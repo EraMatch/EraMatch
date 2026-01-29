@@ -1,0 +1,6 @@
+id,jobTitle,projectName,closureStatus,closedDate,closureReason,candidatesCount,groupsCreated,assessmentsPassed,aiInterviewsPassed,liveInterviewsPassed
+1,Senior Frontend Developer,Tech Corp Engineering 2024,Filled,2024-03-01,Position successfully filled with qualified candidate,67,5,23,15,8
+2,Backend Engineer,Tech Corp Engineering 2024,Filled,2024-04-15,Two positions filled from candidate pool,52,4,19,12,6
+3,DevOps Specialist,Tech Corp Engineering 2024,Cancelled,2024-05-10,Budget constraints led to position cancellation,38,3,14,8,0
+4,Full Stack Developer,Tech Corp Engineering 2024,Filled,2024-06-22,Excellent candidate selected from talent pool,45,4,16,10,5
+5,Mobile Developer (iOS),Tech Corp Engineering 2024,On Hold,2024-07-18,Waiting for project prioritization decision,32,2,11,7,3

@@ -1,0 +1,5 @@
+id,closedPositionId,name,email,selectionDate,finalScore,position
+1,1,Sarah Johnson,sarah.johnson@email.com,2024-03-01,94,Senior Frontend Developer
+2,2,Michael Chen,michael.chen@email.com,2024-04-15,91,Backend Engineer
+3,2,Emily Rodriguez,emily.rodriguez@email.com,2024-04-15,88,Backend Engineer
+4,4,David Kim,david.kim@email.com,2024-06-22,96,Full Stack Developer

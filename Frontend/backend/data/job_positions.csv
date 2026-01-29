@@ -1,0 +1,8 @@
+id,jobTitle,department,assignedHR,assignedTechnicalRecruiter,candidatesCount,status,projectId
+1,Senior React Developer,Engineering,Sarah Johnson,Michael Chen,45,Open,1
+2,Product Manager,Product,Sarah Johnson,Emily Rodriguez,32,Interview,1
+3,DevOps Engineer,Engineering,David Kim,Michael Chen,28,Open,1
+4,UX Designer,Design,Sarah Johnson,Emily Rodriguez,19,Interview,2
+5,Data Scientist,Engineering,David Kim,Michael Chen,52,Open,4
+6,Marketing Manager,Marketing,Jessica Martinez,Emily Rodriguez,23,Open,2
+7,Backend Engineer,Engineering,David Kim,Michael Chen,38,On Hold,1

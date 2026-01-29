@@ -1,0 +1,4 @@
+id,groupName,positionTitle,candidatesCount,status,createdDate,hasAssessment,hasAIInterview,hasLiveInterview
+1,Senior Developers - Batch A,Senior React Developer,25,Active,2024-01-20,true,true,true
+2,Senior Developers - Batch B,Senior React Developer,20,Processing,2024-02-05,true,true,false
+3,Fast Track Candidates,Senior React Developer,8,Completed,2024-01-18,true,false,true

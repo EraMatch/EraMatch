@@ -1,0 +1,8 @@
+id,name,email,role,position,department,joinDate
+1,Sarah Johnson,sarah.johnson@company.com,Admin,HR Manager,Human Resources,Jan 15 2023
+2,Michael Chen,michael.chen@company.com,Member,Engineering Lead,Engineering,Mar 20 2023
+3,Emily Rodriguez,emily.rodriguez@company.com,Member,Senior Designer,Design,May 10 2023
+4,David Kim,david.kim@company.com,Member,Marketing Director,Marketing,Feb 28 2023
+5,Jessica Martinez,jessica.martinez@company.com,Member,Sales Manager,Sales,Jun 18 2023
+6,Robert Martinez,robert.martinez@company.com,Employee,Junior Developer,Engineering,Aug 5 2023
+7,Amanda Lee,amanda.lee@company.com,Member,Finance Manager,Finance,Apr 12 2023
