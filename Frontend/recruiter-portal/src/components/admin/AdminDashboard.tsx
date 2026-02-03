@@ -863,8 +863,8 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
             </span>
           </button>
         )}
-        <h2 className="text-gray-700 mb-2">{dashboardMetrics.title}</h2>
-        <p className="text-gray-600 text-sm">{dashboardMetrics.subtitle}</p>
+        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">{dashboardMetrics.title}</h1>
+        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">{dashboardMetrics.subtitle}</p>
       </div>
 
       {/* Context-Aware Stats Cards */}
