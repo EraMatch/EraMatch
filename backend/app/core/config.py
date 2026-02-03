@@ -14,10 +14,10 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
     
-    # Project
+
     PROJECT_NAME: str = "EraMatch"
     API_V1_STR: str = "/api/v1"
-    DEBUG: bool = False
+    DEBUG: bool = True
     
     # Database
     DATABASE_URL: str = ""
