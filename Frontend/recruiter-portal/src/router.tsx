@@ -1,7 +1,7 @@
 import { createBrowserRouter, useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import React from 'react';
 import { AdminLoginPage } from './components/admin/AdminLoginPage';
-import { RecruiterLoginPage } from './components/recruiter/RecruiterLoginPage';
+import { RecruiterLoginPage } from './components/recruiter/auth/RecruiterLoginPage';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminSettings } from './components/admin/AdminSettings';
 import { AdminRecruiterDelegation } from './components/admin/AdminRecruiterDelegation';
@@ -9,14 +9,18 @@ import { AdminClosedPositions } from './components/admin/AdminClosedPositions';
 import { AdminSubscriptionManagement } from './components/admin/AdminSubscriptionManagement';
 import { AdminOrganizationMembers } from './components/admin/AdminOrganizationMembers';
 import { AdminSidebar } from './components/admin/AdminSidebar';
-import { Sidebar } from './components/recruiter/Sidebar';
-import { Dashboard } from './components/recruiter/Dashboard';
-import { ProjectsPage } from './components/recruiter/ProjectsPage';
-import { CandidatesPage } from './components/recruiter/CandidatesPage';
-import { QuestionBankPage } from './components/recruiter/QuestionBankPage';
+import { Sidebar } from './components/recruiter/layout/Sidebar';
+import { Dashboard } from './components/recruiter/dashboard/Dashboard';
+import { ProjectsPage } from './components/recruiter/projects/ProjectsPage';
+import { CandidatesPage } from './components/recruiter/candidates/CandidatesPage';
+import { QuestionBankPage } from './components/recruiter/assessments/QuestionBankPage';
+import { CandidateProfile } from './components/recruiter/candidates/CandidateProfile';
 import { AlertsNotifications } from './components/common/AlertsNotifications';
-import { EnhancedGroupOverviewV2 } from './components/recruiter/EnhancedGroupOverviewV2';
+import { EnhancedGroupOverviewV2 } from './components/recruiter/groups/EnhancedGroupOverviewV2';
 import { LandingPage } from './components/common/LandingPage';
+import { SuspectReviewWrapper } from './components/recruiter/candidates/SuspectReviewWrapper';
+import { RecruiterSettings } from './components/recruiter/settings/RecruiterSettings';
+import { SuspiciousActivityLog } from './components/recruiter/dashboard/SuspiciousActivityLog';
 import { api, PositionGroup } from './services/api';
 
 // Error Page Component
@@ -33,7 +37,7 @@ const ErrorPage = () => (
 // Layout Wrappers
 const AdminLayout = ({ children }: { children: React.ReactNode }) => {
     return (
-        <div className="min-h-screen" style={{ backgroundColor: '#EDF0F8' }}>
+        <div className="min-h-screen bg-[#edf0f8]">
             <AdminSidebar />
             <div className="ml-20">
                 <main>{children}</main>
@@ -44,7 +48,7 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
 
 const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
     return (
-        <div className="min-h-screen" style={{ backgroundColor: '#EDF0F8' }}>
+        <div className="min-h-screen bg-[#edf0f8]">
             <Sidebar />
             <div className="ml-[96px] transition-all duration-300">
                 <main>{children}</main>
@@ -71,28 +75,54 @@ const DashboardWrapper = () => {
         <Dashboard
             onViewAllProjects={() => navigate('/recruiter/projects')}
             onViewProject={(title) => navigate(`/recruiter/projects?project=${encodeURIComponent(title)}`)}
+            onViewSuspicious={() => navigate('/recruiter/suspicious-activity')}
         />
     );
 };
 
 const ProjectsPageWrapper = () => {
     const navigate = useNavigate();
-    const [searchParams] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
     const initialProjectTitle = searchParams.get('project') || undefined;
+    const initialPosition = searchParams.get('position') || undefined;
+
+    const handlePositionSelect = (positionTitle: string) => {
+        // Update URL with position param without reloading
+        const newParams = new URLSearchParams(searchParams);
+        if (positionTitle) {
+            newParams.set('position', positionTitle);
+        } else {
+            newParams.delete('position');
+        }
+        setSearchParams(newParams);
+    };
 
     return (
         <ProjectsPage
-            onViewProject={(title) => navigate(`/recruiter/projects?project=${encodeURIComponent(title)}`)}
+            onViewProject={(title) => {
+                // When viewing a project, we might want to clear position or keep it? 
+                // Usually viewing a project starts without a specific position unless specified.
+                // But the helper usually just navigates.
+                navigate(`/recruiter/projects?project=${encodeURIComponent(title)}`);
+            }}
             initialProjectTitle={initialProjectTitle}
             onBackToDashboard={() => navigate('/recruiter/dashboard')}
             onCreateAssessment={() => console.log('Create Assessment')}
             onViewDashboard={(title, position) => navigate(`/recruiter/dashboard`)}
-            onViewGroup={(groupId) => navigate(`/recruiter/group/${groupId}`)}
+            onViewGroup={(groupId) => {
+                // Before navigating to the group, update the *current* URL (in history) to include tab=groups
+                // This ensures that when the user clicks 'Back', they return to the Groups tab
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', 'groups');
+                window.history.replaceState(window.history.state, '', url);
+
+                navigate(`/recruiter/group/${groupId}`);
+            }}
             pendingAssessment={null}
             onAssessmentConsumed={() => { }}
-            returnToGroupsTab={false}
-            initialPosition=""
-            onPositionSelect={() => { }}
+            returnToGroupsTab={searchParams.get('tab') === 'groups'}
+            initialPosition={initialPosition}
+            onPositionSelect={handlePositionSelect}
         />
     );
 };
@@ -137,7 +167,23 @@ const GroupOverviewWrapper = () => {
             recruiterType="technical"
             filtrationFlow={flow}
             onBack={() => navigate(-1)}
-            onViewCandidate={(id) => console.log('View candidate', id)}
+            onViewCandidate={(id) => navigate(`/recruiter/candidates/${id}`)}
+        />
+    );
+};
+
+const CandidateProfileWrapper = () => {
+    const { candidateId } = useParams();
+    const navigate = useNavigate();
+
+    // Ensure candidateId is a number
+    const id = candidateId ? parseInt(candidateId, 10) : 0;
+
+    return (
+        <CandidateProfile
+            candidateId={id}
+            onBack={() => navigate(-1)}
+            onViewKnowledgeGraph={() => console.log('View Knowledge Graph')}
         />
     );
 };
@@ -246,6 +292,14 @@ export const router = createBrowserRouter([
         )
     },
     {
+        path: "/recruiter/suspect-review",
+        element: (
+            <RecruiterLayout>
+                <SuspectReviewWrapper />
+            </RecruiterLayout>
+        )
+    },
+    {
         path: "/recruiter/candidates",
         element: (
             <RecruiterLayout>
@@ -265,8 +319,24 @@ export const router = createBrowserRouter([
         path: "/recruiter/settings",
         element: (
             <RecruiterLayout>
-                <div className="p-8"><h1 className="text-2xl font-bold">Settings</h1><p>Settings page content placeholder</p></div>
+                <RecruiterSettings />
             </RecruiterLayout>
         )
+    },
+    {
+        path: "/recruiter/suspicious-activity",
+        element: (
+            <RecruiterLayout>
+                <SuspiciousActivityLog onBack={() => window.history.back()} />
+            </RecruiterLayout>
+        )
+    },
+    {
+        path: "/recruiter/candidates/:candidateId",
+        element: (
+            <RecruiterLayout>
+                <CandidateProfileWrapper />
+            </RecruiterLayout>
+        ),
     },
 ]);

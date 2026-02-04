@@ -222,7 +222,8 @@ export const api = {
         getFiltrationFlowConfig: async (positionId: string) => fetchAPI(`/positions/${positionId}/filtration-flow`),
         getSkillClusters: async (positionId: string) => fetchAPI(`/positions/${positionId}/skills`),
         getAssessmentSession: async (sessionId: string) => fetchAPI(`/assessments/sessions/${sessionId}`),
-        getRecordedInterviewQuestions: async (interviewId: string) => fetchAPI(`/interviews/recorded/questions/${interviewId}`)
+        getRecordedInterviewQuestions: async (interviewId: string) => fetchAPI(`/interviews/recorded/questions/${interviewId}`),
+        getCandidate: async (candidateId: number) => fetchAPI<any>(`/candidates/${candidateId}`)
     },
     candidate: {
         getHome: async () => fetchAPI('/candidate/home'),

@@ -350,8 +350,21 @@ def get_recruiter_analytics():
                 "candidates": p.get("applicantsCount", 0)
             } for p in projects
         ],
-        "recentActivity": [],
-        "weeklyTrend": []
+        "recentActivity": [
+            { "groupName": "Senior React Developers Q1 2025", "project": "Summer Internship 2025", "stage": "Live Interview", "time": "2 hours ago" },
+            { "groupName": "Backend Engineers - Python Focus", "project": "Quarter 1 Hiring", "stage": "Assessment", "time": "5 hours ago" },
+            { "groupName": "Full Stack - High Match", "project": "Expansion Project", "stage": "Review", "time": "1 day ago" },
+            { "groupName": "DevOps Engineers", "project": "Infrastructure Upgrade", "stage": "Screening", "time": "2 days ago" }
+        ],
+        "weeklyTrend": [
+            { "day": "Mon", "candidates": 12 },
+            { "day": "Tue", "candidates": 19 },
+            { "day": "Wed", "candidates": 15 },
+            { "day": "Thu", "candidates": 22 },
+            { "day": "Fri", "candidates": 28 },
+            { "day": "Sat", "candidates": 14 },
+            { "day": "Sun", "candidates": 8 }
+        ]
     }
 
 @app.get("/recruiter/pipeline-modules")
@@ -709,6 +722,147 @@ def get_skill_clusters(position_id: str):
         }
     ]
 
+# --- Candidate Details Endpoint ---
+
+@app.get("/candidates/{candidate_id}")
+def get_candidate_details(candidate_id: int):
+    # Mock comprehensive candidate profile combining profile data and pipeline status
+    return {
+        "id": candidate_id,
+        "name": 'John Smith',
+        "email": 'john.smith@email.com',
+        "phone": '+1 (555) 123-4567',
+        "location": 'San Francisco, CA',
+        "avatar": None,
+        "title": 'Senior Full Stack Developer',
+        "experience": 8,
+        "about": "Passionate full-stack developer with over 8 years of experience building scalable web applications. Expert in React, Node.js, and cloud architecture.",
+        "skills": ['React', 'TypeScript', 'Node.js', 'AWS', 'Docker', 'PostgreSQL'],
+        "education": [
+             {
+                "degree": 'Master of Science in Computer Science',
+                "school": 'Stanford University',
+                "year": '2015-2017'
+            },
+            {
+                "degree": 'Bachelor of Science in Computer Engineering',
+                "school": 'University of California, Berkeley',
+                "year": '2011-2015'
+            }
+        ],
+        "workHistory": [
+            {
+                "title": "Senior Software Engineer",
+                "company": "Tech Corp",
+                "duration": "2020 - Present",
+                "description": "Leading the frontend team, architecting micro-frontends, and mentoring junior developers."
+            },
+            {
+                "title": "Software Engineer",
+                "company": "Startup Inc",
+                "duration": "2017 - 2020",
+                "description": "Full stack development using MERN stack. Implemented real-time features using WebSockets."
+            }
+        ],
+        "scores": {
+            "overall": 95,
+            "assessment": 92,
+            "aiInterview": 88,
+            "github": 90
+        },
+        "pipelineStatus": {
+            "groupAssignment": { "status": 'completed', "completedAt": '2025-01-15 09:00' },
+            "assessment": { "status": 'completed', "completedAt": '2025-01-16 14:30' },
+            "aiInterview": { "status": 'completed', "completedAt": '2025-01-18 10:15' },
+            "liveInterview": { "status": 'completed', "completedAt": '2025-01-20 15:45' },
+            "finalDecision": { "status": 'pending', "completedAt": None }
+        },
+        "assessmentQuestions": [
+             {
+                "id": 1,
+                "text": "Explain React Hooks",
+                "score": 95,
+                "maxScore": 100,
+                "feedback": "Excellent explanation of useEffect and useState."
+             }
+        ],
+        "videoInterviewQuestions": [
+            {
+                "id": 1,
+                "question": "Tell me about a challenging project you worked on.",
+                "duration": "2:30",
+                "score": 9,
+                "transcript": "In my previous role, I led the migration of a monolithic application to microservices..."
+            },
+            {
+                "id": 2,
+                "question": "How do you handle disagreement with a team member?",
+                "duration": "1:45",
+                "score": 8,
+                "transcript": "I believe in open communication and active listening. When I have a disagreement..."
+            }
+        ],
+        "assessmentData": {
+            "questionsCorrect": 46,
+            "questionsTotal": 50,
+            "completedAt": "2025-01-16 14:30",
+            "duration": "45m",
+            "topicScores": [
+                 { "topic": "React", "score": 95 },
+                 { "topic": "TypeScript", "score": 90 },
+                 { "topic": "System Design", "score": 85 }
+            ]
+        },
+        "interviewData": {
+            "completedAt": "2025-01-18 10:15",
+            "duration": "25m",
+            "overallFeedback": "Candidate demonstrated strong communication skills and technical depth."
+        },
+        "liveInterviewData": {
+            "duration": "45:00",
+            "completedAt": "2025-01-20 15:45",
+            "overallConfidence": 85,
+            "overallCorrectness": 90,
+            "emotionMetrics": [
+                { "emotion": "Confidence", "percentage": 85, "icon": "trending-up", "color": "#10b981" },
+                { "emotion": "Calmness", "percentage": 90, "icon": "smile", "color": "#6366f1" },
+                { "emotion": "Enthusiasm", "percentage": 75, "icon": "activity", "color": "#f59e0b" },
+                { "emotion": "Professionalism", "percentage": 95, "icon": "meh", "color": "#3b82f6" }
+            ],
+            "transcript": "Interviewer: Tell me about yourself...\nCandidate: I started my career..."
+        },
+        "resumeSummary": "Experienced developer with strong background in modern web technologies.",
+        "techSkills": {
+            "frontend": ["React", "Vue", "Angular"],
+            "backend": ["Node.js", "Python", "Go"],
+            "devops": ["AWS", "Docker", "CI/CD"]
+        },
+        "githubStats": {
+            "publicRepos": 45,
+            "totalStars": 120,
+            "followers": 35,
+            "contributionsLastYear": 850,
+            "languages": [
+                { "name": "TypeScript", "percentage": 60, "color": "#2b7489" },
+                { "name": "Python", "percentage": 30, "color": "#3572A5" },
+                { "name": "HTML", "percentage": 10, "color": "#e34c26" }
+            ],
+            "topRepos": [
+                {
+                    "name": "react-awesome-lib",
+                    "description": "A collection of awesome React hooks",
+                    "language": "TypeScript",
+                    "stars": 85,
+                    "forks": 12,
+                    "updatedAt": "2 days ago"
+                }
+            ]
+        },
+        "certifications": ["AWS Certified Solutions Architect", "Google Cloud Professional"],
+        "offerStatus": "none",
+        "groupAssigned": True
+    }
+
 # --- Candidate/Assessment Endpoints ---
 
 @app.get("/candidates/selected")
@@ -1006,19 +1160,32 @@ def get_ai_interview_config(interview_id: str):
     return {
         "id": interview_id,
         "name": 'Technical AI Interview',
-        "description": 'AI-powered technical interview...',
-        "duration": 30,
+        "description": 'AI-powered technical interview to evaluate React, algorithmic problem solving, and system design skills.',
+        "duration": 45,
         "questionCount": 10,
         "difficulty": 'Medium',
-        "topics": ['React', 'JavaScript', 'System Design', 'Algorithms'],
-        "enableFaceDetection": True,
-        "enableVoiceAnalysis": True,
-        "enableSentimentAnalysis": True,
+        "topics": ['React', 'JavaScript', 'System Design', 'Algorithms', 'Soft Skills'],
+        "passingScore": 70,
+        "settings": {
+            "enableFaceDetection": True,
+            "enableVoiceAnalysis": True,
+            "enableSentimentAnalysis": True,
+            "enableEyeTracking": True,
+            "enableFullScreen": True,
+            "preventTabSwitching": True,
+            "allowRetries": True,
+            "maxRetries": 1,
+            "showTimer": True
+        },
+        "messages": {
+            "welcome": "Welcome to your AI Technical Interview. You will be asked a series of technical and behavioral questions.",
+            "completion": "Thank you for completing the interview. Your results have been submitted for review."
+        },
         "variants": [
             {
                 "id": 'v1',
                 "name": 'Frontend Focus',
-                "description": 'More questions on React...',
+                "description": 'More questions on React and CSS architecture',
                 "weight": 0.4
             }
         ]
@@ -1062,10 +1229,75 @@ def get_assessment_session(session_id: str):
 @app.get("/interviews/recorded/questions/{interview_id}")
 def get_recorded_interview_questions(interview_id: str):
     return [
-        { "id": 1, "question": "Describe your most challenging project and how you overcame the obstacles you faced." },
-        { "id": 2, "question": "Tell us about a time when you had to work with a difficult team member. How did you handle the situation?" },
-        { "id": 3, "question": "What motivates you in your professional career, and how do you stay productive during challenging times?" },
-        { "id": 4, "question": "Describe a situation where you had to learn a new technology or skill quickly. How did you approach it?" },
-        { "id": 5, "question": "Where do you see yourself in 5 years, and how does this position align with your career goals?" }
+        { 
+            "id": 1, 
+            "question": "Describe your most challenging project and how you overcame the obstacles you faced.",
+            "duration": 180,
+            "preparationTime": 30,
+            "retriesAllowed": 1
+        },
+        { 
+            "id": 2, 
+            "question": "Tell us about a time when you had to work with a difficult team member. How did you handle the situation?",
+            "duration": 150,
+            "preparationTime": 30,
+            "retriesAllowed": 1
+        },
+        { 
+            "id": 3, 
+            "question": "What motivates you in your professional career, and how do you stay productive during challenging times?",
+            "duration": 120,
+            "preparationTime": 15,
+            "retriesAllowed": 0
+        },
+        { 
+            "id": 4, 
+            "question": "Describe a situation where you had to learn a new technology or skill quickly. How did you approach it?",
+            "duration": 150,
+            "preparationTime": 30,
+            "retriesAllowed": 1
+        },
+        { 
+            "id": 5, 
+            "question": "Where do you see yourself in 5 years, and how does this position align with your career goals?",
+            "duration": 120,
+            "preparationTime": 15,
+            "retriesAllowed": 0
+        },
+        { 
+            "id": 6, 
+            "question": "Explain a complex technical concept to someone without a technical background.",
+            "duration": 180,
+            "preparationTime": 45,
+            "retriesAllowed": 1
+        },
+        { 
+            "id": 7, 
+            "question": "How do you ensure code quality and maintainability in your projects?",
+            "duration": 150,
+            "preparationTime": 30,
+            "retriesAllowed": 1
+        },
+        { 
+            "id": 8, 
+            "question": "Describe a bug you encountered that was difficult to solve. What was your debugging process?",
+            "duration": 180,
+            "preparationTime": 30,
+            "retriesAllowed": 1
+        },
+        { 
+            "id": 9, 
+            "question": "How do you handle feedback and criticism on your code/work?",
+            "duration": 120,
+            "preparationTime": 15,
+            "retriesAllowed": 0
+        },
+        { 
+            "id": 10, 
+            "question": "What is your preferred workflow for collaborating with designers and product managers?",
+            "duration": 150,
+            "preparationTime": 30,
+            "retriesAllowed": 1
+        }
     ]
 

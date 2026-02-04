@@ -4,7 +4,9 @@ import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { EditAccessPrivilegesModal } from '../recruiter/EditAccessPrivilegesModal';
+import { EditAccessPrivilegesModal } from '../recruiter/groups/EditAccessPrivilegesModal';
+// import { EditAccessPrivilegesModal } from '../../';
+
 import { toast } from 'sonner';
 import { api, Member } from '../../services/api';
 
@@ -129,6 +131,12 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
 
   return (
     <div className="px-12 py-8">
+      {/* Page Header */}
+      <div className="mb-8">
+        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Organization Members</h1>
+        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Overview of your organization's team and access</p>
+      </div>
+
       {/* Stats Cards */}
       <div className="grid grid-cols-3 gap-6 mb-12">
         <div className="bg-white rounded-3xl px-8 py-9 shadow-sm">
@@ -165,8 +173,8 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
       {/* Organization Members Section with Tabs */}
       <Card className="p-6 rounded-3xl shadow-sm">
         <div className="mb-6">
-          <h3 className="text-gray-900 mb-2">Organization Members</h3>
-          <p className="text-gray-500 text-sm">Manage all members in your organization and their access privileges</p>
+          <h3 className="text-[#111827] text-[18px] font-['Arimo',sans-serif] mb-2">Member Management</h3>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage all members in your organization and their access privileges</p>
         </div>
 
         {/* Tab Navigation */}
