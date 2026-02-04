@@ -1,5 +1,5 @@
 """
-Application settings loaded from environment variables.
+Application settings loaded from environment variables
 """
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +34,22 @@ class Settings(BaseSettings):
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+    
+    # AI/LLM Providers
+    # Ollama Cloud - https://ollama.com/blog/cloud-models
+    OLLAMA_BASE_URL: str = "https://api.ollama.com"
+    OLLAMA_API_KEY: str = ""
+    
+    # Google Gemini
+    GOOGLE_API_KEY: str = ""
+    
+    # Groq 
+    GROQ_API_KEY: str = ""
+    
+    
+    # Default LLM provider: "ollama", "gemini", "groq", "openai"
+    DEFAULT_LLM_PROVIDER: str = "gemini"
+    DEFAULT_EMBEDDING_PROVIDER: str = "gemini"
 
 
 @lru_cache
