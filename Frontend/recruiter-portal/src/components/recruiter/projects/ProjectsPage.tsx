@@ -53,40 +53,41 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  const fetchProjects = async () => {
+    try {
+      setIsLoading(true);
+      const [activeProjects, closedProjects] = await Promise.all([
+        api.recruiter.getProjects(),
+        api.recruiter.getClosedProjects()
+      ]);
+
+      const mappedActive = activeProjects.map(p => ({
+        id: p.id,
+        title: p.projectName,
+        roles: p.positionsCount,
+        applicants: p.applicantsCount,
+        isOpen: true,
+        description: '' // Description might need to be fetched if added to API
+      }));
+
+      const mappedClosed = closedProjects.map(p => ({
+        id: p.id,
+        title: p.projectName,
+        roles: p.positionsCount,
+        applicants: p.totalCandidates,
+        isOpen: false,
+        description: ''
+      }));
+
+      setProjects([...mappedActive, ...mappedClosed]);
+    } catch (error) {
+      toast.error('Failed to load projects');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchProjects = async () => {
-      try {
-        setIsLoading(true);
-        const [activeProjects, closedProjects] = await Promise.all([
-          api.recruiter.getProjects(),
-          api.recruiter.getClosedProjects()
-        ]);
-
-        const mappedActive = activeProjects.map(p => ({
-          id: p.id,
-          title: p.projectName,
-          roles: p.positionsCount,
-          applicants: p.applicantsCount,
-          isOpen: true,
-          description: ''
-        }));
-
-        const mappedClosed = closedProjects.map(p => ({
-          id: p.id,
-          title: p.projectName,
-          roles: p.positionsCount,
-          applicants: p.totalCandidates,
-          isOpen: false,
-          description: ''
-        }));
-
-        setProjects([...mappedActive, ...mappedClosed]);
-      } catch (error) {
-        toast.error('Failed to load projects');
-      } finally {
-        setIsLoading(false);
-      }
-    };
     fetchProjects();
   }, []);
 
@@ -208,17 +209,18 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
     }
   });
 
-  const handleAddProject = () => {
+  const handleAddProject = async () => {
     if (newProjectName.trim()) {
-      const newProject: Project = {
-        id: Date.now(),
-        title: newProjectName,
-        roles: 0,
-        applicants: 0,
-        isOpen: true,
-        description: newProjectDescription
-      };
-      setProjects([...projects, newProject]);
+      try {
+        await api.recruiter.createProject({
+          projectName: newProjectName,
+          description: newProjectDescription
+        });
+        toast.success('Project created successfully');
+        fetchProjects();
+      } catch (error) {
+        toast.error('Failed to create project');
+      }
       setNewProjectName('');
       setNewProjectDescription('');
       setIsAddDialogOpen(false);
@@ -233,13 +235,19 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
     setIsEditDialogOpen(true);
   };
 
-  const handleSaveChanges = () => {
+  const handleSaveChanges = async () => {
     if (editingProject && editProjectName.trim()) {
-      setProjects(projects.map(p =>
-        p.id === editingProject.id
-          ? { ...p, title: editProjectName, description: editProjectDescription, isOpen: editProjectIsOpen }
-          : p
-      ));
+      try {
+        await api.recruiter.updateProject(editingProject.id, {
+          projectName: editProjectName,
+          description: editProjectDescription,
+          // status: editProjectIsOpen ? 'Active' : 'Closed' // Assuming backend handles this mapped to status or closed endpoint
+        });
+        toast.success('Project updated successfully');
+        fetchProjects();
+      } catch (error) {
+        toast.error('Failed to update project');
+      }
       setIsEditDialogOpen(false);
       setEditingProject(null);
     }

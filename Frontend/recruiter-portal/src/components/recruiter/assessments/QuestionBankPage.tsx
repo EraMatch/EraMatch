@@ -1,6 +1,11 @@
-import { useState, useEffect } from 'react';
-import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle } from 'lucide-react';
 import { api } from '../../../services/api';
+import { MCQEditor } from '../../common/MCQEditor';
+import { EssayEditor } from '../../common/EssayEditor';
+import { CodeEditor } from '../../common/CodeEditor';
+
+// --- Interfaces ---
 
 interface Question {
   id: string;
@@ -14,6 +19,40 @@ interface Question {
   createdAt: string;
   createdBy: string;
   isFavorite: boolean;
+  // Extended properties (matching QuestionVariant somewhat)
+  options?: string[];
+  correctAnswer?: number | number[];
+  multipleCorrect?: boolean;
+  codeLanguage?: string;
+  codeTemplate?: string;
+  testCases?: { input: string; output: string; isHidden?: boolean; points?: number; id?: string }[];
+  maxWords?: number;
+  explanation?: string;
+  expectedKeywords?: string[];
+  rubric?: string;
+}
+
+// Interface used by the shared editors
+interface QuestionVariant {
+  id: string;
+  questionText: string;
+  type: 'mcq' | 'essay' | 'code';
+  options?: string[];
+  correctAnswer?: number | number[];
+  multipleCorrect?: boolean;
+  explanation?: string;
+  difficulty?: 'Easy' | 'Medium' | 'Hard';
+  tags?: string[];
+  // Essay
+  expectedKeywords?: string[];
+  maxWords?: number;
+  rubric?: string;
+  // Code
+  codeTemplate?: string;
+  testCases?: any[];
+  language?: string;
+  timeLimit?: number;
+  memoryLimit?: number;
 }
 
 interface QuestionBankPageProps {
@@ -21,23 +60,41 @@ interface QuestionBankPageProps {
 }
 
 export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
+  // --- State ---
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [viewMode, setViewMode] = useState<'list' | 'editor'>('list');
+  const [editorType, setEditorType] = useState<'mcq' | 'essay' | 'code' | null>(null);
+  const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
+  const [currentVariant, setCurrentVariant] = useState<QuestionVariant | null>(null);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
 
-  // Fetch questions from API
+  const [loading, setLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Effects ---
+
   useEffect(() => {
     const fetchQuestions = async () => {
       try {
         setLoading(true);
         const data = await api.recruiter.getQuestionBank();
-        setQuestions(data as Question[]);
+        // Ensure data matches interface and has defaults
+        const mappedData = (data as any[]).map(q => ({
+          ...q,
+          options: q.options || [],
+          tags: q.tags || [],
+          usageCount: q.usageCount || 0,
+          avgScore: q.avgScore || 0,
+          createdAt: q.createdAt || new Date().toISOString().split('T')[0],
+          createdBy: q.createdBy || 'System'
+        }));
+        setQuestions(mappedData);
       } catch (error) {
         console.error('Failed to fetch questions:', error);
       } finally {
@@ -47,6 +104,178 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
 
     fetchQuestions();
   }, []);
+
+  // --- Data Conversion Helpers ---
+
+  const toVariant = (q: Question): QuestionVariant => {
+    // Map Question -> QuestionVariant
+    let vType: 'mcq' | 'essay' | 'code' = 'mcq';
+    if (q.type === 'Multiple Choice' || q.type === 'True/False') vType = 'mcq';
+    else if (q.type === 'Code') vType = 'code';
+    else if (q.type === 'Essay') vType = 'essay';
+
+    return {
+      id: q.id,
+      questionText: q.text,
+      type: vType,
+      difficulty: q.difficulty,
+      tags: q.tags,
+      explanation: q.explanation,
+      // MCQ
+      options: q.options,
+      correctAnswer: q.correctAnswer,
+      multipleCorrect: q.multipleCorrect,
+      // Code
+      language: q.codeLanguage,
+      codeTemplate: q.codeTemplate,
+      testCases: q.testCases,
+      // Essay
+      maxWords: q.maxWords,
+      expectedKeywords: q.expectedKeywords,
+      rubric: q.rubric
+    };
+  };
+
+  const fromVariant = (v: QuestionVariant, originalId?: string): Question => {
+    // Map QuestionVariant -> Question
+    let qType: Question['type'] = 'Multiple Choice';
+    if (v.type === 'mcq') qType = 'Multiple Choice'; // Simplified
+    else if (v.type === 'code') qType = 'Code';
+    else if (v.type === 'essay') qType = 'Essay';
+
+    return {
+      id: originalId || Date.now().toString(),
+      text: v.questionText,
+      category: 'Uncategorized', // Editor doesn't have category field yet, default
+      difficulty: v.difficulty || 'Medium',
+      type: qType,
+      tags: v.tags || [],
+      usageCount: 0,
+      avgScore: 0,
+      createdAt: new Date().toISOString().split('T')[0],
+      createdBy: 'Me',
+      isFavorite: false,
+      // Extended fields
+      options: v.options,
+      correctAnswer: v.correctAnswer,
+      multipleCorrect: v.multipleCorrect,
+      explanation: v.explanation,
+      codeLanguage: v.language,
+      codeTemplate: v.codeTemplate,
+      testCases: v.testCases,
+      maxWords: v.maxWords,
+      expectedKeywords: v.expectedKeywords,
+      rubric: v.rubric
+    };
+  };
+
+  // --- Handlers ---
+
+  const handleCreateClick = (type: 'mcq' | 'essay' | 'code') => {
+    setEditingQuestionId(null);
+    setEditorType(type);
+    setCurrentVariant({
+      id: `new-${Date.now()}`,
+      questionText: '',
+      type: type,
+      difficulty: 'Medium',
+      options: type === 'mcq' ? ['', '', '', ''] : undefined,
+      correctAnswer: type === 'mcq' ? 0 : undefined
+    });
+    setViewMode('editor');
+    setShowCreateMenu(false);
+  };
+
+  const handleEditClick = (q: Question) => {
+    setEditingQuestionId(q.id);
+    const variant = toVariant(q);
+    setEditorType(variant.type);
+    setCurrentVariant(variant);
+    setViewMode('editor');
+  };
+
+  const handleEditorSave = (variant: QuestionVariant) => {
+    if (editingQuestionId) {
+      // Update existing
+      setQuestions(questions.map(q => {
+        if (q.id === editingQuestionId) {
+          const updated = fromVariant(variant, editingQuestionId);
+          // Preserve fields not in editor (like usageCount, createdBy, category)
+          return { ...q, ...updated, category: q.category };
+        }
+        return q;
+      }));
+    } else {
+      // Create new
+      const newQuestion = fromVariant(variant);
+      setQuestions([newQuestion, ...questions]);
+    }
+    setViewMode('list');
+    setEditingQuestionId(null);
+  };
+
+  const handleDelete = (id: string) => {
+    if (confirm('Are you sure you want to delete this question?')) {
+      setQuestions(questions.filter(q => q.id !== id));
+    }
+  };
+
+  const handleDuplicate = (q: Question) => {
+    const newQuestion = {
+      ...q,
+      id: Date.now().toString(),
+      text: `${q.text} (Copy)`,
+      usageCount: 0,
+      createdAt: new Date().toISOString().split('T')[0]
+    };
+    setQuestions([newQuestion, ...questions]);
+  };
+
+  const handleExport = () => {
+    const dataStr = JSON.stringify(questions, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `question_bank_export_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const importedData = JSON.parse(event.target?.result as string);
+        if (Array.isArray(importedData)) {
+          const newQuestions = importedData.map((q: any) => ({
+            ...q,
+            id: `import_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            isFavorite: false
+          }));
+          setQuestions([...newQuestions, ...questions]);
+          alert(`Successfully imported ${newQuestions.length} questions.`);
+        } else {
+          alert('Invalid JSON format. Expected an array of questions.');
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Failed to parse JSON file.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // --- Render Helpers ---
 
   const categories = [
     { id: 'all', label: 'All Categories', icon: BookOpen, count: questions.length },
@@ -76,8 +305,21 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     }
   };
 
+  // --- Main Render ---
+
+  if (viewMode === 'editor' && currentVariant) {
+    // Render the specific editor
+    if (editorType === 'mcq') {
+      return <MCQEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />;
+    } else if (editorType === 'essay') {
+      return <EssayEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />;
+    } else if (editorType === 'code') {
+      return <CodeEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />;
+    }
+  }
+
   return (
-    <div className="min-h-screen p-8">
+    <div className="min-h-screen p-8" onClick={() => setShowCreateMenu(false)}>
       <div className="max-w-[1600px] mx-auto">
         {/* Header */}
         <div className="mb-8">
@@ -86,7 +328,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
             className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4 transition-colors"
           >
             <ArrowLeft size={20} />
-            <span className="text-sm">Back</span>
+            <span className="text-sm">Back to Dashboard</span>
           </button>
 
           <div className="flex items-center justify-between">
@@ -94,22 +336,68 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               <h1 className="text-[#111827] mb-2 text-[32px] font-['Arimo',sans-serif]">Question Bank</h1>
               <p className="font-['Arimo',sans-serif] text-[14px] text-gray-600">Manage and organize your assessment questions</p>
             </div>
-            <div className="flex items-center gap-3">
-              <button className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#e5e7eb] rounded-[10px] hover:bg-[#f9fafb] transition-colors font-['Arimo',sans-serif] text-[14px] text-[#374151]">
+            <div className="flex items-center gap-3 relative">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                className="hidden"
+                accept=".json"
+              />
+              <button
+                onClick={handleImportClick}
+                className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#e5e7eb] rounded-[10px] hover:bg-[#f9fafb] transition-colors font-['Arimo',sans-serif] text-[14px] text-[#374151]"
+              >
                 <Upload size={18} className="text-[#6b7280]" />
                 <span>Import</span>
               </button>
-              <button className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#e5e7eb] rounded-[10px] hover:bg-[#f9fafb] transition-colors font-['Arimo',sans-serif] text-[14px] text-[#374151]">
+              <button
+                onClick={handleExport}
+                className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#e5e7eb] rounded-[10px] hover:bg-[#f9fafb] transition-colors font-['Arimo',sans-serif] text-[14px] text-[#374151]"
+              >
                 <Download size={18} className="text-[#6b7280]" />
                 <span>Export</span>
               </button>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="flex items-center gap-2 px-6 py-2.5 bg-[#6366f1] text-white rounded-[10px] hover:bg-[#5558e3] transition-colors font-['Arimo',sans-serif] text-[14px]"
-              >
-                <Plus size={18} />
-                <span>Create Question</span>
-              </button>
+
+              <div className="relative">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowCreateMenu(!showCreateMenu);
+                  }}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-[#6366f1] text-white rounded-[10px] hover:bg-[#5558e3] transition-colors font-['Arimo',sans-serif] text-[14px]"
+                >
+                  <Plus size={18} />
+                  <span>Create Question</span>
+                  <ChevronDown size={16} />
+                </button>
+
+                {showCreateMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-[10px] shadow-xl border border-[#e5e7eb] py-1 z-20">
+                    <button
+                      onClick={() => handleCreateClick('mcq')}
+                      className="w-full text-left px-4 py-2 text-[14px] text-[#374151] hover:bg-[#f3f4f6] hover:text-[#6366f1] flex items-center gap-2"
+                    >
+                      <CheckCircle size={16} />
+                      Multiple Choice
+                    </button>
+                    <button
+                      onClick={() => handleCreateClick('code')}
+                      className="w-full text-left px-4 py-2 text-[14px] text-[#374151] hover:bg-[#f3f4f6] hover:text-[#6366f1] flex items-center gap-2"
+                    >
+                      <Code size={16} />
+                      Coding
+                    </button>
+                    <button
+                      onClick={() => handleCreateClick('essay')}
+                      className="w-full text-left px-4 py-2 text-[14px] text-[#374151] hover:bg-[#f3f4f6] hover:text-[#6366f1] flex items-center gap-2"
+                    >
+                      <FileText size={16} />
+                      Essay
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -301,13 +589,26 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 ml-4">
-                      <button className="p-2 text-[#9ca3af] hover:text-[#6366f1] hover:bg-[#e0e7ff] rounded-[8px] transition-colors">
+                      {/* Action Buttons */}
+                      <button
+                        onClick={() => handleEditClick(question)}
+                        className="p-2 text-[#9ca3af] hover:text-[#6366f1] hover:bg-[#e0e7ff] rounded-[8px] transition-colors"
+                        title="Edit"
+                      >
                         <Edit2 size={18} />
                       </button>
-                      <button className="p-2 text-[#9ca3af] hover:text-[#6366f1] hover:bg-[#e0e7ff] rounded-[8px] transition-colors">
+                      <button
+                        onClick={() => handleDuplicate(question)}
+                        className="p-2 text-[#9ca3af] hover:text-[#6366f1] hover:bg-[#e0e7ff] rounded-[8px] transition-colors"
+                        title="Duplicate"
+                      >
                         <Copy size={18} />
                       </button>
-                      <button className="p-2 text-[#9ca3af] hover:text-[#ef4444] hover:bg-[#fee2e2] rounded-[8px] transition-colors">
+                      <button
+                        onClick={() => handleDelete(question.id)}
+                        className="p-2 text-[#9ca3af] hover:text-[#ef4444] hover:bg-[#fee2e2] rounded-[8px] transition-colors"
+                        title="Delete"
+                      >
                         <Trash2 size={18} />
                       </button>
                     </div>
