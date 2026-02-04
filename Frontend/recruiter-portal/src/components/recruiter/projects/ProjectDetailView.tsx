@@ -55,14 +55,15 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
         const project = allProjects.find(p => p.projectName === projectTitle);
 
         if (project) {
-          const projectPositions = await api.recruiter.getProjectPositions(project.id);
+          setProjectId(project.id);
+          const projectPositions = await api.recruiter.getProjectPositions(Number(project.id));
           const mappedPositions: Position[] = projectPositions.map(p => ({
             id: p.id,
             title: p.jobTitle,
             description: `Department: ${p.department}`,
             screeningConditions: 'Standard screening requirements apply',
-            applicants: p.candidatesCount,
-            isOpen: p.status === 'Open' || p.status === 'Interview'
+            applicants: p.applicantsCount,
+            isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
           }));
           setPositions(mappedPositions);
         } else {
@@ -78,6 +79,8 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
 
     fetchProjectData();
   }, [projectTitle]);
+
+  const [projectId, setProjectId] = useState<number | string | undefined>();
   const [viewingPosition, setViewingPosition] = useState<Position | null>(null);
   const [activeTab, setActiveTab] = useState<'positions' | 'analytics'>('positions');
 
@@ -113,17 +116,30 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
   // Track internal project status
   const [internalProjectStatus, setInternalProjectStatus] = useState<'Draft' | 'Active' | 'Complete' | 'Archived'>(projectStatus || 'Active');
 
-  const handleAddPosition = () => {
-    if (newPositionTitle.trim()) {
-      const newPosition: Position = {
-        id: Date.now(),
-        title: newPositionTitle,
-        description: newPositionDescription,
-        screeningConditions: newPositionScreening,
-        applicants: 0,
-        isOpen: true,
-      };
-      setPositions([...positions, newPosition]);
+  const handleAddPosition = async () => {
+    if (newPositionTitle.trim() && projectId) {
+      try {
+        await api.recruiter.createPosition({
+          jobTitle: newPositionTitle,
+          department: newPositionDescription || 'Engineering', // Default department if desc used for dept
+          projectId: Number(projectId),
+          description: newPositionScreening
+        });
+        toast.success('Position created successfully');
+        // Reload positions (duplicate logic, should extract)
+        const projectPositions = await api.recruiter.getProjectPositions(Number(projectId));
+        const mappedPositions: Position[] = projectPositions.map(p => ({
+          id: p.id,
+          title: p.jobTitle,
+          description: `Department: ${p.department}`,
+          screeningConditions: 'Standard screening requirements apply',
+          applicants: p.candidatesCount,
+          isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
+        }));
+        setPositions(mappedPositions);
+      } catch (error) {
+        toast.error('Failed to create position');
+      }
       setNewPositionTitle('');
       setNewPositionDescription('');
       setNewPositionScreening('');
@@ -140,19 +156,31 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
     setIsEditDialogOpen(true);
   };
 
-  const handleSaveChanges = () => {
+  const handleSaveChanges = async () => {
     if (editingPosition && editPositionTitle.trim()) {
-      setPositions(positions.map(p =>
-        p.id === editingPosition.id
-          ? {
-            ...p,
-            title: editPositionTitle,
-            description: editPositionDescription,
-            screeningConditions: editPositionScreening,
-            isOpen: editPositionIsOpen
-          }
-          : p
-      ));
+      try {
+        await api.recruiter.updatePosition(editingPosition.id, {
+          jobTitle: editPositionTitle,
+          // department: ... not editing department in modal currently
+          status: editPositionIsOpen ? 'Active' : 'Closed'
+        });
+        toast.success('Position updated successfully');
+        // Refresh
+        if (projectId) {
+          const projectPositions = await api.recruiter.getProjectPositions(Number(projectId));
+          const mappedPositions: Position[] = projectPositions.map(p => ({
+            id: p.id,
+            title: p.jobTitle,
+            description: `Department: ${p.department}`,
+            screeningConditions: 'Standard screening requirements apply',
+            applicants: p.applicantsCount,
+            isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
+          }));
+          setPositions(mappedPositions);
+        }
+      } catch (error) {
+        toast.error('Failed to update position');
+      }
       setIsEditDialogOpen(false);
       setEditingPosition(null);
     }
@@ -163,26 +191,34 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
     setIsClosePositionModalOpen(true);
   };
 
-  const handleConfirmClosePosition = (outcome: PositionOutcome) => {
+  const handleConfirmClosePosition = async (outcome: PositionOutcome) => {
     if (closingPosition) {
-      setPositions(positions.map(p =>
-        p.id === closingPosition.id
-          ? {
-            ...p,
-            isOpen: false,
-            closureStatus: outcome.status,
-            closureReason: outcome.reason,
-            closureDate: outcome.closureDate
-          }
-          : p
-      ));
+      try {
+        await api.recruiter.updatePosition(closingPosition.id, {
+          status: outcome.status === 'Filled' ? 'Closed' : 'On Hold' // Map correctly
+        });
+        // Show success toast
+        const message = outcome.status === 'Filled'
+          ? `Position "${closingPosition.title}" closed as Filled`
+          : `Position "${closingPosition.title}" closed as Cancelled`;
+        toast.success(message);
 
-      // Show success toast
-      const message = outcome.status === 'Filled'
-        ? `Position "${closingPosition.title}" closed as Filled`
-        : `Position "${closingPosition.title}" closed as Cancelled`;
-      toast.success(message);
-
+        // Refresh
+        if (projectId) {
+          const projectPositions = await api.recruiter.getProjectPositions(Number(projectId));
+          const mappedPositions: Position[] = projectPositions.map(p => ({
+            id: p.id,
+            title: p.jobTitle,
+            description: `Department: ${p.department}`,
+            screeningConditions: 'Standard screening requirements apply',
+            applicants: p.applicantsCount,
+            isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
+          }));
+          setPositions(mappedPositions);
+        }
+      } catch (e) {
+        toast.error('Failed to close position');
+      }
       setClosingPosition(null);
     }
   };
