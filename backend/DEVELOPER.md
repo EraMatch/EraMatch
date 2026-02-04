@@ -10,6 +10,7 @@ Before starting work, create an issue on GitHub:
 ```
 feat        # New feature or enhancement
 fix         # Bug fix
+design      #  architecture for smth, ui edits in design, new ideas need definition
 other       # General tasks, improvements
 regulation  # Code standards, refactoring, documentation
 ```
@@ -19,24 +20,8 @@ regulation  # Code standards, refactoring, documentation
 - Document what you're doing
 - If you hit workarounds or internal issues, document them in the issue thread
 - Link related issues if any
+- **For design issues:** on zenhub... with same issue number Attach mockups, wireframes, architecture diagrams, links or anything there and justify 
 
-**Example:**
-```
-Title: [feat] Add CV parsing with Whisper
-Label: feat
-
-Description:
-Need to add CV parsing using Whisper model.
-- Parse uploaded PDF/DOCX files
-- Extract text and structure
-- Store in database
-
-Workarounds:
-- Using base model for now (faster)
-- Will upgrade to large model later
-```
-
----
 
 ## How to Add Code
 

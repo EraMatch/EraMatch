@@ -43,16 +43,42 @@ We use **feature branch workflow** with issue tracking.
 
  - **create issue with what u want, and ADD a deescription please, with franco even but just write what u made and if any workarround or internal issue document this in the thread of the issue please argook**
 
+### Branch Structure
+
+```
+main              # Production releases only (protected)
+  ↑
+  │ (PR with review required)
+  │
+development       # Active development (default branch, protected)
+  ↑
+  │ (PR with review required)
+  │
+feat/*            # Feature branches from issues
+fix/*             # Bug fix branches
+design/*          # Architecture/design decisions
+other/*           # Other tasks
+regulation/*      # Code standards/refactoring
+```
+
 ### Issue Labels
 
 When creating an issue, use one of these labels:
 
 ```
-feat        # New feature or enhancment
-fix         # bug fix
-other       # generic  
-regulation  #  standards, refactoring, documentation
+feat        # New feature or enhancement
+fix         # Bug fix
+design      # architecture for smth, ui edits in design, new ideas need definition
+other       # Generic tasks
+regulation  # Standards, refactoring, documentation
 ```
+
+**ZenHub Documentation:**
+- **Always attach assets** (mockups, diagrams (reviiiisee them before), screenshots) to issues on ZenHub
+- Use the same issue number when uploading files or adding links or any comment or want to save the data 
+- Document design decisions or errors or any comment with screenshots if needed inside the thread 
+
+
 example: feat/candidate-login #21 (the number is set automatically from github)
 
 ### Branch Naming
@@ -61,7 +87,9 @@ example: feat/candidate-login #21 (the number is set automatically from github)
 feat/{issue-number}-{short-description}    # New features
 fix/{issue-number}-{short-description}     # Bug fixes
 other/{issue-number}-{short-description}   # Other tasks
-regulation/{issue-number}-{short-description}  # Code standards
+
+```
+
 ```
 
 **Examples:**
@@ -71,24 +99,32 @@ regulation/{issue-number}-{short-description}  # Code standards
 ### Workflow Steps
 
 ```bash
-# 1. Create branch from main
-git checkout main
-git pull origin main # remember to fetch and pull before anything 
+# 1. Always start from development (default branch)
+git checkout development
+git pull origin development # remember to fetch and pull before anything 
+
+# 2. Create feature branch
 git checkout -b feat/23-add-cv-parsing
 
-# 2. Make changes and commit
+# 3. Make changes and commit
 git add .
-git commit -m "feat: add CV parsing with Whisper integration" #  be descriptive 
+git commit -m "feat: add CV parsing with Whisper integration #23" #  be descriptive 
 
-# 3. Push to remote
+# 4. Push to remote
 git push origin feat/23-add-cv-parsing
 
-# 4. Create Pull Request on GitHub
+# 5. Create Pull Request on GitHub
+# - Target: development (not main!)
 # - Link to issue #23
 # - Request review from team
 
-# 5. After approval, merge to main
+# 6. After approval, merge to development
 # - Delete feature branch after merge
+
+# 7. When ready for production release:
+# - Create PR: development → main
+# - Requires review
+# - Merge to deploy
 ```
 
 ### Commit Message Format
