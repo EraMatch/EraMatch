@@ -43,11 +43,25 @@ We use **feature branch workflow** with issue tracking.
 
  - **create issue with what u want, and ADD a deescription please, with franco even but just write what u made and if any workarround or internal issue document this in the thread of the issue please argook**
 
+### Issue Labels
+
+When creating an issue, use one of these labels:
+
+```
+feat        # New feature or enhancment
+fix         # bug fix
+other       # generic  
+regulation  #  standards, refactoring, documentation
+```
+example: feat/candidate-login #21 (the number is set automatically from github)
+
 ### Branch Naming
 
 ```
 feat/{issue-number}-{short-description}    # New features
 fix/{issue-number}-{short-description}     # Bug fixes
+other/{issue-number}-{short-description}   # Other tasks
+regulation/{issue-number}-{short-description}  # Code standards
 ```
 
 **Examples:**
@@ -79,11 +93,28 @@ git push origin feat/23-add-cv-parsing
 
 ### Commit Message Format
 
+Use this structure for commits:
+
 ```
 feat: add new feature
 fix: fix bug
-other: write what u want
+other: general improvements
+regulation: code standards/refactoring
 ```
+
+**Examples:**
+```bash
+# Regular commits
+git commit -m "feat: add CV parsing with Whisper"
+git commit -m "regulation: update README with Git workflow"
+git commit -m "fix: resolve login validation error"
+
+# To auto-close issue when merged
+git commit -m "fixes: resolve login validation error #45"
+git commit -m "feat: add CV parsing #23"
+```
+
+**Note:** Adding `fixes: #issue-number` or `feat: #issue-number` will automatically close the issue when PR is merged.
 
 ---
 

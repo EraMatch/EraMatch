@@ -2,6 +2,42 @@
 
 Guidelines for the EraMatch development team.
 
+## Creating Issues
+
+Before starting work, create an issue on GitHub:
+
+**Issue Labels:**
+```
+feat        # New feature or enhancement
+fix         # Bug fix
+other       # General tasks, improvements
+regulation  # Code standards, refactoring, documentation
+```
+
+**Issue Requirements:**
+- Write a clear description (even in franco/arabic is fine)
+- Document what you're doing
+- If you hit workarounds or internal issues, document them in the issue thread
+- Link related issues if any
+
+**Example:**
+```
+Title: [feat] Add CV parsing with Whisper
+Label: feat
+
+Description:
+Need to add CV parsing using Whisper model.
+- Parse uploaded PDF/DOCX files
+- Extract text and structure
+- Store in database
+
+Workarounds:
+- Using base model for now (faster)
+- Will upgrade to large model later
+```
+
+---
+
 ## How to Add Code
 
 ### Adding a New API Endpoint
