@@ -76,8 +76,8 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
       {viewMode === 'projects' && (
         <div>
           <div className="mb-8">
-            <h2 className="text-gray-900 mb-2">Closed Projects Archive</h2>
-            <p className="text-gray-500 text-sm">
+            <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Closed Projects Archive</h1>
+            <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
               Browse closed projects and view position archives
             </p>
           </div>
@@ -208,8 +208,8 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
               <ArrowLeft size={20} />
             </button>
             <div>
-              <h3 className="text-gray-900 mb-1">Project Archive: {selectedProject.projectName}</h3>
-              <p className="text-gray-500 text-sm">Select a position to view detailed archive data</p>
+              <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Project Archive: {selectedProject.projectName}</h1>
+              <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Select a position to view detailed archive data</p>
             </div>
           </div>
 
@@ -343,8 +343,8 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
               <ArrowLeft size={20} />
             </button>
             <div>
-              <h3 className="text-gray-900 mb-1">Position Archive: {selectedPosition.jobTitle}</h3>
-              <p className="text-gray-500 text-sm">Detailed closure information and statistics</p>
+              <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Position Archive: {selectedPosition.jobTitle}</h1>
+              <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Detailed closure information and statistics</p>
             </div>
           </div>
 

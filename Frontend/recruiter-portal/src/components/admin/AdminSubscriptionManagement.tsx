@@ -89,8 +89,8 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
     <div className="px-12 py-8">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-gray-900 text-3xl mb-2">Subscription Management</h1>
-        <p className="text-gray-500">Manage your organization's subscription plan</p>
+        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Subscription Management</h1>
+        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your organization's subscription plan</p>
       </div>
 
       {/* Current Plan Card */}

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronLeft, Plus, Trash2, CheckCircle, Circle, Sparkles } from 'lucide-react';
 import { Button } from '../ui/button';
-import { TextRefiner } from '../recruiter/TextRefiner';
+import { TextRefiner } from '../recruiter/shared/TextRefiner';
 
 interface QuestionVariant {
   id: string;
@@ -56,7 +56,7 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
       return;
     }
     const newOptions = questionData.options?.filter((_, i) => i !== index) || [];
-    
+
     // Adjust correct answer if needed
     let newCorrectAnswer = questionData.correctAnswer;
     if (questionData.multipleCorrect && Array.isArray(newCorrectAnswer)) {
@@ -66,9 +66,9 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
     } else if (typeof newCorrectAnswer === 'number' && newCorrectAnswer > index) {
       newCorrectAnswer = newCorrectAnswer - 1;
     }
-    
-    setQuestionData({ 
-      ...questionData, 
+
+    setQuestionData({
+      ...questionData,
       options: newOptions,
       correctAnswer: newCorrectAnswer
     });
@@ -117,12 +117,12 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
       alert('Please enter a question');
       return;
     }
-    
+
     if (questionData.options?.some(opt => !opt.trim())) {
       alert('All options must be filled');
       return;
     }
-    
+
     if (questionData.multipleCorrect) {
       if (!Array.isArray(questionData.correctAnswer) || questionData.correctAnswer.length === 0) {
         alert('Please select at least one correct answer');
@@ -134,7 +134,7 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
         return;
       }
     }
-    
+
     onSave(questionData);
   };
 
@@ -224,11 +224,10 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
                     <div key={index} className="flex items-center gap-3">
                       <button
                         onClick={() => handleToggleCorrectAnswer(index)}
-                        className={`flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all ${
-                          isCorrect
+                        className={`flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all ${isCorrect
                             ? 'border-emerald-500 bg-emerald-50'
                             : 'border-gray-300 bg-white hover:border-[#6366f1]'
-                        }`}
+                          }`}
                         title={`Mark as ${isCorrect ? 'incorrect' : 'correct'}`}
                       >
                         {isCorrect ? (
@@ -237,7 +236,7 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
                           <Circle size={20} className="text-gray-400" />
                         )}
                       </button>
-                      
+
                       <div className="flex-1 flex items-center gap-2">
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280] w-8">
                           {String.fromCharCode(65 + index)}.
@@ -247,9 +246,8 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
                           value={option}
                           onChange={(e) => handleOptionChange(index, e.target.value)}
                           placeholder={`Option ${String.fromCharCode(65 + index)}`}
-                          className={`flex-1 h-[44px] px-4 rounded-[8px] border font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent ${
-                            isCorrect ? 'border-emerald-300 bg-emerald-50' : 'border-[#e5e7eb] bg-white'
-                          }`}
+                          className={`flex-1 h-[44px] px-4 rounded-[8px] border font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent ${isCorrect ? 'border-emerald-300 bg-emerald-50' : 'border-[#e5e7eb] bg-white'
+                            }`}
                         />
                         <button
                           onClick={() => setShowOptionRefiner(index)}
@@ -269,7 +267,7 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
                           />
                         )}
                       </div>
-                      
+
                       {(questionData.options?.length || 0) > 2 && (
                         <button
                           onClick={() => handleRemoveOption(index)}
@@ -282,7 +280,7 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
                   );
                 })}
               </div>
-              
+
               <button
                 onClick={handleAddOption}
                 className="mt-3 flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] border border-dashed border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-colors"
@@ -338,15 +336,14 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
                   <button
                     key={difficulty}
                     onClick={() => setQuestionData({ ...questionData, difficulty })}
-                    className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${
-                      questionData.difficulty === difficulty
+                    className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${questionData.difficulty === difficulty
                         ? difficulty === 'Easy'
                           ? 'border-green-500 bg-green-50 text-green-700'
                           : difficulty === 'Medium'
-                          ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
-                          : 'border-red-500 bg-red-50 text-red-700'
+                            ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
+                            : 'border-red-500 bg-red-50 text-red-700'
                         : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]'
-                    }`}
+                      }`}
                   >
                     {difficulty}
                   </button>

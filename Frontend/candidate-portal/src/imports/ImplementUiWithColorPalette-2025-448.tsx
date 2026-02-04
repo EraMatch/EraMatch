@@ -250,7 +250,7 @@ function Text() {
     <div className="basis-0 grow h-[30px] min-h-px min-w-px relative rounded-[1.67772e+07px] shrink-0" data-name="Text">
       <div aria-hidden="true" className="absolute border border-[#18ba84] border-solid inset-0 pointer-events-none rounded-[1.67772e+07px]" />
       <div className="bg-clip-padding border-0 border-[transparent] border-solid box-border h-[30px] relative w-full">
-        <p className="absolute font-['Arimo:Regular',sans-serif] font-normal leading-[20px] left-[13px] text-[#18ba84] text-[14px] text-nowrap top-[3.5px] whitespace-pre">currently open</p>
+        <p className="absolute font-['Arimo:Regular',sans-serif] font-normal leading-[20px] left-[13px] text-[#18ba84] text-[14px] text-nowrap top-[3.5px] whitespace-pre">Currently Open</p>
       </div>
     </div>
   );
@@ -369,7 +369,7 @@ function Text3() {
     <div className="basis-0 grow h-[30px] min-h-px min-w-px relative rounded-[1.67772e+07px] shrink-0" data-name="Text">
       <div aria-hidden="true" className="absolute border border-[#18ba84] border-solid inset-0 pointer-events-none rounded-[1.67772e+07px]" />
       <div className="bg-clip-padding border-0 border-[transparent] border-solid box-border h-[30px] relative w-full">
-        <p className="absolute font-['Arimo:Regular',sans-serif] font-normal leading-[20px] left-[13px] text-[#18ba84] text-[14px] text-nowrap top-[3.5px] whitespace-pre">currently open</p>
+        <p className="absolute font-['Arimo:Regular',sans-serif] font-normal leading-[20px] left-[13px] text-[#18ba84] text-[14px] text-nowrap top-[3.5px] whitespace-pre">Currently Open</p>
       </div>
     </div>
   );
@@ -488,7 +488,7 @@ function Text6() {
     <div className="basis-0 grow h-[30px] min-h-px min-w-px relative rounded-[1.67772e+07px] shrink-0" data-name="Text">
       <div aria-hidden="true" className="absolute border border-[#18ba84] border-solid inset-0 pointer-events-none rounded-[1.67772e+07px]" />
       <div className="bg-clip-padding border-0 border-[transparent] border-solid box-border h-[30px] relative w-full">
-        <p className="absolute font-['Arimo:Regular',sans-serif] font-normal leading-[20px] left-[13px] text-[#18ba84] text-[14px] text-nowrap top-[3.5px] whitespace-pre">currently open</p>
+        <p className="absolute font-['Arimo:Regular',sans-serif] font-normal leading-[20px] left-[13px] text-[#18ba84] text-[14px] text-nowrap top-[3.5px] whitespace-pre">Currently Open</p>
       </div>
     </div>
   );

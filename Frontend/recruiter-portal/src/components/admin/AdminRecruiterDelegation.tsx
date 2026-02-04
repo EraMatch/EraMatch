@@ -104,8 +104,8 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
   return (
     <div className="px-12 py-8">
       <div className="mb-8">
-        <h2 className="text-gray-900 mb-2">Recruiter Delegation</h2>
-        <p className="text-gray-500 text-sm">
+        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Recruiter Delegation</h1>
+        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
           Assign and manage HR and Technical Recruiters for each job position
         </p>
       </div>

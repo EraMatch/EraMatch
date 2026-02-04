@@ -3,7 +3,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Switch } from '../ui/switch';
-import { Bell, Mail, Lock, User, Palette, Globe } from 'lucide-react';
+import { Bell, Mail, Lock, User, Globe } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -27,9 +27,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
   const [twoFactorAuth, setTwoFactorAuth] = useState(false);
   const [sessionTimeout, setSessionTimeout] = useState(true);
 
-  // Appearance state
-  const [darkMode, setDarkMode] = useState(false);
-  const [compactView, setCompactView] = useState(false);
+
 
   // Organization state
   const [orgName, setOrgName] = useState('ERAMATCH');
@@ -47,8 +45,8 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
   return (
     <div className="px-12 py-8">
       <div className="mb-8">
-        <h2 className="text-gray-700 mb-2">Settings</h2>
-        <p className="text-gray-600 text-sm">Manage your account settings and preferences</p>
+        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Settings</h1>
+        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your account settings and preferences</p>
       </div>
 
       <div className="space-y-6">
@@ -68,9 +66,9 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="firstName">First Name</Label>
-                <Input 
-                  id="firstName" 
-                  placeholder="John" 
+                <Input
+                  id="firstName"
+                  placeholder="John"
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
                   className="rounded-lg"
@@ -78,9 +76,9 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="lastName">Last Name</Label>
-                <Input 
-                  id="lastName" 
-                  placeholder="Doe" 
+                <Input
+                  id="lastName"
+                  placeholder="Doe"
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
                   className="rounded-lg"
@@ -90,10 +88,10 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
 
             <div className="space-y-2">
               <Label htmlFor="email">Email Address</Label>
-              <Input 
-                id="email" 
-                type="email" 
-                placeholder="admin@example.com" 
+              <Input
+                id="email"
+                type="email"
+                placeholder="admin@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="rounded-lg"
@@ -102,9 +100,9 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
 
             <div className="space-y-2">
               <Label htmlFor="role">Role</Label>
-              <Input 
-                id="role" 
-                placeholder="Administrator" 
+              <Input
+                id="role"
+                placeholder="Administrator"
                 defaultValue="System Administrator"
                 disabled
                 className="rounded-lg bg-gray-50"
@@ -113,7 +111,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
           </div>
 
           <div className="flex justify-end mt-6">
-            <Button 
+            <Button
               className="text-white rounded-full px-6"
               style={{ backgroundColor: '#6366F1' }}
               onClick={handleSaveProfile}
@@ -200,7 +198,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
             </div>
 
             <div className="py-3">
-              <Button 
+              <Button
                 variant="outline"
                 className="rounded-full px-6"
                 onClick={() => toast.info('Password change functionality coming soon!')}
@@ -211,36 +209,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
           </div>
         </Card>
 
-        {/* Appearance Settings */}
-        <Card className="p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#EEF2FF' }}>
-              <Palette className="w-5 h-5" style={{ color: '#6366F1' }} />
-            </div>
-            <div>
-              <h3 className="text-gray-700">Appearance</h3>
-              <p className="text-gray-500 text-sm">Customize the look and feel</p>
-            </div>
-          </div>
 
-          <div className="space-y-4">
-            <div className="flex items-center justify-between py-3 border-b border-gray-100">
-              <div>
-                <p className="text-gray-700">Dark Mode</p>
-                <p className="text-gray-500 text-sm">Use dark theme</p>
-              </div>
-              <Switch checked={darkMode} onCheckedChange={setDarkMode} />
-            </div>
-
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <p className="text-gray-700">Compact View</p>
-                <p className="text-gray-500 text-sm">Show more content on screen</p>
-              </div>
-              <Switch checked={compactView} onCheckedChange={setCompactView} />
-            </div>
-          </div>
-        </Card>
 
         {/* Organization Settings */}
         <Card className="p-6">
@@ -257,9 +226,9 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="orgName">Organization Name</Label>
-              <Input 
-                id="orgName" 
-                placeholder="Organization Name" 
+              <Input
+                id="orgName"
+                placeholder="Organization Name"
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
                 className="rounded-lg"
@@ -268,10 +237,10 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
 
             <div className="space-y-2">
               <Label htmlFor="orgEmail">Organization Email</Label>
-              <Input 
-                id="orgEmail" 
-                type="email" 
-                placeholder="contact@organization.com" 
+              <Input
+                id="orgEmail"
+                type="email"
+                placeholder="contact@organization.com"
                 value={orgEmail}
                 onChange={(e) => setOrgEmail(e.target.value)}
                 className="rounded-lg"
@@ -280,10 +249,10 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
 
             <div className="space-y-2">
               <Label htmlFor="timezone">Timezone</Label>
-              <select 
+              <select
                 id="timezone"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2"
-                style={{ focusRingColor: '#6366F1' }}
+                style={{ outlineColor: '#6366F1' }}
                 value={timezone}
                 onChange={(e) => setTimezone(e.target.value)}
               >
@@ -297,7 +266,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
           </div>
 
           <div className="flex justify-end mt-6">
-            <Button 
+            <Button
               className="text-white rounded-full px-6"
               style={{ backgroundColor: '#6366F1' }}
               onClick={handleSaveOrganization}
