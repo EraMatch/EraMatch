@@ -23,100 +23,75 @@ celery -A worker.celery_app worker --loglevel=info
 backend/
 ├── app/                      # Main FastAPI application
 │   ├── api/                  # HTTP routes (endpoints)
-│   │   └── v1/               # routes
 │   ├── core/                 # App config, security, shared utilities
-│   │   └── config.py         # Environment settings (DB, Redis, API keys....)
 │   ├── db/                   # Database session and connection
 │   ├── integrations/         # External service clients (AI, storage, etc)
-│   │   ├── llm.py            # LLM providers (Gemini, Ollama, Groq ....)
-│   │   ├── embeddings.py     # Embedding models for semantic search
-│   │   └── models.py         # Local ML models (YOLO, Whisper) - placeholder
 │   ├── schemas/              # Pydantic schemas for models
 │   ├── services/             # Business logic layer (main code logic) 
 │   ├── utils/                # Helper functions
-│   ├── models.py             # SQLModel ORM definitions (all tables for now till we divide)
+│   ├── models.py             # SQLModel ORM definitions (all tables)
 │   └── main.py               # main app
 ├── worker/                   # Celery async tasks
-│   ├── celery_app.py         # celery configs
-│   └── tasks/                # Background task definitions
-│       └── video.py          # Video processing tasks
 └── docs/                     # API documentation
 ```
 
 ---
 
-## How to Add Code
+## Git Workflow
 
-### Adding a New API Endpoint
+We use **feature branch workflow** with issue tracking.
 
-```
-1. Create route in app/api/v1/{resource}.py (or use a one from here now (i reccomend this in start))
-2. Add schema in app/schemas/{resource}.py (request/response)
-3. Add service in app/services/{resource}.py (business logic) (write the logic and code, your querying will be here too)
-4. Register router in app/api/v1/router.py 
-```
+ - **create issue with what u want, and ADD a deescription please, with franco even but just write what u made and if any workarround or internal issue document this in the thread of the issue please argook**
 
-### Adding a New LLM Provider
+### Branch Naming
 
 ```
-1. Open app/integrations/llm.py
-2. Add provider to LLMProvider type
-3. Implement _get_{provider}_llm() function
-4. Add API key to app/core/config.py
+feat/{issue-number}-{short-description}    # New features
+fix/{issue-number}-{short-description}     # Bug fixes
 ```
 
-### Adding a Background Task
+**Examples:**
+- `feat/23-add-cv-parsing`
+- `fix/45-login-validation`
 
-```
-1. Create task in worker/tasks/{task_name}.py
-2. Register in worker/celery_app.py (include list)
-3. Call from service: task_name.delay(args)
-```
+### Workflow Steps
 
-### Code Style Guidelines
+```bash
+# 1. Create branch from main
+git checkout main
+git pull origin main # remember to fetch and pull before anything 
+git checkout -b feat/23-add-cv-parsing
 
-**Comment Formatting:**
-```python
-# =========================================================
-# Separate sections with "==="
+# 2. Make changes and commit
+git add .
+git commit -m "feat: add CV parsing with Whisper integration" #  be descriptive 
 
-'''-------------- Write new topic -----------------------'''
+# 3. Push to remote
+git push origin feat/23-add-cv-parsing
 
-async def your_function():
-    # Your code here
-    pass
-```
+# 4. Create Pull Request on GitHub
+# - Link to issue #23
+# - Request review from team
 
----
-
-## Flow: Service → Integration → External API
-
-```
-┌──────────┐     ┌──────────────┐     ┌────────────────┐
-│  Route   │────▶│   Service    │────▶│  Integration   │────▶ External API
-│ (HTTP)   │     │ (Logic)      │     │ (HTTP Client)  │     (Gemini, and maybe an external service for us too if we deployed externally)
-└──────────┘     └──────────────┘     └────────────────┘
+# 5. After approval, merge to main
+# - Delete feature branch after merge
 ```
 
-**Example:**
-```python
-# In service
-from app.integrations.llm import get_llm
+### Commit Message Format
 
-class CVService:
-    async def analyze_cv(self, cv_text: str):
-        llm = get_llm("gemini")
-        result = await llm.ainvoke(f"Analyze this CV: {cv_text}")
-        return result
+```
+feat: add new feature
+fix: fix bug
+other: write what u want
 ```
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and configure.
 
-"See out group for latest versions, and update the env.example when u change it.."
+**See group chat for latest API keys. Update `.env.example` when you change it.**
 
 ```env
 # Database
@@ -127,9 +102,14 @@ SUPABASE_KEY=your-anon-key
 # AI Providers (set at least one)
 GOOGLE_API_KEY=your-gemini-key
 GROQ_API_KEY=your-groq-key
-OPENAI_API_KEY=your-openai-key
 OLLAMA_API_KEY=your-ollama-key
 
 # Celery
 CELERY_BROKER_URL=redis://localhost:6379/0
 ```
+
+---
+
+## Developer Instructions
+
+For detailed coding guidelines, see [DEVELOPER.md](./DEVELOPER.md)
