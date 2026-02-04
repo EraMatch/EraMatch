@@ -606,3 +606,11 @@ class SystemLog(BaseModel, table=True):
     entity_type: str | None = Field(default=None, max_length=50)
     entity_id: UUID | None = Field(default=None)
     details: dict | None = Field(default=None, sa_column=Column(JSONB))
+
+
+# =============================================================================
+# TYPE ALIASES FOR BACKWARD COMPATIBILITY
+# =============================================================================
+
+# Alias for OrganizationUser to maintain compatibility with existing code
+User = OrganizationUser
