@@ -4,7 +4,7 @@ from sqlmodel import select, func, col
 
 from app.models import (
     User, Project, Position, CandidateApplication, CandidateGroup, 
-    CandidateStageProgress, OrganizationUser, Hire, Offer
+    CandidateStageProgress, OrganizationUser, Hire, Offer, ProctoringFlag
 )
 from app.schemas import (
     ProjectCreate, ProjectUpdate, PositionCreate, PositionUpdate, ApplicationUpdate,
@@ -81,22 +81,38 @@ class RecruiterService:
                 
                 app_count = 0
                 group_count = 0
+                avg_time = 0.0
                 
                 if pos_ids:
-                    # Count applicants across positions
+                    # Parallel fetch
                     q_apps = select(func.count()).where(
                         CandidateApplication.position_id.in_(pos_ids),
                         CandidateApplication.is_deleted == False
                     )
-                    res_apps = await self.session.execute(q_apps)
-                    app_count = res_apps.scalar() or 0
-                    
-                    # Count candidate groups across positions
                     q_groups = select(func.count()).where(
-                        CandidateGroup.position_id.in_(pos_ids)
+                        CandidateGroup.position_id.in_(pos_ids),
+                        func.lower(CandidateGroup.status) == "active"
                     )
-                    res_groups = await self.session.execute(q_groups)
+                    q_hires = select(Hire.hired_at, CandidateApplication.applied_at).join(
+                        CandidateApplication, Hire.application_id == CandidateApplication.id
+                    ).where(
+                        Hire.position_id.in_(pos_ids)
+                    )
+                    
+                    res_apps, res_groups, res_hires = await asyncio.gather(
+                        self.session.execute(q_apps),
+                        self.session.execute(q_groups),
+                        self.session.execute(q_hires)
+                    )
+                    
+                    app_count = res_apps.scalar() or 0
                     group_count = res_groups.scalar() or 0
+                    
+                    hire_data = res_hires.all()
+                    if hire_data:
+                        diffs = [(h - a).days for h, a in hire_data if h and a]
+                        if diffs:
+                            avg_time = sum(diffs) / len(diffs)
                 
                 enriched_projects.append({
                     "project_id": str(p.id),
@@ -105,11 +121,12 @@ class RecruiterService:
                     "status": p.status,
                     "target_hire_count": p.target_hire_count,
                     "created_at": p.created_at.isoformat(),
-                    "id": str(pid),  # Pydantic schema expects 'id'
+                    "id": str(pid),
                     "projectName": p.name,
                     "positionsCount": pos_count,
                     "applicantsCount": app_count,
                     "subGroupsCount": group_count,
+                    "avgTimeToFill": round(avg_time, 1),
                     "openDate": p.created_at.isoformat()
                 })
             
@@ -271,7 +288,7 @@ class RecruiterService:
                 )
                 q_groups = select(func.count()).where(
                     CandidateGroup.position_id.in_(pos_ids),
-                    CandidateGroup.status == "active"
+                    func.lower(CandidateGroup.status) == "active"
                 )
                 q_hires = select(Hire.hired_at, CandidateApplication.applied_at).join(
                     CandidateApplication, Hire.application_id == CandidateApplication.id
@@ -350,13 +367,21 @@ class RecruiterService:
             integrity = 0
             
             if app_ids:
-                # Fetch progress
-                res_prog = await self.session.execute(
-                    select(CandidateStageProgress.stage_type, CandidateStageProgress.score).where(
-                        CandidateStageProgress.application_id.in_(app_ids)
-                    )
+                # Fetch progress and integrity flags
+                q_prog = select(CandidateStageProgress.stage_type, CandidateStageProgress.score).where(
+                    CandidateStageProgress.application_id.in_(app_ids)
                 )
+                q_integrity = select(func.count()).where(
+                    ProctoringFlag.application_id.in_(app_ids)
+                )
+                
+                res_prog, res_integ = await asyncio.gather(
+                    self.session.execute(q_prog),
+                    self.session.execute(q_integrity)
+                )
+                
                 progs = res_prog.all()
+                integrity = res_integ.scalar() or 0
                 
                 assess_scores = [float(score) for stage, score in progs if stage == "assessment" and score is not None]
                 inter_scores = [float(score) for stage, score in progs if stage in ["interview", "ai_interview"] and score is not None]
@@ -397,20 +422,45 @@ class RecruiterService:
             result = []
             for g in groups:
                 gid = g.id
-                res_count = await self.session.execute(
-                    select(func.count()).where(
-                        CandidateApplication.group_id == gid,
-                        CandidateApplication.is_deleted == False
+                res_count, res_flags = await asyncio.gather(
+                    self.session.execute(
+                        select(func.count()).where(
+                            CandidateApplication.group_id == gid,
+                            CandidateApplication.is_deleted == False
+                        )
+                    ),
+                    self.session.execute(
+                        select(func.count(ProctoringFlag.id)).join(
+                            CandidateApplication, ProctoringFlag.application_id == CandidateApplication.id
+                        ).where(
+                            CandidateApplication.group_id == gid,
+                            CandidateApplication.is_deleted == False
+                        )
                     )
                 )
                 count = res_count.scalar() or 0
+                flags = res_flags.scalar() or 0
                 
+                # Derive stage flags
+                flow = g.filtration_flow
+                if isinstance(flow, dict):
+                    flow = flow.get("stages", []) if isinstance(flow.get("stages"), list) else []
+                flow_list = flow if isinstance(flow, list) else []
+                has_assessment = any(str(s.get("type")).lower() == "assessment" for s in flow_list if isinstance(s, dict))
+                has_ai = any(str(s.get("type")).lower() == "ai_interview" for s in flow_list if isinstance(s, dict))
+                has_live = any(str(s.get("type")).lower() == "live_interview" for s in flow_list if isinstance(s, dict))
+
                 result.append(PositionGroupResponse(
                     groupID=gid,
                     groupName=g.group_name,
                     candidatesCount=count,
                     status=g.status,
-                    createdDate=g.created_at
+                    createdDate=g.created_at,
+                    integrityIssues=flags,
+                    hasAssessment=has_assessment,
+                    hasAIInterview=has_ai,
+                    hasLiveInterview=has_live,
+                    position_id=g.position_id
                 ))
             return result
         except Exception as e:

@@ -14,6 +14,7 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
   const [isCardUpdateModalOpen, setIsCardUpdateModalOpen] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isActionLoading, setIsActionLoading] = useState(false);
 
   // Card update form state
   const [cardNumber, setCardNumber] = useState('');
@@ -27,27 +28,27 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
   const [availablePlans, setAvailablePlans] = useState<any[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<{ brand: string; last4: string; expiry: string } | null>(null);
 
+  const fetchSubscriptionData = async () => {
+    try {
+      setIsLoading(true);
+      const [subscriptionData, paymentData] = await Promise.all([
+        api.admin.getSubscriptionPlans(),
+        api.admin.getPaymentMethod().catch(() => null)
+      ]);
+      setCurrentPlan((subscriptionData as any).currentPlan);
+      setUsage((subscriptionData as any).usage);
+      setAvailablePlans((subscriptionData as any).availablePlans);
+      setPaymentMethod(paymentData);
+    } catch (error) {
+      console.error('Failed to fetch subscription data:', error);
+      toast.error('Failed to load subscription data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Fetch subscription data from API
   useEffect(() => {
-    const fetchSubscriptionData = async () => {
-      try {
-        setIsLoading(true);
-        const [subscriptionData, paymentData] = await Promise.all([
-          api.admin.getSubscriptionPlans(),
-          api.admin.getPaymentMethod().catch(() => null)
-        ]);
-        setCurrentPlan((subscriptionData as any).currentPlan);
-        setUsage((subscriptionData as any).usage);
-        setAvailablePlans((subscriptionData as any).availablePlans);
-        setPaymentMethod(paymentData);
-      } catch (error) {
-        console.error('Failed to fetch subscription data:', error);
-        toast.error('Failed to load subscription data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     fetchSubscriptionData();
   }, []);
 
@@ -60,18 +61,59 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
     setIsCardUpdateModalOpen(true);
   };
 
-  const handleUpgradeConfirm = () => {
+  const handleUpgradeConfirm = async () => {
     if (selectedPlan) {
-      // Update current plan
-      setCurrentPlan({ ...currentPlan, name: selectedPlan.name, price: selectedPlan.price });
-      toast.success(`Upgraded to ${selectedPlan.name} plan`);
-      setIsUpgradeModalOpen(false);
+      try {
+        setIsActionLoading(true);
+        await api.admin.upgradeSubscription(selectedPlan.id);
+        toast.success(`Upgraded to ${selectedPlan.name} plan`);
+        setIsUpgradeModalOpen(false);
+        await fetchSubscriptionData();
+      } catch (error) {
+        console.error('Failed to upgrade plan:', error);
+        toast.error('Failed to upgrade plan. Please try again.');
+      } finally {
+        setIsActionLoading(false);
+      }
     }
   };
 
-  const handleCardUpdateConfirm = () => {
-    toast.success('Card updated successfully');
-    setIsCardUpdateModalOpen(false);
+  const handleCardUpdateConfirm = async () => {
+    if (!cardNumber || !cardExpiry || !cardCVC || !cardName) {
+      toast.error('Please fill in all card details');
+      return;
+    }
+
+    try {
+      setIsActionLoading(true);
+      const last4 = cardNumber.slice(-4);
+      const brand = cardNumber.startsWith('4') ? 'Visa' : 'Mastercard'; // Simple mock brand detection
+
+      await api.admin.addPaymentMethod({
+        brand,
+        last4,
+        expiry: cardExpiry,
+        cardNumber,
+        cvc: cardCVC,
+        cardName
+      });
+
+      toast.success('Payment method updated successfully');
+      setIsCardUpdateModalOpen(false);
+
+      // Clear form
+      setCardNumber('');
+      setCardExpiry('');
+      setCardCVC('');
+      setCardName('');
+
+      await fetchSubscriptionData();
+    } catch (error) {
+      console.error('Failed to update payment method:', error);
+      toast.error('Failed to update payment method. Please try again.');
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
   if (isLoading) {
@@ -276,10 +318,12 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
               type="button"
               variant="outline"
               onClick={() => setIsUpgradeModalOpen(false)}
+              disabled={isActionLoading}
             >
               Cancel
             </Button>
-            <Button type="button" onClick={handleUpgradeConfirm}>
+            <Button type="button" onClick={handleUpgradeConfirm} disabled={isActionLoading}>
+              {isActionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Upgrade
             </Button>
           </DialogFooter>
@@ -332,11 +376,13 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
               type="button"
               variant="outline"
               onClick={() => setIsCardUpdateModalOpen(false)}
+              disabled={isActionLoading}
             >
               Cancel
             </Button>
-            <Button type="button" onClick={handleCardUpdateConfirm}>
-              Update Card
+            <Button type="button" onClick={handleCardUpdateConfirm} disabled={isActionLoading}>
+              {isActionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {paymentMethod ? 'Update Card' : 'Add Card'}
             </Button>
           </DialogFooter>
         </DialogContent>

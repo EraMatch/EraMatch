@@ -52,7 +52,7 @@ export const authService = {
     changePassword: async (oldPass: string, newPass: string, confirmNewPass: string) => {
         // Here we use fetchAPI wrapper because we need the Authorization header,
         // which fetchAPI handles automatically.
-        return fetchAPI(`${API_URL}/auth/change-password`, {
+        return fetchAPI('/auth/change-password', {
             method: 'POST',
             body: JSON.stringify({ old_password: oldPass, new_password: newPass, confirm_password: confirmNewPass })
         });

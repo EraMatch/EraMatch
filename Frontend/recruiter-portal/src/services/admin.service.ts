@@ -4,7 +4,10 @@ import type { Project, JobPosition, PositionGroup, Member, ClosedProject, Closed
 export const adminService = {
     getGlobalStats: async () => fetchAPI<any>('/admin/stats/global'),
 
-    getPipelineStats: async () => fetchAPI<any>('/admin/stats/pipeline'),
+    getPipelineStats: async (projectId?: string) => {
+        const url = projectId ? `/admin/stats/pipeline?project_id=${projectId}` : '/admin/stats/pipeline';
+        return fetchAPI<any>(url);
+    },
     getHealthAnalytics: async () => fetchAPI<any>('/admin/stats/analytics'),
     getMemberStats: async () => fetchAPI<any>('/admin/members/stats'),
     getMemberPrivileges: async (userId: string) => fetchAPI<any>(`/admin/members/${userId}/privileges`),
@@ -12,6 +15,17 @@ export const adminService = {
         method: 'PATCH',
         body: JSON.stringify({ permissions })
     }),
+
+    updateUserStatus: async (userId: string, status: 'active' | 'suspended') => {
+        return fetchAPI(`/admin/members/${userId}/status?status=${status}`, {
+            method: 'PATCH'
+        });
+    },
+
+    transformPipelineData: (pipelineParams: any) => {
+        if (!pipelineParams?.stages) return [];
+        return pipelineParams.stages;
+    },
 
     getDashboardStats: async () => {
         const [globalStats, projects, positions, groups, pipelineParams, analytics] = await Promise.all([
@@ -30,33 +44,8 @@ export const adminService = {
             positions: positions.length
         });
 
-        // Transform pipeline data
-        let pipelineData: { stage: string; count: number; percentage: number; color: string }[] = [];
-        if (pipelineParams) {
-            // Calculate cumulative counts for funnel visualization
-            // "Offer" Stage = Offer
-            // "Interview" Stage = Interview + Offer
-            // "Assessment" Stage = Assessment + Interview + Offer
-            // "Screening" Stage = Screening + Assessment + Interview + Offer
-            // "Applied" Stage = Applied + Screening + Assessment + Interview + Offer
-
-            const offerCount = pipelineParams.offer || 0;
-            const interviewCount = (pipelineParams.interview || 0) + offerCount;
-            const assessmentCount = (pipelineParams.assessment || 0) + interviewCount;
-            const screeningCount = (pipelineParams.screening || 0) + assessmentCount;
-            const appliedCount = (pipelineParams.applied || 0) + screeningCount;
-
-            // Base total for percentages is the top of the funnel (Applied)
-            const total = appliedCount || 1;
-
-            pipelineData = [
-                { stage: 'Applied', count: appliedCount, percentage: 100, color: '#6366f1' },
-                { stage: 'Screening', count: screeningCount, percentage: Math.round((screeningCount / total) * 100), color: '#8b5cf6' },
-                { stage: 'Assessment', count: assessmentCount, percentage: Math.round((assessmentCount / total) * 100), color: '#a855f7' },
-                { stage: 'Interview', count: interviewCount, percentage: Math.round((interviewCount / total) * 100), color: '#c084fc' },
-                { stage: 'Offer', count: offerCount, percentage: Math.round((offerCount / total) * 100), color: '#10b981' }
-            ];
-        }
+        // Transform pipeline data using the helper
+        const pipelineData = adminService.transformPipelineData(pipelineParams);
 
         const transformedProjects = (projects || []).map((p: any) => {
             console.log('🔧 Transforming project:', p);
@@ -67,6 +56,7 @@ export const adminService = {
                 positionsCount: p.positionsCount || p.positions_count || 0,
                 applicantsCount: p.applicantsCount || p.applicants_count || 0,
                 subGroupsCount: p.subGroupsCount || p.sub_groups_count || 0,
+                avgTimeToFill: p.avgTimeToFill || p.avg_time_to_fill || 0,
                 openDate: p.openDate || p.created_at || p.open_date || new Date().toISOString()
             };
             console.log('✅ Transformed to:', transformed);
@@ -90,6 +80,7 @@ export const adminService = {
             id: g.groupID || g.group_id || g.id,
             groupName: g.groupName || g.group_name || 'Unnamed Group',
             candidatesCount: g.candidatesCount || g.candidates_count || 0,
+            integrityIssues: g.integrityIssues || g.integrity_issues || 0,
             status: g.status || 'Active',
             createdDate: g.createdDate || g.created_at || new Date().toISOString()
         }));
@@ -141,6 +132,22 @@ export const adminService = {
     getSubscriptionPlans: async () => fetchAPI('/admin/subscription'),
 
     getPaymentMethod: async () => fetchAPI<{ brand: string; last4: string; expiry: string }>('/admin/subscription/payment'),
+
+    addPaymentMethod: async (data: { brand: string, last4: string, expiry: string, cardNumber: string, cvc: string, cardName: string }) => {
+        return fetchAPI('/admin/subscription/payment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    upgradeSubscription: async (planId: string) => {
+        return fetchAPI('/admin/subscription/upgrade', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ planID: planId })
+        });
+    },
 
     getNotifications: async () => fetchAPI('/admin/notifications'),
 

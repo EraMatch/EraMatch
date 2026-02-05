@@ -7,7 +7,13 @@ from fastapi import APIRouter, HTTPException
 
 from app.api.deps import DbSession, AdminUser
 from app.services import AdminService
-from app.schemas import UserResponse, GlobalStatsResponse, PipelineStatsResponse, HealthAnalyticsResponse, PaymentMethodResponse, MemberStatsResponse, MemberPrivilegesResponse, MemberPrivilegesUpdate, MemberRegisterRequest, MemberRegisterResponse, AdminSettingsResponse, AdminProfileUpdate, OrganizationSettingsUpdate, PreferencesUpdate, PositionGroupResponse
+from app.schemas import (
+    UserResponse, GlobalStatsResponse, PipelineStatsResponse, HealthAnalyticsResponse,
+    PaymentMethodResponse, MemberStatsResponse, MemberPrivilegesResponse, MemberPrivilegesUpdate,
+    MemberRegisterRequest, MemberRegisterResponse, AdminSettingsResponse, AdminProfileUpdate,
+    OrganizationSettingsUpdate, PreferencesUpdate, PositionGroupResponse,
+    PaymentMethodCreate, SubscriptionUpgradeRequest
+)
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -77,7 +83,7 @@ async def get_subscription_plans(session: DbSession, admin: AdminUser):
     service = AdminService(session, admin)
     return await service.get_subscription_plans()
 
-@router.get("/subscription/payment", response_model=PaymentMethodResponse)
+@router.get("/subscription/payment", response_model=PaymentMethodResponse | None)
 async def get_payment_method(session: DbSession, admin: AdminUser):
     """
     Get payment method details for the organization.
@@ -87,9 +93,28 @@ async def get_payment_method(session: DbSession, admin: AdminUser):
     payment_method = await service.get_payment_method()
     
     if not payment_method:
-        raise HTTPException(status_code=404, detail="No payment method found")
+        return None
     
     return PaymentMethodResponse(**payment_method)
+
+@router.post("/subscription/payment", response_model=PaymentMethodResponse)
+async def add_payment_method(session: DbSession, admin: AdminUser, data: PaymentMethodCreate):
+    """
+    Add a new payment method for the organization.
+    Requires admin role.
+    """
+    service = AdminService(session, admin)
+    return await service.add_payment_method(data)
+
+@router.post("/subscription/upgrade")
+async def upgrade_subscription(session: DbSession, admin: AdminUser, request: SubscriptionUpgradeRequest):
+    """
+    Upgrade organization's subscription plan.
+    Requires admin role.
+    """
+    service = AdminService(session, admin)
+    success = await service.upgrade_subscription(request.planID)
+    return {"success": success}
 
 @router.get("/members/stats", response_model=MemberStatsResponse)
 async def get_member_stats(session: DbSession, admin: AdminUser):
@@ -136,6 +161,15 @@ async def delete_member(user_id: UUID, session: DbSession, admin: AdminUser):
     success = await service.delete_user(user_id)
     if not success:
         raise HTTPException(status_code=404, detail="Member not found or already deleted")
+    return {"status": "success"}
+
+@router.patch("/members/{user_id}/status")
+async def update_member_status(user_id: UUID, status: str, session: DbSession, admin: AdminUser):
+    """Update user status (active/suspended). Requires admin role."""
+    service = AdminService(session, admin)
+    success = await service.update_user_status(user_id, status)
+    if not success:
+        raise HTTPException(status_code=404, detail="Member not found")
     return {"status": "success"}
 
 

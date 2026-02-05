@@ -6,16 +6,17 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.models import (
     User, Organization, Position, Project, CandidateApplication, Hire, 
     CandidateStageProgress, OrganizationUser, UserPermission, PaymentMethod,
-    SystemLog, CandidateGroup, Offer, SubscriptionPlan
+    SystemLog, CandidateGroup, Offer, SubscriptionPlan, ProctoringFlag
 )
 from app.core.exceptions import ForbiddenException
 from app.schemas.admin import (
-    GlobalStatsResponse, PipelineStatsResponse, HealthAnalyticsResponse, 
+    GlobalStatsResponse, PipelineStatsResponse, PipelineStageStats, HealthAnalyticsResponse,
     MemberStatsResponse, MemberPermissions, MemberPrivilegesResponse, 
-    MemberRegisterRequest, MemberRegisterResponse, ReassignRequest
+    MemberRegisterRequest, MemberRegisterResponse, ReassignRequest,
+    PaymentMethodCreate, SubscriptionUpgradeRequest
 )
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import HTTPException
 from app.core.security import hash_password
 import secrets
@@ -161,21 +162,31 @@ class AdminService:
                 avgTimeToFill=0.0
             )
 
-    async def get_pipeline_stats(self) -> PipelineStatsResponse:
+    async def get_pipeline_stats(self, project_id: UUID | None = None) -> PipelineStatsResponse:
         """
-        Get counts for the recruitment funnel.
+        Get counts of candidates in each stage for the recruitment pipeline.
+        Cumulative funnel logic should be applied in the frontend.
         """
         org_id = self.organization_id
         
         try:
-            # Group by status to avoid fetching all rows
-            query = select(CandidateApplication.status, func.count()).where(
+            # Base query
+            query = select(CandidateApplication.status, func.count(CandidateApplication.id)).where(
                 CandidateApplication.organization_id == org_id,
                 CandidateApplication.is_deleted == False
-            ).group_by(CandidateApplication.status)
+            )
             
-            result = await self.session.execute(query)
-            rows = result.all()
+            # Apply project filter if provided
+            if project_id:
+                # Need to join with Position to get project_id
+                query = query.join(Position, CandidateApplication.position_id == Position.id).where(
+                    Position.project_id == project_id
+                )
+            
+            query = query.group_by(CandidateApplication.status)
+            
+            res = await self.session.execute(query)
+            rows = res.all()
             
             # Initialize counts
             counts = {
@@ -192,18 +203,35 @@ class AdminService:
                     counts["applied"] += count
                 elif s == "screening":
                     counts["screening"] += count
+                elif s == "assessment":
+                    counts["assessment"] += count
                 elif s == "in_pipeline": # Logic from original code
                     counts["interview"] += count
                 elif s in ["offer", "offered", "hired", "accepted"]:
                     counts["offer"] += count
             
-            return PipelineStatsResponse(**counts)
+            # Calculate cumulative counts
+            offer_total = counts["offer"]
+            interview_total = counts["interview"] + offer_total
+            assessment_total = counts["assessment"] + interview_total
+            screening_total = counts["screening"] + assessment_total
+            applied_total = counts["applied"] + screening_total
+            
+            total_base = applied_total if applied_total > 0 else 1
+            
+            stages_data = [
+                {"stage": "Applied", "count": applied_total, "percentage": 100, "color": "#6366f1"},
+                {"stage": "Screening", "count": screening_total, "percentage": round((screening_total/total_base)*100), "color": "#8b5cf6"},
+                {"stage": "Assessment", "count": assessment_total, "percentage": round((assessment_total/total_base)*100), "color": "#a855f7"},
+                {"stage": "Interview", "count": interview_total, "percentage": round((interview_total/total_base)*100), "color": "#c084fc"},
+                {"stage": "Offer", "count": offer_total, "percentage": round((offer_total/total_base)*100), "color": "#10b981"}
+            ]
+
+            return PipelineStatsResponse(stages=[PipelineStageStats(**s) for s in stages_data])
             
         except Exception as e:
             print(f"Error fetching pipeline stats: {e}")
-            return PipelineStatsResponse(
-                applied=0, screening=0, assessment=0, interview=0, offer=0
-            )
+            return PipelineStatsResponse(stages=[])
 
     async def get_health_analytics(self) -> HealthAnalyticsResponse:
         """
@@ -309,11 +337,13 @@ class AdminService:
         Get payment method details for the organization with safe fallbacks.
         """
         try:
+            print(f"DEBUG: Fetching PM for OrgID: {self.organization_id}")
             query = select(PaymentMethod).where(
                 PaymentMethod.organization_id == self.organization_id
             )
             result = await self.session.execute(query)
             pms = result.scalars().all()
+            print(f"DEBUG: Found {len(pms)} PMs")
             
             if not pms:
                 return None
@@ -329,52 +359,93 @@ class AdminService:
             
         except Exception as e:
             print(f"Error fetching payment method: {e}")
-            import traceback
-            traceback.print_exc()
             return None
+
+    async def add_payment_method(self, data: PaymentMethodCreate) -> dict:
+        """Add a new payment method and set it as default."""
+        # In a real app, we would integrate with Stripe here.
+        # For now, we save it to the DB.
+        
+        # Reset existing default
+        from sqlalchemy import update
+        await self.session.execute(
+            update(PaymentMethod)
+            .where(PaymentMethod.organization_id == self.organization_id)
+            .values(is_default=False)
+        )
+        
+        new_pm = PaymentMethod(
+            organization_id=self.organization_id,
+            card_brand=data.brand,
+            last4=data.last4,
+            expiry_date=data.expiry,
+            is_default=True
+        )
+        
+        self.session.add(new_pm)
+        await self.session.commit()
+        await self.session.refresh(new_pm)
+        
+        return {
+            "brand": new_pm.card_brand,
+            "last4": new_pm.last4,
+            "expiry": new_pm.expiry_date
+        }
+
+    async def upgrade_subscription(self, plan_id: UUID) -> bool:
+        """Upgrade organization's subscription plan."""
+        res_org = await self.session.execute(
+            select(Organization).where(Organization.id == self.organization_id)
+        )
+        org = res_org.scalar_one_or_none()
+        
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+            
+        org.plan_id = plan_id
+        org.subscription_status = "active"
+        
+        self.session.add(org)
+        await self.session.commit()
+        
+        return True
 
     async def get_member_stats(self) -> MemberStatsResponse:
         """
-        Get counts for Active Members, Pending Requests, and Open Roles using DB aggregations.
+        Get counts for Active Members, System Admins, and Recruiting Force using DB aggregations.
         """
         org_id = self.organization_id
         
         try:
-            # 1. Members count by status
-            q_members = select(OrganizationUser.status, func.count()).where(
+            # 1. Members count by status and role
+            query = select(OrganizationUser.status, OrganizationUser.role, func.count()).where(
                 OrganizationUser.organization_id == org_id,
                 OrganizationUser.is_deleted == False
-            ).group_by(OrganizationUser.status)
+            ).group_by(OrganizationUser.status, OrganizationUser.role)
             
-            # 2. Open Roles count
-            q_opens = select(func.count()).where(
-                Position.organization_id == org_id,
-                Position.status == "open",
-                Position.is_deleted == False
-            )
+            result = await self.session.execute(query)
+            rows = result.all()
             
-            res_members, res_opens = await asyncio.gather(
-                self.session.execute(q_members),
-                self.session.execute(q_opens)
-            )
-            
-            members_rows = res_members.all()
             total_active = 0
-            pending_requests = 0
+            admins_count = 0
+            recruiters_count = 0
             
-            for status, count in members_rows:
+            for status, role, count in rows:
                 s = str(status).lower()
+                r = str(role).lower()
+                
                 if s == "active":
                     total_active += count
-                elif s == "pending":
-                    pending_requests += count
-            
-            open_roles = res_opens.scalar() or 0
+                
+                if r == "admin":
+                    admins_count += count
+                elif r in ["hr", "technical"] and s == "active":
+                    recruiters_count += count
             
             return MemberStatsResponse(
                 totalActive=total_active,
-                pendingRequests=pending_requests,
-                openRoles=open_roles
+                adminsCount=admins_count,
+                recruitersCount=recruiters_count
             )
             
         except Exception as e:
@@ -540,7 +611,9 @@ class AdminService:
         try:
             query = select(OrganizationUser).where(
                 OrganizationUser.organization_id == org_id,
-                OrganizationUser.role == role
+                OrganizationUser.role == role,
+                OrganizationUser.is_deleted == False,
+                OrganizationUser.status == "active"
             )
             result = await self.session.execute(query)
             users = result.scalars().all()
@@ -589,7 +662,15 @@ class AdminService:
                 return False
                 
             old_value = None
-            if request.type.lower() == "hr":
+            # Verify new recruiter is not suspended if recruiter_id is provided
+            res_rec = await self.session.execute(
+                select(OrganizationUser).where(OrganizationUser.id == request.recruiterID)
+            )
+            new_rec = res_rec.scalar_one_or_none()
+            if not new_rec or new_rec.status == "suspended":
+                raise HTTPException(status_code=400, detail="Cannot assign to a suspended or non-existent recruiter")
+
+            if request.type.upper() == 'HR':
                 old_value = str(position.assigned_hr_id) if position.assigned_hr_id else None
                 position.assigned_hr_id = request.recruiterID
             else:
@@ -864,10 +945,24 @@ class AdminService:
         
         try:
             # 1. Fetch User Profile
-            res_user = await self.session.execute(
-                select(OrganizationUser).where(OrganizationUser.id == user_id)
-            )
+            if self.current_user.role == "admin":
+                # For admins, the session ID is actually the Org ID. 
+                # We fetch the specific OrganizationUser record for this org with role='admin'.
+                res_user = await self.session.execute(
+                    select(OrganizationUser).where(
+                        OrganizationUser.organization_id == org_id,
+                        OrganizationUser.role == "admin"
+                    )
+                )
+            else:
+                res_user = await self.session.execute(
+                    select(OrganizationUser).where(OrganizationUser.id == user_id)
+                )
             user_data = res_user.scalar_one_or_none()
+            
+            # If still not found but is admin, use current_user as fallback
+            if not user_data and self.current_user.role == "admin":
+                user_data = self.current_user
             
             # 2. Fetch Organization Details
             res_org = await self.session.execute(
@@ -878,6 +973,12 @@ class AdminService:
             if not user_data or not org_data:
                 raise Exception("User or Org not found")
             
+            # 3. Ensure user_data has necessary attributes (if it was a fallback)
+            first_name = getattr(user_data, "first_name", "Admin")
+            last_name = getattr(user_data, "last_name", "")
+            email = getattr(user_data, "email", self.current_user.email)
+            role = getattr(user_data, "role", "admin")
+            
             # 3. Fetch User Preferences
             org_settings = org_data.settings or {}
             timezone = org_settings.get("timezone", "UTC-08:00 (Pacific Time)")
@@ -885,23 +986,23 @@ class AdminService:
             # Construct response
             return {
                 # Profile
-                "first_name": user_data.first_name,
-                "last_name": user_data.last_name,
-                "email": user_data.email,
-                "role": user_data.role,
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email,
+                "role": role,
                 
                 # Organization
                 "organization_name": org_data.organization_name,
                 "organization_email": org_data.admin_email,
                 "timezone": timezone,
                 
-                # Preferences (Mocked/Default for now as partially supported)
-                "email_notifications": True,
-                "new_member_requests": True,
-                "project_updates": True,
-                "weekly_summary": False,
-                "two_factor_auth": False,
-                "session_timeout": True
+                # Preferences (Saved in organization settings)
+                "email_notifications": org_settings.get("email_notifications", True),
+                "new_member_requests": org_settings.get("new_member_requests", True),
+                "project_updates": org_settings.get("project_updates", True),
+                "weekly_summary": org_settings.get("weekly_summary", False),
+                "two_factor_auth": org_settings.get("two_factor_auth", False),
+                "session_timeout": org_settings.get("session_timeout", True)
             }
             
         except Exception as e:
@@ -913,17 +1014,35 @@ class AdminService:
         user_id = self.current_user.id
         
         try:
-            res = await self.session.execute(
-                select(OrganizationUser).where(OrganizationUser.id == user_id)
-            )
+            if self.current_user.role == "admin":
+                res = await self.session.execute(
+                    select(OrganizationUser).where(
+                        OrganizationUser.organization_id == self.organization_id,
+                        OrganizationUser.role == "admin"
+                    )
+                )
+            else:
+                res = await self.session.execute(
+                    select(OrganizationUser).where(OrganizationUser.id == user_id)
+                )
             user = res.scalar_one_or_none()
             
             if not user:
                 return False
                 
-            if first_name: user.first_name = first_name
-            if last_name: user.last_name = last_name
-            if email: user.email = email
+            if first_name is not None: user.first_name = first_name
+            if last_name is not None: user.last_name = last_name
+            if email is not None: 
+                user.email = email
+                # Sync with Organization table if this is the admin
+                if self.current_user.role == "admin":
+                    res_org = await self.session.execute(
+                        select(Organization).where(Organization.id == self.organization_id)
+                    )
+                    org = res_org.scalar_one_or_none()
+                    if org:
+                        org.admin_email = email
+                        self.session.add(org)
             
             self.session.add(user)
             await self.session.commit()
@@ -947,7 +1066,19 @@ class AdminService:
                 return False
                 
             if name: org.organization_name = name
-            if email: org.admin_email = email
+            if email: 
+                org.admin_email = email
+                # Sync with OrganizationUser table for the admin
+                res_user = await self.session.execute(
+                    select(OrganizationUser).where(
+                        OrganizationUser.organization_id == self.organization_id,
+                        OrganizationUser.role == "admin"
+                    )
+                )
+                user = res_user.scalar_one_or_none()
+                if user:
+                    user.email = email
+                    self.session.add(user)
             
             if timezone:
                 current_settings = dict(org.settings) if org.settings else {}
@@ -1010,6 +1141,118 @@ class AdminService:
             await self.session.rollback()
             return False
 
+    async def distribute_workload(self, user_id: UUID, role: str) -> None:
+        """
+        Redistribute open positions from a suspended recruiter to active recruiters of the same role.
+        Round-robin assignment.
+        """
+        try:
+            # 1. Get all OPEN positions assigned to this user
+            if role == 'hr':
+                query_pos = select(Position).where(
+                    Position.assigned_hr_id == user_id,
+                    Position.status == 'open',
+                    Position.is_deleted == False
+                )
+            else:
+                query_pos = select(Position).where(
+                    Position.assigned_tech_id == user_id,
+                    Position.status == 'open',
+                    Position.is_deleted == False
+                )
+            
+            res_pos = await self.session.execute(query_pos)
+            positions = res_pos.scalars().all()
+            
+            if not positions:
+                return
+
+            # 2. Get active recruiters of the same role
+            query_recruiters = select(OrganizationUser).where(
+                OrganizationUser.organization_id == self.organization_id,
+                OrganizationUser.role == role,
+                OrganizationUser.status == 'active',
+                OrganizationUser.is_deleted == False
+            )
+            res_rec = await self.session.execute(query_recruiters)
+            recruiters = res_rec.scalars().all()
+            
+            if not recruiters:
+                # No active recruiters to assign to. Leave orphaned or log warning.
+                print(f"Warning: No active {role} recruiters available for redistribution.")
+                return
+
+            # 3. Redistribute
+            num_recruiters = len(recruiters)
+            for i, position in enumerate(positions):
+                target_recruiter = recruiters[i % num_recruiters]
+                
+                old_val = str(user_id)
+                new_val = str(target_recruiter.id)
+                
+                if role == 'hr':
+                    position.assigned_hr_id = target_recruiter.id
+                else:
+                    position.assigned_tech_id = target_recruiter.id
+                
+                self.session.add(position)
+                
+                # Log redistribution
+                log = SystemLog(
+                    organization_id=self.organization_id,
+                    user_id=None, # System action
+                    action=f"auto_redistribute_{role}",
+                    entity_type="position",
+                    entity_id=position.id,
+                    details={
+                        "reason": "recruiter_suspension",
+                        "old_recruiter": old_val,
+                        "new_recruiter": new_val
+                    }
+                )
+                self.session.add(log)
+                
+            await self.session.flush() # Ensure changes are staged
+            
+        except Exception as e:
+            print(f"Error distributing workload: {e}")
+            # Don't rollback here, let the caller handle transaction management or swallow checks
+            # But since this is called within update_user_status transaction, we should be careful.
+            raise e
+
+    async def update_user_status(self, user_id: UUID, status: str) -> bool:
+        """Update user status (active/suspended). Admins cannot be suspended."""
+        try:
+            res = await self.session.execute(
+                select(OrganizationUser).where(
+                    OrganizationUser.organization_id == self.organization_id,
+                    OrganizationUser.id == user_id,
+                    OrganizationUser.is_deleted == False
+                )
+            )
+            user = res.scalar_one_or_none()
+            if not user:
+                return False
+                
+            if status == "suspended" and user.role == "admin":
+                raise HTTPException(status_code=400, detail="Cannot suspend an administrator account")
+                
+            user.status = status
+            self.session.add(user)
+            
+            # Auto-redistribute if suspending a recruiter
+            if status == "suspended" and user.role in ["hr", "technical"]:
+                await self.distribute_workload(user.id, user.role.lower())
+                
+            await self.session.commit()
+            return True
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"Error updating user status: {e}")
+            await self.session.rollback()
+            return False
+
     async def get_subscription_plans(self) -> dict:
         """Fetch subscription plans from DB and calculate current usage with safe fallbacks."""
         org_id = self.organization_id
@@ -1028,7 +1271,7 @@ class AdminService:
             "name": "Professional",
             "price": 299,
             "billingCycle": "Monthly",
-            "nextBillingDate": "Mar 4, 2026"
+            "nextBillingDate": "N/A"
         }
 
         try:
@@ -1065,12 +1308,23 @@ class AdminService:
             default_usage["candidatesProcessed"] = total_apps
             
             # 4. Map current plan details
-            if org and org.plan_id:
-                for p in plans:
-                    if p.id == org.plan_id:
-                        current_plan["name"] = p.name
-                        current_plan["price"] = float(p.monthly_price)
-                        break
+            if org:
+                # Calculate next billing date
+                if org.created_at:
+                    now = datetime.utcnow()
+                    days_since = (now - org.created_at).days
+                    # Assume 30-day billing cycle for now
+                    cycle_days = 30
+                    cycles = (days_since // cycle_days) + 1
+                    next_bill = org.created_at + timedelta(days=cycles * cycle_days)
+                    current_plan["nextBillingDate"] = next_bill.strftime("%b %d, %Y")
+
+                if org.plan_id:
+                    for p in plans:
+                        if p.id == org.plan_id:
+                            current_plan["name"] = p.name
+                            current_plan["price"] = float(p.monthly_price)
+                            break
 
             available_plans = []
             for p in plans:
@@ -1175,22 +1429,47 @@ class AdminService:
             for group, job_title in rows:
                 gid = group.id
                 
-                # Count candidates in this group
-                # Using CandidateApplication.group_id if it exists, or linking via stage progress?
-                # RecruiterService uses CandidateApplication.group_id
-                q_count = select(func.count()).where(
+                # Count candidates and integrity flags separately for robustness
+                q_count = select(func.count(CandidateApplication.id)).where(
                     CandidateApplication.group_id == gid,
                     CandidateApplication.is_deleted == False
                 )
-                res_count = await self.session.execute(q_count)
-                count = res_count.scalar() or 0
+                q_flags = select(func.count(ProctoringFlag.id)).join(
+                    CandidateApplication, ProctoringFlag.application_id == CandidateApplication.id
+                ).where(
+                    CandidateApplication.group_id == gid,
+                    CandidateApplication.is_deleted == False
+                )
                 
+                res_count, res_flags = await asyncio.gather(
+                    self.session.execute(q_count),
+                    self.session.execute(q_flags)
+                )
+                
+                count = res_count.scalar() or 0
+                flags = res_flags.scalar() or 0
+                
+                # Derive stage flags from filtration_flow
+                flow = group.filtration_flow
+                if isinstance(flow, dict): # Handle if it's a dict instead of list
+                    flow = flow.get("stages", []) if isinstance(flow.get("stages"), list) else []
+                
+                flow_list = flow if isinstance(flow, list) else []
+                has_assessment = any(str(s.get("type")).lower() == "assessment" for s in flow_list if isinstance(s, dict))
+                has_ai = any(str(s.get("type")).lower() == "ai_interview" for s in flow_list if isinstance(s, dict))
+                has_live = any(str(s.get("type")).lower() == "live_interview" for s in flow_list if isinstance(s, dict))
+
                 result.append({
                     "groupID": str(gid),
-                    "id": str(gid), # Helper for frontend
+                    "id": str(gid),
                     "groupName": group.group_name,
                     "positionTitle": job_title,
                     "candidatesCount": count,
+                    "integrityIssues": flags,
+                    "hasAssessment": has_assessment,
+                    "hasAIInterview": has_ai,
+                    "hasLiveInterview": has_live,
+                    "position_id": str(group.position_id),
                     "status": group.status,
                     "createdDate": group.created_at
                 })

@@ -17,7 +17,6 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
   const [selectedPosition, setSelectedPosition] = useState<JobPosition | null>(null);
   const [showHRDropdown, setShowHRDropdown] = useState(false);
   const [showTechDropdown, setShowTechDropdown] = useState(false);
-  const [showInsightsPanel, setShowInsightsPanel] = useState(false);
   const [sortField, setSortField] = useState<string>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
@@ -629,13 +628,6 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
               {/* Action Buttons */}
               <div className="mt-6 flex items-center gap-3">
                 <Button
-                  variant="outline"
-                  className="flex-1 rounded-full"
-                  onClick={() => setShowInsightsPanel(true)}
-                >
-                  View Insights
-                </Button>
-                <Button
                   className="flex-1 rounded-full text-white"
                   style={{ backgroundColor: '#6366F1' }}
                   onClick={async () => {
@@ -652,150 +644,6 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                 </Button>
               </div>
             </Card>
-          </div>
-        </div>
-      )}
-
-      {/* Insights Panel Modal */}
-      {showInsightsPanel && selectedPosition && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="sticky top-0 bg-white border-b border-gray-200 px-8 py-6 rounded-t-3xl">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-gray-900 mb-1">Position Insights</h2>
-                  <p className="text-gray-500 text-sm">
-                    {selectedPosition.jobTitle} • {selectedPosition.department} Department
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowInsightsPanel(false)}
-                  className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-gray-100 transition-colors"
-                >
-                  <X className="w-5 h-5 text-gray-500" />
-                </button>
-              </div>
-            </div>
-
-            <div className="px-8 py-6">
-              {/* Overview Stats Grid */}
-              <div className="grid grid-cols-4 gap-4 mb-8">
-                <div className="bg-white rounded-2xl p-5 border border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-gray-500 text-sm">Total Candidates</span>
-                    <TrendingUp className="w-4 h-4 text-emerald-600" />
-                  </div>
-                  <div className="text-3xl text-gray-900 mb-1">{selectedPosition.candidatesCount}</div>
-                  <div className="text-xs text-emerald-600">+12% from last week</div>
-                </div>
-
-                <div className="bg-white rounded-2xl p-5 border border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-gray-500 text-sm">Avg. Assessment</span>
-                  </div>
-                  <div className="text-3xl text-gray-900 mb-1">87%</div>
-                  <div className="text-xs text-gray-500">Above threshold</div>
-                </div>
-
-                <div className="bg-white rounded-2xl p-5 border border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-gray-500 text-sm">Interview Rate</span>
-                  </div>
-                  <div className="text-3xl text-gray-900 mb-1">64%</div>
-                  <div className="text-xs text-indigo-600">Strong pipeline</div>
-                </div>
-
-                <div className="bg-white rounded-2xl p-5 border border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-gray-500 text-sm">Time to Hire</span>
-                    <TrendingDown className="w-4 h-4 text-red-600" />
-                  </div>
-                  <div className="text-3xl text-gray-900 mb-1">28d</div>
-                  <div className="text-xs text-red-600">+3 days slower</div>
-                </div>
-              </div>
-
-              {/* Candidate Pipeline Overview */}
-              <div className="bg-white rounded-2xl p-6 border border-gray-200 mb-6">
-                <div className="mb-6">
-                  <h3 className="text-gray-900 mb-1">Candidate Pipeline</h3>
-                  <p className="text-gray-500 text-sm">Hiring funnel progression and stage drop-offs</p>
-                </div>
-
-                <div className="space-y-5">
-                  {[
-                    { stage: 'Applied', count: selectedPosition.candidatesCount, color: '#6366f1', percentage: 100 },
-                    { stage: 'Assessment', count: Math.floor(selectedPosition.candidatesCount * 0.78), color: '#8b5cf6', percentage: 78 },
-                    { stage: 'Interview', count: Math.floor(selectedPosition.candidatesCount * 0.52), color: '#a855f7', percentage: 52 },
-                    { stage: 'Offer', count: Math.floor(selectedPosition.candidatesCount * 0.24), color: '#c084fc', percentage: 24 },
-                    { stage: 'Hired', count: Math.floor(selectedPosition.candidatesCount * 0.16), color: '#10b981', percentage: 16 }
-                  ].map((stage, index, arr) => (
-                    <div key={stage.stage}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-3">
-                          <span className="font-['Arimo',sans-serif] text-[14px] text-[#374151] min-w-[100px]">
-                            {stage.stage}
-                          </span>
-                          <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                            {stage.count} candidates
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                            {stage.percentage}%
-                          </span>
-                          {index > 0 && (
-                            <span className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af]">
-                              -{arr[index - 1].percentage - stage.percentage}% drop
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="h-12 bg-[#f3f4f6] rounded-lg overflow-hidden">
-                        <div
-                          className="h-full rounded-lg transition-all duration-500 flex items-center justify-between px-4"
-                          style={{
-                            width: `${stage.percentage}%`,
-                            backgroundColor: stage.color
-                          }}
-                        >
-                          <span className="font-['Arimo',sans-serif] text-[13px] text-white font-medium">
-                            {stage.stage}
-                          </span>
-                          <span className="font-['Arimo',sans-serif] text-[14px] text-white font-semibold">
-                            {stage.count}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Footer Actions */}
-            <div className="sticky bottom-0 bg-white border-t border-gray-200 px-8 py-4 rounded-b-3xl">
-              <div className="flex items-center justify-end gap-3">
-                <Button
-                  variant="outline"
-                  className="rounded-full px-6"
-                  onClick={() => setShowInsightsPanel(false)}
-                >
-                  Close
-                </Button>
-                <Button
-                  className="rounded-full px-6 text-white"
-                  style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => {
-                    console.log('Exporting insights for:', selectedPosition);
-                    toast.success('Insights exported successfully!');
-                  }}
-                >
-                  Export Report
-                </Button>
-              </div>
-            </div>
           </div>
         </div>
       )}

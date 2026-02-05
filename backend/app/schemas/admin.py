@@ -8,13 +8,15 @@ class GlobalStatsResponse(BaseModel):
     totalApplicants: int
     avgTimeToFill: float
 
+class PipelineStageStats(BaseModel):
+    stage: str
+    count: int
+    percentage: int
+    color: str
+
 class PipelineStatsResponse(BaseModel):
     """Response schema for recruitment pipeline funnel."""
-    applied: int
-    screening: int
-    assessment: int
-    interview: int
-    offer: int
+    stages: list[PipelineStageStats]
 
 class HealthMetrics(BaseModel):
     onTrack: int
@@ -32,15 +34,28 @@ class HealthAnalyticsResponse(BaseModel):
 
 class PaymentMethodResponse(BaseModel):
     """Response schema for payment method details."""
+    brand: str | None = None
+    last4: str | None = None
+    expiry: str | None = None
+
+class PaymentMethodCreate(BaseModel):
+    """Request schema for adding a payment method."""
     brand: str
     last4: str
     expiry: str
+    cardNumber: str | None = None
+    cvc: str | None = None
+    cardName: str | None = None
+
+class SubscriptionUpgradeRequest(BaseModel):
+    """Request schema for upgrading subscription plan."""
+    planID: UUID
 
 class MemberStatsResponse(BaseModel):
     """Response schema for member statistics."""
     totalActive: int
-    pendingRequests: int
-    openRoles: int
+    adminsCount: int
+    recruitersCount: int
 
 class MemberPermissions(BaseModel):
     managePositions: bool

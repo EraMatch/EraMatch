@@ -47,6 +47,7 @@ class ProjectListResponse(BaseModel):
     positionsCount: int = Field(default=0)
     applicantsCount: int = Field(default=0)
     subGroupsCount: int = Field(default=0)
+    avgTimeToFill: float = Field(default=0.0, serialization_alias="avgTimeToFill")
     
     class Config:
         from_attributes = True
@@ -125,6 +126,11 @@ class PositionGroupResponse(BaseModel):
     candidatesCount: int
     status: str
     createdDate: datetime
+    integrityIssues: int = 0
+    hasAssessment: bool = False
+    hasAIInterview: bool = False
+    hasLiveInterview: bool = False
+    position_id: UUID | None = None
 
 class GroupAnalysisResponse(BaseModel):
     matchAccuracy: float

@@ -17,6 +17,7 @@ export interface Project {
     positionsCount: number;
     applicantsCount: number;
     subGroupsCount: number;
+    avgTimeToFill: number;
     openDate: string;
     description?: string;
 }
@@ -26,11 +27,13 @@ export interface PositionGroup {
     groupName: string;
     positionTitle: string;
     candidatesCount: number;
+    integrityIssues?: number;
     status: 'Active' | 'Processing' | 'Completed' | 'On Hold';
     createdDate: string;
     hasAssessment: boolean;
     hasAIInterview: boolean;
     hasLiveInterview: boolean;
+    position_id?: string;
 }
 
 export interface SelectedCandidate {

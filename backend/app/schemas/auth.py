@@ -39,6 +39,7 @@ class UserResponse(BaseModel):
     organization_id: UUID
     created_at: datetime | None = None
     phone_number: str | None = None
+    status: str | None = "active"
     
     class Config:
         from_attributes = True

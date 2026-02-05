@@ -35,9 +35,9 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
   const [isLoading, setIsLoading] = useState(true);
   const [members, setMembers] = useState<Member[]>([]);
 
-  const [openRolesCount, setOpenRolesCount] = useState(0);
+  const [recruitersCount, setRecruitersCount] = useState(0);
   const [totalActiveCount, setTotalActiveCount] = useState(0);
-  const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
+  const [adminsCount, setAdminsCount] = useState(0);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -48,9 +48,9 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
           api.admin.getMemberStats()
         ]);
         setMembers(membersData);
-        setOpenRolesCount(statsData.openRoles || 0);
+        setRecruitersCount(statsData.recruitersCount || 0);
         setTotalActiveCount(statsData.totalActive || 0);
-        setPendingRequestsCount(statsData.pendingRequests || 0);
+        setAdminsCount(statsData.adminsCount || 0);
       } catch (error) {
         toast.error('Failed to load organization data');
       } finally {
@@ -86,6 +86,37 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
       setMembers(updatedMembers);
     } catch (error) {
       toast.error('Failed to remove member');
+    }
+  };
+
+  const handleToggleStatus = async (member: Member) => {
+    const isSuspended = member.status?.toLowerCase() === 'suspended';
+    const newStatus = isSuspended ? 'active' : 'suspended';
+
+    if (!window.confirm(`Are you sure you want to ${isSuspended ? 'open' : 'suspend'} this member?`)) {
+      return;
+    }
+
+    try {
+      await api.admin.updateUserStatus(member.id, newStatus);
+      toast.success(`Member ${isSuspended ? 'opened' : 'suspended'} successfully`);
+
+      // Refresh members list and stats
+      const [updatedMembers, updatedStats] = await Promise.all([
+        api.admin.getMembers(),
+        api.admin.getMemberStats()
+      ]);
+
+      setMembers(updatedMembers);
+
+      if (updatedStats) {
+        setRecruitersCount(updatedStats.recruitersCount || 0);
+        setTotalActiveCount(updatedStats.totalActive || 0);
+        // Admins count likely hasn't changed but good to refresh
+        setAdminsCount(updatedStats.adminsCount || 0);
+      }
+    } catch (error: any) {
+      toast.error(error?.detail || `Failed to ${isSuspended ? 'activate' : 'suspend'} member`);
     }
   };
 
@@ -163,20 +194,20 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
 
         <div className="bg-white rounded-3xl px-8 py-9 shadow-sm">
           <div className="flex items-center gap-3">
-            <span className="text-5xl text-gray-900">{openRolesCount}</span>
+            <span className="text-5xl text-gray-900">{recruitersCount}</span>
             <div className="flex-1">
-              <div className="text-gray-900 mb-1">Open Roles</div>
-              <div className="text-gray-400 text-sm">across all projects</div>
+              <div className="text-gray-900 mb-1">Recruiting Force</div>
+              <div className="text-gray-400 text-sm">active recruiters & HR</div>
             </div>
           </div>
         </div>
 
         <div className="bg-white rounded-3xl px-8 py-9 shadow-sm">
           <div className="flex items-center gap-3">
-            <span className="text-5xl text-gray-900">{pendingRequestsCount}</span>
+            <span className="text-5xl text-gray-900">{adminsCount}</span>
             <div className="flex-1">
-              <div className="text-gray-900 mb-1">Pending Requests</div>
-              <div className="text-gray-400 text-sm">awaiting approval</div>
+              <div className="text-gray-900 mb-1">System Admins</div>
+              <div className="text-gray-400 text-sm">full administrative access</div>
             </div>
           </div>
         </div>
@@ -347,7 +378,7 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
                           className={`px-3 py-1 rounded-full text-xs inline-block ${member.status?.toLowerCase() === 'active'
                             ? 'bg-green-100 text-green-700'
                             : member.status?.toLowerCase() === 'suspended'
-                              ? 'bg-amber-100 text-amber-700'
+                              ? 'bg-red-100 text-red-700'
                               : 'bg-gray-100 text-gray-700'
                             }`}
                         >
@@ -368,6 +399,17 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
                                 onClick={() => handleEditPrivileges(member)}
                               >
                                 Edit Privileges
+                              </Button>
+
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className={`rounded-lg text-sm ${member.status?.toLowerCase() === 'suspended'
+                                  ? 'border-green-200 hover:bg-green-50 text-green-600'
+                                  : 'border-amber-200 hover:bg-amber-50 text-amber-600'}`}
+                                onClick={() => handleToggleStatus(member)}
+                              >
+                                {member.status?.toLowerCase() === 'suspended' ? 'Open' : 'Suspend'}
                               </Button>
 
                               <Button
@@ -474,15 +516,17 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
       </Card>
 
       {/* Edit Access Privileges Modal */}
-      {showEditModal && selectedMember && (
-        <EditAccessPrivilegesModal
-          member={selectedMember}
-          onClose={() => {
-            setShowEditModal(false);
-            setSelectedMember(null);
-          }}
-        />
-      )}
-    </div>
+      {
+        showEditModal && selectedMember && (
+          <EditAccessPrivilegesModal
+            member={selectedMember}
+            onClose={() => {
+              setShowEditModal(false);
+              setSelectedMember(null);
+            }}
+          />
+        )
+      }
+    </div >
   );
 }
