@@ -22,10 +22,11 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   const [isLoading, setIsLoading] = useState(true);
-  const [hrRecruiters, setHrRecruiters] = useState<string[]>([]);
-  const [technicalRecruiters, setTechnicalRecruiters] = useState<string[]>([]);
+  const [hrRecruiters, setHrRecruiters] = useState<{ id: string; name: string }[]>([]);
+  const [technicalRecruiters, setTechnicalRecruiters] = useState<{ id: string; name: string }[]>([]);
   const [jobPositions, setJobPositions] = useState<JobPosition[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [recentAssignments, setRecentAssignments] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -36,6 +37,9 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
         setTechnicalRecruiters(data.technicalRecruiters);
         setJobPositions(data.positions);
         setProjects(data.projects);
+
+        const recent = await api.admin.getRecentAssignments();
+        setRecentAssignments(recent || []);
       } catch (error) {
         toast.error('Failed to load delegation data');
       } finally {
@@ -53,28 +57,54 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
     );
   }
 
-  const handleAssignHR = (positionId: number, hrName: string) => {
-    setJobPositions(prev =>
-      prev.map(pos =>
-        pos.id === positionId ? { ...pos, assignedHR: hrName } : pos
-      )
-    );
-    if (selectedPosition && selectedPosition.id === positionId) {
-      setSelectedPosition({ ...selectedPosition, assignedHR: hrName });
+  const handleAssignHR = async (positionId: any, recruiter: { id: string, name: string }) => {
+    try {
+      const posIdStr = positionId.toString();
+      await api.admin.reassignRecruiter(posIdStr, recruiter.id, 'HR');
+      setJobPositions(prev =>
+        prev.map(pos =>
+          pos.id === posIdStr ? { ...pos, assignedHR: recruiter.name } : pos
+        )
+      );
+      if (selectedPosition && selectedPosition.id === posIdStr) {
+        setSelectedPosition({ ...selectedPosition, assignedHR: recruiter.name });
+      }
+
+      // Refresh logs
+      const recent = await api.admin.getRecentAssignments();
+      setRecentAssignments(recent || []);
+
+      toast.success(`HR Recruiter assigned: ${recruiter.name}`);
+    } catch (error) {
+      toast.error('Failed to reassign HR Recruiter');
+    } finally {
+      setShowHRDropdown(false);
     }
-    setShowHRDropdown(false);
   };
 
-  const handleAssignTechnical = (positionId: number, techName: string) => {
-    setJobPositions(prev =>
-      prev.map(pos =>
-        pos.id === positionId ? { ...pos, assignedTechnicalRecruiter: techName } : pos
-      )
-    );
-    if (selectedPosition && selectedPosition.id === positionId) {
-      setSelectedPosition({ ...selectedPosition, assignedTechnicalRecruiter: techName });
+  const handleAssignTechnical = async (positionId: any, recruiter: { id: string, name: string }) => {
+    try {
+      const posIdStr = positionId.toString();
+      await api.admin.reassignRecruiter(posIdStr, recruiter.id, 'Technical');
+      setJobPositions(prev =>
+        prev.map(pos =>
+          pos.id === posIdStr ? { ...pos, assignedTechnicalRecruiter: recruiter.name } : pos
+        )
+      );
+      if (selectedPosition && selectedPosition.id === posIdStr) {
+        setSelectedPosition({ ...selectedPosition, assignedTechnicalRecruiter: recruiter.name });
+      }
+
+      // Refresh logs
+      const recent = await api.admin.getRecentAssignments();
+      setRecentAssignments(recent || []);
+
+      toast.success(`Technical Recruiter assigned: ${recruiter.name}`);
+    } catch (error) {
+      toast.error('Failed to reassign Technical Recruiter');
+    } finally {
+      setShowTechDropdown(false);
     }
-    setShowTechDropdown(false);
   };
 
   const getStatusBadgeColor = (status: string) => {
@@ -285,7 +315,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                   </tr>
                 </thead>
                 <tbody>
-                  {jobPositions.slice(0, selectedProject.positionsCount).map((position, index) => (
+                  {jobPositions.filter(p => p.projectId === selectedProject.id).map((position, index) => (
                     <tr
                       key={position.id}
                       className={`border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors cursor-pointer ${index === selectedProject.positionsCount - 1 ? 'border-b-0' : ''
@@ -415,6 +445,31 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                   </div>
                 </div>
               </div>
+
+              {/* Recruiter Workload Table */}
+              <div className="mt-8">
+                <h4 className="text-gray-900 text-sm font-semibold mb-3">Recruiter Workload</h4>
+                <div className="overflow-hidden rounded-xl border border-gray-200">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-2 font-medium text-gray-500">Recruiter</th>
+                        <th className="px-4 py-2 font-medium text-gray-500 text-right">Assignments</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {[...hrRecruiters, ...technicalRecruiters].map((r: any) => (
+                        <tr key={r.id}>
+                          <td className="px-4 py-2 text-gray-900">{r.name}</td>
+                          <td className="px-4 py-2 text-gray-600 text-right font-medium">
+                            {r.assignedCount || 0}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </Card>
 
             {/* Right Section - Recruiter Assignment */}
@@ -435,9 +490,11 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                         style={{ backgroundColor: '#6366F1' }}
                       >
                         {selectedPosition.assignedHR
-                          .split(' ')
-                          .map((n) => n[0])
-                          .join('')}
+                          ? selectedPosition.assignedHR
+                            .split(' ')
+                            .map((n) => n[0])
+                            .join('')
+                          : '??'}
                       </div>
                       <div className="flex-1">
                         <p className="text-gray-900 text-sm">
@@ -463,13 +520,13 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                       <div className="absolute right-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-10 min-w-[200px]">
                         {hrRecruiters.map((recruiter) => (
                           <button
-                            key={recruiter}
+                            key={recruiter.id}
                             className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 first:rounded-t-lg last:rounded-b-lg"
                             onClick={() =>
                               handleAssignHR(selectedPosition.id, recruiter)
                             }
                           >
-                            {recruiter}
+                            {recruiter.name}
                           </button>
                         ))}
                       </div>
@@ -491,9 +548,11 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                         style={{ backgroundColor: '#10b981' }}
                       >
                         {selectedPosition.assignedTechnicalRecruiter
-                          .split(' ')
-                          .map((n) => n[0])
-                          .join('')}
+                          ? selectedPosition.assignedTechnicalRecruiter
+                            .split(' ')
+                            .map((n) => n[0])
+                            .join('')
+                          : '??'}
                       </div>
                       <div className="flex-1">
                         <p className="text-gray-900 text-sm">
@@ -521,7 +580,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                       <div className="absolute right-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-10 min-w-[200px]">
                         {technicalRecruiters.map((recruiter) => (
                           <button
-                            key={recruiter}
+                            key={recruiter.id}
                             className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 first:rounded-t-lg last:rounded-b-lg"
                             onClick={() =>
                               handleAssignTechnical(
@@ -530,7 +589,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                               )
                             }
                           >
-                            {recruiter}
+                            {recruiter.name}
                           </button>
                         ))}
                       </div>
@@ -543,30 +602,27 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
               <div className="pt-6 border-t border-gray-200">
                 <h4 className="text-gray-900 mb-3">Recent Assignment Changes</h4>
                 <div className="space-y-3">
-                  <div className="flex items-start gap-3 text-sm">
-                    <div className="w-2 h-2 rounded-full bg-indigo-600 mt-1.5"></div>
-                    <div className="flex-1">
-                      <p className="text-gray-900">
-                        HR Recruiter assigned to{' '}
-                        <span className="text-gray-900">
-                          {selectedPosition.assignedHR}
-                        </span>
-                      </p>
-                      <p className="text-gray-500 text-xs mt-1">2 days ago</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3 text-sm">
-                    <div className="w-2 h-2 rounded-full bg-emerald-600 mt-1.5"></div>
-                    <div className="flex-1">
-                      <p className="text-gray-900">
-                        Technical Recruiter assigned to{' '}
-                        <span className="text-gray-900">
-                          {selectedPosition.assignedTechnicalRecruiter}
-                        </span>
-                      </p>
-                      <p className="text-gray-500 text-xs mt-1">3 days ago</p>
-                    </div>
-                  </div>
+                  {recentAssignments.length > 0 ? (
+                    recentAssignments.map((log: any, index: number) => (
+                      <div key={index} className="flex items-start gap-3 text-sm">
+                        <div className={`w-2 h-2 rounded-full mt-1.5 ${log.action?.includes('hr') ? 'bg-indigo-600' : 'bg-emerald-600'}`}></div>
+                        <div className="flex-1">
+                          <p className="text-gray-900">
+                            {log.action?.includes('hr') ? 'HR' : 'Technical'} Recruiter assigned to{' '}
+                            <span className="text-gray-900 font-medium">
+                              {log.positionName || 'Position'}
+                            </span>
+                          </p>
+                          <div className="text-xs text-gray-500 mt-1 flex justify-between">
+                            <span>New: {log.newValueName || log.newValue || 'Unknown'}</span>
+                            <span>{new Date(log.timestamp).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-gray-500 text-sm italic">No recent assignments found.</p>
+                  )}
                 </div>
               </div>
 
@@ -582,9 +638,14 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                 <Button
                   className="flex-1 rounded-full text-white"
                   style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => {
-                    console.log('Notifying recruiters for position:', selectedPosition);
-                    toast.success('Recruiters notified successfully!');
+                  onClick={async () => {
+                    try {
+                      const posIdStr = selectedPosition.id.toString();
+                      await api.admin.notifyRecruiters(posIdStr);
+                      toast.success('Recruiters notified successfully!');
+                    } catch (error) {
+                      toast.error('Failed to notify recruiters');
+                    }
                   }}
                 >
                   Notify Recruiters

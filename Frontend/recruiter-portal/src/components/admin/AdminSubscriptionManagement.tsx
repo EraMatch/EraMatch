@@ -25,16 +25,21 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
   const [currentPlan, setCurrentPlan] = useState<any>(null);
   const [usage, setUsage] = useState<any>(null);
   const [availablePlans, setAvailablePlans] = useState<any[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<{ brand: string; last4: string; expiry: string } | null>(null);
 
   // Fetch subscription data from API
   useEffect(() => {
     const fetchSubscriptionData = async () => {
       try {
         setIsLoading(true);
-        const data = await api.admin.getSubscriptionPlans();
-        setCurrentPlan(data.currentPlan);
-        setUsage(data.usage);
-        setAvailablePlans(data.availablePlans);
+        const [subscriptionData, paymentData] = await Promise.all([
+          api.admin.getSubscriptionPlans(),
+          api.admin.getPaymentMethod().catch(() => null)
+        ]);
+        setCurrentPlan((subscriptionData as any).currentPlan);
+        setUsage((subscriptionData as any).usage);
+        setAvailablePlans((subscriptionData as any).availablePlans);
+        setPaymentMethod(paymentData);
       } catch (error) {
         console.error('Failed to fetch subscription data:', error);
         toast.error('Failed to load subscription data');
@@ -161,7 +166,7 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
           {availablePlans.map((plan: any) => (
             <div
               key={plan.id}
-              className={`bg-white rounded-2xl p-6 shadow-sm border-2 transition-all ${plan.recommended
+              className={`bg-white rounded-2xl p-6 shadow-sm border-2 transition-all flex flex-col ${plan.recommended
                 ? 'border-indigo-600 ring-2 ring-indigo-100'
                 : 'border-gray-200 hover:border-indigo-300'
                 }`}
@@ -174,18 +179,39 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
                 </div>
               </div>
 
-              <ul className="space-y-3 mb-6">
-                {plan.features.map((feature: string, index: number) => (
-                  <li key={index} className="flex items-start gap-2">
-                    <Check size={18} className="text-indigo-600 flex-shrink-0 mt-0.5" />
-                    <span className="text-sm text-gray-600">{feature}</span>
-                  </li>
-                ))}
-              </ul>
+              {/* Features List */}
+              <div className="mb-6 flex-grow">
+                <h4 className="text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wider">Features</h4>
+                <ul className="space-y-3">
+                  {plan.features.map((feature: string, index: number) => (
+                    <li key={index} className="flex items-start gap-2">
+                      <Check size={18} className="text-indigo-600 flex-shrink-0 mt-0.5" />
+                      <span className="text-sm text-gray-600">{feature}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Limits Section */}
+              {plan.limits && (
+                <div className="mb-6 pt-4 border-t border-gray-100">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wider">Plan Limits</h4>
+                  <div className="space-y-2">
+                    {Object.entries(plan.limits).map(([key, value]: [string, any]) => (
+                      <div key={key} className="flex justify-between text-sm">
+                        <span className="text-gray-500">{key.replace('max', '')}</span>
+                        <span className="font-medium text-gray-900">
+                          {value === -1 ? 'Unlimited' : value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <button
                 disabled={plan.name === currentPlan.name}
-                className={`w-full h-12 rounded-lg font-medium transition-all ${plan.name === currentPlan.name
+                className={`w-full h-12 rounded-lg font-medium mt-auto transition-all ${plan.name === currentPlan.name
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   : 'bg-indigo-600 text-white hover:bg-indigo-700 flex items-center justify-center gap-2'
                   }`}
@@ -208,20 +234,32 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
       {/* Payment Method Section */}
       <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-200">
         <h2 className="text-xl font-semibold text-gray-900 mb-4">Payment Method</h2>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
-              <CreditCard size={24} className="text-gray-600" />
+        {paymentMethod ? (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
+                <CreditCard size={24} className="text-gray-600" />
+              </div>
+              <div>
+                <div className="text-sm font-medium text-gray-900">
+                  {paymentMethod.brand} •••• •••• •••• {paymentMethod.last4}
+                </div>
+                <div className="text-sm text-gray-500">Expires {paymentMethod.expiry}</div>
+              </div>
             </div>
-            <div>
-              <div className="text-sm font-medium text-gray-900">•••• •••• •••• 4242</div>
-              <div className="text-sm text-gray-500">Expires 12/2027</div>
-            </div>
+            <button className="h-10 px-6 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium transition-colors" onClick={handleCardUpdate}>
+              Update Card
+            </button>
           </div>
-          <button className="h-10 px-6 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium transition-colors" onClick={handleCardUpdate}>
-            Update Card
-          </button>
-        </div>
+        ) : (
+          <div className="text-center py-8 text-gray-500">
+            <CreditCard size={48} className="mx-auto mb-3 text-gray-300" />
+            <p className="mb-4">No payment method on file</p>
+            <button className="h-10 px-6 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors" onClick={handleCardUpdate}>
+              Add Payment Method
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Upgrade Modal */}

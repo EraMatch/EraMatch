@@ -25,7 +25,7 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [positionGroups, setPositionGroups] = useState<PositionGroup[]>([]);
   const [pipelineData, setPipelineData] = useState<any[]>([]);
-  const [avgTimeToFill, setAvgTimeToFill] = useState(0);
+  const [globalStats, setGlobalStats] = useState<any>(null);
   const [groupAnalytics, setGroupAnalytics] = useState<any>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
 
@@ -35,11 +35,21 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
         setIsLoading(true);
         const stats = await api.admin.getDashboardStats();
 
+        setGlobalStats(stats);
+        console.log('📊 GlobalStats set to:', stats);
+        console.log('📊 Analytics in stats?', stats.analytics);
         setProjects(stats.projects || []);
+        console.log('📋 Projects array:', stats.projects);
+        console.log('📋 First project:', stats.projects?.[0]);
         setPositionGroups(stats.positionGroups || []);
         setJobPositions(stats.jobPositions || []);
-        setPipelineData(stats.pipelineData || []);
-        setAvgTimeToFill(stats.avgTimeToFill || 0);
+        setPipelineData(stats.pipelineData || [
+          { stage: 'Applied', count: (stats.totalApplicants || 0), percentage: 100, color: '#6366f1' },
+          { stage: 'Screening', count: Math.floor((stats.totalApplicants || 0) * 0.8), percentage: 80, color: '#8b5cf6' },
+          { stage: 'Assessment', count: Math.floor((stats.totalApplicants || 0) * 0.6), percentage: 60, color: '#a855f7' },
+          { stage: 'Interview', count: Math.floor((stats.totalApplicants || 0) * 0.4), percentage: 40, color: '#c084fc' },
+          { stage: 'Offer', count: Math.floor((stats.totalApplicants || 0) * 0.2), percentage: 20, color: '#10b981' }
+        ]);
 
       } catch (error) {
         toast.error('Failed to load dashboard data');
@@ -49,6 +59,11 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
     };
     fetchData();
   }, []);
+
+  useEffect(() => {
+    console.log('🔄 GlobalStats changed:', globalStats);
+    console.log('🔄 Analytics available?', globalStats?.analytics);
+  }, [globalStats]);
 
   useEffect(() => {
     const fetchGroupAnalytics = async () => {
@@ -110,15 +125,15 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
   const exportPositionInsights = (position: JobPosition) => {
     const csvContent = `Position: ${position.jobTitle}
 Department: ${position.department}
-Total Candidates: ${position.candidatesCount}
+Total Candidates: ${position.applicantsCount}
 Status: ${position.status}
 
 Stage,Count,Percentage
-Applied,${position.candidatesCount},100%
-Assessment,${Math.floor(position.candidatesCount * 0.78)},78%
-Interview,${Math.floor(position.candidatesCount * 0.52)},52%
-Offer,${Math.floor(position.candidatesCount * 0.24)},24%
-Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
+Applied,${position.applicantsCount},100%
+Assessment,${Math.floor(position.applicantsCount * 0.78)},78%
+Interview,${Math.floor(position.applicantsCount * 0.52)},52%
+Offer,${Math.floor(position.applicantsCount * 0.24)},24%
+Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -135,10 +150,38 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
 
   // If viewing group insights, show group-level analytics with phase-specific metrics
   if (viewMode === 'insights' && selectedGroup) {
-    if (loadingAnalytics || !groupAnalytics) {
+    if (loadingAnalytics) {
       return (
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+        </div>
+      );
+    }
+
+    if (!groupAnalytics) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
+          <AlertTriangle className="w-12 h-12 text-amber-500 mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Failed to load analytics</h3>
+          <p className="text-gray-500 mb-6">Unable to fetch insights for this group.</p>
+          <Button
+            onClick={() => {
+              setLoadingAnalytics(true);
+              api.admin.getGroupAnalytics(selectedGroup.id.toString())
+                .then(analytics => setGroupAnalytics(analytics))
+                .catch(() => toast.error('Retry failed'))
+                .finally(() => setLoadingAnalytics(false));
+            }}
+          >
+            Retry
+          </Button>
+          <Button
+            variant="ghost"
+            className="mt-4"
+            onClick={() => setViewMode('groups')}
+          >
+            Back to Groups
+          </Button>
         </div>
       );
     }
@@ -238,10 +281,10 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
             </div>
             <div className="text-5xl text-gray-900 mb-1">
               {Math.floor((
-                (assessmentData ? assessmentData.completed / totalCandidates : 0) +
-                (aiInterviewData ? aiInterviewData.completed / totalCandidates : 0) +
-                (liveInterviewData ? liveInterviewData.completed / totalCandidates : 0)
-              ) / [selectedGroup.hasAssessment, selectedGroup.hasAIInterview, selectedGroup.hasLiveInterview].filter(Boolean).length * 100)}%
+                (assessmentData && totalCandidates > 0 ? assessmentData.completed / totalCandidates : 0) +
+                (aiInterviewData && totalCandidates > 0 ? aiInterviewData.completed / totalCandidates : 0) +
+                (liveInterviewData && totalCandidates > 0 ? liveInterviewData.completed / totalCandidates : 0)
+              ) / Math.max([selectedGroup.hasAssessment, selectedGroup.hasAIInterview, selectedGroup.hasLiveInterview].filter(Boolean).length, 1) * 100)}%
             </div>
             <div className="text-xs text-emerald-600">On track</div>
           </div>
@@ -811,25 +854,25 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
         stats: [
           {
             label: 'Active Projects',
-            value: projects.length.toString(),
+            value: (globalStats?.activeProjects ?? projects.length).toString(),
             sublabel: 'currently running',
             icon: <Briefcase className="w-5 h-5 text-indigo-600" />
           },
           {
             label: 'Total Positions',
-            value: projects.reduce((sum, p) => sum + p.positionsCount, 0).toString(),
+            value: (globalStats?.openPositions ?? projects.reduce((sum, p) => sum + p.positionsCount, 0)).toString(),
             sublabel: 'across all projects',
             icon: <Target className="w-5 h-5 text-purple-600" />
           },
           {
             label: 'Total Applicants',
-            value: projects.reduce((sum, p) => sum + p.applicantsCount, 0).toString(),
+            value: (globalStats?.totalApplicants ?? projects.reduce((sum, p) => sum + p.applicantsCount, 0)).toString(),
             sublabel: 'in pipeline',
             icon: <Users className="w-5 h-5 text-emerald-600" />
           },
           {
             label: 'Avg. Time to Fill',
-            value: `${avgTimeToFill}d`,
+            value: `${Math.round(globalStats?.avgTimeToFill ?? 0)}d`,
             sublabel: 'days',
             icon: <Clock className="w-5 h-5 text-amber-600" />
           }
@@ -952,11 +995,13 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                     <span className="text-sm text-gray-600">On Track</span>
                   </div>
                   <span className="text-lg font-semibold text-gray-900">
-                    {projects.filter(p => p.positionsCount <= 8).length}
+                    {globalStats?.analytics?.health?.onTrack || 0}
                   </span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${(projects.filter(p => p.positionsCount <= 8).length / projects.length) * 100}%` }} />
+                  <div className="h-full bg-emerald-500 rounded-full" style={{
+                    width: `${((globalStats?.analytics?.health?.onTrack || 0) / Math.max((globalStats?.analytics?.health?.onTrack || 0) + (globalStats?.analytics?.health?.atRisk || 0), 1)) * 100}%`
+                  }} />
                 </div>
               </div>
 
@@ -967,22 +1012,24 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                     <span className="text-sm text-gray-600">At Risk</span>
                   </div>
                   <span className="text-lg font-semibold text-gray-900">
-                    {projects.filter(p => p.positionsCount > 8).length}
+                    {globalStats?.analytics?.health?.atRisk || 0}
                   </span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-orange-500 rounded-full" style={{ width: `${(projects.filter(p => p.positionsCount > 8).length / projects.length) * 100}%` }} />
+                  <div className="h-full bg-orange-500 rounded-full" style={{
+                    width: `${((globalStats?.analytics?.health?.atRisk || 0) / Math.max((globalStats?.analytics?.health?.onTrack || 0) + (globalStats?.analytics?.health?.atRisk || 0), 1)) * 100}%`
+                  }} />
                 </div>
               </div>
 
-              {projects.filter(p => p.positionsCount > 8).length > 0 && (
+              {(globalStats?.analytics?.health?.atRisk || 0) > 0 && (
                 <div className="mt-4 bg-orange-50 border border-orange-200 rounded-lg p-3">
                   <div className="flex items-start gap-2">
                     <AlertTriangle size={14} className="text-orange-600 mt-0.5" />
                     <div>
                       <div className="text-xs font-medium text-orange-900 mb-1">Attention Needed</div>
                       <div className="text-xs text-orange-700">
-                        {projects.filter(p => p.positionsCount > 8).map(p => p.projectName).join(', ')} require review
+                        {globalStats?.analytics?.health?.atRisk} project{(globalStats?.analytics?.health?.atRisk || 0) > 1 ? 's' : ''} require review
                       </div>
                     </div>
                   </div>
@@ -993,7 +1040,9 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                 <div className="text-sm text-gray-600 mb-3">Avg Conversion by Project</div>
                 <div className="space-y-2">
                   {projects.slice(0, 3).map(project => {
-                    const conversion = ((Math.floor(project.applicantsCount * 0.18) / project.applicantsCount) * 100);
+                    const conversion = project.applicantsCount > 0
+                      ? ((Math.floor(project.applicantsCount * 0.18) / project.applicantsCount) * 100)
+                      : 0;
                     return (
                       <div key={project.id} className="flex items-center justify-between">
                         <span className="text-xs text-gray-600 truncate flex-1">{project.projectName}</span>
@@ -1018,59 +1067,64 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                   <span className="text-sm text-gray-600">Hiring Velocity</span>
                   <div className="flex items-center gap-2">
                     <span className="text-lg font-semibold text-gray-900">
-                      {(projects.reduce((sum, p) => sum + Math.floor(p.applicantsCount * 0.18), 0) / projects.length).toFixed(1)}
+                      {globalStats?.analytics?.velocity?.toFixed(1) || '0.0'}
                     </span>
                     <span className="text-xs text-gray-500">hires/project</span>
                   </div>
                 </div>
                 <p className="text-xs text-gray-500">
-                  Total: {projects.reduce((sum, p) => sum + Math.floor(p.applicantsCount * 0.18), 0)} hires across {projects.length} projects
+                  Average hiring velocity across all active projects
                 </p>
               </div>
 
               <div className="pt-3 border-t">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Portfolio Quality Score</span>
-                  <span className="text-lg font-semibold text-emerald-600">78%</span>
+                  <span className="text-lg font-semibold text-emerald-600">
+                    {(() => {
+                      if (!globalStats?.analytics?.quality) return '0%';
+                      const { high, needsImprove } = globalStats.analytics.quality;
+                      const total = high + needsImprove;
+                      if (total === 0) return '0%';
+                      return `${Math.round((high / total) * 100)}%`;
+                    })()}
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   <div className="bg-emerald-50 rounded-lg p-2">
                     <div className="text-xs text-emerald-700">High Quality</div>
                     <div className="text-sm font-semibold text-emerald-900">
-                      {projects.filter((p, i) => i % 3 === 0).length}
+                      {globalStats?.analytics?.quality?.high || 0}
                     </div>
                     <div className="text-xs text-emerald-600">projects (≥80%)</div>
                   </div>
                   <div className="bg-orange-50 rounded-lg p-2">
                     <div className="text-xs text-orange-700">Need Improvement</div>
                     <div className="text-sm font-semibold text-orange-900">
-                      {projects.filter((p, i) => i % 3 === 2).length}
+                      {globalStats?.analytics?.quality?.needsImprove || 0}
                     </div>
-                    <div className="text-xs text-orange-600">projects (&lt;60%)</div>
+                    <div className="text-xs text-orange-600">projects {'(<60%)'}</div>
                   </div>
                 </div>
               </div>
 
               <div className="pt-3 border-t">
-                <div className="text-sm text-gray-600 mb-3">Benchmarking</div>
-                <div className="space-y-2">
-                  {[
-                    { metric: 'Time-to-Hire', value: '36d', benchmark: '42d', better: true },
-                    { metric: 'Conversion Rate', value: '18%', benchmark: '15%', better: true },
-                    { metric: 'Quality Score', value: '78%', benchmark: '75%', better: true }
-                  ].map(item => (
-                    <div key={item.metric} className="flex items-center justify-between">
-                      <span className="text-xs text-gray-600">{item.metric}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400">{item.benchmark}</span>
-                        <span className="text-xs text-gray-500">→</span>
-                        <span className={`text-xs font-medium ${item.better ? 'text-emerald-600' : 'text-orange-600'}`}>
-                          {item.value}
-                        </span>
-                        {item.better && <TrendingUp size={12} className="text-emerald-600" />}
-                      </div>
+                <div className="text-sm text-gray-600 mb-3">Project Health</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-emerald-50 rounded-lg p-2">
+                    <div className="text-xs text-emerald-700">On Track</div>
+                    <div className="text-sm font-semibold text-emerald-900">
+                      {globalStats?.analytics?.health?.onTrack || 0}
                     </div>
-                  ))}
+                    <div className="text-xs text-emerald-600">projects</div>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg p-2">
+                    <div className="text-xs text-orange-700">At Risk</div>
+                    <div className="text-sm font-semibold text-orange-900">
+                      {globalStats?.analytics?.health?.atRisk || 0}
+                    </div>
+                    <div className="text-xs text-orange-600">projects</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1147,7 +1201,9 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Overall Conversion Rate</span>
                   <span className="text-lg font-semibold text-gray-900">
-                    {((Math.floor(selectedProject.applicantsCount * 0.18) / selectedProject.applicantsCount) * 100).toFixed(1)}%
+                    {selectedProject.applicantsCount > 0
+                      ? ((Math.floor(selectedProject.applicantsCount * 0.18) / selectedProject.applicantsCount) * 100).toFixed(1)
+                      : "0.0"}%
                   </span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -1183,7 +1239,9 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                   </span>
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {((Math.floor(selectedProject.applicantsCount * 0.08) / selectedProject.applicantsCount) * 100).toFixed(1)}% of assessed candidates
+                  {selectedProject.applicantsCount > 0
+                    ? ((Math.floor(selectedProject.applicantsCount * 0.08) / selectedProject.applicantsCount) * 100).toFixed(1)
+                    : "0.0"}% of assessed candidates
                 </p>
               </div>
             </div>
@@ -1575,7 +1633,7 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                     </td>
                     <td className="p-4">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                        {position.candidatesCount}
+                        {position.applicantsCount}
                       </span>
                     </td>
                     <td className="p-4">

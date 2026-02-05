@@ -21,19 +21,18 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
   const [closedPositions, setClosedPositions] = useState<ClosedPosition[]>([]);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchProjects = async () => {
       try {
         setIsLoading(true);
-        const data = await api.admin.getClosedPositions();
-        setClosedProjects(data.projects);
-        setClosedPositions(data.positions);
+        const data = await api.admin.getArchivedProjects();
+        setClosedProjects(data);
       } catch (error) {
-        console.error("Error loading closed positions:", error);
+        console.error("Error loading archived projects:", error);
       } finally {
         setIsLoading(false);
       }
     };
-    fetchData();
+    fetchProjects();
   }, []);
 
   if (isLoading) {
@@ -139,9 +138,18 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                         key={project.id}
                         className={`border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors cursor-pointer ${index === closedProjects.length - 1 ? 'border-b-0' : ''
                           }`}
-                        onClick={() => {
-                          setSelectedProject(project);
-                          setViewMode('positions');
+                        onClick={async () => {
+                          setIsLoading(true);
+                          try {
+                            const positions = await api.admin.getArchivedPositions(project.id);
+                            setClosedPositions(positions);
+                            setSelectedProject(project);
+                            setViewMode('positions');
+                          } catch (error) {
+                            console.error("Error loading archived positions:", error);
+                          } finally {
+                            setIsLoading(false);
+                          }
                         }}
                       >
                         <td className="p-4">
@@ -172,10 +180,19 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                         <td className="p-4">
                           <button
                             className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
-                              setSelectedProject(project);
-                              setViewMode('positions');
+                              setIsLoading(true);
+                              try {
+                                const positions = await api.admin.getArchivedPositions(project.id);
+                                setClosedPositions(positions);
+                                setSelectedProject(project);
+                                setViewMode('positions');
+                              } catch (error) {
+                                console.error("Error loading archived positions:", error);
+                              } finally {
+                                setIsLoading(false);
+                              }
                             }}
                           >
                             <Eye size={16} className="text-[#6366f1]" />
@@ -270,9 +287,27 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                         key={position.id}
                         className={`border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors cursor-pointer ${index === getPositionsForProject(selectedProject.projectName).length - 1 ? 'border-b-0' : ''
                           }`}
-                        onClick={() => {
-                          setSelectedPosition(position);
-                          setViewMode('details');
+                        onClick={async () => {
+                          setIsLoading(true);
+                          try {
+                            const details = await api.admin.getPositionArchiveDetails(position.id);
+                            setSelectedPosition({
+                              ...position,
+                              jobTitle: details.jobTitle,
+                              closureStatus: details.closureStatus,
+                              candidatesCount: details.totalCandidates,
+                              groupsCreated: details.groupsCreated,
+                              assessmentsPassed: details.assessmentsPassed,
+                              aiInterviewsPassed: details.aiInterviewsPassed,
+                              liveInterviewsPassed: details.liveInterviewsPassed,
+                              selectedCandidates: details.hiredCandidate ? [details.hiredCandidate] : []
+                            });
+                            setViewMode('details');
+                          } catch (error) {
+                            console.error("Error loading position archive details:", error);
+                          } finally {
+                            setIsLoading(false);
+                          }
                         }}
                       >
                         <td className="p-4">
@@ -307,10 +342,28 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                         <td className="p-4">
                           <button
                             className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
-                              setSelectedPosition(position);
-                              setViewMode('details');
+                              setIsLoading(true);
+                              try {
+                                const details = await api.admin.getPositionArchiveDetails(position.id);
+                                setSelectedPosition({
+                                  ...position,
+                                  jobTitle: details.jobTitle,
+                                  closureStatus: details.closureStatus,
+                                  candidatesCount: details.totalCandidates,
+                                  groupsCreated: details.groupsCreated,
+                                  assessmentsPassed: details.assessmentsPassed,
+                                  aiInterviewsPassed: details.aiInterviewsPassed,
+                                  liveInterviewsPassed: details.liveInterviewsPassed,
+                                  selectedCandidates: details.hiredCandidate ? [details.hiredCandidate] : []
+                                });
+                                setViewMode('details');
+                              } catch (error) {
+                                console.error("Error loading position archive details:", error);
+                              } finally {
+                                setIsLoading(false);
+                              }
                             }}
                           >
                             <Eye size={16} className="text-[#6366f1]" />

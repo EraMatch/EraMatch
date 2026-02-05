@@ -12,8 +12,9 @@ from app.core.config import settings
 # Create async engine
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
+    echo=False,  # Set to False to disable query logging and improve performance
     future=True,
+    connect_args={"statement_cache_size": 0},
 )
 
 # Session factory

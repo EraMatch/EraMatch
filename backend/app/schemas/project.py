@@ -4,7 +4,7 @@ Project and position schemas.
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ProjectCreate(BaseModel):
@@ -25,14 +25,32 @@ class ProjectUpdate(BaseModel):
 class ProjectResponse(BaseModel):
     """Project response."""
     id: UUID
-    name: str
+    project_name: str = Field(alias="name", serialization_alias="projectName")
     description: str | None
     status: str
     target_hire_count: int
-    created_at: datetime
+    created_at: datetime = Field(serialization_alias="openDate")
     
     class Config:
         from_attributes = True
+        populate_by_name = True
+
+
+class ProjectListResponse(BaseModel):
+    """Project list response with aggregated counts for dashboard."""
+    id: UUID
+    projectName: str = Field(alias="name", serialization_alias="projectName")
+    description: str | None
+    status: str
+    target_hire_count: int
+    openDate: datetime = Field(alias="created_at", serialization_alias="openDate")
+    positionsCount: int = Field(default=0)
+    applicantsCount: int = Field(default=0)
+    subGroupsCount: int = Field(default=0)
+    
+    class Config:
+        from_attributes = True
+        populate_by_name = True
 
 
 class PositionCreate(BaseModel):
@@ -61,17 +79,79 @@ class PositionUpdate(BaseModel):
 
 class PositionResponse(BaseModel):
     """Position response."""
-    id: UUID
+    id: UUID = Field(alias="position_id", serialization_alias="id")
     project_id: UUID
-    job_title: str
-    job_description: str
-    required_skills: list[str]
-    experience_level: str | None
-    work_type: str | None
-    salary_min: float | None
-    salary_max: float | None
+    job_title: str = Field(serialization_alias="jobTitle")
+    job_description: str | None = Field(default=None, serialization_alias="jobDescription")
+    required_skills: list = Field(default_factory=list, serialization_alias="requiredSkills")
+    experience_level: str | None = Field(default=None, serialization_alias="experienceLevel")
+    work_type: str | None = Field(default=None, serialization_alias="workType")
+    salary_min: float | None = Field(default=None, serialization_alias="salaryMin")
+    salary_max: float | None = Field(default=None, serialization_alias="salaryMax")
     status: str
-    created_at: datetime
+    created_at: datetime | None = None
     
+    # Enrichment fields for delegation
+    assignedHR: str | None = None
+    assignedTechnicalRecruiter: str | None = None
+    candidatesCount: int = 0
+    applicantsCount: int = 0
+    department: str = "Technical" # Mock or fetch from dept table
+
     class Config:
         from_attributes = True
+        populate_by_name = True
+
+
+class ProjectSummaryResponse(BaseModel):
+    openPositions: int
+    totalApplicants: int
+    subGroups: int
+    avgTimeToFill: float
+
+class InsightScores(BaseModel):
+    assessment: float
+    interview: float
+
+class PositionInsightsResponse(BaseModel):
+    conversion: float
+    qualityScore: float
+    scores: InsightScores
+    integrityIssues: int
+
+class PositionGroupResponse(BaseModel):
+    groupID: UUID
+    groupName: str
+    candidatesCount: int
+    status: str
+    createdDate: datetime
+
+class GroupAnalysisResponse(BaseModel):
+    matchAccuracy: float
+    totalCandidates: int
+    activePhases: int
+    integrityScore: float
+
+class TechStats(BaseModel):
+    avgScore: float
+    passRate: float
+    completed: int = 0
+
+class AIStats(BaseModel):
+    avgScore: float
+    avgConfidence: float = 0.0
+    sentimentPositive: int = 0
+    sentimentNeutral: int = 0
+    sentimentNegative: int = 0
+    completed: int = 0
+    passRate: float = 0.0
+
+class TechnicalAIResponse(BaseModel):
+    tech: TechStats
+    ai: AIStats
+
+class RiskBreakdownResponse(BaseModel):
+    high: int
+    medium: int
+    low: int
+    cheatingDetected: int = 0

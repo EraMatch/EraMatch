@@ -1,6 +1,9 @@
 import { createBrowserRouter, useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import React from 'react';
+import { Toaster } from 'sonner';
 import { AdminLoginPage } from './components/admin/AdminLoginPage';
+import { ForgotPasswordPage } from './components/admin/ForgotPasswordPage';
+import { ResetPasswordPage } from './components/admin/ResetPasswordPage';
 import { RecruiterLoginPage } from './components/recruiter/auth/RecruiterLoginPage';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminSettings } from './components/admin/AdminSettings';
@@ -41,6 +44,7 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
             <AdminSidebar />
             <div className="ml-20">
                 <main>{children}</main>
+                <Toaster richColors position="top-right" />
             </div>
         </div>
     );
@@ -52,6 +56,7 @@ const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
             <Sidebar />
             <div className="ml-[96px] transition-all duration-300">
                 <main>{children}</main>
+                <Toaster richColors position="top-right" />
             </div>
         </div>
     );
@@ -199,7 +204,23 @@ export const router = createBrowserRouter([
     // Admin Routes
     {
         path: "/admin/login",
-        element: <AdminLoginPage onBack={() => window.location.href = '/'} onSignIn={() => window.location.href = '/admin/dashboard'} />,
+        element: (
+            <AdminLoginPage
+                onBack={() => window.location.href = '/'}
+                onSignIn={() => window.location.href = '/admin/dashboard'}
+                onForgotPassword={() => window.location.href = '/admin/forgot-password'}
+            />
+        ),
+        errorElement: <ErrorPage />,
+    },
+    {
+        path: "/admin/forgot-password",
+        element: <ForgotPasswordPage onBack={() => window.location.href = '/admin/login'} />,
+        errorElement: <ErrorPage />,
+    },
+    {
+        path: "/admin/reset-password",
+        element: <ResetPasswordPage onBack={() => window.location.href = '/admin/login'} />,
         errorElement: <ErrorPage />,
     },
     {

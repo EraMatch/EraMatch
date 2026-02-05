@@ -1,17 +1,18 @@
 export interface JobPosition {
-    id: number;
+    id: string;
     jobTitle: string;
     department: string;
     assignedHR?: string;
     assignedTechnicalRecruiter?: string;
     applicantsCount: number;
+    candidatesCount: number;
     status: 'Open' | 'Interview' | 'Closed' | 'On Hold' | 'Active';
-    projectId?: number;
+    projectId?: string;
     description?: string;
 }
 
 export interface Project {
-    id: number;
+    id: string;
     projectName: string;
     positionsCount: number;
     applicantsCount: number;
@@ -21,7 +22,7 @@ export interface Project {
 }
 
 export interface PositionGroup {
-    id: number;
+    id: string;
     groupName: string;
     positionTitle: string;
     candidatesCount: number;
@@ -33,7 +34,7 @@ export interface PositionGroup {
 }
 
 export interface SelectedCandidate {
-    id: number;
+    id: string;
     name: string;
     email: string;
     selectionDate: string;
@@ -42,7 +43,7 @@ export interface SelectedCandidate {
 }
 
 export interface ClosedPosition {
-    id: number;
+    id: string;
     jobTitle: string;
     projectName: string;
     closureStatus: 'Filled' | 'Cancelled' | 'On Hold';
@@ -66,10 +67,11 @@ export interface ClosedProject {
 }
 
 export interface Member {
-    id: number;
+    id: string;
     name: string;
     email: string;
     role: string;
+    status: string;
     position: string;
     department: string;
     joinDate: string;
