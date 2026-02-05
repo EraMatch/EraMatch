@@ -16,7 +16,7 @@ from app.schemas.admin import (
     PaymentMethodCreate, SubscriptionUpgradeRequest
 )
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from app.core.security import hash_password
 import secrets
@@ -1257,6 +1257,17 @@ class AdminService:
         """Fetch subscription plans from DB and calculate current usage with safe fallbacks."""
         org_id = self.organization_id
 
+        fallback_plans = [
+            {
+                "id": "professional",
+                "name": "Professional",
+                "price": 299.0,
+                "features": ["Unlimited Positions", "Advanced Analytics", "Priority Support"],
+                "limits": {},
+                "recommended": True
+            }
+        ]
+
         
         default_usage = {
             "activePositions": 0,
@@ -1311,7 +1322,7 @@ class AdminService:
             if org:
                 # Calculate next billing date
                 if org.created_at:
-                    now = datetime.utcnow()
+                    now = datetime.now(timezone.utc)
                     days_since = (now - org.created_at).days
                     # Assume 30-day billing cycle for now
                     cycle_days = 30
