@@ -180,10 +180,7 @@ class RecruiterService:
             query = query.offset(skip).limit(limit)
             result = await self.session.execute(query)
             rows = result.all()
-            
-            # Fetch HR and Tech Recruiters in batch if needed? 
-            # For now, let's keep it simple but correct.
-            
+                        
             enriched = []
             for pos, cand_count in rows:
                 pid = pos.id
@@ -423,7 +420,6 @@ class RecruiterService:
     async def get_group_analysis(self, group_id: UUID) -> GroupAnalysisResponse:
         """Get high-level analysis for a candidate group."""
         try:
-            # Match Accuracy: Use random mock or calc from scores if possible
             match_acc = 92.5 # Mock
             
             # Total Candidates: Count apps in this group (via stage progress)
@@ -434,11 +430,11 @@ class RecruiterService:
             )
             total = res_count.scalar() or 0
             
-            # Active Phases: Mock
-            active_phases = 2 
+            # Active Phases: 
+            active_phases = 2 # Mock
             
-            # Integrity: Mock
-            integrity = 98.0
+            # Integrity:
+            integrity = 98.0 # Mock
             
             return GroupAnalysisResponse(
                 matchAccuracy=match_acc,
