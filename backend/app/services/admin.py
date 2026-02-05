@@ -428,16 +428,6 @@ class AdminService:
                     exportData=False
                 )
             )
-            # The following lines were part of the instruction but are syntactically incorrect in this context.
-            # They appear to be intended for a different function or a different part of the code.
-            # result.append(PositionGroupResponse(
-            # groupID=gid,
-            # groupName=g.group_name,
-            # candidatesCount=count,
-            # status=g.status,
-            # createdDate=g.created_at
-            # ))
-            # )
 
     async def update_member_privileges(self, user_id: UUID, permissions: MemberPermissions):
         """Update permission flags for a user."""
