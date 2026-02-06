@@ -26,11 +26,25 @@ class QualityMetrics(BaseModel):
     high: int
     needsImprove: int
 
+class IntegrityStats(BaseModel):
+    cheatingDetected: int
+    highRisk: int
+    mediumRisk: int
+    lowRisk: int
+
+class StageTiming(BaseModel):
+    stage: str
+    days: int
+    target: int
+    status: str  # 'good' | 'slow'
+
 class HealthAnalyticsResponse(BaseModel):
     """Response schema for dashboard health & analytics."""
     health: HealthMetrics
     velocity: float
     quality: QualityMetrics
+    integrity: IntegrityStats
+    stageTiming: list[StageTiming]
 
 class PaymentMethodResponse(BaseModel):
     """Response schema for payment method details."""
