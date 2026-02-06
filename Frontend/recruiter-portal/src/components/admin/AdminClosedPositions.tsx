@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Eye, ArrowUpDown, Calendar, Users, FileText, CheckCircle, XCircle, Clock, Briefcase, Award, TrendingUp, Loader2 } from 'lucide-react';
 import { Card } from '../ui/card';
 import { api, ClosedProject, ClosedPosition } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminClosedPositionsProps {
   onSignOut: () => void;
@@ -74,11 +75,14 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
       {/* Projects View */}
       {viewMode === 'projects' && (
         <div>
-          <div className="mb-8">
-            <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Closed Projects Archive</h1>
-            <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-              Browse closed projects and view position archives
-            </p>
+          <div className="mb-8 flex items-start justify-between">
+            <div>
+              <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Closed Projects Archive</h1>
+              <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                Browse closed projects and view position archives
+              </p>
+            </div>
+            <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
           </div>
 
           <div className="bg-white rounded-3xl p-6 shadow-sm">
@@ -214,20 +218,23 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
       {/* Positions View */}
       {viewMode === 'positions' && selectedProject && (
         <div>
-          <div className="mb-6 flex items-center gap-3">
-            <button
-              onClick={() => {
-                setViewMode('projects');
-                setSelectedProject(null);
-              }}
-              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
-            >
-              <ArrowLeft size={20} />
-            </button>
-            <div>
-              <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Project Archive: {selectedProject.projectName}</h1>
-              <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Select a position to view detailed archive data</p>
+          <div className="mb-6 flex items-start justify-between">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setViewMode('projects');
+                  setSelectedProject(null);
+                }}
+                className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                <ArrowLeft size={20} />
+              </button>
+              <div>
+                <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Project Archive: {selectedProject.projectName}</h1>
+                <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Select a position to view detailed archive data</p>
+              </div>
             </div>
+            <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
           </div>
 
           <div className="bg-white rounded-3xl p-6 shadow-sm">
@@ -385,20 +392,23 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
       {/* Archive Details View */}
       {viewMode === 'details' && selectedPosition && selectedProject && (
         <div>
-          <div className="mb-6 flex items-center gap-3">
-            <button
-              onClick={() => {
-                setViewMode('positions');
-                setSelectedPosition(null);
-              }}
-              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
-            >
-              <ArrowLeft size={20} />
-            </button>
-            <div>
-              <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Position Archive: {selectedPosition.jobTitle}</h1>
-              <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Detailed closure information and statistics</p>
+          <div className="mb-6 flex items-start justify-between">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setViewMode('positions');
+                  setSelectedPosition(null);
+                }}
+                className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                <ArrowLeft size={20} />
+              </button>
+              <div>
+                <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Position Archive: {selectedPosition.jobTitle}</h1>
+                <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Detailed closure information and statistics</p>
+              </div>
             </div>
+            <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
           </div>
 
           <div className="grid grid-cols-2 gap-6">

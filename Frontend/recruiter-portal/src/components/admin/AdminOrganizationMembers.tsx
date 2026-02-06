@@ -9,6 +9,7 @@ import { EditAccessPrivilegesModal } from '../recruiter/groups/EditAccessPrivile
 
 import { toast } from 'sonner';
 import { api, Member } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminOrganizationMembersProps {
   onSignOut: () => void;
@@ -175,9 +176,12 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
   return (
     <div className="px-12 py-8">
       {/* Page Header */}
-      <div className="mb-8">
-        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Organization Members</h1>
-        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Overview of your organization's team and access</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Organization Members</h1>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Overview of your organization's team and access</p>
+        </div>
+        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
       {/* Stats Cards */}

@@ -4,6 +4,7 @@ import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api, JobPosition, Project } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminRecruiterDelegationProps {
   onSignOut: () => void;
@@ -132,11 +133,14 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
 
   return (
     <div className="px-12 py-8">
-      <div className="mb-8">
-        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Recruiter Delegation</h1>
-        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-          Assign and manage HR and Technical Recruiters for each job position
-        </p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Recruiter Delegation</h1>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+            Assign and manage HR and Technical Recruiters for each job position
+          </p>
+        </div>
+        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
       {/* Projects Table View */}

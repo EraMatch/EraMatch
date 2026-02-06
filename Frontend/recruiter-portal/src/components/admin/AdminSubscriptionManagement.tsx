@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminSubscriptionManagementProps {
   onSignOut: () => void;
@@ -135,9 +136,12 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
   return (
     <div className="px-12 py-8">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Subscription Management</h1>
-        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your organization's subscription plan</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Subscription Management</h1>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your organization's subscription plan</p>
+        </div>
+        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
       {/* Current Plan Card */}

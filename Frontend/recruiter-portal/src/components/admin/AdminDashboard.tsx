@@ -3,6 +3,7 @@ import { Eye, ArrowUpDown, X, TrendingUp, TrendingDown, AlertTriangle, ArrowLeft
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api, JobPosition, Project, PositionGroup } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminDashboardProps {
   onSignOut: () => void;
@@ -207,20 +208,24 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
     return (
       <div className="px-12 py-8">
         {/* Header with Back Button */}
-        <div className="mb-8">
-          <button
-            onClick={() => setViewMode('groups')}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-4"
-          >
-            <ArrowLeft size={20} />
-            <span className="font-['Arimo',sans-serif] text-[14px]">Back to Groups</span>
-          </button>
+        {/* Header with Back Button */}
+        <div className="mb-8 flex items-start justify-between">
           <div>
-            <h1 className="text-gray-900 text-3xl mb-2">Group Insights</h1>
-            <p className="text-gray-500">
-              {selectedGroup.groupName} • {selectedGroup.positionTitle}
-            </p>
+            <button
+              onClick={() => setViewMode('groups')}
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-4"
+            >
+              <ArrowLeft size={20} />
+              <span className="font-['Arimo',sans-serif] text-[14px]">Back to Groups</span>
+            </button>
+            <div>
+              <h1 className="text-gray-900 text-3xl mb-2">Group Insights</h1>
+              <p className="text-gray-500">
+                {selectedGroup.groupName} • {selectedGroup.positionTitle}
+              </p>
+            </div>
           </div>
+          <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
         </div>
 
         {/* Overview Stats Grid */}
@@ -902,28 +907,31 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
   return (
     <div className="px-12 py-8">
       {/* Context-Aware Header */}
-      <div className="mb-8">
-        {(viewMode === 'positions' || viewMode === 'groups') && (
-          <button
-            onClick={() => {
-              if (viewMode === 'groups') {
-                setViewMode('positions');
-                setSelectedPositionForGroups(null);
-              } else if (viewMode === 'positions') {
-                setViewMode('dashboard');
-                setSelectedProject(null);
-              }
-            }}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-4"
-          >
-            <ArrowLeft size={20} />
-            <span className="font-['Arimo',sans-serif] text-[14px]">
-              {viewMode === 'groups' ? 'Back to Positions' : 'Back to Projects'}
-            </span>
-          </button>
-        )}
-        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">{dashboardMetrics.title}</h1>
-        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">{dashboardMetrics.subtitle}</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          {(viewMode === 'positions' || viewMode === 'groups') && (
+            <button
+              onClick={() => {
+                if (viewMode === 'groups') {
+                  setViewMode('positions');
+                  setSelectedPositionForGroups(null);
+                } else if (viewMode === 'positions') {
+                  setViewMode('dashboard');
+                  setSelectedProject(null);
+                }
+              }}
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-4"
+            >
+              <ArrowLeft size={20} />
+              <span className="font-['Arimo',sans-serif] text-[14px]">
+                {viewMode === 'groups' ? 'Back to Positions' : 'Back to Projects'}
+              </span>
+            </button>
+          )}
+          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">{dashboardMetrics.title}</h1>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">{dashboardMetrics.subtitle}</p>
+        </div>
+        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
       {/* Context-Aware Stats Cards */}
@@ -1261,12 +1269,12 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Integrity Issues</span>
                   <span className="text-lg font-semibold text-orange-600">
-                    {globalStats?.analytics?.quality?.needsImprove || 0}
+                    {globalStats?.analytics?.integrity?.cheatingDetected || 0}
                   </span>
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
                   {selectedProject.applicantsCount > 0
-                    ? ((globalStats?.analytics?.quality?.needsImprove || 0) / selectedProject.applicantsCount * 100).toFixed(1)
+                    ? ((globalStats?.analytics?.integrity?.cheatingDetected || 0) / selectedProject.applicantsCount * 100).toFixed(1)
                     : "0.0"}% of assessed candidates
                 </p>
               </div>
@@ -1294,12 +1302,12 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
               <div className="pt-3 border-t">
                 <div className="text-sm text-gray-600 mb-3">Stage Timing</div>
                 <div className="space-y-2">
-                  {[
+                  {(globalStats?.analytics?.stageTiming || [
                     { stage: 'Screening', days: 3, target: 3, status: 'good' },
                     { stage: 'Assessment', days: 7, target: 5, status: 'slow' },
                     { stage: 'Interview', days: 12, target: 7, status: 'slow' },
                     { stage: 'Offer', days: 4, target: 5, status: 'good' }
-                  ].map(item => (
+                  ]).map((item: any) => (
                     <div key={item.stage} className="flex items-center justify-between">
                       <span className="text-xs text-gray-600">{item.stage}</span>
                       <div className="flex items-center gap-2">

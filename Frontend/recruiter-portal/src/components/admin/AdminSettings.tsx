@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { adminService } from '../../services/admin.service';
 import { authService } from '../../services/auth.service';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminSettingsProps {
   onSignOut: () => void;
@@ -172,9 +173,12 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
 
   return (
     <div className="px-12 py-8">
-      <div className="mb-8">
-        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Settings</h1>
-        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your account settings and preferences</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Settings</h1>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your account settings and preferences</p>
+        </div>
+        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
       <div className="space-y-6">
