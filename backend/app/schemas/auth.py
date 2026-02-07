@@ -1,6 +1,4 @@
-"""
-Authentication schemas.
-"""
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
@@ -39,6 +37,35 @@ class UserResponse(BaseModel):
     last_name: str
     role: str
     organization_id: UUID
+    created_at: datetime | None = None
+    phone_number: str | None = None
+    status: str | None = "active"
     
     class Config:
         from_attributes = True
+
+
+class AdminLoginResponseUser(BaseModel):
+    """Admin user info in login response."""
+    userID: UUID
+    organizationID: UUID
+    fullName: str
+    role: str = "Admin"
+
+
+class AdminLoginResponse(BaseModel):
+    """Admin login response."""
+    success: bool
+    token: str
+    user: AdminLoginResponseUser
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Forgot password request body."""
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    """Reset password request body."""
+    token: str
+    password: str

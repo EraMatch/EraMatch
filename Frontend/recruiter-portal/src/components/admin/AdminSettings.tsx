@@ -3,19 +3,26 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Switch } from '../ui/switch';
-import { Bell, Mail, Lock, User, Globe } from 'lucide-react';
-import { useState } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '../ui/dialog';
+import { Bell, Mail, Lock, User, Globe, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
+import { adminService } from '../../services/admin.service';
+import { authService } from '../../services/auth.service';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminSettingsProps {
   onSignOut: () => void;
 }
 
 export function AdminSettings({ onSignOut }: AdminSettingsProps) {
+  const [isLoading, setIsLoading] = useState(true);
+
   // Profile state
-  const [firstName, setFirstName] = useState('Admin');
-  const [lastName, setLastName] = useState('User');
-  const [email, setEmail] = useState('admin@eramatch.com');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState('');
 
   // Notification state
   const [emailNotifications, setEmailNotifications] = useState(true);
@@ -27,26 +34,151 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
   const [twoFactorAuth, setTwoFactorAuth] = useState(false);
   const [sessionTimeout, setSessionTimeout] = useState(true);
 
-
-
   // Organization state
-  const [orgName, setOrgName] = useState('ERAMATCH');
-  const [orgEmail, setOrgEmail] = useState('contact@eramatch.com');
+  const [orgName, setOrgName] = useState('');
+  const [orgEmail, setOrgEmail] = useState('');
   const [timezone, setTimezone] = useState('UTC-08:00 (Pacific Time)');
 
-  const handleSaveProfile = () => {
-    toast.success('Profile settings saved successfully!');
+  // Change Password State
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      setIsLoading(true);
+      const data = await adminService.getSettings();
+
+      // Profile
+      setFirstName(data.first_name || '');
+      setLastName(data.last_name || '');
+      setEmail(data.email || '');
+      setRole(data.role || 'Admin');
+
+      // Organization
+      setOrgName(data.organization_name || '');
+      setOrgEmail(data.organization_email || '');
+      setTimezone(data.timezone || 'UTC-08:00 (Pacific Time)');
+
+      // Preferences (Notifications & Security)
+      setEmailNotifications(data.email_notifications ?? true);
+      setNewMemberRequests(data.new_member_requests ?? true);
+      setProjectUpdates(data.project_updates ?? true);
+      setWeeklySummary(data.weekly_summary ?? false);
+      setTwoFactorAuth(data.two_factor_auth ?? false);
+      setSessionTimeout(data.session_timeout ?? true);
+
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+      toast.error('Failed to load settings. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleSaveOrganization = () => {
-    toast.success('Organization settings updated successfully!');
+  const handleSaveProfile = async () => {
+    try {
+      await adminService.updateProfile({
+        first_name: firstName,
+        last_name: lastName,
+        email
+      });
+      toast.success('Profile settings saved successfully!');
+    } catch (error) {
+      console.error('Failed to update profile:', error);
+      toast.error('Failed to update profile.');
+    }
   };
+
+  const handleSaveOrganization = async () => {
+    try {
+      await adminService.updateOrganization({
+        organization_name: orgName,
+        admin_email: orgEmail,
+        timezone
+      });
+      toast.success('Organization settings updated successfully!');
+    } catch (error) {
+      console.error('Failed to update organization:', error);
+      toast.error('Failed to update organization.');
+    }
+  };
+
+  const handleTogglePreference = async (key: string, value: boolean, setter: (val: boolean) => void) => {
+    // Optimistic update
+    setter(value);
+
+    // In a real implementation with per-user prefs column, we'd send this to API
+    // For now, we mock the persistence success or send to the generic updatePreferences endpoint
+    try {
+      await adminService.updatePreferences({ [key]: value });
+      // Silet success for toggles
+    } catch (error) {
+      // Revert on failure
+      setter(!value);
+      toast.error('Failed to update preference.');
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      toast.error('Please fill in all fields.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      toast.error('New passwords do not match.');
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      toast.error('Password must be at least 8 characters long.');
+      return;
+    }
+
+    try {
+      setIsChangingPassword(true);
+      await authService.changePassword(oldPassword, newPassword, confirmPassword);
+      toast.success('Password changed successfully! Please log in again.');
+      setIsPasswordModalOpen(false);
+
+      // Clear fields
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+
+      // Optionally sign out
+      // onSignOut(); 
+    } catch (error: any) {
+      console.error('Failed to change password:', error);
+      toast.error(error.message || 'Failed to change password.');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex h-96 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-[#6366F1]" />
+      </div>
+    );
+  }
 
   return (
     <div className="px-12 py-8">
-      <div className="mb-8">
-        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Settings</h1>
-        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your account settings and preferences</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Settings</h1>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your account settings and preferences</p>
+        </div>
+        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
       <div className="space-y-6">
@@ -102,8 +234,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
               <Label htmlFor="role">Role</Label>
               <Input
                 id="role"
-                placeholder="Administrator"
-                defaultValue="System Administrator"
+                value={role}
                 disabled
                 className="rounded-lg bg-gray-50"
               />
@@ -139,7 +270,10 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
                 <p className="text-gray-700">Email Notifications</p>
                 <p className="text-gray-500 text-sm">Receive notifications via email</p>
               </div>
-              <Switch checked={emailNotifications} onCheckedChange={setEmailNotifications} />
+              <Switch
+                checked={emailNotifications}
+                onCheckedChange={(val) => handleTogglePreference('email_notifications', val, setEmailNotifications)}
+              />
             </div>
 
             <div className="flex items-center justify-between py-3 border-b border-gray-100">
@@ -147,7 +281,10 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
                 <p className="text-gray-700">New Member Requests</p>
                 <p className="text-gray-500 text-sm">Get notified when new members request to join</p>
               </div>
-              <Switch checked={newMemberRequests} onCheckedChange={setNewMemberRequests} />
+              <Switch
+                checked={newMemberRequests}
+                onCheckedChange={(val) => handleTogglePreference('new_member_requests', val, setNewMemberRequests)}
+              />
             </div>
 
             <div className="flex items-center justify-between py-3 border-b border-gray-100">
@@ -155,7 +292,10 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
                 <p className="text-gray-700">Project Updates</p>
                 <p className="text-gray-500 text-sm">Receive updates about project changes</p>
               </div>
-              <Switch checked={projectUpdates} onCheckedChange={setProjectUpdates} />
+              <Switch
+                checked={projectUpdates}
+                onCheckedChange={(val) => handleTogglePreference('project_updates', val, setProjectUpdates)}
+              />
             </div>
 
             <div className="flex items-center justify-between py-3">
@@ -163,7 +303,10 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
                 <p className="text-gray-700">Weekly Summary</p>
                 <p className="text-gray-500 text-sm">Get a weekly summary of activities</p>
               </div>
-              <Switch checked={weeklySummary} onCheckedChange={setWeeklySummary} />
+              <Switch
+                checked={weeklySummary}
+                onCheckedChange={(val) => handleTogglePreference('weekly_summary', val, setWeeklySummary)}
+              />
             </div>
           </div>
         </Card>
@@ -186,7 +329,10 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
                 <p className="text-gray-700">Two-Factor Authentication</p>
                 <p className="text-gray-500 text-sm">Add an extra layer of security</p>
               </div>
-              <Switch checked={twoFactorAuth} onCheckedChange={setTwoFactorAuth} />
+              <Switch
+                checked={twoFactorAuth}
+                onCheckedChange={(val) => handleTogglePreference('two_factor_auth', val, setTwoFactorAuth)}
+              />
             </div>
 
             <div className="flex items-center justify-between py-3 border-b border-gray-100">
@@ -194,22 +340,23 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
                 <p className="text-gray-700">Session Timeout</p>
                 <p className="text-gray-500 text-sm">Auto-logout after 30 minutes of inactivity</p>
               </div>
-              <Switch checked={sessionTimeout} onCheckedChange={setSessionTimeout} />
+              <Switch
+                checked={sessionTimeout}
+                onCheckedChange={(val) => handleTogglePreference('session_timeout', val, setSessionTimeout)}
+              />
             </div>
 
             <div className="py-3">
               <Button
                 variant="outline"
                 className="rounded-full px-6"
-                onClick={() => toast.info('Password change functionality coming soon!')}
+                onClick={() => setIsPasswordModalOpen(true)}
               >
                 Change Password
               </Button>
             </div>
           </div>
         </Card>
-
-
 
         {/* Organization Settings */}
         <Card className="p-6">
@@ -276,6 +423,68 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
           </div>
         </Card>
       </div>
+
+      {/* Change Password Modal */}
+      <Dialog open={isPasswordModalOpen} onOpenChange={setIsPasswordModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change Password</DialogTitle>
+            <DialogDescription>
+              Update your password securely.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="oldPassword">Old Password</Label>
+              <Input
+                id="oldPassword"
+                type="password"
+                value={oldPassword}
+                onChange={(e) => setOldPassword(e.target.value)}
+                placeholder="Enter current password"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="newPassword">New Password</Label>
+              <Input
+                id="newPassword"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Enter new password"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Confirm New Password</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Confirm new password"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsPasswordModalOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleChangePassword}
+              disabled={isChangingPassword}
+              className="bg-[#6366F1] hover:bg-[#5558DD] text-white"
+            >
+              {isChangingPassword ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Updating...
+                </>
+              ) : 'Update Password'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }

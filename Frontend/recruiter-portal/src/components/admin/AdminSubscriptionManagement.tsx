@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminSubscriptionManagementProps {
   onSignOut: () => void;
@@ -14,6 +15,7 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
   const [isCardUpdateModalOpen, setIsCardUpdateModalOpen] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isActionLoading, setIsActionLoading] = useState(false);
 
   // Card update form state
   const [cardNumber, setCardNumber] = useState('');
@@ -25,24 +27,29 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
   const [currentPlan, setCurrentPlan] = useState<any>(null);
   const [usage, setUsage] = useState<any>(null);
   const [availablePlans, setAvailablePlans] = useState<any[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<{ brand: string; last4: string; expiry: string } | null>(null);
+
+  const fetchSubscriptionData = async () => {
+    try {
+      setIsLoading(true);
+      const [subscriptionData, paymentData] = await Promise.all([
+        api.admin.getSubscriptionPlans(),
+        api.admin.getPaymentMethod().catch(() => null)
+      ]);
+      setCurrentPlan((subscriptionData as any).currentPlan);
+      setUsage((subscriptionData as any).usage);
+      setAvailablePlans((subscriptionData as any).availablePlans);
+      setPaymentMethod(paymentData);
+    } catch (error) {
+      console.error('Failed to fetch subscription data:', error);
+      toast.error('Failed to load subscription data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Fetch subscription data from API
   useEffect(() => {
-    const fetchSubscriptionData = async () => {
-      try {
-        setIsLoading(true);
-        const data = await api.admin.getSubscriptionPlans();
-        setCurrentPlan(data.currentPlan);
-        setUsage(data.usage);
-        setAvailablePlans(data.availablePlans);
-      } catch (error) {
-        console.error('Failed to fetch subscription data:', error);
-        toast.error('Failed to load subscription data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     fetchSubscriptionData();
   }, []);
 
@@ -55,18 +62,59 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
     setIsCardUpdateModalOpen(true);
   };
 
-  const handleUpgradeConfirm = () => {
+  const handleUpgradeConfirm = async () => {
     if (selectedPlan) {
-      // Update current plan
-      setCurrentPlan({ ...currentPlan, name: selectedPlan.name, price: selectedPlan.price });
-      toast.success(`Upgraded to ${selectedPlan.name} plan`);
-      setIsUpgradeModalOpen(false);
+      try {
+        setIsActionLoading(true);
+        await api.admin.upgradeSubscription(selectedPlan.id);
+        toast.success(`Upgraded to ${selectedPlan.name} plan`);
+        setIsUpgradeModalOpen(false);
+        await fetchSubscriptionData();
+      } catch (error) {
+        console.error('Failed to upgrade plan:', error);
+        toast.error('Failed to upgrade plan. Please try again.');
+      } finally {
+        setIsActionLoading(false);
+      }
     }
   };
 
-  const handleCardUpdateConfirm = () => {
-    toast.success('Card updated successfully');
-    setIsCardUpdateModalOpen(false);
+  const handleCardUpdateConfirm = async () => {
+    if (!cardNumber || !cardExpiry || !cardCVC || !cardName) {
+      toast.error('Please fill in all card details');
+      return;
+    }
+
+    try {
+      setIsActionLoading(true);
+      const last4 = cardNumber.slice(-4);
+      const brand = cardNumber.startsWith('4') ? 'Visa' : 'Mastercard'; // Simple mock brand detection
+
+      await api.admin.addPaymentMethod({
+        brand,
+        last4,
+        expiry: cardExpiry,
+        cardNumber,
+        cvc: cardCVC,
+        cardName
+      });
+
+      toast.success('Payment method updated successfully');
+      setIsCardUpdateModalOpen(false);
+
+      // Clear form
+      setCardNumber('');
+      setCardExpiry('');
+      setCardCVC('');
+      setCardName('');
+
+      await fetchSubscriptionData();
+    } catch (error) {
+      console.error('Failed to update payment method:', error);
+      toast.error('Failed to update payment method. Please try again.');
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
   if (isLoading) {
@@ -88,9 +136,12 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
   return (
     <div className="px-12 py-8">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Subscription Management</h1>
-        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your organization's subscription plan</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Subscription Management</h1>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your organization's subscription plan</p>
+        </div>
+        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
       {/* Current Plan Card */}
@@ -161,7 +212,7 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
           {availablePlans.map((plan: any) => (
             <div
               key={plan.id}
-              className={`bg-white rounded-2xl p-6 shadow-sm border-2 transition-all ${plan.recommended
+              className={`bg-white rounded-2xl p-6 shadow-sm border-2 transition-all flex flex-col ${plan.recommended
                 ? 'border-indigo-600 ring-2 ring-indigo-100'
                 : 'border-gray-200 hover:border-indigo-300'
                 }`}
@@ -174,18 +225,39 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
                 </div>
               </div>
 
-              <ul className="space-y-3 mb-6">
-                {plan.features.map((feature: string, index: number) => (
-                  <li key={index} className="flex items-start gap-2">
-                    <Check size={18} className="text-indigo-600 flex-shrink-0 mt-0.5" />
-                    <span className="text-sm text-gray-600">{feature}</span>
-                  </li>
-                ))}
-              </ul>
+              {/* Features List */}
+              <div className="mb-6 flex-grow">
+                <h4 className="text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wider">Features</h4>
+                <ul className="space-y-3">
+                  {plan.features.map((feature: string, index: number) => (
+                    <li key={index} className="flex items-start gap-2">
+                      <Check size={18} className="text-indigo-600 flex-shrink-0 mt-0.5" />
+                      <span className="text-sm text-gray-600">{feature}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Limits Section */}
+              {plan.limits && (
+                <div className="mb-6 pt-4 border-t border-gray-100">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wider">Plan Limits</h4>
+                  <div className="space-y-2">
+                    {Object.entries(plan.limits).map(([key, value]: [string, any]) => (
+                      <div key={key} className="flex justify-between text-sm">
+                        <span className="text-gray-500">{key.replace('max', '')}</span>
+                        <span className="font-medium text-gray-900">
+                          {value === -1 ? 'Unlimited' : value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <button
                 disabled={plan.name === currentPlan.name}
-                className={`w-full h-12 rounded-lg font-medium transition-all ${plan.name === currentPlan.name
+                className={`w-full h-12 rounded-lg font-medium mt-auto transition-all ${plan.name === currentPlan.name
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   : 'bg-indigo-600 text-white hover:bg-indigo-700 flex items-center justify-center gap-2'
                   }`}
@@ -208,20 +280,32 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
       {/* Payment Method Section */}
       <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-200">
         <h2 className="text-xl font-semibold text-gray-900 mb-4">Payment Method</h2>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
-              <CreditCard size={24} className="text-gray-600" />
+        {paymentMethod ? (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
+                <CreditCard size={24} className="text-gray-600" />
+              </div>
+              <div>
+                <div className="text-sm font-medium text-gray-900">
+                  {paymentMethod.brand} •••• •••• •••• {paymentMethod.last4}
+                </div>
+                <div className="text-sm text-gray-500">Expires {paymentMethod.expiry}</div>
+              </div>
             </div>
-            <div>
-              <div className="text-sm font-medium text-gray-900">•••• •••• •••• 4242</div>
-              <div className="text-sm text-gray-500">Expires 12/2027</div>
-            </div>
+            <button className="h-10 px-6 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium transition-colors" onClick={handleCardUpdate}>
+              Update Card
+            </button>
           </div>
-          <button className="h-10 px-6 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium transition-colors" onClick={handleCardUpdate}>
-            Update Card
-          </button>
-        </div>
+        ) : (
+          <div className="text-center py-8 text-gray-500">
+            <CreditCard size={48} className="mx-auto mb-3 text-gray-300" />
+            <p className="mb-4">No payment method on file</p>
+            <button className="h-10 px-6 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors" onClick={handleCardUpdate}>
+              Add Payment Method
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Upgrade Modal */}
@@ -238,10 +322,12 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
               type="button"
               variant="outline"
               onClick={() => setIsUpgradeModalOpen(false)}
+              disabled={isActionLoading}
             >
               Cancel
             </Button>
-            <Button type="button" onClick={handleUpgradeConfirm}>
+            <Button type="button" onClick={handleUpgradeConfirm} disabled={isActionLoading}>
+              {isActionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Upgrade
             </Button>
           </DialogFooter>
@@ -294,11 +380,13 @@ export function AdminSubscriptionManagement({ onSignOut }: AdminSubscriptionMana
               type="button"
               variant="outline"
               onClick={() => setIsCardUpdateModalOpen(false)}
+              disabled={isActionLoading}
             >
               Cancel
             </Button>
-            <Button type="button" onClick={handleCardUpdateConfirm}>
-              Update Card
+            <Button type="button" onClick={handleCardUpdateConfirm} disabled={isActionLoading}>
+              {isActionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {paymentMethod ? 'Update Card' : 'Add Card'}
             </Button>
           </DialogFooter>
         </DialogContent>

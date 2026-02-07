@@ -3,6 +3,7 @@ import { Eye, ArrowUpDown, X, TrendingUp, TrendingDown, AlertTriangle, ArrowLeft
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api, JobPosition, Project, PositionGroup } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminDashboardProps {
   onSignOut: () => void;
@@ -25,7 +26,7 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [positionGroups, setPositionGroups] = useState<PositionGroup[]>([]);
   const [pipelineData, setPipelineData] = useState<any[]>([]);
-  const [avgTimeToFill, setAvgTimeToFill] = useState(0);
+  const [globalStats, setGlobalStats] = useState<any>(null);
   const [groupAnalytics, setGroupAnalytics] = useState<any>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
 
@@ -35,11 +36,15 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
         setIsLoading(true);
         const stats = await api.admin.getDashboardStats();
 
+        setGlobalStats(stats);
+        console.log('📊 GlobalStats set to:', stats);
+        console.log('📊 Analytics in stats?', stats.analytics);
         setProjects(stats.projects || []);
+        console.log('📋 Projects array:', stats.projects);
+        console.log('📋 First project:', stats.projects?.[0]);
         setPositionGroups(stats.positionGroups || []);
         setJobPositions(stats.jobPositions || []);
         setPipelineData(stats.pipelineData || []);
-        setAvgTimeToFill(stats.avgTimeToFill || 0);
 
       } catch (error) {
         toast.error('Failed to load dashboard data');
@@ -49,6 +54,11 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
     };
     fetchData();
   }, []);
+
+  useEffect(() => {
+    console.log('🔄 GlobalStats changed:', globalStats);
+    console.log('🔄 Analytics available?', globalStats?.analytics);
+  }, [globalStats]);
 
   useEffect(() => {
     const fetchGroupAnalytics = async () => {
@@ -66,6 +76,27 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
     };
     fetchGroupAnalytics();
   }, [viewMode, selectedGroup]);
+
+  // Project-specific pipeline data
+  useEffect(() => {
+    const fetchProjectFunnel = async () => {
+      if (selectedProject) {
+        try {
+          const pipelineParams = await api.admin.getPipelineStats(selectedProject.id);
+          const transformed = api.admin.transformPipelineData(pipelineParams);
+          setPipelineData(transformed);
+        } catch (error) {
+          console.error('Failed to fetch project funnel:', error);
+        }
+      } else {
+        // Reset to global pipeline if no project selected
+        api.admin.getPipelineStats().then(params => {
+          setPipelineData(api.admin.transformPipelineData(params));
+        });
+      }
+    };
+    fetchProjectFunnel();
+  }, [selectedProject]);
 
   if (isLoading) {
     return (
@@ -90,17 +121,17 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
   };
 
   const getStatusBadgeColor = (status: string) => {
-    switch (status) {
-      case 'Open':
-      case 'Active':
+    switch (status?.toLowerCase()) {
+      case 'open':
+      case 'active':
         return 'bg-[#dcfce7] text-[#16a34a]';
-      case 'Interview':
-      case 'Processing':
+      case 'interview':
+      case 'processing':
         return 'bg-[#dbeafe] text-[#2563eb]';
-      case 'Closed':
-      case 'Completed':
+      case 'closed':
+      case 'completed':
         return 'bg-[#f3f4f6] text-[#6b7280]';
-      case 'On Hold':
+      case 'on hold':
         return 'bg-[#fef3c7] text-[#d97706]';
       default:
         return 'bg-[#f3f4f6] text-[#6b7280]';
@@ -110,15 +141,15 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
   const exportPositionInsights = (position: JobPosition) => {
     const csvContent = `Position: ${position.jobTitle}
 Department: ${position.department}
-Total Candidates: ${position.candidatesCount}
+Total Candidates: ${position.applicantsCount}
 Status: ${position.status}
 
 Stage,Count,Percentage
-Applied,${position.candidatesCount},100%
-Assessment,${Math.floor(position.candidatesCount * 0.78)},78%
-Interview,${Math.floor(position.candidatesCount * 0.52)},52%
-Offer,${Math.floor(position.candidatesCount * 0.24)},24%
-Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
+Applied,${position.applicantsCount},100%
+Assessment,${Math.floor(position.applicantsCount * 0.78)},78%
+Interview,${Math.floor(position.applicantsCount * 0.52)},52%
+Offer,${Math.floor(position.applicantsCount * 0.24)},24%
+Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -135,10 +166,38 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
 
   // If viewing group insights, show group-level analytics with phase-specific metrics
   if (viewMode === 'insights' && selectedGroup) {
-    if (loadingAnalytics || !groupAnalytics) {
+    if (loadingAnalytics) {
       return (
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+        </div>
+      );
+    }
+
+    if (!groupAnalytics) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
+          <AlertTriangle className="w-12 h-12 text-amber-500 mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Failed to load analytics</h3>
+          <p className="text-gray-500 mb-6">Unable to fetch insights for this group.</p>
+          <Button
+            onClick={() => {
+              setLoadingAnalytics(true);
+              api.admin.getGroupAnalytics(selectedGroup.id.toString())
+                .then(analytics => setGroupAnalytics(analytics))
+                .catch(() => toast.error('Retry failed'))
+                .finally(() => setLoadingAnalytics(false));
+            }}
+          >
+            Retry
+          </Button>
+          <Button
+            variant="ghost"
+            className="mt-4"
+            onClick={() => setViewMode('groups')}
+          >
+            Back to Groups
+          </Button>
         </div>
       );
     }
@@ -149,20 +208,24 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
     return (
       <div className="px-12 py-8">
         {/* Header with Back Button */}
-        <div className="mb-8">
-          <button
-            onClick={() => setViewMode('groups')}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-4"
-          >
-            <ArrowLeft size={20} />
-            <span className="font-['Arimo',sans-serif] text-[14px]">Back to Groups</span>
-          </button>
+        {/* Header with Back Button */}
+        <div className="mb-8 flex items-start justify-between">
           <div>
-            <h1 className="text-gray-900 text-3xl mb-2">Group Insights</h1>
-            <p className="text-gray-500">
-              {selectedGroup.groupName} • {selectedGroup.positionTitle}
-            </p>
+            <button
+              onClick={() => setViewMode('groups')}
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-4"
+            >
+              <ArrowLeft size={20} />
+              <span className="font-['Arimo',sans-serif] text-[14px]">Back to Groups</span>
+            </button>
+            <div>
+              <h1 className="text-gray-900 text-3xl mb-2">Group Insights</h1>
+              <p className="text-gray-500">
+                {selectedGroup.groupName} • {selectedGroup.positionTitle}
+              </p>
+            </div>
           </div>
+          <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
         </div>
 
         {/* Overview Stats Grid */}
@@ -238,10 +301,10 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
             </div>
             <div className="text-5xl text-gray-900 mb-1">
               {Math.floor((
-                (assessmentData ? assessmentData.completed / totalCandidates : 0) +
-                (aiInterviewData ? aiInterviewData.completed / totalCandidates : 0) +
-                (liveInterviewData ? liveInterviewData.completed / totalCandidates : 0)
-              ) / [selectedGroup.hasAssessment, selectedGroup.hasAIInterview, selectedGroup.hasLiveInterview].filter(Boolean).length * 100)}%
+                (assessmentData && totalCandidates > 0 ? assessmentData.completed / totalCandidates : 0) +
+                (aiInterviewData && totalCandidates > 0 ? aiInterviewData.completed / totalCandidates : 0) +
+                (liveInterviewData && totalCandidates > 0 ? liveInterviewData.completed / totalCandidates : 0)
+              ) / Math.max([selectedGroup.hasAssessment, selectedGroup.hasAIInterview, selectedGroup.hasLiveInterview].filter(Boolean).length, 1) * 100)}%
             </div>
             <div className="text-xs text-emerald-600">On track</div>
           </div>
@@ -740,31 +803,32 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
   const getDashboardMetrics = () => {
     if (viewMode === 'groups' && selectedPositionForGroups) {
       // Group-level context: Show metrics for this position's groups
+      const filteredGroups = positionGroups.filter(g => g.position_id === selectedPositionForGroups.id);
       return {
         title: `${selectedPositionForGroups.jobTitle} Groups`,
         subtitle: `${selectedPositionForGroups.department} Department`,
         stats: [
           {
             label: 'Total Groups',
-            value: positionGroups.length.toString(),
+            value: filteredGroups.length.toString(),
             sublabel: 'active groups',
             icon: <Briefcase className="w-5 h-5 text-indigo-600" />
           },
           {
             label: 'Total Candidates',
-            value: positionGroups.reduce((sum, g) => sum + g.candidatesCount, 0).toString(),
+            value: filteredGroups.reduce((sum, g) => sum + g.candidatesCount, 0).toString(),
             sublabel: 'across all groups',
             icon: <Users className="w-5 h-5 text-purple-600" />
           },
           {
             label: 'Active Groups',
-            value: positionGroups.filter(g => g.status === 'Active').length.toString(),
+            value: filteredGroups.filter(g => g.status?.toLowerCase() === 'active').length.toString(),
             sublabel: 'in progress',
             icon: <Activity className="w-5 h-5 text-emerald-600" />
           },
           {
             label: 'Completed Groups',
-            value: positionGroups.filter(g => g.status === 'Completed').length.toString(),
+            value: filteredGroups.filter(g => g.status?.toLowerCase() === 'completed').length.toString(),
             sublabel: 'finished',
             icon: <CheckCircle className="w-5 h-5 text-amber-600" />
           }
@@ -797,8 +861,8 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
           },
           {
             label: 'Avg. Time',
-            value: '24d',
-            sublabel: 'to first interview',
+            value: `${selectedProject.avgTimeToFill || 0}d`,
+            sublabel: 'to fill position',
             icon: <Clock className="w-5 h-5 text-amber-600" />
           }
         ]
@@ -811,25 +875,25 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
         stats: [
           {
             label: 'Active Projects',
-            value: projects.length.toString(),
+            value: (globalStats?.activeProjects ?? projects.length).toString(),
             sublabel: 'currently running',
             icon: <Briefcase className="w-5 h-5 text-indigo-600" />
           },
           {
             label: 'Total Positions',
-            value: projects.reduce((sum, p) => sum + p.positionsCount, 0).toString(),
+            value: (globalStats?.openPositions ?? projects.reduce((sum, p) => sum + p.positionsCount, 0)).toString(),
             sublabel: 'across all projects',
             icon: <Target className="w-5 h-5 text-purple-600" />
           },
           {
             label: 'Total Applicants',
-            value: projects.reduce((sum, p) => sum + p.applicantsCount, 0).toString(),
+            value: (globalStats?.totalApplicants ?? projects.reduce((sum, p) => sum + p.applicantsCount, 0)).toString(),
             sublabel: 'in pipeline',
             icon: <Users className="w-5 h-5 text-emerald-600" />
           },
           {
             label: 'Avg. Time to Fill',
-            value: `${avgTimeToFill}d`,
+            value: `${Math.round(globalStats?.avgTimeToFill ?? 0)}d`,
             sublabel: 'days',
             icon: <Clock className="w-5 h-5 text-amber-600" />
           }
@@ -843,28 +907,31 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
   return (
     <div className="px-12 py-8">
       {/* Context-Aware Header */}
-      <div className="mb-8">
-        {(viewMode === 'positions' || viewMode === 'groups') && (
-          <button
-            onClick={() => {
-              if (viewMode === 'groups') {
-                setViewMode('positions');
-                setSelectedPositionForGroups(null);
-              } else if (viewMode === 'positions') {
-                setViewMode('dashboard');
-                setSelectedProject(null);
-              }
-            }}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-4"
-          >
-            <ArrowLeft size={20} />
-            <span className="font-['Arimo',sans-serif] text-[14px]">
-              {viewMode === 'groups' ? 'Back to Positions' : 'Back to Projects'}
-            </span>
-          </button>
-        )}
-        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">{dashboardMetrics.title}</h1>
-        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">{dashboardMetrics.subtitle}</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          {(viewMode === 'positions' || viewMode === 'groups') && (
+            <button
+              onClick={() => {
+                if (viewMode === 'groups') {
+                  setViewMode('positions');
+                  setSelectedPositionForGroups(null);
+                } else if (viewMode === 'positions') {
+                  setViewMode('dashboard');
+                  setSelectedProject(null);
+                }
+              }}
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-4"
+            >
+              <ArrowLeft size={20} />
+              <span className="font-['Arimo',sans-serif] text-[14px]">
+                {viewMode === 'groups' ? 'Back to Positions' : 'Back to Projects'}
+              </span>
+            </button>
+          )}
+          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">{dashboardMetrics.title}</h1>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">{dashboardMetrics.subtitle}</p>
+        </div>
+        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
       {/* Context-Aware Stats Cards */}
@@ -952,11 +1019,13 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                     <span className="text-sm text-gray-600">On Track</span>
                   </div>
                   <span className="text-lg font-semibold text-gray-900">
-                    {projects.filter(p => p.positionsCount <= 8).length}
+                    {globalStats?.analytics?.health?.onTrack || 0}
                   </span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${(projects.filter(p => p.positionsCount <= 8).length / projects.length) * 100}%` }} />
+                  <div className="h-full bg-emerald-500 rounded-full" style={{
+                    width: `${((globalStats?.analytics?.health?.onTrack || 0) / Math.max((globalStats?.analytics?.health?.onTrack || 0) + (globalStats?.analytics?.health?.atRisk || 0), 1)) * 100}%`
+                  }} />
                 </div>
               </div>
 
@@ -967,22 +1036,24 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                     <span className="text-sm text-gray-600">At Risk</span>
                   </div>
                   <span className="text-lg font-semibold text-gray-900">
-                    {projects.filter(p => p.positionsCount > 8).length}
+                    {globalStats?.analytics?.health?.atRisk || 0}
                   </span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-orange-500 rounded-full" style={{ width: `${(projects.filter(p => p.positionsCount > 8).length / projects.length) * 100}%` }} />
+                  <div className="h-full bg-orange-500 rounded-full" style={{
+                    width: `${((globalStats?.analytics?.health?.atRisk || 0) / Math.max((globalStats?.analytics?.health?.onTrack || 0) + (globalStats?.analytics?.health?.atRisk || 0), 1)) * 100}%`
+                  }} />
                 </div>
               </div>
 
-              {projects.filter(p => p.positionsCount > 8).length > 0 && (
+              {(globalStats?.analytics?.health?.atRisk || 0) > 0 && (
                 <div className="mt-4 bg-orange-50 border border-orange-200 rounded-lg p-3">
                   <div className="flex items-start gap-2">
                     <AlertTriangle size={14} className="text-orange-600 mt-0.5" />
                     <div>
                       <div className="text-xs font-medium text-orange-900 mb-1">Attention Needed</div>
                       <div className="text-xs text-orange-700">
-                        {projects.filter(p => p.positionsCount > 8).map(p => p.projectName).join(', ')} require review
+                        {globalStats?.analytics?.health?.atRisk} project{(globalStats?.analytics?.health?.atRisk || 0) > 1 ? 's' : ''} require review
                       </div>
                     </div>
                   </div>
@@ -993,7 +1064,9 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                 <div className="text-sm text-gray-600 mb-3">Avg Conversion by Project</div>
                 <div className="space-y-2">
                   {projects.slice(0, 3).map(project => {
-                    const conversion = ((Math.floor(project.applicantsCount * 0.18) / project.applicantsCount) * 100);
+                    const conversion = project.applicantsCount > 0
+                      ? (Math.min(project.applicantsCount, Math.floor(project.subGroupsCount * 2)) / project.applicantsCount * 100)
+                      : 0; // Use a heuristic or real conversion if available
                     return (
                       <div key={project.id} className="flex items-center justify-between">
                         <span className="text-xs text-gray-600 truncate flex-1">{project.projectName}</span>
@@ -1018,59 +1091,64 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                   <span className="text-sm text-gray-600">Hiring Velocity</span>
                   <div className="flex items-center gap-2">
                     <span className="text-lg font-semibold text-gray-900">
-                      {(projects.reduce((sum, p) => sum + Math.floor(p.applicantsCount * 0.18), 0) / projects.length).toFixed(1)}
+                      {globalStats?.analytics?.velocity?.toFixed(1) || '0.0'}
                     </span>
                     <span className="text-xs text-gray-500">hires/project</span>
                   </div>
                 </div>
                 <p className="text-xs text-gray-500">
-                  Total: {projects.reduce((sum, p) => sum + Math.floor(p.applicantsCount * 0.18), 0)} hires across {projects.length} projects
+                  Average hiring velocity across all active projects
                 </p>
               </div>
 
               <div className="pt-3 border-t">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Portfolio Quality Score</span>
-                  <span className="text-lg font-semibold text-emerald-600">78%</span>
+                  <span className="text-lg font-semibold text-emerald-600">
+                    {(() => {
+                      if (!globalStats?.analytics?.quality) return '0%';
+                      const { high, needsImprove } = globalStats.analytics.quality;
+                      const total = high + needsImprove;
+                      if (total === 0) return '0%';
+                      return `${Math.round((high / total) * 100)}%`;
+                    })()}
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   <div className="bg-emerald-50 rounded-lg p-2">
                     <div className="text-xs text-emerald-700">High Quality</div>
                     <div className="text-sm font-semibold text-emerald-900">
-                      {projects.filter((p, i) => i % 3 === 0).length}
+                      {globalStats?.analytics?.quality?.high || 0}
                     </div>
                     <div className="text-xs text-emerald-600">projects (≥80%)</div>
                   </div>
                   <div className="bg-orange-50 rounded-lg p-2">
                     <div className="text-xs text-orange-700">Need Improvement</div>
                     <div className="text-sm font-semibold text-orange-900">
-                      {projects.filter((p, i) => i % 3 === 2).length}
+                      {globalStats?.analytics?.quality?.needsImprove || 0}
                     </div>
-                    <div className="text-xs text-orange-600">projects (&lt;60%)</div>
+                    <div className="text-xs text-orange-600">projects {'(<60%)'}</div>
                   </div>
                 </div>
               </div>
 
               <div className="pt-3 border-t">
-                <div className="text-sm text-gray-600 mb-3">Benchmarking</div>
-                <div className="space-y-2">
-                  {[
-                    { metric: 'Time-to-Hire', value: '36d', benchmark: '42d', better: true },
-                    { metric: 'Conversion Rate', value: '18%', benchmark: '15%', better: true },
-                    { metric: 'Quality Score', value: '78%', benchmark: '75%', better: true }
-                  ].map(item => (
-                    <div key={item.metric} className="flex items-center justify-between">
-                      <span className="text-xs text-gray-600">{item.metric}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400">{item.benchmark}</span>
-                        <span className="text-xs text-gray-500">→</span>
-                        <span className={`text-xs font-medium ${item.better ? 'text-emerald-600' : 'text-orange-600'}`}>
-                          {item.value}
-                        </span>
-                        {item.better && <TrendingUp size={12} className="text-emerald-600" />}
-                      </div>
+                <div className="text-sm text-gray-600 mb-3">Project Health</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-emerald-50 rounded-lg p-2">
+                    <div className="text-xs text-emerald-700">On Track</div>
+                    <div className="text-sm font-semibold text-emerald-900">
+                      {globalStats?.analytics?.health?.onTrack || 0}
                     </div>
-                  ))}
+                    <div className="text-xs text-emerald-600">projects</div>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg p-2">
+                    <div className="text-xs text-orange-700">At Risk</div>
+                    <div className="text-sm font-semibold text-orange-900">
+                      {globalStats?.analytics?.health?.atRisk || 0}
+                    </div>
+                    <div className="text-xs text-orange-600">projects</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1086,13 +1164,13 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
           </div>
 
           <div className="space-y-6">
-            {[
+            {(pipelineData.length > 0 ? pipelineData : [
               { stage: 'Applied', count: selectedProject.applicantsCount, percentage: 100, color: '#6366f1' },
-              { stage: 'Screening', count: Math.floor(selectedProject.applicantsCount * 0.84), percentage: 84, color: '#8b5cf6' },
-              { stage: 'Assessment', count: Math.floor(selectedProject.applicantsCount * 0.68), percentage: 68, color: '#a855f7' },
-              { stage: 'Interview', count: Math.floor(selectedProject.applicantsCount * 0.42), percentage: 42, color: '#c084fc' },
-              { stage: 'Offer', count: Math.floor(selectedProject.applicantsCount * 0.18), percentage: 18, color: '#10b981' }
-            ].map((stage, index, arr) => (
+              { stage: 'Screening', count: Math.floor(selectedProject.applicantsCount * 0.8), percentage: 80, color: '#8b5cf6' },
+              { stage: 'Assessment', count: Math.floor(selectedProject.applicantsCount * 0.6), percentage: 60, color: '#a855f7' },
+              { stage: 'Interview', count: Math.floor(selectedProject.applicantsCount * 0.4), percentage: 40, color: '#c084fc' },
+              { stage: 'Offer', count: Math.floor(selectedProject.applicantsCount * 0.2), percentage: 20, color: '#10b981' }
+            ]).map((stage, index, arr) => (
               <div key={stage.stage}>
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-4">
@@ -1147,21 +1225,33 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Overall Conversion Rate</span>
                   <span className="text-lg font-semibold text-gray-900">
-                    {((Math.floor(selectedProject.applicantsCount * 0.18) / selectedProject.applicantsCount) * 100).toFixed(1)}%
+                    {selectedProject.applicantsCount > 0
+                      ? (Math.min(selectedProject.applicantsCount, (pipelineData?.find((s: any) => s.stage === 'Offer')?.count || 0)) / selectedProject.applicantsCount * 100).toFixed(1)
+                      : "0.0"}%
                   </span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-500 rounded-full" style={{ width: '18%' }} />
+                  <div className="h-full bg-indigo-500 rounded-full" style={{
+                    width: `${selectedProject.applicantsCount > 0 ? (pipelineData?.find((s: any) => s.stage === 'Offer')?.count || 0) / selectedProject.applicantsCount * 100 : 0}%`
+                  }} />
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {Math.floor(selectedProject.applicantsCount * 0.18)} offers from {selectedProject.applicantsCount} applicants
+                  {pipelineData?.find((s: any) => s.stage === 'Offer')?.count || 0} offers from {selectedProject.applicantsCount} applicants
                 </p>
               </div>
 
               <div className="pt-3 border-t">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Avg Quality Score</span>
-                  <span className="text-lg font-semibold text-emerald-600">78%</span>
+                  <span className="text-lg font-semibold text-emerald-600">
+                    {(() => {
+                      if (!globalStats?.analytics?.quality) return '0%';
+                      const { high, needsImprove } = globalStats.analytics.quality;
+                      const total = high + needsImprove;
+                      if (total === 0) return '0%';
+                      return `${Math.round((high / total) * 100)}%`;
+                    })()}
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   <div className="bg-blue-50 rounded-lg p-2">
@@ -1179,11 +1269,13 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Integrity Issues</span>
                   <span className="text-lg font-semibold text-orange-600">
-                    {Math.floor(selectedProject.applicantsCount * 0.08)}
+                    {globalStats?.analytics?.integrity?.cheatingDetected || 0}
                   </span>
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {((Math.floor(selectedProject.applicantsCount * 0.08) / selectedProject.applicantsCount) * 100).toFixed(1)}% of assessed candidates
+                  {selectedProject.applicantsCount > 0
+                    ? ((globalStats?.analytics?.integrity?.cheatingDetected || 0) / selectedProject.applicantsCount * 100).toFixed(1)
+                    : "0.0"}% of assessed candidates
                 </p>
               </div>
             </div>
@@ -1197,10 +1289,10 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Avg Time-to-Hire</span>
                   <div className="flex items-center gap-2">
-                    <span className="text-lg font-semibold text-gray-900">38d</span>
+                    <span className="text-lg font-semibold text-gray-900">{selectedProject.avgTimeToFill || 0}d</span>
                     <div className="flex items-center gap-1 text-xs text-emerald-600">
                       <TrendingUp size={12} />
-                      <span>4d faster</span>
+                      <span>dynamic</span>
                     </div>
                   </div>
                 </div>
@@ -1210,12 +1302,12 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
               <div className="pt-3 border-t">
                 <div className="text-sm text-gray-600 mb-3">Stage Timing</div>
                 <div className="space-y-2">
-                  {[
+                  {(globalStats?.analytics?.stageTiming || [
                     { stage: 'Screening', days: 3, target: 3, status: 'good' },
                     { stage: 'Assessment', days: 7, target: 5, status: 'slow' },
                     { stage: 'Interview', days: 12, target: 7, status: 'slow' },
                     { stage: 'Offer', days: 4, target: 5, status: 'good' }
-                  ].map(item => (
+                  ]).map((item: any) => (
                     <div key={item.stage} className="flex items-center justify-between">
                       <span className="text-xs text-gray-600">{item.stage}</span>
                       <div className="flex items-center gap-2">
@@ -1239,7 +1331,7 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                     <div>
                       <div className="text-xs font-medium text-orange-900">Bottleneck Detected</div>
                       <div className="text-xs text-orange-700 mt-1">
-                        <strong>Assessment stage:</strong> {Math.floor(selectedProject.applicantsCount * 0.68)} candidates waiting (avg 7 days)
+                        <strong>Assessment stage:</strong> {pipelineData?.find((s: any) => s.stage === 'Assessment')?.count || 0} candidates waiting (avg 7 days)
                       </div>
                     </div>
                   </div>
@@ -1252,127 +1344,136 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
 
       {viewMode === 'groups' && selectedPositionForGroups && (
         <div className="bg-white rounded-3xl p-8 shadow-sm mb-8">
-          <div className="mb-6">
-            <h3 className="text-gray-900 mb-2">Group Performance Metrics</h3>
-            <p className="text-gray-500 text-sm">Key statistics across all groups for {selectedPositionForGroups.jobTitle}</p>
-          </div>
+          {(() => {
+            const filteredGroups = positionGroups.filter(g => g.position_id === selectedPositionForGroups.id);
+            const totalCandidatesInPosition = filteredGroups.reduce((sum, g) => sum + g.candidatesCount, 0);
 
-          <div className="grid grid-cols-4 gap-6">
-            {/* Candidates in Assessment Phase */}
-            <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl p-6 border border-indigo-200">
-              <div className="flex items-center gap-2 mb-2">
-                <BarChart3 className="w-4 h-4 text-indigo-600" />
-                <div className="text-sm text-indigo-900 font-medium">In Assessment</div>
-              </div>
-              <div className="text-4xl text-gray-900 mb-3">
-                {Math.floor(positionGroups.reduce((sum, g) => sum + g.candidatesCount, 0) * 0.42)}
-              </div>
-              <div className="text-xs text-indigo-700 mt-2">
-                {Math.floor((positionGroups.filter(g => g.hasAssessment).length / positionGroups.length) * 100)}% groups configured
-              </div>
-            </div>
+            return (
+              <>
+                <div className="mb-6">
+                  <h3 className="text-gray-900 mb-2">Group Performance Metrics</h3>
+                  <p className="text-gray-500 text-sm">Key statistics across all groups for {selectedPositionForGroups.jobTitle}</p>
+                </div>
 
-            {/* Candidates in AI Interview Phase */}
-            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl p-6 border border-purple-200">
-              <div className="flex items-center gap-2 mb-2">
-                <Activity className="w-4 h-4 text-purple-600" />
-                <div className="text-sm text-purple-900 font-medium">In AI Interview</div>
-              </div>
-              <div className="text-4xl text-gray-900 mb-3">
-                {Math.floor(positionGroups.reduce((sum, g) => sum + g.candidatesCount, 0) * 0.28)}
-              </div>
-              <div className="text-xs text-purple-700 mt-2">
-                {Math.floor((positionGroups.filter(g => g.hasAIInterview).length / positionGroups.length) * 100)}% groups configured
-              </div>
-            </div>
+                <div className="grid grid-cols-4 gap-6">
+                  {/* Candidates in Assessment Phase */}
+                  <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl p-6 border border-indigo-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <BarChart3 className="w-4 h-4 text-indigo-600" />
+                      <div className="text-sm text-indigo-900 font-medium">In Assessment</div>
+                    </div>
+                    <div className="text-4xl text-gray-900 mb-3">
+                      {Math.floor(totalCandidatesInPosition * 0.42)}
+                    </div>
+                    <div className="text-xs text-indigo-700 mt-2">
+                      {filteredGroups.length > 0 ? Math.floor((filteredGroups.filter(g => g.hasAssessment).length / filteredGroups.length) * 100) : 0}% groups configured
+                    </div>
+                  </div>
 
-            {/* Candidates Awaiting Live Interview */}
-            <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-2xl p-6 border border-emerald-200">
-              <div className="flex items-center gap-2 mb-2">
-                <Users className="w-4 h-4 text-emerald-600" />
-                <div className="text-sm text-emerald-900 font-medium">Live Interview Queue</div>
-              </div>
-              <div className="text-4xl text-gray-900 mb-3">
-                {Math.floor(positionGroups.reduce((sum, g) => sum + g.candidatesCount, 0) * 0.18)}
-              </div>
-              <div className="text-xs text-emerald-700 mt-2">
-                {Math.floor((positionGroups.filter(g => g.hasLiveInterview).length / positionGroups.length) * 100)}% groups configured
-              </div>
-            </div>
+                  {/* Candidates in AI Interview Phase */}
+                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl p-6 border border-purple-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Activity className="w-4 h-4 text-purple-600" />
+                      <div className="text-sm text-purple-900 font-medium">In AI Interview</div>
+                    </div>
+                    <div className="text-4xl text-gray-900 mb-3">
+                      {Math.floor(totalCandidatesInPosition * 0.28)}
+                    </div>
+                    <div className="text-xs text-purple-700 mt-2">
+                      {filteredGroups.length > 0 ? Math.floor((filteredGroups.filter(g => g.hasAIInterview).length / filteredGroups.length) * 100) : 0}% groups configured
+                    </div>
+                  </div>
 
-            {/* High Performers / Completion Rate */}
-            <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl p-6 border border-amber-200">
-              <div className="flex items-center gap-2 mb-2">
-                <Award className="w-4 h-4 text-amber-600" />
-                <div className="text-sm text-amber-900 font-medium">Top Performers</div>
-              </div>
-              <div className="text-4xl text-gray-900 mb-3">
-                {Math.floor(positionGroups.reduce((sum, g) => sum + g.candidatesCount, 0) * 0.12)}
-              </div>
-              <div className="text-xs text-amber-700 mt-2">
-                Passed all phases
-              </div>
-            </div>
-          </div>
+                  {/* Candidates Awaiting Live Interview */}
+                  <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-2xl p-6 border border-emerald-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Users className="w-4 h-4 text-emerald-600" />
+                      <div className="text-sm text-emerald-900 font-medium">Live Interview Queue</div>
+                    </div>
+                    <div className="text-4xl text-gray-900 mb-3">
+                      {Math.floor(totalCandidatesInPosition * 0.18)}
+                    </div>
+                    <div className="text-xs text-emerald-700 mt-2">
+                      {filteredGroups.length > 0 ? Math.floor((filteredGroups.filter(g => g.hasLiveInterview).length / filteredGroups.length) * 100) : 0}% groups configured
+                    </div>
+                  </div>
 
-          {/* Additional Metrics Row */}
-          <div className="grid grid-cols-4 gap-6 mt-6">
-            {/* Average Completion Rate */}
-            <div className="bg-[#f9fafb] rounded-2xl p-6 border border-gray-200">
-              <div className="flex items-center gap-2 mb-2">
-                <Target className="w-4 h-4 text-indigo-600" />
-                <div className="text-sm text-gray-700 font-medium">Completion Rate</div>
-              </div>
-              <div className="text-4xl text-gray-900 mb-1">
-                {Math.floor((positionGroups.filter(g => g.status === 'Completed').length / positionGroups.length) * 100)}%
-              </div>
-              <div className="text-xs text-gray-500 mt-2">
-                {positionGroups.filter(g => g.status === 'Completed').length} of {positionGroups.length} groups
-              </div>
-            </div>
+                  {/* High Performers / Completion Rate */}
+                  <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl p-6 border border-amber-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Award className="w-4 h-4 text-amber-600" />
+                      <div className="text-sm text-amber-900 font-medium">Top Performers</div>
+                    </div>
+                    <div className="text-4xl text-gray-900 mb-3">
+                      {Math.floor(totalCandidatesInPosition * 0.12)}
+                    </div>
+                    <div className="text-xs text-amber-700 mt-2">
+                      Passed all phases
+                    </div>
+                  </div>
+                </div>
 
-            {/* Integrity Flags */}
-            <div className="bg-[#f9fafb] rounded-2xl p-6 border border-gray-200">
-              <div className="flex items-center gap-2 mb-2">
-                <AlertOctagon className="w-4 h-4 text-red-600" />
-                <div className="text-sm text-gray-700 font-medium">Integrity Flags</div>
-              </div>
-              <div className="text-4xl text-gray-900 mb-1">
-                {Math.floor(positionGroups.reduce((sum, g) => sum + g.candidatesCount, 0) * 0.08)}
-              </div>
-              <div className="text-xs text-gray-500 mt-2">
-                Requires review
-              </div>
-            </div>
+                {/* Additional Metrics Row */}
+                <div className="grid grid-cols-4 gap-6 mt-6">
+                  {/* Average Completion Rate */}
+                  <div className="bg-[#f9fafb] rounded-2xl p-6 border border-gray-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Target className="w-4 h-4 text-indigo-600" />
+                      <div className="text-sm text-gray-700 font-medium">Completion Rate</div>
+                    </div>
+                    <div className="text-4xl text-gray-900 mb-1">
+                      {filteredGroups.length > 0 ? Math.floor((filteredGroups.filter(g => g.status?.toLowerCase() === 'completed').length / filteredGroups.length) * 100) : 0}%
+                    </div>
+                    <div className="text-xs text-gray-500 mt-2">
+                      {filteredGroups.filter(g => g.status?.toLowerCase() === 'completed').length} of {filteredGroups.length} groups
+                    </div>
+                  </div>
 
-            {/* Active Groups */}
-            <div className="bg-[#f9fafb] rounded-2xl p-6 border border-gray-200">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle className="w-4 h-4 text-emerald-600" />
-                <div className="text-sm text-gray-700 font-medium">Active Groups</div>
-              </div>
-              <div className="text-4xl text-gray-900 mb-1">
-                {positionGroups.filter(g => g.status === 'Active').length}
-              </div>
-              <div className="text-xs text-gray-500 mt-2">
-                Currently in progress
-              </div>
-            </div>
+                  {/* Integrity Flags */}
+                  <div className="bg-[#f9fafb] rounded-2xl p-6 border border-gray-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <AlertOctagon className="w-4 h-4 text-red-600" />
+                      <div className="text-sm text-gray-700 font-medium">Integrity Flags</div>
+                    </div>
+                    <div className="text-4xl text-gray-900 mb-1">
+                      {filteredGroups.reduce((sum, g) => sum + (g.integrityIssues || 0), 0)}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-2">
+                      Requires review
+                    </div>
+                  </div>
 
-            {/* Average Time */}
-            <div className="bg-[#f9fafb] rounded-2xl p-6 border border-gray-200">
-              <div className="flex items-center gap-2 mb-2">
-                <Clock className="w-4 h-4 text-purple-600" />
-                <div className="text-sm text-gray-700 font-medium">Avg. Time</div>
-              </div>
-              <div className="text-4xl text-gray-900 mb-1">
-                18d
-              </div>
-              <div className="text-xs text-gray-500 mt-2">
-                Per phase completion
-              </div>
-            </div>
-          </div>
+                  {/* Active Groups */}
+                  <div className="bg-[#f9fafb] rounded-2xl p-6 border border-gray-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <CheckCircle className="w-4 h-4 text-emerald-600" />
+                      <div className="text-sm text-gray-700 font-medium">Active Groups</div>
+                    </div>
+                    <div className="text-4xl text-gray-900 mb-1">
+                      {filteredGroups.filter(g => g.status?.toLowerCase() === 'active').length}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-2">
+                      Currently in progress
+                    </div>
+                  </div>
+
+                  {/* Average Time */}
+                  <div className="bg-[#f9fafb] rounded-2xl p-6 border border-gray-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Clock className="w-4 h-4 text-purple-600" />
+                      <div className="text-sm text-gray-700 font-medium">Avg. Time</div>
+                    </div>
+                    <div className="text-4xl text-gray-900 mb-1">
+                      {selectedProject?.avgTimeToFill || 0}d
+                    </div>
+                    <div className="text-xs text-gray-500 mt-2">
+                      Per phase completion
+                    </div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -1575,7 +1676,7 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                     </td>
                     <td className="p-4">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                        {position.candidatesCount}
+                        {position.applicantsCount}
                       </span>
                     </td>
                     <td className="p-4">
@@ -1665,48 +1766,50 @@ Hired,${Math.floor(position.candidatesCount * 0.16)},16%`;
                 </tr>
               </thead>
               <tbody>
-                {positionGroups.map((group) => (
-                  <tr key={group.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="p-4">
-                      <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
-                        {group.groupName}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                        {group.candidatesCount}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <span
-                        className={`inline-block px-3 py-1 rounded-full font-['Arimo',sans-serif] text-[12px] ${getStatusBadgeColor(
-                          group.status
-                        )}`}
-                      >
-                        {group.status}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                        {new Date(group.createdDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
-                      </span>
-                    </td>
-                    <td className="p-4">
-                      <button
-                        className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
-                        onClick={() => {
-                          setSelectedGroup(group);
-                          setViewMode('insights');
-                        }}
-                      >
-                        <Eye size={16} className="text-[#6366f1]" />
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#111827]">
-                          View Insights
+                {positionGroups
+                  .filter(group => !selectedPositionForGroups || group.position_id === selectedPositionForGroups.id)
+                  .map((group) => (
+                    <tr key={group.id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="p-4">
+                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
+                          {group.groupName}
                         </span>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="p-4">
+                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                          {group.candidatesCount}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <span
+                          className={`inline-block px-3 py-1 rounded-full font-['Arimo',sans-serif] text-[12px] ${getStatusBadgeColor(
+                            group.status
+                          )}`}
+                        >
+                          {group.status}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                          {new Date(group.createdDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <button
+                          className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
+                          onClick={() => {
+                            setSelectedGroup(group);
+                            setViewMode('insights');
+                          }}
+                        >
+                          <Eye size={16} className="text-[#6366f1]" />
+                          <span className="font-['Arimo',sans-serif] text-[13px] text-[#111827]">
+                            View Insights
+                          </span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>

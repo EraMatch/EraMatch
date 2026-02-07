@@ -1,9 +1,19 @@
+from app.schemas.admin import (
+    GlobalStatsResponse, PipelineStatsResponse, HealthAnalyticsResponse, 
+    PaymentMethodResponse, MemberStatsResponse, MemberPrivilegesResponse, 
+    MemberPrivilegesUpdate, MemberRegisterRequest, MemberRegisterResponse,
+    PaymentMethodCreate, SubscriptionUpgradeRequest
+)
 from app.schemas.auth import (
     LoginRequest,
     TokenResponse,
     TokenPayload,
     RefreshRequest,
     UserResponse,
+    AdminLoginResponse,
+    AdminLoginResponseUser,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
 )
 from app.schemas.candidate import (
     CandidateCreate,
@@ -17,9 +27,26 @@ from app.schemas.project import (
     ProjectCreate,
     ProjectUpdate,
     ProjectResponse,
+    ProjectListResponse,
     PositionCreate,
     PositionUpdate,
     PositionResponse,
+    ProjectSummaryResponse,
+    PositionInsightsResponse,
+    PositionGroupResponse,
+    InsightScores,
+    GroupAnalysisResponse,
+    TechnicalAIResponse,
+    RiskBreakdownResponse,
+    TechStats,
+    AIStats,
+)
+from app.schemas.settings import (
+    ChangePasswordRequest,
+    AdminProfileUpdate,
+    OrganizationSettingsUpdate,
+    PreferencesUpdate,
+    AdminSettingsResponse,
 )
 
 __all__ = [
@@ -29,6 +56,10 @@ __all__ = [
     "TokenPayload",
     "RefreshRequest",
     "UserResponse",
+    "AdminLoginResponse",
+    "AdminLoginResponseUser",
+    "ForgotPasswordRequest",
+    "ResetPasswordRequest",
     # Candidate
     "CandidateCreate",
     "CandidateUpdate",
@@ -40,7 +71,35 @@ __all__ = [
     "ProjectCreate",
     "ProjectUpdate",
     "ProjectResponse",
+    "ProjectListResponse",
     "PositionCreate",
     "PositionUpdate",
     "PositionResponse",
+    # Admin
+    "GlobalStatsResponse",
+    "PipelineStatsResponse",
+    "HealthAnalyticsResponse",
+    "PaymentMethodResponse",
+    "MemberStatsResponse",
+    "MemberPrivilegesResponse",
+    "MemberPrivilegesUpdate",
+    "MemberRegisterRequest",
+    "MemberRegisterResponse",
+    "PaymentMethodCreate",
+    "SubscriptionUpgradeRequest",
+    "ProjectSummaryResponse",
+    "PositionInsightsResponse",
+    "PositionGroupResponse",
+    "InsightScores",
+    "GroupAnalysisResponse",
+    "TechnicalAIResponse",
+    "RiskBreakdownResponse",
+    "TechStats",
+    "AIStats",
+    # Settings
+    "ChangePasswordRequest",
+    "AdminProfileUpdate",
+    "OrganizationSettingsUpdate",
+    "PreferencesUpdate",
+    "AdminSettingsResponse",
 ]

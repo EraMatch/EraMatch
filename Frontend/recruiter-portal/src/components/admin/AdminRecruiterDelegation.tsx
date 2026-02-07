@@ -4,6 +4,7 @@ import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api, JobPosition, Project } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminRecruiterDelegationProps {
   onSignOut: () => void;
@@ -17,15 +18,15 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
   const [selectedPosition, setSelectedPosition] = useState<JobPosition | null>(null);
   const [showHRDropdown, setShowHRDropdown] = useState(false);
   const [showTechDropdown, setShowTechDropdown] = useState(false);
-  const [showInsightsPanel, setShowInsightsPanel] = useState(false);
   const [sortField, setSortField] = useState<string>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   const [isLoading, setIsLoading] = useState(true);
-  const [hrRecruiters, setHrRecruiters] = useState<string[]>([]);
-  const [technicalRecruiters, setTechnicalRecruiters] = useState<string[]>([]);
+  const [hrRecruiters, setHrRecruiters] = useState<{ id: string; name: string }[]>([]);
+  const [technicalRecruiters, setTechnicalRecruiters] = useState<{ id: string; name: string }[]>([]);
   const [jobPositions, setJobPositions] = useState<JobPosition[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [recentAssignments, setRecentAssignments] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -36,6 +37,9 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
         setTechnicalRecruiters(data.technicalRecruiters);
         setJobPositions(data.positions);
         setProjects(data.projects);
+
+        const recent = await api.admin.getRecentAssignments();
+        setRecentAssignments(recent || []);
       } catch (error) {
         toast.error('Failed to load delegation data');
       } finally {
@@ -53,28 +57,54 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
     );
   }
 
-  const handleAssignHR = (positionId: number, hrName: string) => {
-    setJobPositions(prev =>
-      prev.map(pos =>
-        pos.id === positionId ? { ...pos, assignedHR: hrName } : pos
-      )
-    );
-    if (selectedPosition && selectedPosition.id === positionId) {
-      setSelectedPosition({ ...selectedPosition, assignedHR: hrName });
+  const handleAssignHR = async (positionId: any, recruiter: { id: string, name: string }) => {
+    try {
+      const posIdStr = positionId.toString();
+      await api.admin.reassignRecruiter(posIdStr, recruiter.id, 'HR');
+      setJobPositions(prev =>
+        prev.map(pos =>
+          pos.id === posIdStr ? { ...pos, assignedHR: recruiter.name } : pos
+        )
+      );
+      if (selectedPosition && selectedPosition.id === posIdStr) {
+        setSelectedPosition({ ...selectedPosition, assignedHR: recruiter.name });
+      }
+
+      // Refresh logs
+      const recent = await api.admin.getRecentAssignments();
+      setRecentAssignments(recent || []);
+
+      toast.success(`HR Recruiter assigned: ${recruiter.name}`);
+    } catch (error) {
+      toast.error('Failed to reassign HR Recruiter');
+    } finally {
+      setShowHRDropdown(false);
     }
-    setShowHRDropdown(false);
   };
 
-  const handleAssignTechnical = (positionId: number, techName: string) => {
-    setJobPositions(prev =>
-      prev.map(pos =>
-        pos.id === positionId ? { ...pos, assignedTechnicalRecruiter: techName } : pos
-      )
-    );
-    if (selectedPosition && selectedPosition.id === positionId) {
-      setSelectedPosition({ ...selectedPosition, assignedTechnicalRecruiter: techName });
+  const handleAssignTechnical = async (positionId: any, recruiter: { id: string, name: string }) => {
+    try {
+      const posIdStr = positionId.toString();
+      await api.admin.reassignRecruiter(posIdStr, recruiter.id, 'Technical');
+      setJobPositions(prev =>
+        prev.map(pos =>
+          pos.id === posIdStr ? { ...pos, assignedTechnicalRecruiter: recruiter.name } : pos
+        )
+      );
+      if (selectedPosition && selectedPosition.id === posIdStr) {
+        setSelectedPosition({ ...selectedPosition, assignedTechnicalRecruiter: recruiter.name });
+      }
+
+      // Refresh logs
+      const recent = await api.admin.getRecentAssignments();
+      setRecentAssignments(recent || []);
+
+      toast.success(`Technical Recruiter assigned: ${recruiter.name}`);
+    } catch (error) {
+      toast.error('Failed to reassign Technical Recruiter');
+    } finally {
+      setShowTechDropdown(false);
     }
-    setShowTechDropdown(false);
   };
 
   const getStatusBadgeColor = (status: string) => {
@@ -103,11 +133,14 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
 
   return (
     <div className="px-12 py-8">
-      <div className="mb-8">
-        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Recruiter Delegation</h1>
-        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-          Assign and manage HR and Technical Recruiters for each job position
-        </p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Recruiter Delegation</h1>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+            Assign and manage HR and Technical Recruiters for each job position
+          </p>
+        </div>
+        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
       {/* Projects Table View */}
@@ -285,7 +318,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                   </tr>
                 </thead>
                 <tbody>
-                  {jobPositions.slice(0, selectedProject.positionsCount).map((position, index) => (
+                  {jobPositions.filter(p => p.projectId === selectedProject.id).map((position, index) => (
                     <tr
                       key={position.id}
                       className={`border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors cursor-pointer ${index === selectedProject.positionsCount - 1 ? 'border-b-0' : ''
@@ -415,6 +448,31 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                   </div>
                 </div>
               </div>
+
+              {/* Recruiter Workload Table */}
+              <div className="mt-8">
+                <h4 className="text-gray-900 text-sm font-semibold mb-3">Recruiter Workload</h4>
+                <div className="overflow-hidden rounded-xl border border-gray-200">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-2 font-medium text-gray-500">Recruiter</th>
+                        <th className="px-4 py-2 font-medium text-gray-500 text-right">Assignments</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {[...hrRecruiters, ...technicalRecruiters].map((r: any) => (
+                        <tr key={r.id}>
+                          <td className="px-4 py-2 text-gray-900">{r.name}</td>
+                          <td className="px-4 py-2 text-gray-600 text-right font-medium">
+                            {r.assignedCount || 0}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </Card>
 
             {/* Right Section - Recruiter Assignment */}
@@ -435,9 +493,11 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                         style={{ backgroundColor: '#6366F1' }}
                       >
                         {selectedPosition.assignedHR
-                          .split(' ')
-                          .map((n) => n[0])
-                          .join('')}
+                          ? selectedPosition.assignedHR
+                            .split(' ')
+                            .map((n) => n[0])
+                            .join('')
+                          : '??'}
                       </div>
                       <div className="flex-1">
                         <p className="text-gray-900 text-sm">
@@ -463,13 +523,13 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                       <div className="absolute right-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-10 min-w-[200px]">
                         {hrRecruiters.map((recruiter) => (
                           <button
-                            key={recruiter}
+                            key={recruiter.id}
                             className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 first:rounded-t-lg last:rounded-b-lg"
                             onClick={() =>
                               handleAssignHR(selectedPosition.id, recruiter)
                             }
                           >
-                            {recruiter}
+                            {recruiter.name}
                           </button>
                         ))}
                       </div>
@@ -491,9 +551,11 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                         style={{ backgroundColor: '#10b981' }}
                       >
                         {selectedPosition.assignedTechnicalRecruiter
-                          .split(' ')
-                          .map((n) => n[0])
-                          .join('')}
+                          ? selectedPosition.assignedTechnicalRecruiter
+                            .split(' ')
+                            .map((n) => n[0])
+                            .join('')
+                          : '??'}
                       </div>
                       <div className="flex-1">
                         <p className="text-gray-900 text-sm">
@@ -521,7 +583,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                       <div className="absolute right-0 top-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-10 min-w-[200px]">
                         {technicalRecruiters.map((recruiter) => (
                           <button
-                            key={recruiter}
+                            key={recruiter.id}
                             className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 first:rounded-t-lg last:rounded-b-lg"
                             onClick={() =>
                               handleAssignTechnical(
@@ -530,7 +592,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                               )
                             }
                           >
-                            {recruiter}
+                            {recruiter.name}
                           </button>
                         ))}
                       </div>
@@ -543,198 +605,49 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
               <div className="pt-6 border-t border-gray-200">
                 <h4 className="text-gray-900 mb-3">Recent Assignment Changes</h4>
                 <div className="space-y-3">
-                  <div className="flex items-start gap-3 text-sm">
-                    <div className="w-2 h-2 rounded-full bg-indigo-600 mt-1.5"></div>
-                    <div className="flex-1">
-                      <p className="text-gray-900">
-                        HR Recruiter assigned to{' '}
-                        <span className="text-gray-900">
-                          {selectedPosition.assignedHR}
-                        </span>
-                      </p>
-                      <p className="text-gray-500 text-xs mt-1">2 days ago</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3 text-sm">
-                    <div className="w-2 h-2 rounded-full bg-emerald-600 mt-1.5"></div>
-                    <div className="flex-1">
-                      <p className="text-gray-900">
-                        Technical Recruiter assigned to{' '}
-                        <span className="text-gray-900">
-                          {selectedPosition.assignedTechnicalRecruiter}
-                        </span>
-                      </p>
-                      <p className="text-gray-500 text-xs mt-1">3 days ago</p>
-                    </div>
-                  </div>
+                  {recentAssignments.length > 0 ? (
+                    recentAssignments.map((log: any, index: number) => (
+                      <div key={index} className="flex items-start gap-3 text-sm">
+                        <div className={`w-2 h-2 rounded-full mt-1.5 ${log.action?.includes('hr') ? 'bg-indigo-600' : 'bg-emerald-600'}`}></div>
+                        <div className="flex-1">
+                          <p className="text-gray-900">
+                            {log.action?.includes('hr') ? 'HR' : 'Technical'} Recruiter assigned to{' '}
+                            <span className="text-gray-900 font-medium">
+                              {log.positionName || 'Position'}
+                            </span>
+                          </p>
+                          <div className="text-xs text-gray-500 mt-1 flex justify-between">
+                            <span>New: {log.newValueName || log.newValue || 'Unknown'}</span>
+                            <span>{new Date(log.timestamp).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-gray-500 text-sm italic">No recent assignments found.</p>
+                  )}
                 </div>
               </div>
 
               {/* Action Buttons */}
               <div className="mt-6 flex items-center gap-3">
                 <Button
-                  variant="outline"
-                  className="flex-1 rounded-full"
-                  onClick={() => setShowInsightsPanel(true)}
-                >
-                  View Insights
-                </Button>
-                <Button
                   className="flex-1 rounded-full text-white"
                   style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => {
-                    console.log('Notifying recruiters for position:', selectedPosition);
-                    toast.success('Recruiters notified successfully!');
+                  onClick={async () => {
+                    try {
+                      const posIdStr = selectedPosition.id.toString();
+                      await api.admin.notifyRecruiters(posIdStr);
+                      toast.success('Recruiters notified successfully!');
+                    } catch (error) {
+                      toast.error('Failed to notify recruiters');
+                    }
                   }}
                 >
                   Notify Recruiters
                 </Button>
               </div>
             </Card>
-          </div>
-        </div>
-      )}
-
-      {/* Insights Panel Modal */}
-      {showInsightsPanel && selectedPosition && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="sticky top-0 bg-white border-b border-gray-200 px-8 py-6 rounded-t-3xl">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-gray-900 mb-1">Position Insights</h2>
-                  <p className="text-gray-500 text-sm">
-                    {selectedPosition.jobTitle} • {selectedPosition.department} Department
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowInsightsPanel(false)}
-                  className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-gray-100 transition-colors"
-                >
-                  <X className="w-5 h-5 text-gray-500" />
-                </button>
-              </div>
-            </div>
-
-            <div className="px-8 py-6">
-              {/* Overview Stats Grid */}
-              <div className="grid grid-cols-4 gap-4 mb-8">
-                <div className="bg-white rounded-2xl p-5 border border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-gray-500 text-sm">Total Candidates</span>
-                    <TrendingUp className="w-4 h-4 text-emerald-600" />
-                  </div>
-                  <div className="text-3xl text-gray-900 mb-1">{selectedPosition.candidatesCount}</div>
-                  <div className="text-xs text-emerald-600">+12% from last week</div>
-                </div>
-
-                <div className="bg-white rounded-2xl p-5 border border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-gray-500 text-sm">Avg. Assessment</span>
-                  </div>
-                  <div className="text-3xl text-gray-900 mb-1">87%</div>
-                  <div className="text-xs text-gray-500">Above threshold</div>
-                </div>
-
-                <div className="bg-white rounded-2xl p-5 border border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-gray-500 text-sm">Interview Rate</span>
-                  </div>
-                  <div className="text-3xl text-gray-900 mb-1">64%</div>
-                  <div className="text-xs text-indigo-600">Strong pipeline</div>
-                </div>
-
-                <div className="bg-white rounded-2xl p-5 border border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-gray-500 text-sm">Time to Hire</span>
-                    <TrendingDown className="w-4 h-4 text-red-600" />
-                  </div>
-                  <div className="text-3xl text-gray-900 mb-1">28d</div>
-                  <div className="text-xs text-red-600">+3 days slower</div>
-                </div>
-              </div>
-
-              {/* Candidate Pipeline Overview */}
-              <div className="bg-white rounded-2xl p-6 border border-gray-200 mb-6">
-                <div className="mb-6">
-                  <h3 className="text-gray-900 mb-1">Candidate Pipeline</h3>
-                  <p className="text-gray-500 text-sm">Hiring funnel progression and stage drop-offs</p>
-                </div>
-
-                <div className="space-y-5">
-                  {[
-                    { stage: 'Applied', count: selectedPosition.candidatesCount, color: '#6366f1', percentage: 100 },
-                    { stage: 'Assessment', count: Math.floor(selectedPosition.candidatesCount * 0.78), color: '#8b5cf6', percentage: 78 },
-                    { stage: 'Interview', count: Math.floor(selectedPosition.candidatesCount * 0.52), color: '#a855f7', percentage: 52 },
-                    { stage: 'Offer', count: Math.floor(selectedPosition.candidatesCount * 0.24), color: '#c084fc', percentage: 24 },
-                    { stage: 'Hired', count: Math.floor(selectedPosition.candidatesCount * 0.16), color: '#10b981', percentage: 16 }
-                  ].map((stage, index, arr) => (
-                    <div key={stage.stage}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-3">
-                          <span className="font-['Arimo',sans-serif] text-[14px] text-[#374151] min-w-[100px]">
-                            {stage.stage}
-                          </span>
-                          <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                            {stage.count} candidates
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                            {stage.percentage}%
-                          </span>
-                          {index > 0 && (
-                            <span className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af]">
-                              -{arr[index - 1].percentage - stage.percentage}% drop
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="h-12 bg-[#f3f4f6] rounded-lg overflow-hidden">
-                        <div
-                          className="h-full rounded-lg transition-all duration-500 flex items-center justify-between px-4"
-                          style={{
-                            width: `${stage.percentage}%`,
-                            backgroundColor: stage.color
-                          }}
-                        >
-                          <span className="font-['Arimo',sans-serif] text-[13px] text-white font-medium">
-                            {stage.stage}
-                          </span>
-                          <span className="font-['Arimo',sans-serif] text-[14px] text-white font-semibold">
-                            {stage.count}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Footer Actions */}
-            <div className="sticky bottom-0 bg-white border-t border-gray-200 px-8 py-4 rounded-b-3xl">
-              <div className="flex items-center justify-end gap-3">
-                <Button
-                  variant="outline"
-                  className="rounded-full px-6"
-                  onClick={() => setShowInsightsPanel(false)}
-                >
-                  Close
-                </Button>
-                <Button
-                  className="rounded-full px-6 text-white"
-                  style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => {
-                    console.log('Exporting insights for:', selectedPosition);
-                    toast.success('Insights exported successfully!');
-                  }}
-                >
-                  Export Report
-                </Button>
-              </div>
-            </div>
           </div>
         </div>
       )}
