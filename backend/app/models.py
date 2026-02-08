@@ -171,9 +171,11 @@ class ProjectAccess(BaseModel, table=True):
     user_id: UUID = Field(foreign_key="organization_users.id")
 
 
-class Position(BaseModel, table=True):
+class Position(SQLModel, table=True):
+    """Position - uses position_id as primary key."""
     __tablename__ = "positions"
     
+    position_id: UUID = Field(default_factory=uuid4, primary_key=True)
     project_id: UUID = Field(foreign_key="projects.id")
     organization_id: UUID = Field(foreign_key="organizations.id")
     job_title: str = Field(max_length=255)
@@ -193,10 +195,12 @@ class Position(BaseModel, table=True):
 # SECTION 3: GROUPS & PIPELINE CONFIG (3 Tables)
 # =============================================================================
 
-class CandidateGroup(BaseModel, table=True):
+class CandidateGroup(SQLModel, table=True):
+    """Candidate group - uses group_id as primary key."""
     __tablename__ = "candidate_groups"
     
-    position_id: UUID = Field(foreign_key="positions.id")
+    group_id: UUID = Field(default_factory=uuid4, primary_key=True)
+    position_id: UUID = Field(foreign_key="positions.position_id")
     organization_id: UUID = Field(foreign_key="organizations.id")
     group_name: str = Field(max_length=100)
     assigned_hr_id: UUID | None = Field(default=None, foreign_key="organization_users.id")
@@ -206,10 +210,13 @@ class CandidateGroup(BaseModel, table=True):
     created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.id")
 
 
-class GroupStageConfig(BaseModel, table=True):
-    __tablename__ = "group_stage_configs"
+
+class GroupStageConfig(SQLModel, table=True):
+    """Group stage configuration - uses config_id as primary key."""
+    __tablename__ = "group_stage_config"  # Note: singular in DB
     
-    group_id: UUID = Field(foreign_key="candidate_groups.id")
+    config_id: UUID = Field(default_factory=uuid4, primary_key=True)
+    group_id: UUID = Field(foreign_key="candidate_groups.group_id")
     organization_id: UUID = Field(foreign_key="organizations.id")
     stage_type: str = Field(max_length=30)  # assessment, ai_interview, live_interview
     stage_order: int
@@ -238,9 +245,11 @@ class CandidateStageProgress(BaseModel, table=True):
 # SECTION 4: CANDIDATES (3 Tables)
 # =============================================================================
 
-class CandidateProfile(BaseModel, table=True):
+class CandidateProfile(SQLModel, table=True):
+    """Candidate profile - uses candidate_id as primary key (not inherited id)."""
     __tablename__ = "candidate_profiles"
     
+    candidate_id: UUID = Field(default_factory=uuid4, primary_key=True)
     organization_id: UUID = Field(foreign_key="organizations.id")
     email: str = Field(max_length=255)
     full_name: str = Field(max_length=255)
@@ -249,21 +258,27 @@ class CandidateProfile(BaseModel, table=True):
     linkedin_url: str | None = Field(default=None, max_length=500)
     github_url: str | None = Field(default=None, max_length=500)
     portfolio_url: str | None = Field(default=None, max_length=500)
+    password_hash: str | None = Field(default=None, max_length=255)
+    avatar_url: str | None = Field(default=None, max_length=500)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
 
 
-class CandidateApplication(BaseModel, table=True):
+class CandidateApplication(SQLModel, table=True):
+    """Candidate application - uses application_id as primary key."""
     __tablename__ = "candidate_applications"
     
-    candidate_id: UUID = Field(foreign_key="candidate_profiles.id")
-    position_id: UUID = Field(foreign_key="positions.id")
-    group_id: UUID | None = Field(default=None, foreign_key="candidate_groups.id")
+    application_id: UUID = Field(default_factory=uuid4, primary_key=True)
+    candidate_id: UUID = Field(foreign_key="candidate_profiles.candidate_id")
+    position_id: UUID = Field(foreign_key="positions.position_id")
+    group_id: UUID | None = Field(default=None, foreign_key="candidate_groups.group_id")
     organization_id: UUID = Field(foreign_key="organizations.id")
     resume_url: str | None = Field(default=None, max_length=500)
     cover_letter: str | None = Field(default=None, sa_column=Column(Text))
     source: str | None = Field(default=None, max_length=50)
     status: str = Field(default="applied", max_length=30)
     applied_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
 
 

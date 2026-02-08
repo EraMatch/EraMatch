@@ -4,6 +4,8 @@ from app.schemas.auth import (
     TokenPayload,
     RefreshRequest,
     UserResponse,
+    CandidateLoginRequest,
+    CandidateAuthResponse,
 )
 from app.schemas.candidate import (
     CandidateCreate,
@@ -29,6 +31,8 @@ __all__ = [
     "TokenPayload",
     "RefreshRequest",
     "UserResponse",
+    "CandidateLoginRequest",
+    "CandidateAuthResponse",
     # Candidate
     "CandidateCreate",
     "CandidateUpdate",

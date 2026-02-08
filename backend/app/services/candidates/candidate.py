@@ -12,7 +12,7 @@ class CandidateService:
 
     # Profile operations
     async def create_profile(self, data: CandidateCreate) -> CandidateProfile:
-    
+     # we still need even the frontend!
         pass
 
     # Application operations

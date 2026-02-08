@@ -57,3 +57,17 @@ txt code/
 *.txt
 Eramatchcombineduicopycopy/
 transform_ts_to_txt.js
+.github/rulesets/development-branch-ruleset.json
+.github/rulesets/main-branch-ruleset.json
+
+# ignore the whole folder of version_docs
+
+
+version_docs/
+
+
+
+ 
+
+
+

@@ -10,10 +10,15 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from app.core.config import settings
 
 # Create async engine
+# Note: statement_cache_size=0 is required for Supabase's pgbouncer (transaction mode)
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
     future=True,
+    connect_args={
+        "statement_cache_size": 0,  # Required for pgbouncer transaction mode
+        "prepared_statement_cache_size": 0,
+    },
 )
 
 # Session factory

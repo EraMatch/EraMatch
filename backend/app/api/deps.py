@@ -10,6 +10,8 @@ from app.db import get_session
 from app.models import User
 from app.services import AuthService
 from app.core.exceptions import UnauthorizedException
+from app.models import CandidateProfile
+from app.services import CandidateAuthService
 
 
 async def get_db() -> AsyncSession:
@@ -56,3 +58,18 @@ async def require_admin(
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentUser = Annotated[User, Depends(get_current_active_user)]
 AdminUser = Annotated[User, Depends(require_admin)]
+
+
+
+async def get_current_candidate(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    token: Annotated[str, Depends(get_token)],
+) -> CandidateProfile:
+    """Get current authenticated candidate."""
+    auth_service = CandidateAuthService(session)
+    return await auth_service.get_current_candidate(token)
+
+
+# injects the authenticated candidate's profile into the endpoint handler.
+CurrentCandidate = Annotated[CandidateProfile, Depends(get_current_candidate)]
+
