@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
+import { api } from '../services/api';
 
 interface CandidateLoginPageProps {
   onBack: () => void;
@@ -11,14 +12,25 @@ interface CandidateLoginPageProps {
 }
 
 export function CandidateLoginPage({ onBack, onSignIn }: CandidateLoginPageProps) {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSignIn = (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Login logic will be implemented later
-    console.log('Sign in clicked', { username, password });
-    onSignIn();
+    setIsLoading(true);
+    setError('');
+
+    try {
+      await api.auth.login(email, password);
+      onSignIn();
+    } catch (err) {
+      setError('Invalid email or password');
+      console.error('Login failed:', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -47,18 +59,26 @@ export function CandidateLoginPage({ onBack, onSignIn }: CandidateLoginPageProps
             <p className="text-gray-500">Sign in to access your assessments</p>
           </div>
 
+          {/* Error Message */}
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+              {error}
+            </div>
+          )}
+
           {/* Login Form */}
           <form onSubmit={handleSignIn} className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="username" className="text-gray-700">Username</Label>
+              <Label htmlFor="email" className="text-gray-700">Email</Label>
               <Input
-                id="username"
-                type="text"
-                placeholder="Enter your username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                id="email"
+                type="email"
+                placeholder="Enter your email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 className="w-full"
                 required
+                disabled={isLoading}
               />
             </div>
 
@@ -72,17 +92,31 @@ export function CandidateLoginPage({ onBack, onSignIn }: CandidateLoginPageProps
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full"
                 required
+                disabled={isLoading}
               />
             </div>
 
             <Button
               type="submit"
-              className="w-full text-white rounded-full"
+              className="w-full text-white rounded-full flex items-center justify-center gap-2"
               style={{ backgroundColor: '#6366F1' }}
+              disabled={isLoading}
             >
-              Sign In
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Signing In...
+                </>
+              ) : (
+                'Sign In'
+              )}
             </Button>
           </form>
+
+          {/* Dev hint */}
+          <p className="mt-4 text-xs text-gray-400 text-center">
+            Test: amy18@example.org / candidate123
+          </p>
         </div>
       </div>
     </div>

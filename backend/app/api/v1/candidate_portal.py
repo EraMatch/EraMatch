@@ -82,3 +82,29 @@ async def get_candidate_assessments(candidate: CurrentCandidate, session: DbSess
     
     service = CandidateDashboardService(session)
     return await service.get_assessments(candidate.candidate_id)
+
+
+@router.post("/stages/{stage_type}/start")
+async def start_candidate_stage(
+    stage_type: str,
+    candidate: CurrentCandidate,session: DbSession ) -> dict:
+ 
+
+    # placeholder for now, but will be used to go to details of a stage 
+
+    # Map stage types to frontend routes
+    route_map = {
+        "assessment": "/assessment/technical",
+        "ai_interview": "/assessment/recorded",
+        "live_interview": "/assessment/live",
+    }
+    
+    redirect_url = route_map.get(stage_type, f"/assessment/{stage_type.replace('_', '-')}")
+    
+    return {
+        "message": f"Starting {stage_type.replace('_', ' ')} stage",
+        "stage_type": stage_type,
+        "redirect_url": redirect_url,
+        "status": "pending_implementation",
+        "candidate_id": str(candidate.candidate_id),
+    }

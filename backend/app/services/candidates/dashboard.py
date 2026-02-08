@@ -3,6 +3,7 @@ Candidate Dashboard Service.
 
 Provides data for the candidate portal dashboard.
 """
+import logging
 from uuid import UUID
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -19,6 +20,8 @@ from app.models import (
     AIInterviewConfig,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class CandidateDashboardService:
     """Service for candidate dashboard data."""
@@ -30,14 +33,13 @@ class CandidateDashboardService:
         """
         Get dashboard home data for a candidate.
         
-        Returns candidate profile, application status, group info, and current stage.
+        Returns candidate profile, application status, group info, project, 
+        current stage, stages pipeline, and notifications.
         """
-        # Simple approach - return basic candidate info without complex joins
-        # This avoids potential model/query issues
         from sqlalchemy import text
         
         try:
-            # Use raw SQL to avoid model issues
+            # Get candidate profile
             profile_result = await self.session.execute(
                 text("""
                     SELECT candidate_id, email, full_name, avatar_url, organization_id
@@ -54,7 +56,10 @@ class CandidateDashboardService:
                     "application": None,
                     "group": None,
                     "position": None,
+                    "project": None,
                     "current_stage": None,
+                    "stages": [],
+                    "notifications": [],
                 }
             
             profile = {
@@ -64,26 +69,49 @@ class CandidateDashboardService:
                 "avatar_url": profile_row[3],
             }
             
-            # Get application info
+            # Get application info with position and project details
             app_result = await self.session.execute(
                 text("""
-                    SELECT application_id, status, applied_at, group_id, position_id
-                    FROM candidate_applications 
-                    WHERE candidate_id = :cid AND is_deleted = false
-                    ORDER BY applied_at DESC
+                    SELECT 
+                        ca.application_id, 
+                        ca.status, 
+                        ca.applied_at, 
+                        ca.group_id, 
+                        ca.position_id,
+                        p.job_title,
+                        p.job_description,
+                        pr.project_id,
+                        pr.name as project_name,
+                        pr.description as project_description,
+                        cg.group_id,
+                        cg.group_name
+                    FROM candidate_applications ca
+                    LEFT JOIN positions p ON ca.position_id = p.position_id
+                    LEFT JOIN projects pr ON p.project_id = pr.project_id
+                    LEFT JOIN candidate_groups cg ON ca.group_id = cg.group_id
+                    WHERE ca.candidate_id = :cid AND ca.is_deleted = false
+                    ORDER BY ca.applied_at DESC
                     LIMIT 1
                 """),
                 {"cid": str(candidate_id)}
             )
             app_row = app_result.fetchone()
             
+            # Debug: print query result
+            print(f"[DEBUG] get_home for candidate_id={candidate_id}")
+            print(f"[DEBUG] app_row result: {app_row}")
+            
             if not app_row:
+                print(f"[DEBUG] No application found, returning early")
                 return {
                     "profile": profile,
                     "application": None,
                     "group": None,
                     "position": None,
+                    "project": None,
                     "current_stage": None,
+                    "stages": [],
+                    "notifications": [],
                 }
             
             application = {
@@ -92,61 +120,127 @@ class CandidateDashboardService:
                 "applied_at": app_row[2].isoformat() if app_row[2] else None,
             }
             
-            # Get group info if exists
-            group = None
-            if app_row[3]:  # group_id
-                group_result = await self.session.execute(
-                    text("""
-                        SELECT group_id, group_name
-                        FROM candidate_groups 
-                        WHERE group_id = :gid
-                    """),
-                    {"gid": str(app_row[3])}
-                )
-                group_row = group_result.fetchone()
-                if group_row:
-                    group = {
-                        "group_id": str(group_row[0]),
-                        "group_name": group_row[1],
-                    }
+            position = {
+                "position_id": str(app_row[4]) if app_row[4] else None,
+                "job_title": app_row[5],
+                "job_description": app_row[6],
+            } if app_row[4] else None
             
-            # Get position info
-            position = None
-            if app_row[4]:  # position_id
-                pos_result = await self.session.execute(
+            project = {
+                "project_id": str(app_row[7]) if app_row[7] else None,
+                "name": app_row[8],
+                "description": app_row[9],
+            } if app_row[7] else None
+            
+            group = {
+                "group_id": str(app_row[10]) if app_row[10] else None,
+                "group_name": app_row[11],
+            } if app_row[10] else None
+            
+            # Get stages pipeline and current stage
+            stages = []
+            current_stage = None
+            
+            if app_row[3]:  # group_id exists
+                # Get stage configs for the group
+                stage_configs_result = await self.session.execute(
                     text("""
-                        SELECT position_id, job_title
-                        FROM positions 
-                        WHERE position_id = :pid
+                        SELECT 
+                            gsc.config_id,
+                            gsc.stage_type,
+                            gsc.stage_order,
+                            gsc.stage_config_id,
+                            gsc.state,
+                            COALESCE(csp.status, 'locked') as progress_status,
+                            csp.score,
+                            csp.started_at,
+                            csp.completed_at,
+                            -- Get title from appropriate config table
+                            CASE gsc.stage_type
+                                WHEN 'assessment' THEN (SELECT title FROM assessments WHERE assessment_id = gsc.stage_config_id)
+                                WHEN 'ai_interview' THEN (SELECT title FROM ai_interview_configs WHERE config_id = gsc.stage_config_id)
+                                WHEN 'live_interview' THEN (SELECT title FROM live_interview_configs WHERE config_id = gsc.stage_config_id)
+                            END as stage_title
+                        FROM group_stage_config gsc
+                        LEFT JOIN candidate_stage_progress csp 
+                            ON csp.application_id = :app_id 
+                            AND csp.stage_type = gsc.stage_type 
+                            AND csp.stage_order = gsc.stage_order
+                        WHERE gsc.group_id = :gid
+                        ORDER BY gsc.stage_order
                     """),
-                    {"pid": str(app_row[4])}
+                    {"gid": str(app_row[3]), "app_id": str(app_row[0])}
                 )
-                pos_row = pos_result.fetchone()
-                if pos_row:
-                    position = {
-                        "position_id": str(pos_row[0]),
-                        "job_title": pos_row[1],
+                stage_rows = stage_configs_result.fetchall()
+                
+                for row in stage_rows:
+                    stage_type = row[1]
+                    stage_order = row[2]
+                    progress_status = row[5] or "locked"
+                    
+                    # Create human-readable title
+                    title = row[9] or stage_type.replace("_", " ").title()
+                    
+                    stage_data = {
+                        "config_id": str(row[0]),
+                        "stage_type": stage_type,
+                        "stage_order": stage_order,
+                        "status": progress_status,
+                        "title": title,
+                        "score": float(row[6]) if row[6] else None,
+                        "started_at": row[7].isoformat() if row[7] else None,
+                        "completed_at": row[8].isoformat() if row[8] else None,
                     }
+                    stages.append(stage_data)
+                    
+                    # Determine current stage (first unlocked or in_progress)
+                    if current_stage is None and progress_status in ("unlocked", "in_progress"):
+                        current_stage = stage_data.copy()
+            
+            # Generate mock notifications for UI
+            notifications = [
+                {
+                    "id": 1,
+                    "type": "success",
+                    "title": "Assessment Completed",
+                    "message": "You have successfully completed the technical assessment.",
+                    "time": "2 hours ago",
+                    "read": False
+                },
+                {
+                    "id": 2,
+                    "type": "info",
+                    "title": "Next Step Available",
+                    "message": "Your AI interview is now unlocked and ready to start.",
+                    "time": "1 hour ago",
+                    "read": False
+                },
+            ] if current_stage else []
             
             return {
                 "profile": profile,
                 "application": application,
                 "group": group,
                 "position": position,
-                "current_stage": None,  # Simplified for now
+                "project": project,
+                "current_stage": current_stage,
+                "stages": stages,
+                "notifications": notifications,
             }
             
         except Exception as e:
-            print(f"[DEBUG ERROR] get_home failed: {e}")
+            logger.error(f"[ERROR] get_home failed for candidate_id={candidate_id}: {e}")
             import traceback
-            traceback.print_exc()
-            # Return minimal data on error
+            logger.error(traceback.format_exc())
             return {
                 "profile": {"candidate_id": str(candidate_id)},
                 "application": None,
                 "group": None,
                 "position": None,
+                "project": None,
                 "current_stage": None,
+                "stages": [],
+                "notifications": [],
             }
 
     async def get_assessments(self, candidate_id: UUID) -> list[dict]:
