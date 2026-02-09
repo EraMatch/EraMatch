@@ -52,7 +52,17 @@ async def require_admin(
     return current_user
 
 
+async def require_recruiter(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> User:
+    """Require admin, hr, or technical role."""
+    if current_user.role not in ["admin", "hr", "technical"]:
+        raise UnauthorizedException("Recruiter access required")
+    return current_user
+
+
 # Type aliases for cleaner route signatures
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentUser = Annotated[User, Depends(get_current_active_user)]
 AdminUser = Annotated[User, Depends(require_admin)]
+RecruiterUser = Annotated[User, Depends(require_recruiter)]

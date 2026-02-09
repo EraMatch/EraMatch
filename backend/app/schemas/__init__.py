@@ -48,6 +48,15 @@ from app.schemas.settings import (
     PreferencesUpdate,
     AdminSettingsResponse,
 )
+from app.schemas.analytics import (
+    OverviewStats,
+    GroupStatusCount,
+    StageCount,
+    ProjectPerformance,
+    RecentActivity,
+    WeeklyTrend,
+    RecruiterAnalyticsResponse,
+)
 
 __all__ = [
     # Auth
@@ -102,4 +111,12 @@ __all__ = [
     "OrganizationSettingsUpdate",
     "PreferencesUpdate",
     "AdminSettingsResponse",
+    # Analytics
+    "OverviewStats",
+    "GroupStatusCount",
+    "StageCount",
+    "ProjectPerformance",
+    "RecentActivity",
+    "WeeklyTrend",
+    "RecruiterAnalyticsResponse",
 ]

@@ -8,31 +8,54 @@ import logo from '../../../assets/image-eramatch.png';
 interface RecruiterLoginPageProps {
   onBack: () => void;
   onSignIn: (recruiterType: 'recruiter' | 'technical') => void;
+  onForgotPassword: () => void;
 }
 
-export function RecruiterLoginPage({ onBack, onSignIn }: RecruiterLoginPageProps) {
+export function RecruiterLoginPage({ onBack, onSignIn, onForgotPassword }: RecruiterLoginPageProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Demo credentials check
-    if (email === 'recruiter@eramatch.com' && password === 'recruiter123') {
-      onSignIn('recruiter');
-    } else if (email === 'technical@eramatch.com' && password === 'technical123') {
-      onSignIn('technical');
-    } else {
-      alert('Invalid credentials. Please use:\n\nHR Recruiter:\nEmail: recruiter@eramatch.com\nPassword: recruiter123\n\nTechnical Recruiter:\nEmail: technical@eramatch.com\nPassword: technical123');
-    }
-  };
+    setIsLoading(true);
+    setError('');
 
-  const useDemoCredentials = (type: 'recruiter' | 'technical') => {
-    if (type === 'recruiter') {
-      setEmail('recruiter@eramatch.com');
-      setPassword('recruiter123');
-    } else {
-      setEmail('technical@eramatch.com');
-      setPassword('technical123');
+    try {
+      // Call the backend API
+      const response = await fetch('http://localhost:8000/api/v1/auth/organization-user/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Invalid credentials' }));
+        throw new Error(errorData.detail || 'Login failed');
+      }
+
+      const data = await response.json();
+
+      // Store token and user info in localStorage
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+
+      // Route based on role
+      const role = data.user.role.toLowerCase();
+      if (role === 'hr') {
+        onSignIn('recruiter');
+      } else if (role === 'technical') {
+        onSignIn('technical');
+      } else {
+        throw new Error('Invalid user role');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred during login');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -72,62 +95,12 @@ export function RecruiterLoginPage({ onBack, onSignIn }: RecruiterLoginPageProps
               Sign in to access the recruiter dashboard
             </p>
 
-            {/* Demo Credentials Info */}
-            <div className="mb-6 space-y-3">
-              {/* HR Recruiter Credentials */}
-              <div className="p-4 rounded-xl" style={{ backgroundColor: '#EEF2FF' }}>
-                <p className="text-sm mb-2" style={{ color: '#312E81' }}>
-                  <strong>HR Recruiter:</strong>
-                </p>
-                <p className="text-xs mb-1" style={{ color: '#312E81' }}>
-                  Email: recruiter@eramatch.com
-                </p>
-                <p className="text-xs mb-3" style={{ color: '#312E81' }}>
-                  Password: recruiter123
-                </p>
-                <Button
-                  type="button"
-                  className="w-full rounded-lg py-2 text-xs transition-colors duration-200"
-                  style={{ backgroundColor: '#6366F1', color: '#FFFFFF' }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#4F46E5';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#6366F1';
-                  }}
-                  onClick={() => useDemoCredentials('recruiter')}
-                >
-                  Use HR Recruiter Credentials
-                </Button>
+            {/* Error Message */}
+            {error && (
+              <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200">
+                <p className="text-sm text-red-600">{error}</p>
               </div>
-
-              {/* Technical Recruiter Credentials */}
-              <div className="p-4 rounded-xl" style={{ backgroundColor: '#D1FAE5' }}>
-                <p className="text-sm mb-2" style={{ color: '#065F46' }}>
-                  <strong>Technical Recruiter:</strong>
-                </p>
-                <p className="text-xs mb-1" style={{ color: '#065F46' }}>
-                  Email: technical@eramatch.com
-                </p>
-                <p className="text-xs mb-3" style={{ color: '#065F46' }}>
-                  Password: technical123
-                </p>
-                <Button
-                  type="button"
-                  className="w-full rounded-lg py-2 text-xs transition-colors duration-200"
-                  style={{ backgroundColor: '#10B981', color: '#FFFFFF' }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#059669';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#10B981';
-                  }}
-                  onClick={() => useDemoCredentials('technical')}
-                >
-                  Use Technical Recruiter Credentials
-                </Button>
-              </div>
-            </div>
+            )}
 
             {/* Login Form */}
             <form onSubmit={handleSubmit} className="space-y-6">
@@ -163,22 +136,42 @@ export function RecruiterLoginPage({ onBack, onSignIn }: RecruiterLoginPageProps
 
               <Button
                 type="submit"
+                disabled={isLoading}
                 className="w-full rounded-xl py-4 text-base transition-colors duration-200"
-                style={{ backgroundColor: '#6366F1', color: '#FFFFFF' }}
+                style={{
+                  backgroundColor: isLoading ? '#9CA3AF' : '#6366F1',
+                  color: '#FFFFFF',
+                  cursor: isLoading ? 'not-allowed' : 'pointer'
+                }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#4F46E5';
+                  if (!isLoading) {
+                    e.currentTarget.style.backgroundColor = '#4F46E5';
+                  }
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = '#6366F1';
+                  if (!isLoading) {
+                    e.currentTarget.style.backgroundColor = '#6366F1';
+                  }
                 }}
               >
-                Sign In as Recruiter
+                {isLoading ? 'Signing In...' : 'Sign In as Recruiter'}
               </Button>
+
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={onForgotPassword}
+                  className="text-sm font-medium hover:underline transition-colors"
+                  style={{ color: '#6366F1' }}
+                >
+                  Forgot Password?
+                </button>
+              </div>
             </form>
 
             {/* Additional Info */}
             <p className="text-xs text-gray-500 text-center mt-6">
-              This is a demonstration portal. Use the demo credentials provided above.
+              Sign in with your organization user credentials.
             </p>
           </div>
         </div>

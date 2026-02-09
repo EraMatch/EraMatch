@@ -5,6 +5,8 @@ import { AdminLoginPage } from './components/admin/AdminLoginPage';
 import { ForgotPasswordPage } from './components/admin/ForgotPasswordPage';
 import { ResetPasswordPage } from './components/admin/ResetPasswordPage';
 import { RecruiterLoginPage } from './components/recruiter/auth/RecruiterLoginPage';
+import { RecruiterForgotPasswordPage } from './components/recruiter/auth/RecruiterForgotPasswordPage';
+import { RecruiterResetPasswordPage } from './components/recruiter/auth/RecruiterResetPasswordPage';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminSettings } from './components/admin/AdminSettings';
 import { AdminRecruiterDelegation } from './components/admin/AdminRecruiterDelegation';
@@ -276,7 +278,23 @@ export const router = createBrowserRouter([
     // Recruiter Routes
     {
         path: "/recruiter/login",
-        element: <RecruiterLoginPage onBack={() => window.location.href = '/'} onSignIn={() => window.location.href = '/recruiter/dashboard'} />,
+        element: (
+            <RecruiterLoginPage
+                onBack={() => window.location.href = '/'}
+                onSignIn={() => window.location.href = '/recruiter/dashboard'}
+                onForgotPassword={() => window.location.href = '/recruiter/forgot-password'}
+            />
+        ),
+        errorElement: <ErrorPage />,
+    },
+    {
+        path: "/recruiter/forgot-password",
+        element: <RecruiterForgotPasswordPage onBack={() => window.location.href = '/recruiter/login'} />,
+        errorElement: <ErrorPage />,
+    },
+    {
+        path: "/recruiter/reset-password",
+        element: <RecruiterResetPasswordPage onBack={() => window.location.href = '/recruiter/login'} />,
         errorElement: <ErrorPage />,
     },
     {

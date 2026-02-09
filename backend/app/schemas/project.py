@@ -80,7 +80,7 @@ class PositionUpdate(BaseModel):
 
 class PositionResponse(BaseModel):
     """Position response."""
-    id: UUID = Field(alias="position_id", serialization_alias="id")
+    id: UUID = Field(serialization_alias="id")
     project_id: UUID
     job_title: str = Field(serialization_alias="jobTitle")
     job_description: str | None = Field(default=None, serialization_alias="jobDescription")
@@ -91,17 +91,7 @@ class PositionResponse(BaseModel):
     salary_max: float | None = Field(default=None, serialization_alias="salaryMax")
     status: str
     created_at: datetime | None = None
-    
-    # Enrichment fields for delegation
-    assignedHR: str | None = None
-    assignedTechnicalRecruiter: str | None = None
     candidatesCount: int = 0
-    applicantsCount: int = 0
-    department: str = "Technical" # Mock or fetch from dept table
-
-    class Config:
-        from_attributes = True
-        populate_by_name = True
 
 
 class ProjectSummaryResponse(BaseModel):

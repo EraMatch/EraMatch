@@ -49,6 +49,26 @@ export const authService = {
         return res.json();
     },
 
+    organizationUserForgotPassword: async (email: string) => {
+        const res = await fetch(`${API_URL}/auth/organization-user/forgot-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+        if (!res.ok) throw new Error('Failed to request password reset');
+        return res.json();
+    },
+
+    organizationUserResetPassword: async (token: string, pass: string) => {
+        const res = await fetch(`${API_URL}/auth/organization-user/reset-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, password: pass })
+        });
+        if (!res.ok) throw new Error('Failed to reset password');
+        return res.json();
+    },
+
     changePassword: async (oldPass: string, newPass: string, confirmNewPass: string) => {
         // Here we use fetchAPI wrapper because we need the Authorization header,
         // which fetchAPI handles automatically.

@@ -30,8 +30,8 @@ export const adminService = {
     getDashboardStats: async () => {
         const [globalStats, projects, positions, groups, pipelineParams, analytics] = await Promise.all([
             fetchAPI<any>('/admin/stats/global').catch(() => ({})),
-            fetchAPI<Project[]>('/recruiters/projects?status=active').catch(() => []),
-            fetchAPI<JobPosition[]>('/recruiters/positions').catch(() => []),
+            fetchAPI<Project[]>('/recruiter/projects?status=active').catch(() => []),
+            fetchAPI<JobPosition[]>('/recruiter/positions').catch(() => []),
             fetchAPI<PositionGroup[]>('/admin/groups').catch(() => []),
             fetchAPI<any>('/admin/stats/pipeline').catch(() => null),
             fetchAPI<any>('/admin/stats/analytics').catch(() => null)
@@ -156,9 +156,9 @@ export const adminService = {
     getGroupAnalytics: async (groupId: string) => {
         try {
             const [analysis, technicalAI, risks] = await Promise.all([
-                fetchAPI<any>(`/recruiters/groups/${groupId}/analysis`).catch(() => null),
-                fetchAPI<any>(`/recruiters/groups/${groupId}/technical-ai`).catch(() => null),
-                fetchAPI<any>(`/recruiters/groups/${groupId}/risks`).catch(() => null)
+                fetchAPI<any>(`/recruiter/groups/${groupId}/analysis`).catch(() => null),
+                fetchAPI<any>(`/recruiter/groups/${groupId}/technical-ai`).catch(() => null),
+                fetchAPI<any>(`/recruiter/groups/${groupId}/risks`).catch(() => null)
             ]);
 
             if (!analysis) return null;
@@ -225,8 +225,8 @@ export const adminService = {
         const [hr, tech, positions, projects] = await Promise.all([
             fetchAPI<any[]>('/delegation/hr'),
             fetchAPI<any[]>('/delegation/technical'),
-            fetchAPI<JobPosition[]>('/recruiters/positions?status=open'),
-            fetchAPI<Project[]>('/recruiters/projects?status=active')
+            fetchAPI<JobPosition[]>('/recruiter/positions?status=open'),
+            fetchAPI<Project[]>('/recruiter/projects?status=active')
         ]);
 
         const transformedPositions = (positions || []).map((p: any) => ({
