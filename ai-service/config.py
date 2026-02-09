@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     OLLAMA_API_KEY: str = ""
     OLLAMA_MODEL: str = "llama3.2"
     
+    # Whisper settings (faster-whisper)
+    WHISPER_MODEL: str = "small"  # tiny, base, small, medium, large-v2
+    WHISPER_DEVICE: str = "cpu"  # cpu or cuda
+    WHISPER_COMPUTE_TYPE: str = "int8"  # float16, int8, etc.
+    
     # HuggingFace settings
     HUGGINGFACE_TOKEN: str = ""
     MODELS_DIR: str = "./models"

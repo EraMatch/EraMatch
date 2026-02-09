@@ -41,7 +41,7 @@ class EvaluateResponse(BaseModel):
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-   """Generic LLM chat endpoint using Ollama"""
+    """Generic LLM chat endpoint using Ollama"""
     try:
         result = await chat_completion(
             messages=request.messages,
@@ -60,22 +60,43 @@ async def evaluate(request: EvaluateRequest):
     """
     for the ai video based interivew, pairs of q and reference a and prompt fo a model here 
     """
-    # Build evaluation prompt
-    prompt = request.custom_prompt or f"""Evaluate this interview response.
+    # Build smart evaluation prompt
+    has_reference = bool(request.reference_answer and request.reference_answer.strip())
+    
+    prompt = f"""You are an expert interview evaluator. Analyze this candidate response.
 
-Question: {request.question or 'Interview question'}
+## Interview Question
+{request.question or 'Interview question'}
 
-Reference Answer (key points):
-{request.reference_answer}
+## Reference Answer (Key Points)
+{request.reference_answer if has_reference else 'No reference provided - evaluate based on general quality'}
 
-Candidate Response:
+## Candidate's Transcribed Response
 {request.transcript}
 
-Provide:
-1. Score (0-100)
-2. Brief feedback (2-3 sentences)
+## Evaluation Guidelines
+1. If this is a FACTUAL/TECHNICAL question with a reference answer:
+   - Check if key concepts are covered
+   - Allow variations in wording
+   - Partial credit for partial answers
 
-Format: SCORE: [number] | FEEDBACK: [text]"""
+2. If this is a BEHAVIORAL/SITUATIONAL question:
+   - Look for STAR method (Situation, Task, Action, Result)
+   - Evaluate clarity and communication
+   - Check relevance to the question
+
+3. Ignore minor speech transcription errors
+
+## Scoring Scale
+- 90-100: Excellent - comprehensive, accurate, well-structured
+- 70-89: Good - covers main points with minor gaps
+- 50-69: Acceptable - partial answer or lacks depth
+- 30-49: Below average - misses key points
+- 0-29: Poor - irrelevant or incorrect
+
+## Required Output (EXACTLY this format)
+SCORE: [number 0-100]
+FEEDBACK: [2-3 sentences explaining the score]"""
 
     try:
         result = await chat_completion(

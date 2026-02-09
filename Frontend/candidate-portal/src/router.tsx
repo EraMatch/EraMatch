@@ -5,6 +5,7 @@ import { CandidateDashboard } from './components/CandidateDashboard';
 import { TechnicalAssessmentFlow } from './components/TechnicalAssessmentFlow';
 import { RecordedInterviewFlow } from './components/RecordedInterviewFlow';
 import { LiveInterviewFlow } from './components/LiveInterviewFlow';
+import { InterviewMonitoringPage } from './components/InterviewMonitoringPage';
 
 // Error Page Component
 const ErrorPage = () => (
@@ -70,8 +71,8 @@ const RecordedInterviewWrapper = () => {
     return (
         <RecordedInterviewFlow
             onSignOut={() => navigate('/login')}
-            onExit={() => navigate('/testing')}
-            onCompletion={() => navigate('/testing')}
+            onExit={() => navigate('/home')}
+            onCompletion={() => navigate('/home')}
         />
     );
 };
@@ -121,6 +122,16 @@ export const router = createBrowserRouter([
     {
         path: "/assessment/live",
         element: <LiveInterviewWrapper />,
+        errorElement: <ErrorPage />,
+    },
+    {
+        path: "/interview/video",
+        element: <RecordedInterviewWrapper />,
+        errorElement: <ErrorPage />,
+    },
+    {
+        path: "/monitoring",
+        element: <InterviewMonitoringPage />,
         errorElement: <ErrorPage />,
     },
 ]);

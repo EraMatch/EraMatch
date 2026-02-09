@@ -1,14 +1,19 @@
 """
-AI Inference Service - Main FastAPI App that work with all modls we need seperatley to call them as custom api 
+AI Inference Service - Main FastAPI Application
+
+Generic AI service supporting multiple providers:
+- Ollama Cloud for LLM (https://ollama.com)
+- Whisper for transcription (faster-whisper)
+- HuggingFace models (custom)
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import llm, custom
+from routers import llm, custom, transcribe
 
 app = FastAPI(
     title="EraMatch AI Service",
-    description="AI inference service for LLM and custom model operations",
+    description="AI inference service for LLM, transcription, and custom model operations",
     version="0.1.0",
 )
 
@@ -23,6 +28,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(llm.router, prefix="/llm", tags=["LLM"])
+app.include_router(transcribe.router, prefix="/transcribe", tags=["Transcription"])
 app.include_router(custom.router, prefix="/custom", tags=["Custom Models"])
 
 

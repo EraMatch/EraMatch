@@ -1,5 +1,5 @@
 """
-Transcription router - converts video/audio to text.
+Transcription router - audio/video to text using Whisper.
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -11,7 +11,7 @@ router = APIRouter()
 
 class TranscribeRequest(BaseModel):
     """Request body for transcription."""
-    video_url: str
+    audio_url: str
     language: str = "en"
 
 
@@ -19,17 +19,28 @@ class TranscribeResponse(BaseModel):
     """Response from transcription."""
     transcript: str
     confidence: float
-    duration_seconds: float | None = None
+    duration: float | None = None
+    language: str | None = None
 
 
 @router.post("/", response_model=TranscribeResponse)
-async def transcribe_video(request: TranscribeRequest):
+async def transcribe(request: TranscribeRequest):
+    """
+    Transcribe audio/video to text using Whisper.
+    
+    Args:
+        request: Contains audio_url and optional language
+        
+    Returns:
+        Transcript text with confidence score
+    """
     try:
-        result = await transcribe_audio(request.video_url, request.language)
+        result = await transcribe_audio(request.audio_url, request.language)
         return TranscribeResponse(
             transcript=result["transcript"],
             confidence=result["confidence"],
-            duration_seconds=result.get("duration"),
+            duration=result.get("duration"),
+            language=result.get("language"),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")

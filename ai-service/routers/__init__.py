@@ -1,4 +1,4 @@
 """Routers package for AI service."""
-from . import llm, custom
+from . import llm, custom, transcribe
 
-__all__ = ["llm", "custom"]
+__all__ = ["llm", "custom", "transcribe"]

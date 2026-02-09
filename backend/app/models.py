@@ -424,13 +424,14 @@ class InterviewResponse(BaseModel, table=True):
     session_id: UUID = Field(foreign_key="ongoing_interviews.id")
     question_id: str = Field(max_length=50)
     question_order: int
-    video_url: str | None = Field(default=None, max_length=500)
+    video_url: str | None = Field(default=None, sa_column=Column(Text))
     transcript: str | None = Field(default=None, sa_column=Column(Text))
     retake_number: int = Field(default=1)
     duration_seconds: int | None = Field(default=None)
     ai_score: Decimal | None = Field(default=None)
     ai_feedback: dict | None = Field(default=None, sa_column=Column(JSONB))
     answered_at: datetime | None = Field(default=None)
+    processing_status: str = Field(default="pending", max_length=50)
 
 
 class AIInterviewTurn(BaseModel, table=True):

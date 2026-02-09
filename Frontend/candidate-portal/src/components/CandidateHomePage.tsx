@@ -1,5 +1,6 @@
 import { Bell, CheckCircle2, Clock, FileText, Video, Calendar, ArrowRight, AlertCircle, Wrench, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
 import { api } from '../services/api';
 import logo from '../imports/image-eramatch.png';
@@ -32,6 +33,7 @@ export function CandidateHomePage({
   onOpenTestingPage,
   currentStage: propStage
 }: CandidateHomePageProps) {
+  const navigate = useNavigate();
   const [homeData, setHomeData] = useState<HomeData | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [currentStage, setCurrentStage] = useState(propStage || 'assessment');
@@ -248,7 +250,10 @@ export function CandidateHomePage({
                       </div>
                     </div>
 
-                    <Button className="bg-[#6366f1] hover:bg-[#5558e3] text-white h-[36px] px-[20px] rounded-[6px] font-['Arimo',sans-serif] text-[14px]">
+                    <Button
+                      onClick={() => navigate('/interview/video')}
+                      className="bg-[#6366f1] hover:bg-[#5558e3] text-white h-[36px] px-[20px] rounded-[6px] font-['Arimo',sans-serif] text-[14px]"
+                    >
                       Start Now
                     </Button>
                   </div>

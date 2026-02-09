@@ -33,13 +33,14 @@ async def chat_completion(
     if stream:
         # Streaming response
         full_content = ""
-        for part in client.chat(model_name, messages=messages, stream=True):
+        for part in client.chat(model=model_name, messages=messages, stream=True):
             full_content += part["message"]["content"]
         return {"content": full_content, "model": model_name}
     else:
         # Non-streaming
-        response = client.chat(model_name, messages=messages, stream=False)
+        response = client.chat(model=model_name, messages=messages, stream=False)
         return {
             "content": response["message"]["content"],
             "model": model_name,
         }
+

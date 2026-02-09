@@ -3,7 +3,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
+import os
 from app.api.v1.router import router as api_v1_router
 
 
@@ -37,6 +39,11 @@ app.add_middleware(
 )
 
 app.include_router(api_v1_router, prefix=settings.API_V1_STR)
+
+# Mount static files
+static_dir = os.path.join(os.getcwd(), "static")
+os.makedirs(static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 @app.get("/health", tags=["Health"])

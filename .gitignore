@@ -72,3 +72,15 @@ version_docs/
 
 
 backend/inspect_db.py
+
+
+uploads/
+
+
+*.sql
+backend/*.json
+backend/logs/video_processing_debug.json
+backend/uv.lock
+backend/seed_test_users.py
+backend/pyproject.toml
+COMMIT_SUMMARY.md
