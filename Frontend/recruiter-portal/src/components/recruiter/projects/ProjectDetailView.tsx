@@ -56,13 +56,13 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
 
         if (project) {
           setProjectId(project.id);
-          const projectPositions = await api.recruiter.getProjectPositions(Number(project.id));
+          const projectPositions = await api.recruiter.getProjectPositions(project.id);
           const mappedPositions: Position[] = projectPositions.map(p => ({
             id: p.id,
             title: p.jobTitle,
             description: `Department: ${p.department}`,
             screeningConditions: 'Standard screening requirements apply',
-            applicants: p.applicantsCount,
+            applicants: p.candidatesCount,
             isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
           }));
           setPositions(mappedPositions);
@@ -162,7 +162,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
         await api.recruiter.updatePosition(editingPosition.id, {
           jobTitle: editPositionTitle,
           // department: ... not editing department in modal currently
-          status: editPositionIsOpen ? 'Active' : 'Closed'
+          status: editPositionIsOpen ? 'active' : 'closed'
         });
         toast.success('Position updated successfully');
         // Refresh
@@ -173,7 +173,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
             title: p.jobTitle,
             description: `Department: ${p.department}`,
             screeningConditions: 'Standard screening requirements apply',
-            applicants: p.applicantsCount,
+            applicants: p.candidatesCount,
             isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
           }));
           setPositions(mappedPositions);
@@ -445,7 +445,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
 
           {/* Project Description */}
           <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af] mb-[24px] leading-[20px]">
-            {projectDescription || 'This project aims to enhance the overall system performance and user experience by implementing modern development practices and technologies.'}
+            {projectDescription || 'No description'}
           </p>
 
           {/* Tabs */}

@@ -6,7 +6,7 @@ export interface JobPosition {
     assignedTechnicalRecruiter?: string;
     applicantsCount: number;
     candidatesCount: number;
-    status: 'Open' | 'Interview' | 'Closed' | 'On Hold' | 'Active';
+    status: 'Open' | 'Interview' | 'Closed' | 'On Hold' | 'Active' | 'active' | 'closed';
     projectId?: string;
     description?: string;
 }
@@ -20,6 +20,8 @@ export interface Project {
     avgTimeToFill: number;
     openDate: string;
     description?: string;
+    status: string; // Added status
+    name?: string; // Optional alias if needed, but backend sends projectName
 }
 
 export interface PositionGroup {

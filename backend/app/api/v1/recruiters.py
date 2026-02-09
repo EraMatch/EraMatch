@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
-from app.api.deps import DbSession, CurrentUser
+from app.api.deps import DbSession, RecruiterUser
 from app.services import RecruiterService
 from app.schemas import (
     ProjectCreate,
@@ -23,9 +23,10 @@ from app.schemas import (
     GroupAnalysisResponse,
     TechnicalAIResponse,
     RiskBreakdownResponse,
+    RecruiterAnalyticsResponse,
 )
 
-router = APIRouter(prefix="/recruiters", tags=["Recruiters"])
+router = APIRouter(prefix="/recruiter", tags=["Recruiters"])
 
 
 # =============================================================================
@@ -35,7 +36,7 @@ router = APIRouter(prefix="/recruiters", tags=["Recruiters"])
 
 @router.post("/projects", response_model=ProjectResponse, status_code=201)
 async def create_project(
-    data: ProjectCreate, session: DbSession, current_user: CurrentUser
+    data: ProjectCreate, session: DbSession, current_user: RecruiterUser
 ):
     """Create a new project."""
     service = RecruiterService(session, current_user)
@@ -45,7 +46,7 @@ async def create_project(
 @router.get("/projects", response_model=list[ProjectListResponse])
 async def list_projects(
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
     status: str | None = None,
     skip: int = 0,
     limit: int = 50,
@@ -57,11 +58,20 @@ async def list_projects(
 
 @router.get("/projects/{project_id}", response_model=ProjectResponse)
 async def get_project(
-    project_id: UUID, session: DbSession, current_user: CurrentUser
+    project_id: UUID, session: DbSession, current_user: RecruiterUser
 ):
     """Get a project by ID."""
     service = RecruiterService(session, current_user)
     return await service.get_project(project_id)
+
+
+@router.get("/projects/{project_id}/positions", response_model=list[PositionResponse])
+async def get_project_positions(
+    project_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Get all positions for a project."""
+    service = RecruiterService(session, current_user)
+    return await service.get_project_positions(project_id)
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectResponse)
@@ -69,7 +79,7 @@ async def update_project(
     project_id: UUID,
     data: ProjectUpdate,
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
 ):
     """Update a project."""
     service = RecruiterService(session, current_user)
@@ -78,7 +88,7 @@ async def update_project(
 
 @router.get("/projects/{project_id}/summary", response_model=ProjectSummaryResponse)
 async def get_project_summary(
-    project_id: UUID, session: DbSession, current_user: CurrentUser
+    project_id: UUID, session: DbSession, current_user: RecruiterUser
 ):
     """Get project summary stats."""
     service = RecruiterService(session, current_user)
@@ -92,7 +102,7 @@ async def get_project_summary(
 
 @router.post("/positions", response_model=PositionResponse, status_code=201)
 async def create_position(
-    data: PositionCreate, session: DbSession, current_user: CurrentUser
+    data: PositionCreate, session: DbSession, current_user: RecruiterUser
 ):
     """Create a new position."""
     service = RecruiterService(session, current_user)
@@ -102,7 +112,7 @@ async def create_position(
 @router.get("/positions", response_model=list[PositionResponse])
 async def list_positions(
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
     project_id: UUID | None = None,
     status: str | None = None,
     skip: int = 0,
@@ -115,7 +125,7 @@ async def list_positions(
 
 @router.get("/positions/{position_id}", response_model=PositionResponse)
 async def get_position(
-    position_id: UUID, session: DbSession, current_user: CurrentUser
+    position_id: UUID, session: DbSession, current_user: RecruiterUser
 ):
     """Get a position by ID."""
     service = RecruiterService(session, current_user)
@@ -127,7 +137,7 @@ async def update_position(
     position_id: UUID,
     data: PositionUpdate,
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
 ):
     """Update a position."""
     service = RecruiterService(session, current_user)
@@ -136,7 +146,7 @@ async def update_position(
 
 @router.get("/positions/{position_id}/insights", response_model=PositionInsightsResponse)
 async def get_position_insights(
-    position_id: UUID, session: DbSession, current_user: CurrentUser
+    position_id: UUID, session: DbSession, current_user: RecruiterUser
 ):
     """Get position insights."""
     service = RecruiterService(session, current_user)
@@ -145,7 +155,7 @@ async def get_position_insights(
 
 @router.get("/positions/{position_id}/groups", response_model=list[PositionGroupResponse])
 async def get_position_groups(
-    position_id: UUID, session: DbSession, current_user: CurrentUser
+    position_id: UUID, session: DbSession, current_user: RecruiterUser
 ):
     """Get position groups."""
     service = RecruiterService(session, current_user)
@@ -160,7 +170,7 @@ async def get_position_groups(
 @router.get("/applications", response_model=list[ApplicationResponse])
 async def list_applications(
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
     position_id: UUID | None = None,
     status: str | None = None,
     skip: int = 0,
@@ -178,7 +188,7 @@ async def update_application(
     application_id: UUID,
     data: ApplicationUpdate,
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
 ):
     """Update application status."""
     service = RecruiterService(session, current_user)
@@ -192,7 +202,7 @@ async def update_application(
 
 @router.get("/groups/{group_id}/analysis", response_model=GroupAnalysisResponse)
 async def get_group_analysis(
-    group_id: UUID, session: DbSession, current_user: CurrentUser
+    group_id: UUID, session: DbSession, current_user: RecruiterUser
 ):
     """Get group analysis."""
     service = RecruiterService(session, current_user)
@@ -201,7 +211,7 @@ async def get_group_analysis(
 
 @router.get("/groups/{group_id}/technical-ai", response_model=TechnicalAIResponse)
 async def get_group_technical_ai(
-    group_id: UUID, session: DbSession, current_user: CurrentUser
+    group_id: UUID, session: DbSession, current_user: RecruiterUser
 ):
     """Get group technical & AI stats."""
     service = RecruiterService(session, current_user)
@@ -210,8 +220,23 @@ async def get_group_technical_ai(
 
 @router.get("/groups/{group_id}/risks", response_model=RiskBreakdownResponse)
 async def get_group_risks(
-    group_id: UUID, session: DbSession, current_user: CurrentUser
+    group_id: UUID, session: DbSession, current_user: RecruiterUser
 ):
     """Get group risks."""
     service = RecruiterService(session, current_user)
     return await service.get_group_risks(group_id)
+
+
+# =============================================================================
+# ANALYTICS
+# =============================================================================
+
+
+@router.get("/analytics", response_model=RecruiterAnalyticsResponse)
+async def get_analytics(
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Get recruiter analytics."""
+    service = RecruiterService(session, current_user)
+    return await service.get_analytics(current_user.id)

@@ -63,6 +63,63 @@ class AuthService:
             )
         )
 
+    async def organization_user_login(self, email: str, password: str) -> AdminLoginResponse:
+        """
+        Authenticate organization user (HR/Technical recruiter) and return token + user info.
+        Uses OrganizationUser model with email and password_hash.
+        """
+        # 1. Fetch OrganizationUser by email
+        try:
+            query = select(OrganizationUser).where(OrganizationUser.email == email)
+            result = await self.session.execute(query)
+            user = result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"DB error during organization user login: {e}")
+            raise UnauthorizedException("Authentication service unavailable")
+
+        if not user:
+            raise UnauthorizedException("Invalid email or password")
+
+        # 2. Check if user exists and is active
+        if user.is_deleted:
+            raise UnauthorizedException("Invalid email or password")
+        
+        if str(user.status or "").lower() != "active":
+            raise UnauthorizedException("User account is not active")
+
+        # 3. Verify password
+        if not verify_password(password, user.password_hash or ""):
+            raise UnauthorizedException("Invalid email or password")
+
+        # 4. Generate JWT
+        user_id = user.id
+        token = create_access_token(
+            subject=user_id, 
+            extra_data={
+                "role": user.role, 
+                "org_id": str(user.organization_id)
+            }
+        )
+
+        # 5. Update last login timestamp
+        from datetime import datetime
+        user.last_login_at = datetime.utcnow()
+        self.session.add(user)
+        await self.session.commit()
+
+        # 6. Build response
+        full_name = f"{user.first_name} {user.last_name}".strip()
+        return AdminLoginResponse(
+            success=True,
+            token=token,
+            user=AdminLoginResponseUser(
+                userID=user_id,
+                organizationID=user.organization_id,
+                fullName=full_name,
+                role=user.role
+            )
+        )
+
     async def forgot_password(self, email: str) -> bool:
         """
         Request a password reset. Sends an email (logged to console for now).
@@ -134,6 +191,83 @@ class AuthService:
             
         except Exception as e:
             logger.error(f"Error resetting password: {e}")
+            await self.session.rollback()
+            raise UnauthorizedException("Account service unavailable")
+
+        return True
+
+    async def organization_user_forgot_password(self, email: str) -> bool:
+        """
+        Request a password reset for organization user (HR/Technical recruiter).
+        Sends an email (logged to console for now).
+        """
+        # 1. Fetch OrganizationUser by email
+        query = select(OrganizationUser).where(OrganizationUser.email == email)
+        result = await self.session.execute(query)
+        user = result.scalar_one_or_none()
+
+        if not user:
+            # We return True even if email not found to prevent user enumeration
+            logger.info(f"Password reset requested for non-existent organization user email: {email}")
+            return True
+            
+        user_id = user.id
+
+        # 2. Generate a sensitive token (short lived: 15 mins)
+        token = create_access_token(
+            subject=user_id, 
+            expires_delta=timedelta(minutes=15),
+            extra_data={"role": user.role, "type": "password_reset"}
+        )
+
+        # 3. "Send" Email
+        reset_link = f"http://localhost:5173/recruiter/reset-password?token={token}"
+        
+        logger.info("\n" + "="*50)
+        logger.info(f"PASSWORD RESET REQUEST FOR ORGANIZATION USER: {email}")
+        logger.info(f"RESET LINK: {reset_link}")
+        logger.info("="*50 + "\n")
+        
+        # In the future, use an actual SMTP client here if settings.SMTP_HOST is set
+        print(f"DEBUG: Password reset link for organization user {email}: {reset_link}")
+
+        return True
+
+    async def organization_user_reset_password(self, token: str, new_password: str) -> bool:
+        """
+        Reset password for organization user using a token.
+        """
+        # 1. Decode and verify token
+        try:
+            payload = decode_token(token)
+            if payload.get("type") != "password_reset":
+                raise UnauthorizedException("Invalid reset token type")
+            user_id_str = payload.get("sub")
+            user_id = UUID(user_id_str)
+        except Exception:
+            raise UnauthorizedException("Invalid or expired reset token")
+
+        # 2. Hash new password
+        new_hash = hash_password(new_password)
+
+        # 3. Update in DB
+        try:
+            # Verify user exists first
+            res = await self.session.execute(
+                select(OrganizationUser).where(OrganizationUser.id == user_id)
+            )
+            user = res.scalar_one_or_none()
+            
+            if not user:
+                raise UnauthorizedException("User not found")
+
+            # Update password
+            user.password_hash = new_hash
+            self.session.add(user)
+            await self.session.commit()
+            
+        except Exception as e:
+            logger.error(f"Error resetting organization user password: {e}")
             await self.session.rollback()
             raise UnauthorizedException("Account service unavailable")
 
