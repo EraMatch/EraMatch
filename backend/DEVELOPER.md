@@ -45,7 +45,7 @@ Workarounds:
 ```
 1. Create route in app/api/v1/{resource}.py (or use existing one - recommended at start)
 2. Add schema in app/schemas/{resource}.py (request/response)
-3. Add service in app/services/{resource}.py (business logic - your querying will be here)
+3. Add service in app/services/{module}/{resource}.py (e.g., services/candidates/auth.py)
 4. Register router in app/api/v1/router.py 
 ```
 

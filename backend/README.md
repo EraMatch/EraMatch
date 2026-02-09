@@ -27,7 +27,10 @@ backend/
 │   ├── db/                   # Database session and connection
 │   ├── integrations/         # External service clients (AI, storage, etc)
 │   ├── schemas/              # Pydantic schemas for models
-│   ├── services/             # Business logic layer (main code logic) 
+│   ├── services/             # Business logic layer
+│   │   ├── candidates/       # Candidate-specific services (auth, dashboard, etc)
+│   │   ├── recruiters/       # (Planned) Recruiter services
+│   │   └── ...
 │   ├── utils/                # Helper functions
 │   ├── models.py             # SQLModel ORM definitions (all tables)
 │   └── main.py               # main app

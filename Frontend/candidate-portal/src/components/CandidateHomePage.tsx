@@ -1,5 +1,6 @@
 import { Bell, CheckCircle2, Clock, FileText, Video, Calendar, ArrowRight, AlertCircle, Wrench, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
 import { api } from '../services/api';
 import logo from '../imports/image-eramatch.png';
@@ -18,10 +19,22 @@ interface Notification {
   read: boolean;
 }
 
+interface HomeData {
+  profile: { full_name: string; email: string } | null;
+  position: { job_title: string } | null;
+  project: { name: string } | null;
+  group: { group_name: string } | null;
+  current_stage: { stage_type: string; title: string } | null;
+  stages: Array<{ stage_type: string; stage_order: number; status: string }>;
+  notifications: Notification[];
+}
+
 export function CandidateHomePage({
   onOpenTestingPage,
   currentStage: propStage
 }: CandidateHomePageProps) {
+  const navigate = useNavigate();
+  const [homeData, setHomeData] = useState<HomeData | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [currentStage, setCurrentStage] = useState(propStage || 'assessment');
   const [isLoading, setIsLoading] = useState(true);
@@ -30,13 +43,21 @@ export function CandidateHomePage({
     const fetchData = async () => {
       try {
         setIsLoading(true);
-        const data = await api.candidate.getHome();
-        setNotifications((data.notifications as any).map((n: any) => ({
+        const data = await api.candidate.getHome() as HomeData;
+        setHomeData(data);
+        setNotifications((data.notifications || []).map((n: any) => ({
           ...n,
           type: n.type as 'success' | 'info' | 'warning'
         })));
-        if (!propStage && data.currentStage) {
-          setCurrentStage(data.currentStage as 'screening' | 'assessment' | 'ai-interview' | 'live-interview');
+        // Map stage_type to UI stage id
+        if (!propStage && data.current_stage) {
+          const stageMap: Record<string, 'screening' | 'assessment' | 'ai-interview' | 'live-interview'> = {
+            'screening': 'screening',
+            'assessment': 'assessment',
+            'ai_interview': 'ai-interview',
+            'live_interview': 'live-interview'
+          };
+          setCurrentStage(stageMap[data.current_stage.stage_type] || 'assessment');
         }
       } catch (error) {
         console.error("Failed to load candidate home data", error);
@@ -54,6 +75,12 @@ export function CandidateHomePage({
       </div>
     );
   }
+
+  // Extract data for display
+  const candidateName = homeData?.profile?.full_name || 'Candidate';
+  const jobTitle = homeData?.position?.job_title || 'Position';
+  const projectName = homeData?.project?.name || 'Project';
+  const nextStageTitle = homeData?.current_stage?.title || 'Complete Next Stage';
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -110,7 +137,7 @@ export function CandidateHomePage({
         {/* Welcome Section */}
         <div className="mb-[32px]">
           <h1 className="font-['Arimo',sans-serif] text-[32px] text-black mb-[8px]">
-            Welcome back, Alex
+            Welcome back, {candidateName}
           </h1>
           <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
             Track your application progress and stay updated
@@ -130,10 +157,10 @@ export function CandidateHomePage({
                 <div className="flex items-center justify-between mb-[16px]">
                   <div>
                     <h4 className="font-['Arimo',sans-serif] text-[15px] text-black font-medium mb-[4px]">
-                      Senior Software Engineer
+                      {jobTitle}
                     </h4>
                     <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                      Summer Internship Project
+                      {projectName}
                     </p>
                   </div>
                   <div className="h-[28px] px-[12px] rounded-full bg-blue-50 border border-blue-200 flex items-center">
@@ -199,10 +226,10 @@ export function CandidateHomePage({
                   <div className="flex items-start justify-between mb-[12px]">
                     <div className="flex-1">
                       <h4 className="font-['Arimo',sans-serif] text-[15px] text-black font-medium mb-[4px]">
-                        Complete Technical Assessment
+                        {nextStageTitle}
                       </h4>
                       <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] leading-[18px]">
-                        Evaluate your technical skills with coding challenges and problem-solving tasks
+                        Complete this stage to advance in your application
                       </p>
                     </div>
                   </div>
@@ -223,7 +250,10 @@ export function CandidateHomePage({
                       </div>
                     </div>
 
-                    <Button className="bg-[#6366f1] hover:bg-[#5558e3] text-white h-[36px] px-[20px] rounded-[6px] font-['Arimo',sans-serif] text-[14px]">
+                    <Button
+                      onClick={() => navigate('/interview/video')}
+                      className="bg-[#6366f1] hover:bg-[#5558e3] text-white h-[36px] px-[20px] rounded-[6px] font-['Arimo',sans-serif] text-[14px]"
+                    >
                       Start Now
                     </Button>
                   </div>

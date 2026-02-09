@@ -194,7 +194,8 @@ class ProjectAccess(BaseModel, table=True):
     granted_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class Position(BaseModel, table=True):
+class Position(SQLModel, table=True):
+    """Position - uses position_id as primary key."""
     __tablename__ = "positions"
     
     id: UUID = Field(default_factory=uuid4, alias="position_id", sa_column=Column("position_id", PG_UUID(as_uuid=True), primary_key=True))
@@ -218,7 +219,8 @@ class Position(BaseModel, table=True):
 # SECTION 3: GROUPS & PIPELINE CONFIG (3 Tables)
 # =============================================================================
 
-class CandidateGroup(BaseModel, table=True):
+class CandidateGroup(SQLModel, table=True):
+    """Candidate group - uses group_id as primary key."""
     __tablename__ = "candidate_groups"
     
     id: UUID = Field(default_factory=uuid4, alias="group_id", sa_column=Column("group_id", PG_UUID(as_uuid=True), primary_key=True))
@@ -268,7 +270,8 @@ class CandidateStageProgress(BaseModel, table=True):
 # SECTION 4: CANDIDATES (3 Tables)
 # =============================================================================
 
-class CandidateProfile(BaseModel, table=True):
+class CandidateProfile(SQLModel, table=True):
+    """Candidate profile - uses candidate_id as primary key (not inherited id)."""
     __tablename__ = "candidate_profiles"
 
     id: UUID = Field(default_factory=uuid4, alias="candidate_id", sa_column=Column("candidate_id", PG_UUID(as_uuid=True), primary_key=True))
@@ -280,11 +283,14 @@ class CandidateProfile(BaseModel, table=True):
     linkedin_url: str | None = Field(default=None, max_length=500)
     github_url: str | None = Field(default=None, max_length=500)
     portfolio_url: str | None = Field(default=None, max_length=500)
+    password_hash: str | None = Field(default=None, max_length=255)
+    avatar_url: str | None = Field(default=None, max_length=500)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
 
 
-class CandidateApplication(BaseModel, table=True):
+class CandidateApplication(SQLModel, table=True):
+    """Candidate application - uses application_id as primary key."""
     __tablename__ = "candidate_applications"
     
     id: UUID = Field(default_factory=uuid4, alias="application_id", sa_column=Column("application_id", PG_UUID(as_uuid=True), primary_key=True))
@@ -297,6 +303,7 @@ class CandidateApplication(BaseModel, table=True):
     source: str | None = Field(default=None, max_length=50)
     status: str = Field(default="applied", max_length=30)
     applied_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
 
 
@@ -460,13 +467,14 @@ class InterviewResponse(BaseModel, table=True):
     session_id: UUID = Field(foreign_key="ongoing_interviews.session_id")
     question_id: str = Field(max_length=50)
     question_order: int
-    video_url: str | None = Field(default=None, max_length=500)
+    video_url: str | None = Field(default=None, sa_column=Column(Text))
     transcript: str | None = Field(default=None, sa_column=Column(Text))
     retake_number: int = Field(default=1)
     duration_seconds: int | None = Field(default=None)
     ai_score: Decimal | None = Field(default=None)
     ai_feedback: dict | None = Field(default=None, sa_column=Column(JSONB))
     answered_at: datetime | None = Field(default=None)
+    processing_status: str = Field(default="pending", max_length=50)
 
 
 class AIInterviewTurn(BaseModel, table=True):
