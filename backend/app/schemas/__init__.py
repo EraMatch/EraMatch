@@ -2,7 +2,7 @@ from app.schemas.admin import (
     GlobalStatsResponse, PipelineStatsResponse, HealthAnalyticsResponse, 
     PaymentMethodResponse, MemberStatsResponse, MemberPrivilegesResponse, 
     MemberPrivilegesUpdate, MemberRegisterRequest, MemberRegisterResponse,
-    PaymentMethodCreate, SubscriptionUpgradeRequest
+    PaymentMethodCreate, SubscriptionUpgradeRequest, NotificationResponse
 )
 from app.schemas.auth import (
     LoginRequest,
@@ -100,6 +100,7 @@ __all__ = [
     "MemberRegisterResponse",
     "PaymentMethodCreate",
     "SubscriptionUpgradeRequest",
+    "NotificationResponse",
     "ProjectSummaryResponse",
     "PositionInsightsResponse",
     "PositionGroupResponse",

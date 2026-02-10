@@ -12,7 +12,7 @@ from app.schemas import (
     PaymentMethodResponse, MemberStatsResponse, MemberPrivilegesResponse, MemberPrivilegesUpdate,
     MemberRegisterRequest, MemberRegisterResponse, AdminSettingsResponse, AdminProfileUpdate,
     OrganizationSettingsUpdate, PreferencesUpdate, PositionGroupResponse,
-    PaymentMethodCreate, SubscriptionUpgradeRequest
+    PaymentMethodCreate, SubscriptionUpgradeRequest, NotificationResponse
 )
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -60,13 +60,18 @@ async def get_global_stats(session: DbSession, admin: AdminUser):
 
 
 @router.get("/stats/pipeline", response_model=PipelineStatsResponse)
-async def get_pipeline_stats(session: DbSession, admin: AdminUser):
+async def get_pipeline_stats(
+    session: DbSession, 
+    admin: AdminUser,
+    project_id: UUID | None = None,
+    position_id: UUID | None = None
+):
     """
     Get recruitment funnel statistics (aggregated application counts).
     Requires admin role.
     """
     service = AdminService(session, admin)
-    return await service.get_pipeline_stats()
+    return await service.get_pipeline_stats(project_id=project_id, position_id=position_id)
 
 @router.get("/stats/analytics", response_model=HealthAnalyticsResponse)
 async def get_health_analytics(session: DbSession, admin: AdminUser):
@@ -210,3 +215,18 @@ async def list_groups(session: DbSession, admin: AdminUser):
     """
     service = AdminService(session, admin)
     return await service.list_organization_groups()
+
+
+@router.get("/alerts", response_model=list[NotificationResponse])
+async def get_alerts(
+    session: DbSession,
+    admin: AdminUser,
+    skip: int = 0,
+    limit: int = 50
+):
+    """
+    Fetch all organization alerts/notifications.
+    Requires admin role.
+    """
+    service = AdminService(session, admin)
+    return await service.get_alerts(skip=skip, limit=limit)
