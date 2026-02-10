@@ -11,7 +11,6 @@ import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminSettings } from './components/admin/AdminSettings';
 import { AdminRecruiterDelegation } from './components/admin/AdminRecruiterDelegation';
 import { AdminClosedPositions } from './components/admin/AdminClosedPositions';
-import { AdminSubscriptionManagement } from './components/admin/AdminSubscriptionManagement';
 import { AdminOrganizationMembers } from './components/admin/AdminOrganizationMembers';
 import { AdminSidebar } from './components/admin/AdminSidebar';
 import { Sidebar } from './components/recruiter/layout/Sidebar';
@@ -44,7 +43,7 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
     return (
         <div className="min-h-screen bg-[#edf0f8]">
             <AdminSidebar />
-            <div className="ml-20">
+            <div className="ml-[96px]">
                 <main>{children}</main>
                 <Toaster richColors position="top-right" />
             </div>
@@ -243,6 +242,14 @@ export const router = createBrowserRouter([
         ),
     },
     {
+        path: "/admin/notifications",
+        element: (
+            <AdminLayout>
+                <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
+            </AdminLayout>
+        ),
+    },
+    {
         path: "/admin/settings",
         element: (
             <AdminLayout>
@@ -263,14 +270,6 @@ export const router = createBrowserRouter([
         element: (
             <AdminLayout>
                 <AdminClosedPositions onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
-        ),
-    },
-    {
-        path: "/admin/subscription",
-        element: (
-            <AdminLayout>
-                <AdminSubscriptionManagement onSignOut={() => window.location.href = '/'} />
             </AdminLayout>
         ),
     },

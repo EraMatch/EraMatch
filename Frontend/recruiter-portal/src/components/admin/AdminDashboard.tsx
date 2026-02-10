@@ -77,26 +77,31 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
     fetchGroupAnalytics();
   }, [viewMode, selectedGroup]);
 
-  // Project-specific pipeline data
+  // Project/Position-specific pipeline data
   useEffect(() => {
-    const fetchProjectFunnel = async () => {
-      if (selectedProject) {
-        try {
+    const fetchFunnel = async () => {
+      try {
+        if (selectedPositionForGroups) {
+          // Position-level funnel
+          const pipelineParams = await api.admin.getPipelineStats(undefined, selectedPositionForGroups.id.toString());
+          const transformed = api.admin.transformPipelineData(pipelineParams);
+          setPipelineData(transformed);
+        } else if (selectedProject) {
+          // Project-level funnel
           const pipelineParams = await api.admin.getPipelineStats(selectedProject.id);
           const transformed = api.admin.transformPipelineData(pipelineParams);
           setPipelineData(transformed);
-        } catch (error) {
-          console.error('Failed to fetch project funnel:', error);
-        }
-      } else {
-        // Reset to global pipeline if no project selected
-        api.admin.getPipelineStats().then(params => {
+        } else {
+          // Reset to global pipeline if no project/position selected
+          const params = await api.admin.getPipelineStats();
           setPipelineData(api.admin.transformPipelineData(params));
-        });
+        }
+      } catch (error) {
+        console.error('Failed to fetch funnel data:', error);
       }
     };
-    fetchProjectFunnel();
-  }, [selectedProject]);
+    fetchFunnel();
+  }, [selectedProject, selectedPositionForGroups]);
 
   if (isLoading) {
     return (
@@ -1490,53 +1495,53 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('projectName')}
                     >
                       Project Name
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('positionsCount')}
                     >
                       Positions
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('applicantsCount')}
                     >
                       Total Applicants
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('subGroupsCount')}
                     >
                       Sub-Groups
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('openDate')}
                     >
                       Open Date
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal">
+                  <th className="p-4">
+                    <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal text-center">
                       Actions
                     </span>
                   </th>
@@ -1545,32 +1550,32 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
               <tbody>
                 {projects.map((project) => (
                   <tr key={project.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="p-4">
+                    <td className="p-4 text-center">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
                         {project.projectName}
                       </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 text-center">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                         {project.positionsCount}
                       </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 text-center">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                         {project.applicantsCount}
                       </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 text-center">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                         {project.subGroupsCount}
                       </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 text-center">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                         {new Date(project.openDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                       </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 flex justify-center">
                       <button
                         className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
                         onClick={() => {
@@ -1604,53 +1609,53 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('jobTitle')}
                     >
                       Job Title
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('assignedHR')}
                     >
                       Assigned HR
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('assignedTechnicalRecruiter')}
                     >
                       Technical Recruiter
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('candidatesCount')}
                     >
                       Candidates
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('status')}
                     >
                       Status
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal">
+                  <th className="p-4">
+                    <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal text-center">
                       Actions
                     </span>
                   </th>
@@ -1659,27 +1664,27 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
               <tbody>
                 {jobPositions.slice(0, selectedProject.positionsCount).map((position) => (
                   <tr key={position.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="p-4">
+                    <td className="p-4 text-center">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
                         {position.jobTitle}
                       </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 text-center">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                         {position.assignedHR}
                       </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 text-center">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                         {position.assignedTechnicalRecruiter}
                       </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 text-center">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                         {position.applicantsCount}
                       </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 text-center">
                       <span
                         className={`inline-block px-3 py-1 rounded-full font-['Arimo',sans-serif] text-[12px] ${getStatusBadgeColor(
                           position.status
@@ -1688,7 +1693,7 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                         {position.status}
                       </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 flex justify-center">
                       <button
                         className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
                         onClick={() => {
@@ -1722,44 +1727,44 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('groupName')}
                     >
                       Group Name
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('candidatesCount')}
                     >
                       Candidates
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('status')}
                     >
                       Status
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
+                  <th className="p-4">
                     <button
-                      className="flex items-center gap-2 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('createdDate')}
                     >
                       Created Date
                       <ArrowUpDown size={14} />
                     </button>
                   </th>
-                  <th className="text-left p-4">
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal">
+                  <th className="p-4">
+                    <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal text-center">
                       Actions
                     </span>
                   </th>
@@ -1770,17 +1775,17 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                   .filter(group => !selectedPositionForGroups || group.position_id === selectedPositionForGroups.id)
                   .map((group) => (
                     <tr key={group.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="p-4">
+                      <td className="p-4 text-center">
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
                           {group.groupName}
                         </span>
                       </td>
-                      <td className="p-4">
+                      <td className="p-4 text-center">
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                           {group.candidatesCount}
                         </span>
                       </td>
-                      <td className="p-4">
+                      <td className="p-4 text-center">
                         <span
                           className={`inline-block px-3 py-1 rounded-full font-['Arimo',sans-serif] text-[12px] ${getStatusBadgeColor(
                             group.status
@@ -1789,12 +1794,12 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                           {group.status}
                         </span>
                       </td>
-                      <td className="p-4">
+                      <td className="p-4 text-center">
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                           {new Date(group.createdDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                         </span>
                       </td>
-                      <td className="p-4">
+                      <td className="p-4 flex justify-center">
                         <button
                           className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
                           onClick={() => {

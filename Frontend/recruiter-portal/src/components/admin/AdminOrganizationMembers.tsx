@@ -344,30 +344,30 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-200">
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Name</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Role</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Status</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Position</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Department</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Join Date</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Actions</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Name</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Role</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Status</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Position</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Department</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Join Date</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredMembers.map((member) => (
                     <tr key={member.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-4 px-4">
+                      <td className="py-4 px-4 flex justify-center">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: '#6366F1' }}>
                             {member.name.split(' ').map(n => n[0]).join('')}
                           </div>
-                          <div>
+                          <div className="text-left">
                             <p className="text-gray-900 text-sm">{member.name}</p>
                             <p className="text-gray-500 text-xs">{member.email}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="py-4 px-4">
+                      <td className="py-4 px-4 text-center">
                         <span
                           className="px-3 py-1 rounded-full text-xs text-white inline-block"
                           style={{
@@ -377,7 +377,7 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
                           {member.role}
                         </span>
                       </td>
-                      <td className="py-4 px-4">
+                      <td className="py-4 px-4 text-center">
                         <span
                           className={`px-3 py-1 rounded-full text-xs inline-block ${member.status?.toLowerCase() === 'active'
                             ? 'bg-green-100 text-green-700'
@@ -389,11 +389,11 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
                           {member.status || 'Active'}
                         </span>
                       </td>
-                      <td className="py-4 px-4 text-gray-900 text-sm">{member.position}</td>
-                      <td className="py-4 px-4 text-gray-900 text-sm">{member.department}</td>
-                      <td className="py-4 px-4 text-gray-500 text-sm">{member.joinDate}</td>
+                      <td className="py-4 px-4 text-gray-900 text-sm text-center">{member.position}</td>
+                      <td className="py-4 px-4 text-gray-900 text-sm text-center">{member.department}</td>
+                      <td className="py-4 px-4 text-gray-500 text-sm text-center">{member.joinDate}</td>
                       <td className="py-4 px-4">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-center gap-2">
                           {member.role?.toLowerCase() !== 'admin' ? (
                             <>
                               <Button
