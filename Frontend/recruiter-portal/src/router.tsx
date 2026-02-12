@@ -5,11 +5,12 @@ import { AdminLoginPage } from './components/admin/AdminLoginPage';
 import { ForgotPasswordPage } from './components/admin/ForgotPasswordPage';
 import { ResetPasswordPage } from './components/admin/ResetPasswordPage';
 import { RecruiterLoginPage } from './components/recruiter/auth/RecruiterLoginPage';
+import { RecruiterForgotPasswordPage } from './components/recruiter/auth/RecruiterForgotPasswordPage';
+import { RecruiterResetPasswordPage } from './components/recruiter/auth/RecruiterResetPasswordPage';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminSettings } from './components/admin/AdminSettings';
 import { AdminRecruiterDelegation } from './components/admin/AdminRecruiterDelegation';
 import { AdminClosedPositions } from './components/admin/AdminClosedPositions';
-import { AdminSubscriptionManagement } from './components/admin/AdminSubscriptionManagement';
 import { AdminOrganizationMembers } from './components/admin/AdminOrganizationMembers';
 import { AdminSidebar } from './components/admin/AdminSidebar';
 import { Sidebar } from './components/recruiter/layout/Sidebar';
@@ -42,7 +43,7 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
     return (
         <div className="min-h-screen bg-[#edf0f8]">
             <AdminSidebar />
-            <div className="ml-20">
+            <div className="ml-[96px]">
                 <main>{children}</main>
                 <Toaster richColors position="top-right" />
             </div>
@@ -241,6 +242,14 @@ export const router = createBrowserRouter([
         ),
     },
     {
+        path: "/admin/notifications",
+        element: (
+            <AdminLayout>
+                <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
+            </AdminLayout>
+        ),
+    },
+    {
         path: "/admin/settings",
         element: (
             <AdminLayout>
@@ -264,19 +273,27 @@ export const router = createBrowserRouter([
             </AdminLayout>
         ),
     },
-    {
-        path: "/admin/subscription",
-        element: (
-            <AdminLayout>
-                <AdminSubscriptionManagement onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
-        ),
-    },
 
     // Recruiter Routes
     {
         path: "/recruiter/login",
-        element: <RecruiterLoginPage onBack={() => window.location.href = '/'} onSignIn={() => window.location.href = '/recruiter/dashboard'} />,
+        element: (
+            <RecruiterLoginPage
+                onBack={() => window.location.href = '/'}
+                onSignIn={() => window.location.href = '/recruiter/dashboard'}
+                onForgotPassword={() => window.location.href = '/recruiter/forgot-password'}
+            />
+        ),
+        errorElement: <ErrorPage />,
+    },
+    {
+        path: "/recruiter/forgot-password",
+        element: <RecruiterForgotPasswordPage onBack={() => window.location.href = '/recruiter/login'} />,
+        errorElement: <ErrorPage />,
+    },
+    {
+        path: "/recruiter/reset-password",
+        element: <RecruiterResetPasswordPage onBack={() => window.location.href = '/recruiter/login'} />,
         errorElement: <ErrorPage />,
     },
     {

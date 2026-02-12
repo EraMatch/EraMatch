@@ -4,7 +4,7 @@ Project and position schemas.
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, AliasChoices, AliasPath
 
 
 class ProjectCreate(BaseModel):
@@ -31,9 +31,7 @@ class ProjectResponse(BaseModel):
     target_hire_count: int
     created_at: datetime = Field(serialization_alias="openDate")
     
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class ProjectListResponse(BaseModel):
@@ -49,9 +47,7 @@ class ProjectListResponse(BaseModel):
     subGroupsCount: int = Field(default=0)
     avgTimeToFill: float = Field(default=0.0, serialization_alias="avgTimeToFill")
     
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class PositionCreate(BaseModel):
@@ -79,8 +75,11 @@ class PositionUpdate(BaseModel):
 
 
 class PositionResponse(BaseModel):
-    """Position response."""
-    id: UUID = Field(alias="position_id", serialization_alias="id")
+    """Position response with enriched recruiter and count data."""
+    id: UUID = Field(
+        validation_alias=AliasChoices("id", "position_id"),
+        serialization_alias="id"
+    )
     project_id: UUID
     job_title: str = Field(serialization_alias="jobTitle")
     job_description: str | None = Field(default=None, serialization_alias="jobDescription")
@@ -92,16 +91,15 @@ class PositionResponse(BaseModel):
     status: str
     created_at: datetime | None = None
     
-    # Enrichment fields for delegation
-    assignedHR: str | None = None
-    assignedTechnicalRecruiter: str | None = None
-    candidatesCount: int = 0
-    applicantsCount: int = 0
-    department: str = "Technical" # Mock or fetch from dept table
+    # Enriched fields
+    assignedHR: str | None = Field(default=None, serialization_alias="assignedHR")
+    assignedTechnicalRecruiter: str | None = Field(default=None, serialization_alias="assignedTechnicalRecruiter")
+    candidatesCount: int = Field(default=0, serialization_alias="candidatesCount")
+    applicantsCount: int = Field(default=0, serialization_alias="applicantsCount")
+    department: str | None = Field(default="Technical", serialization_alias="department")
 
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
 
 
 class ProjectSummaryResponse(BaseModel):

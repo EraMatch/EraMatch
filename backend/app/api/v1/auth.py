@@ -33,6 +33,40 @@ async def admin_login(data: LoginRequest, session: DbSession):
     return await service.admin_login(data.email, data.password)
 
 
+'''-------------- Organization User Login -----------------------'''
+
+
+@router.post("/organization-user/login", response_model=AdminLoginResponse)
+async def organization_user_login(data: LoginRequest, session: DbSession):
+    """
+    Login for organization users (HR/Technical recruiters).
+    
+    Returns token and user info (name, role, orgID).
+    """
+    service = AuthService(session)
+    return await service.organization_user_login(data.email, data.password)
+
+
+@router.post("/organization-user/forgot-password")
+async def organization_user_forgot_password(data: ForgotPasswordRequest, session: DbSession):
+    """
+    Send a password reset link to the organization user's email.
+    """
+    service = AuthService(session)
+    await service.organization_user_forgot_password(data.email)
+    return {"message": "If the email exists, a reset link has been sent."}
+
+
+@router.post("/organization-user/reset-password")
+async def organization_user_reset_password(data: ResetPasswordRequest, session: DbSession):
+    """
+    Reset password for organization user using the reset token.
+    """
+    service = AuthService(session)
+    await service.organization_user_reset_password(data.token, data.password)
+    return {"message": "Password has been successfully reset."}
+
+
 @router.post("/forgot-password")
 async def forgot_password(data: ForgotPasswordRequest, session: DbSession):
     """

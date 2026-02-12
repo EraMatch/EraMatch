@@ -96,41 +96,41 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                 <table className="w-full">
                   <thead className="bg-[#f9fafb] border-b border-[#e5e7eb]">
                     <tr>
-                      <th className="text-left p-4">
+                      <th className="p-4">
                         <button
                           onClick={() => handleSort('projectName')}
-                          className="flex items-center gap-1 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                          className="flex items-center justify-center gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                         >
                           Project Name
                           <ArrowUpDown size={14} />
                         </button>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Open Date
                         </span>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Closed Date
                         </span>
                       </th>
-                      <th className="text-left p-4">
+                      <th className="p-4">
                         <button
                           onClick={() => handleSort('positionsCount')}
-                          className="flex items-center gap-1 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                          className="flex items-center justify-center gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                         >
                           Positions
                           <ArrowUpDown size={14} />
                         </button>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Total Candidates
                         </span>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Actions
                         </span>
                       </th>
@@ -156,32 +156,32 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                           }
                         }}
                       >
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                             {project.projectName}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                             {new Date(project.openDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                             {new Date(project.closedDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                             {project.positionsCount}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                             {project.totalCandidates}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 flex justify-center">
                           <button
                             className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
                             onClick={async (e) => {
@@ -248,41 +248,41 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                 <table className="w-full">
                   <thead className="bg-[#f9fafb] border-b border-[#e5e7eb]">
                     <tr>
-                      <th className="text-left p-4">
+                      <th className="p-4">
                         <button
                           onClick={() => handleSort('jobTitle')}
-                          className="flex items-center gap-1 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                          className="flex items-center justify-center gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                         >
                           Job Title
                           <ArrowUpDown size={14} />
                         </button>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Closure Status
                         </span>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Closed Date
                         </span>
                       </th>
-                      <th className="text-left p-4">
+                      <th className="p-4">
                         <button
                           onClick={() => handleSort('candidatesCount')}
-                          className="flex items-center gap-1 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                          className="flex items-center justify-center gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                         >
                           Candidates
                           <ArrowUpDown size={14} />
                         </button>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Groups Created
                         </span>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Actions
                         </span>
                       </th>
@@ -317,12 +317,12 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                           }
                         }}
                       >
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                             {position.jobTitle}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span
                             className={`inline-block px-3 py-1 rounded-full font-['Arimo',sans-serif] text-[12px] ${getStatusBadgeColor(
                               position.closureStatus
@@ -331,22 +331,22 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                             {position.closureStatus}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                             {new Date(position.closedDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                             {position.candidatesCount}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                             {position.groupsCreated}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 flex justify-center">
                           <button
                             className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
                             onClick={async (e) => {

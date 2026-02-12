@@ -6,6 +6,7 @@ import {
   Archive,
   CreditCard,
   LogOut,
+  Bell,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
@@ -17,16 +18,17 @@ export function AdminSidebar() {
     }`;
 
   return (
-    <div className="fixed left-0 top-0 h-full w-20 bg-white border-r border-gray-200 flex flex-col items-center gap-8 rounded-r-3xl py-8">
+    <div className="fixed left-0 top-0 h-full w-20 bg-white border-r border-gray-200 flex flex-col items-center gap-8 rounded-r-3xl py-8 z-[100] shadow-xl">
 
       <div className="flex-1 flex flex-col gap-4 w-full items-center justify-center">
         <NavLink to="/admin/dashboard" className={({ isActive }) => getLinkClass(isActive)} title="Dashboard">
           <LayoutDashboard size={24} />
         </NavLink>
 
-        <NavLink to="/admin/subscription" className={({ isActive }) => getLinkClass(isActive)} title="Subscription Management">
-          <CreditCard size={24} />
+        <NavLink to="/admin/notifications" className={({ isActive }) => getLinkClass(isActive)} title="Notifications">
+          <Bell size={24} />
         </NavLink>
+
 
         <NavLink to="/admin/members" className={({ isActive }) => getLinkClass(isActive)} title="Organization Members">
           <Users size={24} />

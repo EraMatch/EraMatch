@@ -2,7 +2,7 @@ from app.schemas.admin import (
     GlobalStatsResponse, PipelineStatsResponse, HealthAnalyticsResponse, 
     PaymentMethodResponse, MemberStatsResponse, MemberPrivilegesResponse, 
     MemberPrivilegesUpdate, MemberRegisterRequest, MemberRegisterResponse,
-    PaymentMethodCreate, SubscriptionUpgradeRequest
+    PaymentMethodCreate, SubscriptionUpgradeRequest, NotificationResponse
 )
 from app.schemas.auth import (
     LoginRequest,
@@ -14,6 +14,8 @@ from app.schemas.auth import (
     AdminLoginResponseUser,
     ForgotPasswordRequest,
     ResetPasswordRequest,
+    CandidateLoginRequest,
+    CandidateAuthResponse,
 )
 from app.schemas.candidate import (
     CandidateCreate,
@@ -48,6 +50,15 @@ from app.schemas.settings import (
     PreferencesUpdate,
     AdminSettingsResponse,
 )
+from app.schemas.analytics import (
+    OverviewStats,
+    GroupStatusCount,
+    StageCount,
+    ProjectPerformance,
+    RecentActivity,
+    WeeklyTrend,
+    RecruiterAnalyticsResponse,
+)
 
 __all__ = [
     # Auth
@@ -60,6 +71,8 @@ __all__ = [
     "AdminLoginResponseUser",
     "ForgotPasswordRequest",
     "ResetPasswordRequest",
+    "CandidateLoginRequest",
+    "CandidateAuthResponse",
     # Candidate
     "CandidateCreate",
     "CandidateUpdate",
@@ -87,6 +100,7 @@ __all__ = [
     "MemberRegisterResponse",
     "PaymentMethodCreate",
     "SubscriptionUpgradeRequest",
+    "NotificationResponse",
     "ProjectSummaryResponse",
     "PositionInsightsResponse",
     "PositionGroupResponse",
@@ -102,4 +116,12 @@ __all__ = [
     "OrganizationSettingsUpdate",
     "PreferencesUpdate",
     "AdminSettingsResponse",
+    # Analytics
+    "OverviewStats",
+    "GroupStatusCount",
+    "StageCount",
+    "ProjectPerformance",
+    "RecentActivity",
+    "WeeklyTrend",
+    "RecruiterAnalyticsResponse",
 ]

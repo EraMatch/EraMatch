@@ -4,8 +4,15 @@ import type { Project, JobPosition, PositionGroup, Member, ClosedProject, Closed
 export const adminService = {
     getGlobalStats: async () => fetchAPI<any>('/admin/stats/global'),
 
-    getPipelineStats: async (projectId?: string) => {
-        const url = projectId ? `/admin/stats/pipeline?project_id=${projectId}` : '/admin/stats/pipeline';
+    getPipelineStats: async (projectId?: string, positionId?: string) => {
+        let url = '/admin/stats/pipeline';
+        const params = new URLSearchParams();
+        if (projectId) params.append('project_id', projectId);
+        if (positionId) params.append('position_id', positionId);
+
+        const queryString = params.toString();
+        if (queryString) url += `?${queryString}`;
+
         return fetchAPI<any>(url);
     },
     getHealthAnalytics: async () => fetchAPI<any>('/admin/stats/analytics'),
@@ -30,8 +37,8 @@ export const adminService = {
     getDashboardStats: async () => {
         const [globalStats, projects, positions, groups, pipelineParams, analytics] = await Promise.all([
             fetchAPI<any>('/admin/stats/global').catch(() => ({})),
-            fetchAPI<Project[]>('/recruiters/projects?status=active').catch(() => []),
-            fetchAPI<JobPosition[]>('/recruiters/positions').catch(() => []),
+            fetchAPI<Project[]>('/recruiter/projects?status=active').catch(() => []),
+            fetchAPI<JobPosition[]>('/recruiter/positions').catch(() => []),
             fetchAPI<PositionGroup[]>('/admin/groups').catch(() => []),
             fetchAPI<any>('/admin/stats/pipeline').catch(() => null),
             fetchAPI<any>('/admin/stats/analytics').catch(() => null)
@@ -93,12 +100,12 @@ export const adminService = {
             pipelineData, // Pass transformed data
             recentGroups: groups.slice(0, 3),
             avgTimeToFill: globalStats.avgTimeToFill || 0,
-            revenue: {
+            revenue: globalStats.revenue || {
                 current: 0,
                 target: 0,
                 growth: 0
             },
-            analytics // Pass analytics data
+            analytics: globalStats.analytics || analytics // Use globalStats.analytics as primary source
         };
     },
 
@@ -156,9 +163,9 @@ export const adminService = {
     getGroupAnalytics: async (groupId: string) => {
         try {
             const [analysis, technicalAI, risks] = await Promise.all([
-                fetchAPI<any>(`/recruiters/groups/${groupId}/analysis`).catch(() => null),
-                fetchAPI<any>(`/recruiters/groups/${groupId}/technical-ai`).catch(() => null),
-                fetchAPI<any>(`/recruiters/groups/${groupId}/risks`).catch(() => null)
+                fetchAPI<any>(`/recruiter/groups/${groupId}/analysis`).catch(() => null),
+                fetchAPI<any>(`/recruiter/groups/${groupId}/technical-ai`).catch(() => null),
+                fetchAPI<any>(`/recruiter/groups/${groupId}/risks`).catch(() => null)
             ]);
 
             if (!analysis) return null;
@@ -222,23 +229,27 @@ export const adminService = {
     },
 
     getRecruiterDelegation: async () => {
+        const cacheBuster = `cb=${Date.now()}`;
         const [hr, tech, positions, projects] = await Promise.all([
-            fetchAPI<any[]>('/delegation/hr'),
-            fetchAPI<any[]>('/delegation/technical'),
-            fetchAPI<JobPosition[]>('/recruiters/positions?status=open'),
-            fetchAPI<Project[]>('/recruiters/projects?status=active')
+            fetchAPI<any[]>(`/delegation/hr?${cacheBuster}`),
+            fetchAPI<any[]>(`/delegation/technical?${cacheBuster}`),
+            fetchAPI<JobPosition[]>(`/recruiter/positions?status=open&${cacheBuster}`),
+            fetchAPI<Project[]>(`/recruiter/projects?status=active&${cacheBuster}`)
         ]);
 
-        const transformedPositions = (positions || []).map((p: any) => ({
-            ...p,
-            id: p.id || p.position_id,
-            jobTitle: p.jobTitle || p.job_title,
-            assignedHR: p.assignedHR || p.assigned_hr_name || 'Not Assigned',
-            assignedTechnicalRecruiter: p.assignedTechnicalRecruiter || p.assigned_tech_name || 'Not Assigned',
-            candidatesCount: p.candidatesCount ?? p.candidates_count ?? 0,
-            status: p.status || 'open',
-            projectId: p.projectId || p.project_id
-        }));
+        const transformedPositions = (positions || []).map((p: any) => {
+            const transformed = {
+                ...p,
+                id: p.id || p.position_id,
+                jobTitle: p.jobTitle || p.job_title,
+                assignedHR: p.assignedHR || p.assigned_hr_name || 'Not Assigned',
+                assignedTechnicalRecruiter: p.assignedTechnicalRecruiter || p.assigned_tech_name || 'Not Assigned',
+                candidatesCount: p.candidatesCount ?? p.candidates_count ?? 0,
+                status: p.status || 'open',
+                projectId: p.projectId || p.project_id
+            };
+            return transformed;
+        });
 
         return {
             hrRecruiters: hr,

@@ -56,30 +56,18 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
   const fetchProjects = async () => {
     try {
       setIsLoading(true);
-      const [activeProjects, closedProjects] = await Promise.all([
-        api.recruiter.getProjects(),
-        api.recruiter.getClosedProjects()
-      ]);
+      const allProjects = await api.recruiter.getProjects();
 
-      const mappedActive = activeProjects.map(p => ({
+      const mappedProjects = allProjects.map(p => ({
         id: p.id,
         title: p.projectName,
         roles: p.positionsCount,
         applicants: p.applicantsCount,
-        isOpen: true,
-        description: '' // Description might need to be fetched if added to API
+        isOpen: p.status?.toLowerCase() === 'active',
+        description: p.description || ''
       }));
 
-      const mappedClosed = closedProjects.map(p => ({
-        id: p.id,
-        title: p.projectName,
-        roles: p.positionsCount,
-        applicants: p.totalCandidates,
-        isOpen: false,
-        description: ''
-      }));
-
-      setProjects([...mappedActive, ...mappedClosed]);
+      setProjects(mappedProjects);
     } catch (error) {
       toast.error('Failed to load projects');
     } finally {
@@ -227,12 +215,21 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
     }
   };
 
-  const handleEditClick = (project: Project) => {
-    setEditingProject(project);
-    setEditProjectName(project.title);
-    setEditProjectDescription(project.description || '');
-    setEditProjectIsOpen(project.isOpen);
-    setIsEditDialogOpen(true);
+  const handleEditClick = async (project: Project) => {
+    try {
+      // 1. Pre-fetch details
+      const details = await api.recruiter.getProjectDetails(String(project.id));
+      if (!details) return;
+
+      setEditingProject(project);
+      setEditProjectName(details.projectName);
+      setEditProjectDescription(details.description || '');
+      // Map 'active' status to boolean
+      setEditProjectIsOpen(details.status?.toLowerCase() === 'active');
+      setIsEditDialogOpen(true);
+    } catch (error) {
+      toast.error('Failed to load project details');
+    }
   };
 
   const handleSaveChanges = async () => {
@@ -241,7 +238,7 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
         await api.recruiter.updateProject(editingProject.id, {
           projectName: editProjectName,
           description: editProjectDescription,
-          // status: editProjectIsOpen ? 'Active' : 'Closed' // Assuming backend handles this mapped to status or closed endpoint
+          status: editProjectIsOpen ? 'active' : 'closed'
         });
         toast.success('Project updated successfully');
         fetchProjects();

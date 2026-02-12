@@ -106,3 +106,13 @@ class ReassignRequest(BaseModel):
     """Request schema for reassigning a recruiter."""
     recruiterID: UUID
     type: str # "HR" or "Technical"
+
+class NotificationResponse(BaseModel):
+    """Response schema for a single notification."""
+    id: UUID
+    type: str
+    title: str
+    message: str | None = None
+    data: dict | None = None
+    is_read: bool
+    created_at: str # ISO string

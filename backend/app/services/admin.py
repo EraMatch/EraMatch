@@ -1,6 +1,6 @@
 from uuid import UUID
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select, func, desc, col, cast
+from sqlmodel import select, func, desc, col, cast, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models import (
@@ -170,26 +170,92 @@ class AdminService:
             }
 
             # 6. Stage Timing
-            # Placeholder: In a real implementation this would query CandidateStageProgress timestamps
-            stage_timing = [
-                {"stage": "Screening", "days": 3, "target": 3, "status": "good"},
-                {"stage": "Assessment", "days": 7, "target": 5, "status": "slow"},
-                {"stage": "Interview", "days": 12, "target": 7, "status": "slow"},
-                {"stage": "Offer", "days": 4, "target": 5, "status": "good"}
-            ]
+            # Calculate from CandidateStageProgress timestamps
+            # We want average days per stage for this organization
+            q_stages = select(
+                CandidateStageProgress.stage_type,
+                func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
+            ).join(
+                CandidateApplication
+            ).where(
+                CandidateApplication.organization_id == org_id,
+                CandidateStageProgress.completed_at.isnot(None),
+                CandidateStageProgress.started_at.isnot(None)
+            ).group_by(CandidateStageProgress.stage_type)
+            
+            res_stages = await self.session.execute(q_stages)
+            stage_data = res_stages.all()
+            
+            stage_map = {str(s).lower(): round(float(d.total_seconds() / 86400.0), 1) if d else 0 for s, d in stage_data}
+            
+            # Target days for stages
+            targets = {
+                "screening": 3,
+                "assessment": 5,
+                "interview": 7,
+                "ai_interview": 7,
+                "offer": 5
+            }
+            
+            # Map to response format
+            stage_timing = []
+            for s_type, target in targets.items():
+                days = stage_map.get(s_type, 0)
+                status = "good" if days <= target else "slow"
+                if days == 0: status = "good" # fallback
+                
+                stage_timing.append({
+                    "stage": s_type.replace('_', ' ').title(),
+                    "days": int(days) if days > 0 else 0,
+                    "target": target,
+                    "status": status
+                })
 
             # 7. Health & Quality
-            # Placeholder logic for now, derived from project status
-            q_proj_status = select(Project.status).where(
+            # Health: Based on project applicant counts (reusing logic from get_health_analytics)
+            # Fetch active projects and applicant counts in one query
+            q_health = select(
+                Project.id,
+                func.count(CandidateApplication.id).label("app_count")
+            ).select_from(Project).outerjoin(
+                Position, Project.id == Position.project_id
+            ).outerjoin(
+                CandidateApplication, Position.id == CandidateApplication.position_id
+            ).where(
                 Project.organization_id == org_id,
-                Project.is_deleted == False
-            )
-            res_proj_st = await self.session.execute(q_proj_status)
-            p_statuses = res_proj_st.scalars().all()
+                Project.status == "active",
+                Project.is_deleted == False,
+                or_(CandidateApplication.id.is_(None), CandidateApplication.is_deleted == False)
+            ).group_by(Project.id)
             
-            # Simple heuristic: active = onTrack, on_hold = atRisk
-            on_track = sum(1 for s in p_statuses if s == 'active')
-            at_risk = sum(1 for s in p_statuses if s == 'on_hold')
+            res_health = await self.session.execute(q_health)
+            health_rows = res_health.all()
+            
+            on_track = 0
+            at_risk = 0
+            for row in health_rows:
+                if row.app_count < 2:
+                    at_risk += 1
+                else:
+                    on_track += 1
+            
+            # Velocity: Hires per active project
+            velocity = total_applicants / max(1, active_projects) / 10.0 # Heuristic if hires aren't easy to count
+            if hire_data:
+                velocity = len(hire_data) / max(1, active_projects)
+            
+            # Quality: Assessment scores
+            q_scores = select(CandidateStageProgress.score).join(
+                CandidateApplication
+            ).where(
+                CandidateApplication.organization_id == org_id,
+                CandidateStageProgress.stage_type == "assessment",
+                CandidateStageProgress.score.isnot(None)
+            )
+            res_scores = await self.session.execute(q_scores)
+            scores = [float(s) for s in res_scores.scalars().all()]
+            high_q = sum(1 for s in scores if s >= 80)
+            low_q = len(scores) - high_q
             
             return GlobalStatsResponse(
                 openPositions=open_positions,
@@ -198,8 +264,8 @@ class AdminService:
                 avgTimeToFill=float(avg_time_to_fill),
                 analytics=HealthAnalyticsResponse(
                     health=HealthMetrics(onTrack=on_track, atRisk=at_risk),
-                    velocity=4.2, 
-                    quality=QualityMetrics(high=8, needsImprove=2),
+                    velocity=round(float(velocity), 1), 
+                    quality=QualityMetrics(high=high_q, needsImprove=low_q),
                     integrity=integrity_stats,
                     stageTiming=stage_timing
                 )
@@ -216,7 +282,7 @@ class AdminService:
                 avgTimeToFill=0.0
             )
 
-    async def get_pipeline_stats(self, project_id: UUID | None = None) -> PipelineStatsResponse:
+    async def get_pipeline_stats(self, project_id: UUID | None = None, position_id: UUID | None = None) -> PipelineStatsResponse:
         """
         Get counts of candidates in each stage for the recruitment pipeline.
         Cumulative funnel logic should be applied in the frontend.
@@ -230,8 +296,11 @@ class AdminService:
                 CandidateApplication.is_deleted == False
             )
             
-            # Apply project filter if provided
-            if project_id:
+            # Apply position filter if provided
+            if position_id:
+                query = query.where(CandidateApplication.position_id == position_id)
+            # Apply project filter if provided (only if position_id is not provided to avoid redundant joins)
+            elif project_id:
                 # Need to join with Position to get project_id
                 query = query.join(Position, CandidateApplication.position_id == Position.id).where(
                     Position.project_id == project_id
@@ -253,23 +322,26 @@ class AdminService:
             
             for status, count in rows:
                 s = str(status).lower()
-                if s == "applied":
-                    counts["applied"] += count
-                elif s == "screening":
+                # All candidates are counted in 'Applied'
+                counts["applied"] += count
+                
+                if s == "screening":
                     counts["screening"] += count
                 elif s == "assessment":
                     counts["assessment"] += count
-                elif s == "in_pipeline": # Logic from original code
+                elif s == "in_pipeline":
                     counts["interview"] += count
                 elif s in ["offer", "offered", "hired", "accepted"]:
                     counts["offer"] += count
             
-            # Calculate cumulative counts
+            # Funnel Logic (Non-cumulative in DB, we make it cumulative here)
+            # A candidate in 'Offer' has passed all previous stages.
             offer_total = counts["offer"]
             interview_total = counts["interview"] + offer_total
             assessment_total = counts["assessment"] + interview_total
             screening_total = counts["screening"] + assessment_total
-            applied_total = counts["applied"] + screening_total
+            # Applied is ALREADY the total count because we summed all statuses into it above
+            applied_total = counts["applied"]
             
             total_base = applied_total if applied_total > 0 else 1
             
@@ -311,44 +383,28 @@ class AdminService:
             hires_count = stats_row.total_hires if stats_row else 0
             velocity = hires_count / max(1, active_proj_count)
 
-            # 3. Project Health (Counts applicants per project in ONE query)
-            # Join Project -> Position -> CandidateApplication
+            # 3. Project Health (Reusing logic for consistency)
             q_health = select(
                 Project.id,
                 func.count(CandidateApplication.id).label("app_count")
-            ).select_from(Project).join(
+            ).select_from(Project).outerjoin(
                 Position, Project.id == Position.project_id
-            ).join(
+            ).outerjoin(
                 CandidateApplication, Position.id == CandidateApplication.position_id
             ).where(
                 Project.organization_id == org_id,
                 Project.status == "active",
                 Project.is_deleted == False,
-                CandidateApplication.is_deleted == False
+                or_(CandidateApplication.id.is_(None), CandidateApplication.is_deleted == False)
             ).group_by(Project.id)
             
             res_health = await self.session.execute(q_health)
             health_rows = res_health.all()
             
-            # Map of project_id -> app_count for projects with at least 1 applicant
-            app_counts = {row.id: row.app_count for row in health_rows}
-            
-            # We also need to account for active projects with 0 applicants (they won't show up in the join)
-            # Fetch all active project IDs to compare
-            q_all_active = select(Project.id).where(
-                Project.organization_id == org_id,
-                Project.status == "active",
-                Project.is_deleted == False
-            )
-            res_all_active = await self.session.execute(q_all_active)
-            all_active_pids = res_all_active.scalars().all()
-            
             on_track_count = 0
             at_risk_count = 0
-            
-            for pid in all_active_pids:
-                p_app_count = app_counts.get(pid, 0)
-                if p_app_count < 2:
+            for row in health_rows:
+                if row.app_count < 2:
                     at_risk_count += 1
                 else:
                     on_track_count += 1
@@ -365,32 +421,65 @@ class AdminService:
             res_scores = await self.session.execute(q_scores)
             scores = [float(s) for s in res_scores.scalars().all()]
             
-            high_quality = sum(1 for s in scores if s > 80)
+            high_quality = sum(1 for s in scores if s >= 80)
             needs_improve = len(scores) - high_quality
             
             if not scores and hires_count > 0:
                 high_quality = hires_count
                 needs_improve = 0
 
-            # Dummy Stage Timing (since we lack real data logic here for now)
-            stage_timing = [
-                {"stage": "Screening", "days": 3, "target": 3, "status": "good"},
-                {"stage": "Assessment", "days": 7, "target": 5, "status": "slow"},
-                {"stage": "Interview", "days": 12, "target": 7, "status": "slow"},
-                {"stage": "Offer", "days": 4, "target": 5, "status": "good"}
-            ]
+            # 5. Real Stage Timing
+            q_stages = select(
+                CandidateStageProgress.stage_type,
+                func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
+            ).join(
+                CandidateApplication
+            ).where(
+                CandidateApplication.organization_id == org_id,
+                CandidateStageProgress.completed_at.isnot(None),
+                CandidateStageProgress.started_at.isnot(None)
+            ).group_by(CandidateStageProgress.stage_type)
+            
+            res_stages = await self.session.execute(q_stages)
+            stage_data = res_stages.all()
+            stage_map = {str(s).lower(): round(float(d.total_seconds() / 86400.0), 1) if d else 0 for s, d in stage_data}
+            
+            targets = {"screening": 3, "assessment": 5, "interview": 7, "ai_interview": 7, "offer": 5}
+            stage_timing = []
+            for s_type, target in targets.items():
+                days = stage_map.get(s_type, 0)
+                stage_timing.append({
+                    "stage": s_type.replace('_', ' ').title(),
+                    "days": int(days) if days > 0 else 0,
+                    "target": target,
+                    "status": "good" if (days <= target or days == 0) else "slow"
+                })
 
-             # Dummy Integrity (since we lack real data logic here for now)
+             # 6. Real Integrity
+            q_integrity = select(ProctoringFlag.severity).join(
+                CandidateApplication, ProctoringFlag.application_id == CandidateApplication.id
+            ).where(
+                CandidateApplication.organization_id == org_id,
+                CandidateApplication.is_deleted == False
+            )
+            
+            res_integrity = await self.session.execute(q_integrity)
+            flags = res_integrity.scalars().all()
+            
+            high_risk = sum(1 for f in flags if str(f).lower() == 'high')
+            medium_risk = sum(1 for f in flags if str(f).lower() == 'medium')
+            low_risk = sum(1 for f in flags if str(f).lower() == 'low')
+            
             integrity_stats = {
-                "cheatingDetected": 0,
-                "highRisk": 0,
-                "mediumRisk": 0,
-                "lowRisk": 0
+                "cheatingDetected": len(flags),
+                "highRisk": high_risk,
+                "mediumRisk": medium_risk,
+                "lowRisk": low_risk
             }
 
             return HealthAnalyticsResponse(
                 health={"onTrack": on_track_count, "atRisk": at_risk_count},
-                velocity=round(velocity, 1),
+                velocity=round(float(velocity), 1),
                 quality={"high": high_quality, "needsImprove": needs_improve},
                 stageTiming=stage_timing,
                 integrity=integrity_stats
