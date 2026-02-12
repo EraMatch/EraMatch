@@ -59,6 +59,25 @@ from app.schemas.analytics import (
     WeeklyTrend,
     RecruiterAnalyticsResponse,
 )
+from app.schemas.group import (
+    GroupDetailResponse,
+    GroupStatsResponse,
+    CandidateProgressResponse,
+    CandidateProgressItem,
+    StartStageRequest,
+    StartStageResponse,
+    ActivityLogResponse,
+    AssessmentMonitoringResponse,
+    AssignInterviewRequest,
+    AssignInterviewResponse,
+    AcceptanceCriteriaUpdate,
+    AcceptanceCriteriaUpdateResponse,
+    CandidateNoteCreate,
+    CandidateNoteResponse,
+    CandidateDetailResponse,
+    IntegrityFlagsResponse,
+    ExportGroupRequest,
+)
 
 __all__ = [
     # Auth
@@ -123,4 +142,22 @@ __all__ = [
     "RecentActivity",
     "WeeklyTrend",
     "RecruiterAnalyticsResponse",
+    # Group management
+    "GroupDetailResponse",
+    "GroupStatsResponse",
+    "CandidateProgressResponse",
+    "CandidateProgressItem",
+    "StartStageRequest",
+    "StartStageResponse",
+    "ActivityLogResponse",
+    "AssessmentMonitoringResponse",
+    "AssignInterviewRequest",
+    "AssignInterviewResponse",
+    "AcceptanceCriteriaUpdate",
+    "AcceptanceCriteriaUpdateResponse",
+    "CandidateNoteCreate",
+    "CandidateNoteResponse",
+    "CandidateDetailResponse",
+    "IntegrityFlagsResponse",
+    "ExportGroupRequest",
 ]
