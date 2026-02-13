@@ -344,7 +344,7 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-200">
-                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Name</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-left">Name</th>
                     <th className="py-3 px-4 text-gray-600 text-sm text-center">Role</th>
                     <th className="py-3 px-4 text-gray-600 text-sm text-center">Status</th>
                     <th className="py-3 px-4 text-gray-600 text-sm text-center">Position</th>
@@ -356,7 +356,7 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
                 <tbody>
                   {filteredMembers.map((member) => (
                     <tr key={member.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-4 px-4 flex justify-center">
+                      <td className="py-4 px-4 flex justify-start">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: '#6366F1' }}>
                             {member.name.split(' ').map(n => n[0]).join('')}

@@ -1497,7 +1497,7 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                 <tr className="border-b border-gray-200">
                   <th className="p-4">
                     <button
-                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-start gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('projectName')}
                     >
                       Project Name
@@ -1550,7 +1550,7 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
               <tbody>
                 {projects.map((project) => (
                   <tr key={project.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="p-4 text-center">
+                    <td className="p-4 text-left">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
                         {project.projectName}
                       </span>
@@ -1611,7 +1611,7 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                 <tr className="border-b border-gray-200">
                   <th className="p-4">
                     <button
-                      className="flex items-center justify-center gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
+                      className="flex items-center justify-start gap-2 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-normal hover:text-[#374151]"
                       onClick={() => handleSort('jobTitle')}
                     >
                       Job Title
@@ -1664,7 +1664,7 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
               <tbody>
                 {jobPositions.slice(0, selectedProject.positionsCount).map((position) => (
                   <tr key={position.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="p-4 text-center">
+                    <td className="p-4 text-left">
                       <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
                         {position.jobTitle}
                       </span>

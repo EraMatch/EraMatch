@@ -159,7 +159,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                     <th className="p-4">
                       <button
                         onClick={() => handleSort('projectName')}
-                        className="flex items-center justify-center gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                        className="flex items-center justify-start gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                       >
                         Project Name
                         <ArrowUpDown size={14} />
@@ -207,7 +207,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                         setViewMode('positions');
                       }}
                     >
-                      <td className="p-4 text-center">
+                      <td className="p-4 text-left">
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                           {project.projectName}
                         </span>
@@ -280,7 +280,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                     <th className="p-4">
                       <button
                         onClick={() => handleSort('jobTitle')}
-                        className="flex items-center justify-center gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                        className="flex items-center justify-start gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                       >
                         Job Title
                         <ArrowUpDown size={14} />
@@ -328,7 +328,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                         setViewMode('delegation');
                       }}
                     >
-                      <td className="p-4 text-center">
+                      <td className="p-4 text-left">
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                           {position.jobTitle}
                         </span>
@@ -457,14 +457,14 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>
                         <th className="px-4 py-2 font-medium text-gray-500">Recruiter</th>
-                        <th className="px-4 py-2 font-medium text-gray-500 text-right">Assignments</th>
+                        <th className="px-4 py-2 font-medium text-gray-500 text-center">Assignments</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {[...hrRecruiters, ...technicalRecruiters].map((r: any) => (
                         <tr key={r.id}>
                           <td className="px-4 py-2 text-gray-900">{r.name}</td>
-                          <td className="px-4 py-2 text-gray-600 text-right font-medium">
+                          <td className="px-4 py-2 text-gray-600 text-center font-medium">
                             {r.assignedCount || 0}
                           </td>
                         </tr>

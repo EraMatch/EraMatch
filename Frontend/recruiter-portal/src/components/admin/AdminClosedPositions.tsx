@@ -99,7 +99,7 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                       <th className="p-4">
                         <button
                           onClick={() => handleSort('projectName')}
-                          className="flex items-center justify-center gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                          className="flex items-center justify-start gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                         >
                           Project Name
                           <ArrowUpDown size={14} />
@@ -156,7 +156,7 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                           }
                         }}
                       >
-                        <td className="p-4 text-center">
+                        <td className="p-4 text-left">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                             {project.projectName}
                           </span>
@@ -251,7 +251,7 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                       <th className="p-4">
                         <button
                           onClick={() => handleSort('jobTitle')}
-                          className="flex items-center justify-center gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                          className="flex items-center justify-start gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                         >
                           Job Title
                           <ArrowUpDown size={14} />
@@ -317,7 +317,7 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                           }
                         }}
                       >
-                        <td className="p-4 text-center">
+                        <td className="p-4 text-left">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                             {position.jobTitle}
                           </span>
