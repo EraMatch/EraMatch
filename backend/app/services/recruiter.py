@@ -1,6 +1,8 @@
+from __future__ import annotations
+import os
 from uuid import UUID
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select, func, col
+from sqlmodel import select, func, col, desc
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from app.core.exceptions import NotFoundException, UnauthorizedException
@@ -8,15 +10,21 @@ from app.core.exceptions import NotFoundException, UnauthorizedException
 from app.models import (
     User, Project, Position, CandidateApplication, CandidateGroup, 
     CandidateStageProgress, OrganizationUser, Hire, Offer, ProctoringFlag,
-    ProjectAccess, GroupStageConfig
+    ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, Organization
 )
-from app.schemas import (
-    ProjectCreate, ProjectUpdate, PositionCreate, PositionUpdate, ApplicationUpdate,
+from app.schemas.project import (
+    ProjectCreate, ProjectUpdate, PositionCreate, PositionUpdate,
     ProjectSummaryResponse, PositionInsightsResponse, PositionGroupResponse, InsightScores,
     GroupAnalysisResponse, TechnicalAIResponse, RiskBreakdownResponse, TechStats, AIStats,
-    RecruiterAnalyticsResponse, OverviewStats, GroupStatusCount, StageCount,
-    ProjectPerformance, RecentActivity, WeeklyTrend, PositionResponse
+    PositionResponse, PositionDetailsResponse, PositionCandidateResponse, DistributionItem,
+    ScoreBucket, SkillDistributionItem, SeniorityDistributionItem, UniversityDistributionItem,
+    AvailabilityDistributionItem
 )
+from app.schemas.analytics import (
+    RecruiterAnalyticsResponse, OverviewStats, GroupStatusCount, StageCount,
+    ProjectPerformance, RecentActivity, WeeklyTrend
+)
+from app.schemas.candidate import ApplicationUpdate
 import asyncio
 from typing import List
 
@@ -30,29 +38,69 @@ class RecruiterService:
     # Project operations
     async def create_project(self, data: ProjectCreate) -> Project:
         """Create a new project."""
-        # 1. Create project
+        # 1. Determine creator ID (Admins are not in organization_users table)
+        creator_id = self.current_user.id
+        if self.current_user.role == "admin":
+            creator_id = None
+            
+        # 2. Determine initial status
+        initial_status = "active"
+        if self.current_user.role != "admin":
+            initial_status = "pending"
+
+        # 3. Create project
         project = Project(
             organization_id=self.organization_id,
-            created_by_user_id=self.current_user.id,
+            created_by_user_id=creator_id,
             name=data.name,
             description=data.description,
             target_hire_count=data.target_hire_count,
-            status="active"
+            status=initial_status
         )
         self.session.add(project)
+        print(f"DEBUG: Project ID before flush: {project.id}")
         await self.session.flush()  # Get ID
+        print(f"DEBUG: Project ID after flush: {project.id}")
 
-        # 2. Grant access to creator
-        access = ProjectAccess(
-            project_id=project.id,
-            user_id=self.current_user.id,
-            access_level="owner"
-        )
-        self.session.add(access)
+        # 4. Grant access to creator if not Admin (Admins have implicit access)
+        if creator_id:
+            access = ProjectAccess(
+                project_id=project.id,
+                user_id=creator_id,
+                access_level="owner"
+            )
+            self.session.add(access)
+
+        # 5. Create Approval Requst if pending
+        if initial_status == "pending" and creator_id:
+            from app.models import ApprovalRequest
+            print(f"DEBUG: Creating ApprovalRequest with entity_id={project.id}")
+            approval_req = ApprovalRequest(
+                organization_id=self.organization_id,
+                requester_id=creator_id,
+                request_type="project",
+                data=data.model_dump(mode='json'),
+                status="pending",
+                entity_id=project.id
+            )
+            self.session.add(approval_req)
         
         await self.session.commit()
         await self.session.refresh(project)
         return project
+
+    async def get_notifications(self, skip: int = 0, limit: int = 50) -> list[dict]:
+        """Fetch notifications for the current user."""
+        from app.models import Notification
+        from sqlalchemy import desc
+        
+        query = select(Notification).where(
+            Notification.recipient_user_id == self.current_user.id
+        ).order_by(desc(Notification.created_at)).offset(skip).limit(limit)
+        
+        result = await self.session.execute(query)
+        notifications = result.scalars().all()
+        return notifications
 
     async def get_project(self, project_id: UUID) -> Project:
         """Get a project with access control."""
@@ -93,6 +141,38 @@ class RecruiterService:
         await self.session.commit()
         await self.session.refresh(project)
         return project
+
+    async def delete_project(self, project_id: UUID) -> None:
+        """Soft delete a project and all its nested entities."""
+        # 1. Get project (checks access)
+        project = await self.get_project(project_id)
+        
+        # 2. Soft delete project
+        await self.session.execute(
+            text("UPDATE projects SET is_deleted = true WHERE project_id = :pid"),
+            {"pid": project_id}
+        )
+        
+        # 3. Soft delete all positions in this project
+        await self.session.execute(
+            text("UPDATE positions SET is_deleted = true WHERE project_id = :pid AND is_deleted = false"),
+            {"pid": project_id}
+        )
+        
+        # 4. Soft delete all candidate applications linked to positions in this project
+        await self.session.execute(
+            text("""
+                UPDATE candidate_applications 
+                SET is_deleted = true 
+                WHERE position_id IN (
+                    select position_id from positions where project_id = :pid
+                ) AND is_deleted = false
+            """),
+            {"pid": project_id}
+        )
+        
+        # Force commit
+        await self.session.commit()
 
     async def get_project_positions(self, project_id: UUID) -> list[PositionResponse]:
         """Get all positions for a project with candidate counts."""
@@ -254,6 +334,13 @@ class RecruiterService:
         """Create a new position with validation for unique title in organization."""
         org_id = self.organization_id
         
+        # 0. Check Project Status
+        # Get project to check status
+        project = await self.get_project(data.project_id)
+        if project.status != "active":
+             from fastapi import HTTPException
+             raise HTTPException(status_code=400, detail="Cannot create positions for a project that is not active (Approved).")
+
         # Check if position with same title exists in the organization
         query = select(Position).where(
             Position.organization_id == org_id,
@@ -266,24 +353,240 @@ class RecruiterService:
             raise HTTPException(status_code=400, detail="Position with this title already exists in the organization.")
             
         # Create position
+        initial_status = "open"
+        approval_status = "pending"
+        
+        if self.current_user.role != "admin":
+            # Check bypass setting
+            res_org = await self.session.execute(select(Organization).where(Organization.id == org_id))
+            org = res_org.scalar_one_or_none()
+            settings = org.settings or {}
+            if settings.get("bypass_admin_approval", False):
+                initial_status = "technical_review"
+                approval_status = "technical_review"
+                
+                # Auto-assign Technical Recruiter: Round-robin / Least Loaded
+                # 1. Find all active technical recruiters in this organization
+                q_tech = select(OrganizationUser.id).where(
+                    OrganizationUser.organization_id == org_id,
+                    OrganizationUser.role == "technical", 
+                    OrganizationUser.status == "active"
+                )
+                res_tech = await self.session.execute(q_tech)
+                tech_ids = res_tech.scalars().all()
+                
+                if tech_ids:
+                    # 2. Find the one with minimum active assignments (open or technical_review)
+                    # We count assignments for each tech recruiter
+                    q_counts = select(
+                        Position.assigned_tech_id, 
+                        func.count(Position.id)
+                    ).where(
+                        Position.assigned_tech_id.in_(tech_ids),
+                        Position.status.in_(["technical_review", "open"]),
+                        Position.is_deleted == False
+                    ).group_by(Position.assigned_tech_id)
+                    
+                    res_counts = await self.session.execute(q_counts)
+                    counts_map = {r[0]: r[1] for r in res_counts.all()}
+                    
+                    # Sort technical recruiters by load (ascending)
+                    # For those with 0 assignments, they won't be in counts_map, giving them priority
+                    best_tech_id = min(tech_ids, key=lambda tid: counts_map.get(tid, 0))
+                    
+                    data.assigned_tech_id = best_tech_id
+            else:
+                initial_status = "pending"
+                approval_status = "pending"
+
         position = Position(
             **data.model_dump(),
             organization_id=org_id,
-            status="open"
+            status=initial_status
         )
         self.session.add(position)
+        await self.session.flush()
+
+        # Create Approval Request if not open immediately
+        if initial_status != "open":
+            from app.models import ApprovalRequest
+            
+            # Serialize data correctly
+            request_data = data.model_dump(mode='json', exclude={"id"})
+            
+            approval_req = ApprovalRequest(
+                organization_id=self.organization_id,
+                requester_id=self.current_user.id,
+                request_type="position",
+                data=request_data,
+                status=approval_status,
+                entity_id=position.id,
+                assigned_tech_id=data.assigned_tech_id # Pass this through if HR assigned it
+            )
+            self.session.add(approval_req)
+        
         await self.session.commit()
         await self.session.refresh(position)
         
         return position
 
     async def get_position(self, position_id: UUID) -> Position:
-        # TODO: Get position
-        pass
+        """Get a position by ID with organization check."""
+        query = select(Position).where(
+            Position.id == position_id,
+            Position.organization_id == self.organization_id,
+            Position.is_deleted == False
+        )
+        res = await self.session.execute(query)
+        pos = res.scalars().first()
+        if not pos:
+            raise NotFoundException("Position not found")
+        return pos
+
+    async def get_position_details(self, position_id: UUID) -> PositionDetailsResponse:
+        """Aggregate candidates and groups for a position."""
+        # 1. Verify existence
+        await self.get_position(position_id)
+
+        # 2. Fetch candidates (applications + optional profiles)
+        q_cands = (
+            select(CandidateApplication, CandidateProfile)
+            .outerjoin(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .where(
+                CandidateApplication.position_id == position_id,
+                CandidateApplication.is_deleted == False
+            )
+        )
+        res_cands = await self.session.execute(q_cands)
+        rows_cands = res_cands.all()
+
+        candidates = []
+        for app, profile in rows_cands:
+            # Get latest score from stage progress if any
+            q_score = select(func.avg(CandidateStageProgress.score)).where(
+                CandidateStageProgress.application_id == app.id,
+                CandidateStageProgress.score.isnot(None)
+            )
+            res_score = await self.session.execute(q_score)
+            avg_score = res_score.scalar() or 0.0
+
+            # Map to response
+            name = profile.full_name if profile else f"Candidate {str(app.candidate_id)[:8]}"
+            email = profile.email if profile else "No Email"
+
+            # Map to response (simulating match score for now)
+            candidates.append(PositionCandidateResponse(
+                id=app.id,
+                name=name,
+                email=email,
+                score=round(float(avg_score), 1),
+                match=round(float(avg_score) * 1.1, 1) if avg_score > 0 else 0.0, # Mock match score logic
+                color="#6366f1",
+                starred=False,
+                selected=False
+            ))
+
+        # 3. Fetch groups
+        groups = await self.get_position_groups(position_id)
+
+        return PositionDetailsResponse(
+            candidates=candidates,
+            groups=groups
+        )
 
     async def update_position(self, position_id: UUID, data: PositionUpdate) -> Position:
-        # TODO: Update project
-        pass
+        """Update a position."""
+        pos = await self.get_position(position_id)
+        
+        # 1. HR Restrictions
+        if self.current_user.role == "hr":
+            if pos.status in ["pending", "technical_review"]:
+                 from fastapi import HTTPException
+                 raise HTTPException(status_code=400, detail="Cannot edit position while it is under review.")
+
+        update_data = data.model_dump(exclude_unset=True)
+        
+        # Normalize status to lowercase if present to match DB constraint
+        if "status" in update_data and update_data["status"]:
+            update_data["status"] = update_data["status"].lower()
+
+        # Check if significant fields are changed by HR on an open position, reset to review
+        trigger_review = False
+        if self.current_user.role == "hr" and pos.status in ["open", "rejected"]:
+            # Check if any significant fields are in update_data
+            # We exclude 'status' from triggering re-approval if it's just closing/opening without detail changes?
+            # Actually, per user request, any "edits" should be approved.
+            significant_fields = {"job_title", "job_description", "required_skills", "experience_level", 
+                                  "work_type", "salary_min", "salary_max"}
+            if any(field in update_data for field in significant_fields):
+                trigger_review = True
+
+        for key, value in update_data.items():
+            setattr(pos, key, value)
+            
+        if trigger_review:
+            # Determine bypass
+            res_org = await self.session.execute(select(Organization).where(Organization.id == self.organization_id))
+            org = res_org.scalar_one_or_none()
+            bypass = org.settings.get("bypass_admin_approval", False) if org and org.settings else False
+            
+            new_status = "technical_review" if bypass else "pending"
+            approval_status = new_status
+            pos.status = new_status
+            
+            # Create Approval Request
+            from app.models import ApprovalRequest
+            
+            # Use updated pos data
+            request_data = {
+                "project_id": str(pos.project_id),
+                "job_title": pos.job_title,
+                "job_description": pos.job_description,
+                "required_skills": pos.required_skills,
+                "experience_level": pos.experience_level,
+                "work_type": pos.work_type,
+                "salary_min": float(pos.salary_min) if pos.salary_min else None,
+                "salary_max": float(pos.salary_max) if pos.salary_max else None,
+                "employment_type": pos.employment_type,
+                "location_type": pos.location_type,
+                "years_of_experience": pos.years_of_experience,
+                "education_level": pos.education_level,
+                "benefits": pos.benefits
+            }
+            
+            approval_req = ApprovalRequest(
+                organization_id=self.organization_id,
+                requester_id=self.current_user.id,
+                request_type="position",
+                data=request_data,
+                status=approval_status,
+                entity_id=pos.id,
+                assigned_tech_id=pos.assigned_tech_id
+            )
+            self.session.add(approval_req)
+
+        await self.session.commit()
+        await self.session.refresh(pos)
+        return pos
+
+    async def delete_position(self, position_id: UUID) -> None:
+        """Soft delete a position and its applications."""
+        # 1. Get position (checks access)
+        pos = await self.get_position(position_id)
+        
+        # 2. Soft delete position
+        await self.session.execute(
+            text("UPDATE positions SET is_deleted = true WHERE position_id = :pos_id"),
+            {"pos_id": position_id}
+        )
+        
+        # 3. Soft delete associated applications
+        await self.session.execute(
+            text("UPDATE candidate_applications SET is_deleted = true WHERE position_id = :pos_id AND is_deleted = false"),
+            {"pos_id": position_id}
+        )
+        
+        await self.session.commit()
 
     async def list_positions(self, project_id: UUID | None = None, status: str | None = None, skip: int = 0, limit: int = 50) -> list[dict]:
         """List positions with enriched data using efficient batch queries."""
@@ -306,7 +609,7 @@ class RecruiterService:
             if status:
                 query = query.where(Position.status == status)
             
-            query = query.offset(skip).limit(limit)
+            query = query.order_by(Position.created_at.desc()).offset(skip).limit(limit)
             result = await self.session.execute(query)
             rows = result.all()
                         
@@ -345,6 +648,8 @@ class RecruiterService:
                     "salary_max": float(pos.salary_max) if pos.salary_max else None,
                     "status": pos.status,
                     "created_at": pos.created_at,
+                    "assigned_hr_id": pos.assigned_hr_id,
+                    "assigned_tech_id": pos.assigned_tech_id,
                     "assignedHR": hr_name,
                     "assignedTechnicalRecruiter": tech_name,
                     "candidatesCount": cand_count or 0,
@@ -507,14 +812,76 @@ class RecruiterService:
                 if all_scores:
                     quality_score = sum(all_scores) / len(all_scores)
             
+            # Generate Distribution Data
+            # 1. Fitting Data
+            fitting_data = [
+                DistributionItem(name="Excellent", value=sum(1 for s in assess_scores if s >= 80), color="#6366f1"),
+                DistributionItem(name="Good", value=sum(1 for s in assess_scores if 60 <= s < 80), color="#10b981"),
+                DistributionItem(name="Fair", value=sum(1 for s in assess_scores if 40 <= s < 60), color="#f59e0b"),
+                DistributionItem(name="Poor", value=sum(1 for s in assess_scores if s < 40), color="#ef4444")
+            ]
+
+            # 2. Score Data (Buckets)
+            score_buckets = [
+                ScoreBucket(range="0-20", count=sum(1 for s in assess_scores if 0 <= s < 20)),
+                ScoreBucket(range="21-40", count=sum(1 for s in assess_scores if 20 <= s < 40)),
+                ScoreBucket(range="41-60", count=sum(1 for s in assess_scores if 40 <= s < 60)),
+                ScoreBucket(range="61-80", count=sum(1 for s in assess_scores if 60 <= s < 80)),
+                ScoreBucket(range="81-100", count=sum(1 for s in assess_scores if 80 <= s <= 100))
+            ]
+
+            # 3. Skill Distribution (Derive from Position or CVAnalysis)
+            # For now, simulate based on position requirements
+            pos = await self.get_position(position_id)
+            skills = pos.required_skills if isinstance(pos.required_skills, list) else []
+            skill_dist = []
+            for skill in skills[:4]: # Limit to 4 for visual appeal
+                count = sum(1 for _ in app_ids) # Mock: all have it or random
+                import random
+                count = random.randint(1, max(1, len(app_ids)))
+                percentage = (count / max(1, len(app_ids))) * 100
+                skill_dist.append(SkillDistributionItem(skill=str(skill), count=count, percentage=round(percentage, 1)))
+
+            # 4. Seniority Distribution
+            seniority_dist = [
+                SeniorityDistributionItem(level="Junior", count=random.randint(0, len(app_ids)), percentage=0),
+                SeniorityDistributionItem(level="Mid-Level", count=random.randint(0, len(app_ids)), percentage=0),
+                SeniorityDistributionItem(level="Senior", count=random.randint(0, len(app_ids)), percentage=0)
+            ]
+            total_sen = sum(d.count for d in seniority_dist)
+            for d in seniority_dist:
+                d.percentage = round((d.count / max(1, total_sen)) * 100, 1)
+
+            # 5. University Distribution
+            uni_dist = [
+                UniversityDistributionItem(university="Global Tech Institute", count=random.randint(1, 10)),
+                UniversityDistributionItem(university="State University", count=random.randint(1, 10)),
+                UniversityDistributionItem(university="Metropolitan College", count=random.randint(1, 10))
+            ]
+
+            # 6. Availability Distribution
+            avail_dist = [
+                AvailabilityDistributionItem(availability="Immediate", count=random.randint(1, 10)),
+                AvailabilityDistributionItem(availability="1 Month Notice", count=random.randint(1, 10)),
+                AvailabilityDistributionItem(availability="Freelance / Part-time", count=random.randint(1, 10))
+            ]
+
             return PositionInsightsResponse(
                 conversion=round(conversion, 1),
                 qualityScore=round(quality_score, 1),
                 scores=InsightScores(assessment=round(score_assessment, 1), interview=round(score_interview, 1)),
-                integrityIssues=integrity
+                integrityIssues=integrity,
+                fittingData=fitting_data,
+                scoreData=score_buckets,
+                skillDistribution=skill_dist,
+                seniorityDistribution=seniority_dist,
+                universityDistribution=uni_dist,
+                availabilityDistribution=avail_dist
             )
         except Exception as e:
             print(f"Error fetching position insights: {e}")
+            import traceback
+            traceback.print_exc()
             return PositionInsightsResponse(
                 conversion=0.0, qualityScore=0.0,
                 scores=InsightScores(assessment=0.0, interview=0.0),
@@ -961,3 +1328,89 @@ class RecruiterService:
             recentActivity=recent_activity,
             weeklyTrend=weekly_trend
         )
+
+    async def list_assigned_requests(self) -> list[dict]:
+        """List approval requests assigned to the current technical recruiter."""
+        from app.models import ApprovalRequest
+        
+        query = select(ApprovalRequest).where(
+            ApprovalRequest.organization_id == self.organization_id,
+            ApprovalRequest.assigned_tech_id == self.current_user.id,
+            ApprovalRequest.status == "technical_review"
+        ).order_by(desc(ApprovalRequest.created_at))
+        
+        result = await self.session.execute(query)
+        requests = result.scalars().all()
+        
+        # Enrich with Position details
+        data = []
+        for req in requests:
+            r_dict = req.model_dump()
+            r_dict["created_at"] = req.created_at.isoformat()
+            
+            if req.request_type == "position" and req.entity_id:
+                # Fetch position title
+                p_res = await self.session.execute(select(Position).where(Position.id == req.entity_id))
+                pos = p_res.scalar_one_or_none()
+                if pos:
+                    r_dict["position_title"] = pos.job_title
+                    r_dict["position_data"] = pos.model_dump() # Full details for review
+            
+            data.append(r_dict)
+            
+        return data
+
+    async def review_approval_request(self, request_id: UUID, status: str, review_notes: str | None = None) -> bool:
+        """Process a technical review (approve/reject)."""
+        from app.models import ApprovalRequest, Notification
+        
+        query = select(ApprovalRequest).where(
+            ApprovalRequest.id == request_id,
+            ApprovalRequest.organization_id == self.organization_id,
+            ApprovalRequest.assigned_tech_id == self.current_user.id
+        )
+        result = await self.session.execute(query)
+        req = result.scalar_one_or_none()
+        
+        if not req:
+            raise NotFoundException("Request not found or not assigned to you")
+            
+        if req.status != "technical_review":
+             from fastapi import HTTPException
+             raise HTTPException(status_code=400, detail="Request is not in technical review stage")
+
+        # Update Request
+        req.status = "approved" if status == "approved" else "rejected"
+        req.review_notes = review_notes
+        req.updated_at = datetime.utcnow()
+        self.session.add(req)
+        
+        # Update Position
+        if req.request_type == "position":
+            p_res = await self.session.execute(select(Position).where(Position.id == req.entity_id))
+            position = p_res.scalar_one_or_none()
+            if position:
+                if status == "approved":
+                    position.status = "open"
+                    msg = f"Position '{position.job_title}' reviewed and approved by Technical Recruiter."
+                else:
+                    position.status = "rejected"
+                    position.is_deleted = True
+                    msg = f"Position '{position.job_title}' rejected by Technical Recruiter."
+                
+                self.session.add(position)
+                
+                # Notify HR (Requester)
+                notif = Notification(
+                    organization_id=self.organization_id,
+                    recipient_user_id=req.requester_id,
+                    type="alert",
+                    title=f"Position {status.capitalize()}",
+                    message=msg,
+                    is_read=False,
+                    created_at=datetime.utcnow()
+                )
+                self.session.add(notif)
+                
+        await self.session.commit()
+        return True

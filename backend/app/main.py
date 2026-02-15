@@ -1,22 +1,35 @@
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from fastapi.staticfiles import StaticFiles
-from app.core.config import settings
-import os
+
 from app.api.v1.router import router as api_v1_router
+from app.core.config import settings
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# Ensure uvicorn and httpx logs are visible
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
-    print(f"Starting {settings.PROJECT_NAME}...")
+    logger.info(f"Starting {settings.PROJECT_NAME}...")
     yield
     # Shutdown
-    print(f"Shutting down {settings.PROJECT_NAME}...")
+    logger.info(f"Shutting down {settings.PROJECT_NAME}...")
 
 
 app = FastAPI(
@@ -28,6 +41,14 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+
+# Request logging middleware
+@app.middleware("http")
+async def log_requests(request, call_next):
+    logger.info(f"Inbound: {request.method} {request.url.path}")
+    response = await call_next(request)
+    logger.info(f"Outbound: {request.method} {request.url.path} - Status: {response.status_code}")
+    return response
 
 # cors
 app.add_middleware(

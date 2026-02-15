@@ -13,6 +13,9 @@ export const recruiterService = {
 
     getDashboardAnalytics: async () => fetchAPI<any>('/recruiter/analytics'),
 
+    // Notifications
+    getNotifications: async () => fetchAPI<any[]>('/recruiter/notifications'),
+
     // Project Management
     getProjects: async (status?: string) => {
         const query = status ? `?status=${status}` : '';
@@ -56,9 +59,17 @@ export const recruiterService = {
         });
     },
 
+    deleteProject: async (id: number | string) => {
+        return fetchAPI(`/recruiter/projects/${id}`, {
+            method: 'DELETE'
+        });
+    },
+
     // Position Management
+    getPositions: async () => fetchAPI<JobPosition[]>('/recruiter/positions'),
+
     createPosition: async (data: Partial<JobPosition>) => {
-        return fetchAPI<JobPosition>('/positions', {
+        return fetchAPI<JobPosition>('/recruiter/positions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -66,26 +77,26 @@ export const recruiterService = {
     },
 
     updatePosition: async (id: number | string, data: Partial<JobPosition>) => {
-        return fetchAPI(`/positions/${id}`, {
-            method: 'PUT',
+        return fetchAPI(`/recruiter/positions/${id}`, {
+            method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
     },
 
     deletePosition: async (id: number | string) => {
-        return fetchAPI(`/positions/${id}`, {
+        return fetchAPI(`/recruiter/positions/${id}`, {
             method: 'DELETE'
         });
     },
 
-    getPositionDetails: async (positionId: string) => fetchAPI(`/positions/${positionId}/details`),
+    getPositionDetails: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/details`),
 
-    getPositionInsights: async (positionId: string) => fetchAPI(`/positions/${positionId}/insights`),
+    getPositionInsights: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/insights`),
 
-    getFiltrationFlowConfig: async (positionId: string) => fetchAPI(`/positions/${positionId}/filtration-flow`),
+    getFiltrationFlowConfig: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/filtration-flow`),
 
-    getSkillClusters: async (positionId: string) => fetchAPI(`/positions/${positionId}/skills`),
+    getSkillClusters: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/skills`),
 
     // Candidate Management
     getCandidates: async () => fetchAPI('/groups/candidates/all'),
@@ -157,5 +168,16 @@ export const recruiterService = {
 
     getLiveInterviewQuestions: async (interviewId: string) => fetchAPI(`/interviews/${interviewId}/questions`),
 
-    getRecordedInterviewQuestions: async (interviewId: string) => fetchAPI(`/interviews/recorded/questions/${interviewId}`)
+    getRecordedInterviewQuestions: async (interviewId: string) => fetchAPI(`/interviews/recorded/questions/${interviewId}`),
+
+    // Review (Technical Recruiter)
+    getAssignedRequests: async () => fetchAPI<any[]>('/recruiter/requests/assigned'),
+
+    reviewRequest: async (requestId: string, status: 'approved' | 'rejected', reviewNotes?: string) => {
+        return fetchAPI(`/recruiter/requests/${requestId}/review`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status, review_notes: reviewNotes })
+        });
+    }
 };

@@ -1,4 +1,4 @@
-import { ChevronLeft, Plus, Pencil, Sparkles, BarChart3, Users, CheckCircle, TrendingUp, Calendar, Award, Target, Briefcase, Archive, XCircle, CheckCircle2 } from 'lucide-react';
+import { ChevronLeft, Plus, Pencil, Sparkles, BarChart3, Users, CheckCircle, TrendingUp, Calendar, Award, Target, Briefcase, Archive, XCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../../ui/dialog';
 import { Switch } from '../../ui/switch';
@@ -10,6 +10,7 @@ import { ClosePositionModal, type PositionOutcome, type PositionClosureStatus } 
 import { CompleteProjectModal, type ProjectCompletionData } from './CompleteProjectModal';
 import { toast } from 'sonner';
 import { api, JobPosition } from '../../../services/api';
+import { AdminPositionModal } from '../../admin/AdminPositionModal';
 
 interface Position {
   id: number;
@@ -18,6 +19,7 @@ interface Position {
   screeningConditions?: string;
   applicants: number;
   isOpen: boolean;
+  status: string;
   closureStatus?: PositionClosureStatus;
   closureReason?: string;
   closureDate?: string;
@@ -26,7 +28,7 @@ interface Position {
 interface ProjectDetailViewProps {
   projectTitle: string;
   projectDescription?: string;
-  projectStatus?: 'Draft' | 'Active' | 'Complete' | 'Archived';
+  projectStatus?: 'Draft' | 'Active' | 'Complete' | 'Archived' | 'Pending';
   completionDate?: string;
   onBack: () => void;
   backLabel?: string;
@@ -56,13 +58,24 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
 
         if (project) {
           setProjectId(project.id);
+          // Update internal status based on API status
+          if (project.status === 'pending') {
+            setInternalProjectStatus('Pending');
+          } else if (project.status === 'active') {
+            setInternalProjectStatus('Active');
+          } else if (project.status === 'completed' || project.status === 'closed') {
+            setInternalProjectStatus('Complete');
+          } else if (project.status === 'archived') {
+            setInternalProjectStatus('Archived');
+          }
           const projectPositions = await api.recruiter.getProjectPositions(project.id);
           const mappedPositions: Position[] = projectPositions.map(p => ({
-            id: p.id,
+            id: Number(p.id),
             title: p.jobTitle,
             description: `Department: ${p.department}`,
             screeningConditions: 'Standard screening requirements apply',
             applicants: p.candidatesCount,
+            status: p.status,
             isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
           }));
           setPositions(mappedPositions);
@@ -91,15 +104,6 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
 
-  const [newPositionTitle, setNewPositionTitle] = useState('');
-  const [newPositionDescription, setNewPositionDescription] = useState('');
-  const [newPositionScreening, setNewPositionScreening] = useState('');
-
-  const [editPositionTitle, setEditPositionTitle] = useState('');
-  const [editPositionDescription, setEditPositionDescription] = useState('');
-  const [editPositionScreening, setEditPositionScreening] = useState('');
-  const [editPositionIsOpen, setEditPositionIsOpen] = useState(false);
-
   // Archive modal state
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
 
@@ -114,76 +118,24 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
   const [showActiveProjectWarning, setShowActiveProjectWarning] = useState(false);
 
   // Track internal project status
-  const [internalProjectStatus, setInternalProjectStatus] = useState<'Draft' | 'Active' | 'Complete' | 'Archived'>(projectStatus || 'Active');
+  const [internalProjectStatus, setInternalProjectStatus] = useState<'Draft' | 'Active' | 'Complete' | 'Archived' | 'Pending'>(projectStatus || 'Active');
 
-  const handleAddPosition = async () => {
-    if (newPositionTitle.trim() && projectId) {
-      try {
-        await api.recruiter.createPosition({
-          jobTitle: newPositionTitle,
-          department: newPositionDescription || 'Engineering', // Default department if desc used for dept
-          projectId: Number(projectId),
-          description: newPositionScreening
-        });
-        toast.success('Position created successfully');
-        // Reload positions (duplicate logic, should extract)
-        const projectPositions = await api.recruiter.getProjectPositions(Number(projectId));
-        const mappedPositions: Position[] = projectPositions.map(p => ({
-          id: p.id,
-          title: p.jobTitle,
-          description: `Department: ${p.department}`,
-          screeningConditions: 'Standard screening requirements apply',
-          applicants: p.candidatesCount,
-          isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
-        }));
-        setPositions(mappedPositions);
-      } catch (error) {
-        toast.error('Failed to create position');
-      }
-      setNewPositionTitle('');
-      setNewPositionDescription('');
-      setNewPositionScreening('');
-      setIsAddDialogOpen(false);
-    }
+  const userStr = localStorage.getItem('user');
+  const userObj = userStr ? JSON.parse(userStr) : null;
+  const userRole = userObj?.role || 'recruiter';
+
+  const handleAddPosition = () => {
+    setEditingPosition(null);
+    setIsAddDialogOpen(true);
   };
 
   const handleEditClick = (position: Position) => {
     setEditingPosition(position);
-    setEditPositionTitle(position.title);
-    setEditPositionDescription(position.description || '');
-    setEditPositionScreening(position.screeningConditions || '');
-    setEditPositionIsOpen(position.isOpen);
-    setIsEditDialogOpen(true);
+    setIsAddDialogOpen(true); // Re-using Add dialog for AdminPositionModal which handles edit too
   };
 
   const handleSaveChanges = async () => {
-    if (editingPosition && editPositionTitle.trim()) {
-      try {
-        await api.recruiter.updatePosition(editingPosition.id, {
-          jobTitle: editPositionTitle,
-          // department: ... not editing department in modal currently
-          status: editPositionIsOpen ? 'active' : 'closed'
-        });
-        toast.success('Position updated successfully');
-        // Refresh
-        if (projectId) {
-          const projectPositions = await api.recruiter.getProjectPositions(Number(projectId));
-          const mappedPositions: Position[] = projectPositions.map(p => ({
-            id: p.id,
-            title: p.jobTitle,
-            description: `Department: ${p.department}`,
-            screeningConditions: 'Standard screening requirements apply',
-            applicants: p.candidatesCount,
-            isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
-          }));
-          setPositions(mappedPositions);
-        }
-      } catch (error) {
-        toast.error('Failed to update position');
-      }
-      setIsEditDialogOpen(false);
-      setEditingPosition(null);
-    }
+    // Handled by AdminPositionModal
   };
 
   const handleClosePosition = (position: Position) => {
@@ -207,11 +159,12 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
         if (projectId) {
           const projectPositions = await api.recruiter.getProjectPositions(Number(projectId));
           const mappedPositions: Position[] = projectPositions.map(p => ({
-            id: p.id,
+            id: Number(p.id),
             title: p.jobTitle,
             description: `Department: ${p.department}`,
             screeningConditions: 'Standard screening requirements apply',
-            applicants: p.applicantsCount,
+            applicants: p.candidatesCount,
+            status: p.status,
             isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
           }));
           setPositions(mappedPositions);
@@ -420,12 +373,20 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
                     </span>
                   </div>
                 );
-              } else if (internalProjectStatus === 'Archived') {
                 return (
                   <div className="inline-flex items-center gap-[6px] h-[28px] px-[12px] rounded-full bg-gray-100 border border-gray-300">
                     <Archive size={14} className="text-gray-600" />
                     <span className="font-['Arimo',sans-serif] text-[12px] text-gray-600 font-medium">
                       Archived
+                    </span>
+                  </div>
+                );
+              } else if (internalProjectStatus === 'Pending') {
+                return (
+                  <div className="inline-flex items-center gap-[6px] h-[28px] px-[12px] rounded-full bg-amber-50 border border-amber-200">
+                    <div className="w-[6px] h-[6px] rounded-full bg-amber-500 animate-pulse" />
+                    <span className="font-['Arimo',sans-serif] text-[12px] text-amber-600 font-medium">
+                      Pending Approval
                     </span>
                   </div>
                 );
@@ -484,17 +445,46 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
                 <h2 className="font-['Arimo',sans-serif] text-[18px] text-black">
                   Positions
                 </h2>
-                <button
-                  onClick={() => setIsAddDialogOpen(true)}
-                  className="w-[28px] h-[28px] rounded-[6px] flex items-center justify-center hover:bg-[#ede9ff] transition-colors"
-                >
-                  <Plus size={18} className="text-black" strokeWidth={2} />
-                </button>
+                {/* Create Position Button */}
+                {(() => {
+                  const canCreate = internalProjectStatus === 'Active';
+                  return (
+                    <div className="relative group">
+                      <button
+                        onClick={handleAddPosition}
+                        disabled={!canCreate}
+                        className={`w-[28px] h-[28px] rounded-[6px] flex items-center justify-center transition-colors ${canCreate
+                          ? 'hover:bg-[#ede9ff] cursor-pointer'
+                          : 'bg-gray-100 cursor-not-allowed opacity-50'
+                          }`}
+                      >
+                        <Plus size={18} className={canCreate ? "text-black" : "text-gray-400"} strokeWidth={2} />
+                      </button>
+
+                      {/* Tooltip for disabled state */}
+                      {!canCreate && (
+                        <div className="absolute top-full right-0 mt-[8px] w-[200px] bg-gray-900 text-white text-[12px] px-[12px] py-[8px] rounded-[6px] opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
+                          <p className="font-['Arimo',sans-serif]">
+                            Project must be fully approved (Active) to create positions.
+                          </p>
+                          <div className="absolute -top-1 right-3 w-2 h-2 bg-gray-900 transform rotate-45"></div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Positions List */}
               <div className="space-y-[12px]">
-                {positions.length === 0 ? (
+                {isLoading ? (
+                  <div className="bg-white rounded-[10px] shadow-sm h-[120px] flex flex-col items-center justify-center gap-3">
+                    <Loader2 className="w-6 h-6 text-[#6366f1] animate-spin" />
+                    <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                      Loading positions...
+                    </p>
+                  </div>
+                ) : positions.length === 0 ? (
                   <div className="bg-white rounded-[10px] shadow-sm h-[120px] flex items-center justify-center">
                     <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af]">
                       No positions available for this project
@@ -514,6 +504,27 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
                       </div>
 
                       {/* Status Badges */}
+                      {(position.status === 'pending' || position.status === 'Pending') && (
+                        <div className="h-[26px] rounded-full bg-amber-50 border border-amber-200 px-[12px] flex items-center justify-center gap-[6px]">
+                          <span className="font-['Arimo',sans-serif] text-[12px] text-amber-600 font-medium">
+                            Pending Approval
+                          </span>
+                        </div>
+                      )}
+                      {(position.status === 'rejected' || position.status === 'Rejected') && (
+                        <div className="h-[26px] rounded-full bg-red-50 border border-red-200 px-[12px] flex items-center justify-center gap-[6px]">
+                          <span className="font-['Arimo',sans-serif] text-[12px] text-red-600 font-medium">
+                            Rejected
+                          </span>
+                        </div>
+                      )}
+                      {(position.status === 'technical_review' || position.status === 'Technical Review' || position.status === 'Technical_Review') && (
+                        <div className="h-[26px] rounded-full bg-indigo-50 border border-indigo-200 px-[12px] flex items-center justify-center gap-[6px]">
+                          <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-600 font-medium">
+                            Technical Review
+                          </span>
+                        </div>
+                      )}
                       {position.closureStatus === 'Filled' && (
                         <div className="h-[26px] rounded-full bg-emerald-50 border border-emerald-200 px-[12px] flex items-center justify-center gap-[6px]">
                           <CheckCircle2 size={14} className="text-emerald-600" />
@@ -805,177 +816,32 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
         </div>
       </div>
 
-      {/* Add New Position Dialog */}
-      <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent className="sm:max-w-[500px] bg-white p-0">
-          <div className="p-6 pb-4">
-            <DialogHeader className="mb-4">
-              <DialogTitle className="text-[18px] font-['Arimo',sans-serif] text-black">Add New Position</DialogTitle>
-              <DialogDescription className="text-[13px] text-[#9ca3af] font-['Arimo',sans-serif] mt-1">
-                Enter the details to create a new position.
-              </DialogDescription>
-            </DialogHeader>
+      {/* Add/Edit Position Modal */}
+      {projectId && (
+        <AdminPositionModal
+          isOpen={isAddDialogOpen}
+          onClose={() => setIsAddDialogOpen(false)}
+          onSuccess={() => {
+            // Reload positions
+            api.recruiter.getProjectPositions(Number(projectId)).then(projectPositions => {
+              const mappedPositions: Position[] = projectPositions.map(p => ({
+                id: Number(p.id),
+                title: p.jobTitle,
+                description: `Department: ${p.department}`,
+                screeningConditions: 'Standard screening requirements apply',
+                applicants: p.candidatesCount,
+                status: p.status,
+                isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
+              }));
+              setPositions(mappedPositions);
+            });
+            setIsAddDialogOpen(false);
+          }}
+          projectId={String(projectId)}
+          position={editingPosition ? { id: editingPosition.id, jobTitle: editingPosition.title } as any : undefined}
+        />
+      )}
 
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <label className="text-[14px] font-['Arimo',sans-serif] text-black">
-                  Position Title
-                </label>
-                <input
-                  type="text"
-                  placeholder="Enter position title"
-                  value={newPositionTitle}
-                  onChange={(e) => setNewPositionTitle(e.target.value)}
-                  className="w-full h-[40px] bg-[#f9fafb] rounded-[6px] border-0 px-[12px] font-['Arimo',sans-serif] text-[14px] text-black placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
-                />
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <label className="text-[14px] font-['Arimo',sans-serif] text-black">
-                  Description
-                </label>
-                <textarea
-                  placeholder="Enter position description"
-                  value={newPositionDescription}
-                  onChange={(e) => setNewPositionDescription(e.target.value)}
-                  rows={3}
-                  className="w-full bg-[#f9fafb] rounded-[6px] border-0 px-[12px] py-[10px] font-['Arimo',sans-serif] text-[14px] text-black placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#6366f1] resize-none"
-                />
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <label className="text-[14px] font-['Arimo',sans-serif] text-black">
-                  Screening Conditions
-                </label>
-                <textarea
-                  placeholder="Enter screening conditions"
-                  value={newPositionScreening}
-                  onChange={(e) => setNewPositionScreening(e.target.value)}
-                  rows={3}
-                  className="w-full bg-[#f9fafb] rounded-[6px] border-0 px-[12px] py-[10px] font-['Arimo',sans-serif] text-[14px] text-black placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#6366f1] resize-none"
-                />
-              </div>
-
-              <button className="flex items-center gap-2 h-[36px] px-[14px] rounded-[6px] border border-[#6366f1] bg-white hover:bg-[#f9fafb] transition-colors self-start">
-                <Sparkles size={16} className="text-[#6366f1]" />
-                <span className="text-[14px] font-['Arimo',sans-serif] text-[#6366f1]">
-                  AI Enhance
-                </span>
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#f3f4f6]">
-            <button
-              onClick={() => {
-                setIsAddDialogOpen(false);
-                setNewPositionTitle('');
-                setNewPositionDescription('');
-                setNewPositionScreening('');
-              }}
-              className="h-[38px] px-[20px] rounded-[6px] font-['Arimo',sans-serif] text-[14px] text-[#9ca3af] hover:bg-[#f9fafb] transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleAddPosition}
-              className="h-[38px] px-[20px] rounded-[6px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
-            >
-              Add Position
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Position Dialog */}
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="sm:max-w-[500px] bg-white p-0">
-          <div className="p-6 pb-4">
-            <DialogHeader className="mb-4">
-              <DialogTitle className="text-[18px] font-['Arimo',sans-serif] text-black">Edit Position</DialogTitle>
-              <DialogDescription className="text-[13px] text-[#9ca3af] font-['Arimo',sans-serif] mt-1">
-                Update the position details and opening status.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <label className="text-[14px] font-['Arimo',sans-serif] text-black">
-                  Position Title
-                </label>
-                <input
-                  type="text"
-                  placeholder="Enter position title"
-                  value={editPositionTitle}
-                  onChange={(e) => setEditPositionTitle(e.target.value)}
-                  className="w-full h-[40px] bg-[#f9fafb] rounded-[6px] border-0 px-[12px] font-['Arimo',sans-serif] text-[14px] text-black placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
-                />
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <label className="text-[14px] font-['Arimo',sans-serif] text-black">
-                  Description
-                </label>
-                <textarea
-                  placeholder="Enter position description"
-                  value={editPositionDescription}
-                  onChange={(e) => setEditPositionDescription(e.target.value)}
-                  rows={3}
-                  className="w-full bg-[#f9fafb] rounded-[6px] border-0 px-[12px] py-[10px] font-['Arimo',sans-serif] text-[14px] text-black placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#6366f1] resize-none"
-                />
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <label className="text-[14px] font-['Arimo',sans-serif] text-black">
-                  Screening Conditions
-                </label>
-                <textarea
-                  placeholder="Enter screening conditions"
-                  value={editPositionScreening}
-                  onChange={(e) => setEditPositionScreening(e.target.value)}
-                  rows={3}
-                  className="w-full bg-[#f9fafb] rounded-[6px] border-0 px-[12px] py-[10px] font-['Arimo',sans-serif] text-[14px] text-black placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#6366f1] resize-none"
-                />
-              </div>
-
-              <button className="flex items-center gap-2 h-[36px] px-[14px] rounded-[6px] border border-[#6366f1] bg-white hover:bg-[#f9fafb] transition-colors self-start">
-                <Sparkles size={16} className="text-[#6366f1]" />
-                <span className="text-[14px] font-['Arimo',sans-serif] text-[#6366f1]">
-                  AI Enhance
-                </span>
-              </button>
-
-              <div className="flex items-center justify-between pt-2">
-                <label className="text-[14px] font-['Arimo',sans-serif] text-black">
-                  Currently Open
-                </label>
-                <Switch
-                  checked={editPositionIsOpen}
-                  onCheckedChange={setEditPositionIsOpen}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#f3f4f6]">
-            <button
-              onClick={() => {
-                setIsEditDialogOpen(false);
-                setEditingPosition(null);
-              }}
-              className="h-[38px] px-[20px] rounded-[6px] font-['Arimo',sans-serif] text-[14px] text-[#9ca3af] hover:bg-[#f9fafb] transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSaveChanges}
-              className="h-[38px] px-[20px] rounded-[6px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
-            >
-              Save Changes
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* Close Position Modal */}
       <ClosePositionModal

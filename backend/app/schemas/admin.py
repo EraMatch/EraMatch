@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from uuid import UUID
+from datetime import datetime
 
 class GlobalStatsResponse(BaseModel):
     """Response schema for global admin statistics."""
@@ -115,4 +116,32 @@ class NotificationResponse(BaseModel):
     message: str | None = None
     data: dict | None = None
     is_read: bool
-    created_at: str # ISO string
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+class ApprovalRequestCreate(BaseModel):
+    """Request schema for creating an approval request (HR)."""
+    request_type: str # 'project' | 'position'
+    data: dict # creation payload (ProjectCreate or PositionCreate data)
+
+class ApprovalRequestResponse(BaseModel):
+    """Response schema for an approval request."""
+    id: UUID
+    requester_id: UUID
+    requester_name: str | None = None
+    request_type: str
+    data: dict
+    entity_id: UUID | None = None
+    status: str
+    reviewer_id: UUID | None = None
+    assigned_tech_id: UUID | None = None
+    review_notes: str | None = None
+    created_at: datetime # ISO string
+    updated_at: datetime | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+class ApprovalDecisionRequest(BaseModel):
+    """Request schema for approving/rejecting a request (Admin)."""
+    status: str # 'approved' | 'rejected'
+    assigned_tech_id: UUID | None = None # For position approvals
+    review_notes: str | None = None

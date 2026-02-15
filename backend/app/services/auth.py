@@ -152,7 +152,6 @@ class AuthService:
         logger.info("="*50 + "\n")
         
         # In the future, use an actual SMTP client here if settings.SMTP_HOST is set
-        print(f"DEBUG: Password reset link for {email}: {reset_link}")
 
         return True
 
@@ -229,7 +228,6 @@ class AuthService:
         logger.info("="*50 + "\n")
         
         # In the future, use an actual SMTP client here if settings.SMTP_HOST is set
-        print(f"DEBUG: Password reset link for organization user {email}: {reset_link}")
 
         return True
 

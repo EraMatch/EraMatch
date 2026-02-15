@@ -10,6 +10,7 @@ import { Button } from '../../ui/button';
 import { useState, useEffect } from 'react';
 import { api } from '../../../services/api';
 import { toast } from 'sonner';
+import { AdminProjectModal } from '../../admin/AdminProjectModal';
 
 // ... existing imports ...
 
@@ -20,6 +21,7 @@ interface Project {
   applicants: number | string;
   isOpen: boolean;
   description?: string;
+  status?: string;
 }
 
 type SortOption =
@@ -64,7 +66,8 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
         roles: p.positionsCount,
         applicants: p.applicantsCount,
         isOpen: p.status?.toLowerCase() === 'active',
-        description: p.description || ''
+        description: p.description || '',
+        status: p.status
       }));
 
       setProjects(mappedProjects);
@@ -99,12 +102,13 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
 
-  const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectDescription, setNewProjectDescription] = useState('');
-
   const [editProjectName, setEditProjectName] = useState('');
   const [editProjectDescription, setEditProjectDescription] = useState('');
   const [editProjectIsOpen, setEditProjectIsOpen] = useState(false);
+
+  const userStr = localStorage.getItem('user');
+  const userObj = userStr ? JSON.parse(userStr) : null;
+  const userRole = userObj?.role || 'recruiter';
 
   // Search, Filter, Sort states
   const [searchQuery, setSearchQuery] = useState('');
@@ -197,22 +201,9 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
     }
   });
 
-  const handleAddProject = async () => {
-    if (newProjectName.trim()) {
-      try {
-        await api.recruiter.createProject({
-          projectName: newProjectName,
-          description: newProjectDescription
-        });
-        toast.success('Project created successfully');
-        fetchProjects();
-      } catch (error) {
-        toast.error('Failed to create project');
-      }
-      setNewProjectName('');
-      setNewProjectDescription('');
-      setIsAddDialogOpen(false);
-    }
+  const handleAddProject = () => {
+    setEditingProject(null);
+    setIsAddDialogOpen(true);
   };
 
   const handleEditClick = async (project: Project) => {
@@ -306,7 +297,7 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
             <div className="h-[42px] flex items-center gap-[16px] relative">
               {/* Add Button */}
               <button
-                onClick={() => setIsAddDialogOpen(true)}
+                onClick={handleAddProject}
                 className="w-[36px] h-[36px] rounded-[10px] flex items-center justify-center hover:bg-[#ede9ff] transition-colors"
               >
                 <Plus size={20} className="text-black" strokeWidth={1.67} />
@@ -442,10 +433,17 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
 
           {/* Projects List */}
           <div className="content-stretch flex flex-col gap-[16px] items-start w-full">
-            {sortedProjects.length === 0 ? (
+            {isLoading ? (
+              <div className="w-full h-[200px] flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-8 h-8 text-[#4834ab] animate-spin" />
+                <p className="text-[#6b7280] font-['Arimo',sans-serif] text-[16px]">
+                  Fetching your projects...
+                </p>
+              </div>
+            ) : filteredProjects.length === 0 ? (
               <div className="w-full h-[200px] flex items-center justify-center">
                 <p className="text-[#9ca3af] font-['Arimo',sans-serif] text-[16px]">
-                  No projects found
+                  {searchQuery ? 'No projects match your search' : 'No projects found'}
                 </p>
               </div>
             ) : (
@@ -456,6 +454,7 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
                   roles={project.roles}
                   applicants={project.applicants}
                   isOpen={project.isOpen}
+                  status={project.status}
                   showOpenBadge
                   onView={() => handleViewProject(project)}
                   onEdit={() => handleEditClick(project)}
@@ -466,65 +465,16 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
         </div>
       </div>
 
-      {/* Add New Project Dialog */}
-      <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent className="sm:max-w-[500px] bg-white">
-          <DialogHeader>
-            <DialogTitle className="text-[20px] font-['Arimo',sans-serif]">Add New Project</DialogTitle>
-            <DialogDescription className="text-[14px] text-[#6b7280] font-['Arimo',sans-serif]">
-              Enter the project name to create a new project.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex flex-col gap-4 py-4">
-            <div className="flex flex-col gap-2">
-              <label className="text-[14px] font-['Arimo',sans-serif] text-black">
-                Project Name
-              </label>
-              <input
-                type="text"
-                placeholder="Enter project name"
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                className="w-full h-[42px] bg-white rounded-[8px] border border-[#e5e7eb] px-[12px] py-[8px] font-['Arimo',sans-serif] text-[14px] text-black placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#4834ab] focus:border-transparent"
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <label className="text-[14px] font-['Arimo',sans-serif] text-black">
-                Project Description
-              </label>
-              <textarea
-                placeholder="Enter project description"
-                value={newProjectDescription}
-                onChange={(e) => setNewProjectDescription(e.target.value)}
-                rows={3}
-                className="w-full bg-white rounded-[8px] border border-[#e5e7eb] px-[12px] py-[8px] font-['Arimo',sans-serif] text-[14px] text-black placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#4834ab] focus:border-transparent resize-none"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setIsAddDialogOpen(false);
-                setNewProjectName('');
-                setNewProjectDescription('');
-              }}
-              className="text-[#6b7280] hover:bg-[#f3f4f6] font-['Arimo',sans-serif]"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleAddProject}
-              className="bg-[#4834ab] hover:bg-[#3d2b91] text-white font-['Arimo',sans-serif]"
-            >
-              Add Project
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Add/Edit Project Modal */}
+      <AdminProjectModal
+        isOpen={isAddDialogOpen}
+        onClose={() => setIsAddDialogOpen(false)}
+        onSuccess={() => {
+          fetchProjects();
+          setIsAddDialogOpen(false);
+        }}
+        project={editingProject ? { id: editingProject.id, projectName: editingProject.title, description: editingProject.description } as any : undefined}
+      />
 
       {/* Edit Project Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>

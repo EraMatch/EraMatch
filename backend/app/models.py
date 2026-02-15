@@ -31,11 +31,16 @@ class ApplicationStatus(str, Enum):
 class PositionStatus(str, Enum):
     OPEN = "open"
     CLOSED = "closed"
+    PENDING = "pending"
+    REJECTED = "rejected"
+    TECHNICAL_REVIEW = "technical_review"
 
 
 class ProjectStatus(str, Enum):
     ACTIVE = "active"
     CLOSED = "closed"
+    PENDING = "pending"
+    REJECTED = "rejected"
 
 
 class StageStatus(str, Enum):
@@ -174,11 +179,16 @@ class Project(BaseModel, table=True):
     
     id: UUID = Field(default_factory=uuid4, alias="project_id", sa_column=Column("project_id", PG_UUID(as_uuid=True), primary_key=True))
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
-    created_by_user_id: UUID = Field(foreign_key="organization_users.user_id")
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     name: str = Field(max_length=255)
     description: str | None = Field(default=None, sa_column=Column(Text))
     status: str = Field(default="active", max_length=20)
     target_hire_count: int = Field(default=1)
+    budget: Decimal | None = Field(default=None)
+    start_date: date | None = Field(default=None)
+    end_date: date | None = Field(default=None)
+    priority: str = Field(default="medium", max_length=20) # low, medium, high, urgent
+    department: str | None = Field(default=None, max_length=100)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     closed_at: datetime | None = Field(default=None)
     is_deleted: bool = Field(default=False)
@@ -202,12 +212,18 @@ class Position(SQLModel, table=True):
     project_id: UUID = Field(foreign_key="projects.project_id")
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     job_title: str = Field(max_length=255)
-    job_description: str = Field(sa_column=Column(Text))
+    job_description: str | None = Field(default=None, sa_column=Column(Text))
     required_skills: dict = Field(default_factory=list, sa_column=Column(JSONB))
     experience_level: str | None = Field(default=None, max_length=20)
     work_type: str | None = Field(default=None, max_length=20)
     salary_min: Decimal | None = Field(default=None)
     salary_max: Decimal | None = Field(default=None)
+    employment_type: str = Field(default="full-time", max_length=30) # full-time, part-time, contract, internship
+    location_type: str = Field(default="remote", max_length=20) # remote, hybrid, on-site
+    location_data: dict | None = Field(default=None, sa_column=Column(JSONB)) # office address, remote requirements
+    years_of_experience: int = Field(default=0)
+    education_level: str | None = Field(default=None, max_length=100)
+    benefits: list = Field(default_factory=list, sa_column=Column(JSONB))
     status: str = Field(default="open", max_length=20)
     assigned_hr_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     assigned_tech_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
@@ -689,6 +705,27 @@ class SystemLog(BaseModel, table=True):
     entity_id: UUID | None = Field(default=None)
     details: dict | None = Field(default=None, sa_column=Column(JSONB))
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# =============================================================================
+# SECTION 14: APPROVAL REQUESTS (1 Table)
+# =============================================================================
+
+class ApprovalRequest(BaseModel, table=True):
+    __tablename__ = "approval_requests"
+    
+    id: UUID = Field(default_factory=uuid4, alias="request_id", sa_column=Column("request_id", PG_UUID(as_uuid=True), primary_key=True))
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    requester_id: UUID = Field()
+    request_type: str = Field(max_length=20)  # project, position
+    entity_id: UUID | None = Field(default=None)  # the ID of the project/position being approved
+    data: dict = Field(sa_column=Column(JSONB))  # creation payload
+    status: str = Field(default="pending", max_length=20)  # pending, approved, rejected
+    reviewer_id: UUID | None = Field(default=None)
+    assigned_tech_id: UUID | None = Field(default=None)
+    review_notes: str | None = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # =============================================================================

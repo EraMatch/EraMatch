@@ -6,7 +6,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.models import (
     User, Organization, Position, Project, CandidateApplication, Hire, 
     CandidateStageProgress, OrganizationUser, UserPermission, PaymentMethod,
-    SystemLog, CandidateGroup, Offer, SubscriptionPlan, ProctoringFlag
+    SystemLog, CandidateGroup, Offer, SubscriptionPlan, ProctoringFlag,
+    ApprovalRequest, Notification
 )
 from app.core.exceptions import ForbiddenException
 from app.schemas.admin import (
@@ -14,7 +15,8 @@ from app.schemas.admin import (
     HealthMetrics, QualityMetrics, IntegrityStats, StageTiming,
     MemberStatsResponse, MemberPermissions, MemberPrivilegesResponse, 
     MemberRegisterRequest, MemberRegisterResponse, ReassignRequest,
-    PaymentMethodCreate, SubscriptionUpgradeRequest
+    PaymentMethodCreate, SubscriptionUpgradeRequest,
+    ApprovalRequestCreate, ApprovalDecisionRequest
 )
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -23,6 +25,7 @@ from app.core.security import hash_password
 import secrets
 import string
 from app.services.notification import NotificationService
+from app.schemas.project import ProjectCreate, PositionCreate
 
 
 class AdminService:
@@ -104,10 +107,16 @@ class AdminService:
                 Project.is_deleted == False
             )
             
-            # 3. Total Applicants
-            q_apps = select(func.count()).where(
+            # 3. Total Applicants - filter by deleted positions/projects
+            q_apps = select(func.count()).select_from(CandidateApplication).join(
+                Position, CandidateApplication.position_id == Position.id
+            ).join(
+                Project, Position.project_id == Project.id
+            ).where(
                 CandidateApplication.organization_id == org_id,
-                CandidateApplication.is_deleted == False
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+                Project.is_deleted == False
             )
             
             # Execute counts in parallel
@@ -125,8 +134,15 @@ class AdminService:
             # Join Hire -> CandidateApplication to get applied_at
             q_hires = select(Hire.hired_at, CandidateApplication.applied_at).join(
                 CandidateApplication
+            ).join(
+                Position, CandidateApplication.position_id == Position.id
+            ).join(
+                Project, Position.project_id == Project.id
             ).where(
-                Hire.organization_id == org_id
+                Hire.organization_id == org_id,
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+                Project.is_deleted == False
             )
             
             res_hires = await self.session.execute(q_hires)
@@ -149,9 +165,15 @@ class AdminService:
             # Count proctoring flags by severity
             q_integrity = select(ProctoringFlag.severity).join(
                 CandidateApplication, ProctoringFlag.application_id == CandidateApplication.id
+            ).join(
+                Position, CandidateApplication.position_id == Position.id
+            ).join(
+                Project, Position.project_id == Project.id
             ).where(
                 CandidateApplication.organization_id == org_id,
-                CandidateApplication.is_deleted == False
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+                Project.is_deleted == False
             )
             
             res_integrity = await self.session.execute(q_integrity)
@@ -177,9 +199,16 @@ class AdminService:
                 func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
             ).join(
                 CandidateApplication
+            ).join(
+                Position, CandidateApplication.position_id == Position.id
+            ).join(
+                Project, Position.project_id == Project.id
             ).where(
                 CandidateApplication.organization_id == org_id,
-                CandidateStageProgress.completed_at.isnot(None),
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+                Project.is_deleted == False,
+CandidateStageProgress.completed_at.isnot(None),
                 CandidateStageProgress.started_at.isnot(None)
             ).group_by(CandidateStageProgress.stage_type)
             
@@ -225,6 +254,7 @@ class AdminService:
                 Project.organization_id == org_id,
                 Project.status == "active",
                 Project.is_deleted == False,
+                Position.is_deleted == False,
                 or_(CandidateApplication.id.is_(None), CandidateApplication.is_deleted == False)
             ).group_by(Project.id)
             
@@ -247,9 +277,16 @@ class AdminService:
             # Quality: Assessment scores
             q_scores = select(CandidateStageProgress.score).join(
                 CandidateApplication
+            ).join(
+                Position, CandidateApplication.position_id == Position.id
+            ).join(
+                Project, Position.project_id == Project.id
             ).where(
                 CandidateApplication.organization_id == org_id,
-                CandidateStageProgress.stage_type == "assessment",
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+                Project.is_deleted == False,
+CandidateStageProgress.stage_type == "assessment",
                 CandidateStageProgress.score.isnot(None)
             )
             res_scores = await self.session.execute(q_scores)
@@ -303,7 +340,16 @@ class AdminService:
             elif project_id:
                 # Need to join with Position to get project_id
                 query = query.join(Position, CandidateApplication.position_id == Position.id).where(
-                    Position.project_id == project_id
+                    Position.project_id == project_id,
+                    Position.is_deleted == False
+                )
+            else:
+                # If no project/position filter, we still want to filter out candidates 
+                # from deleted positions/projects
+                query = query.join(Position, CandidateApplication.position_id == Position.id).where(
+                    Position.is_deleted == False
+                ).join(Project, Position.project_id == Project.id).where(
+                    Project.is_deleted == False
                 )
             
             query = query.group_by(CandidateApplication.status)
@@ -395,6 +441,7 @@ class AdminService:
                 Project.organization_id == org_id,
                 Project.status == "active",
                 Project.is_deleted == False,
+                Position.is_deleted == False,
                 or_(CandidateApplication.id.is_(None), CandidateApplication.is_deleted == False)
             ).group_by(Project.id)
             
@@ -412,9 +459,16 @@ class AdminService:
             # 4. Quality (One query for all scores)
             q_scores = select(CandidateStageProgress.score).join(
                 CandidateApplication
+            ).join(
+                Position, CandidateApplication.position_id == Position.id
+            ).join(
+                Project, Position.project_id == Project.id
             ).where(
                 CandidateApplication.organization_id == org_id,
-                CandidateStageProgress.stage_type == "assessment",
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+                Project.is_deleted == False,
+CandidateStageProgress.stage_type == "assessment",
                 CandidateStageProgress.score.isnot(None)
             )
             
@@ -434,9 +488,16 @@ class AdminService:
                 func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
             ).join(
                 CandidateApplication
+            ).join(
+                Position, CandidateApplication.position_id == Position.id
+            ).join(
+                Project, Position.project_id == Project.id
             ).where(
                 CandidateApplication.organization_id == org_id,
-                CandidateStageProgress.completed_at.isnot(None),
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+                Project.is_deleted == False,
+CandidateStageProgress.completed_at.isnot(None),
                 CandidateStageProgress.started_at.isnot(None)
             ).group_by(CandidateStageProgress.stage_type)
             
@@ -455,12 +516,17 @@ class AdminService:
                     "status": "good" if (days <= target or days == 0) else "slow"
                 })
 
-             # 6. Real Integrity
             q_integrity = select(ProctoringFlag.severity).join(
                 CandidateApplication, ProctoringFlag.application_id == CandidateApplication.id
+            ).join(
+                Position, CandidateApplication.position_id == Position.id
+            ).join(
+                Project, Position.project_id == Project.id
             ).where(
                 CandidateApplication.organization_id == org_id,
-                CandidateApplication.is_deleted == False
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+                Project.is_deleted == False
             )
             
             res_integrity = await self.session.execute(q_integrity)
@@ -996,7 +1062,8 @@ class AdminService:
                 q_group_count.label("group_count")
             ).where(
                 Position.project_id == project_id,
-                Position.organization_id == org_id
+                Position.organization_id == org_id,
+                Position.is_deleted == False
             )
             
             res = await self.session.execute(query)
@@ -1172,7 +1239,8 @@ class AdminService:
                 "project_updates": org_settings.get("project_updates", True),
                 "weekly_summary": org_settings.get("weekly_summary", False),
                 "two_factor_auth": org_settings.get("two_factor_auth", False),
-                "session_timeout": org_settings.get("session_timeout", True)
+                "session_timeout": org_settings.get("session_timeout", True),
+                "bypass_admin_approval": org_settings.get("bypass_admin_approval", False)
             }
             
         except Exception as e:
@@ -1657,4 +1725,179 @@ class AdminService:
             return result
         except Exception as e:
             print(f"Error listing organization groups: {e}")
+            return []
+
+    async def create_approval_request(self, request_data: ApprovalRequestCreate) -> ApprovalRequest:
+        """Create a new approval request (called by HR)."""
+        try:
+            new_request = ApprovalRequest(
+                organization_id=self.organization_id,
+                requester_id=self.current_user.id,
+                request_type=request_data.request_type,
+                data=request_data.data,
+                status="pending"
+            )
+            self.session.add(new_request)
+            await self.session.commit()
+            await self.session.refresh(new_request)
+            
+            # TODO: Notify admins
+            return new_request
+        except Exception as e:
+            print(f"Error creating approval request: {e}")
+            await self.session.rollback()
+            raise HTTPException(status_code=500, detail="Failed to create approval request")
+
+    async def list_approval_requests(self, status: str = "pending") -> list[dict]:
+        """List all approval requests for an organization."""
+        try:
+            # Join with User to get requester name
+            query = select(ApprovalRequest, User.first_name, User.last_name).join(
+                User, ApprovalRequest.requester_id == User.id
+            ).where(
+                ApprovalRequest.organization_id == self.organization_id,
+                ApprovalRequest.status == status
+            ).order_by(desc(ApprovalRequest.created_at))
+            
+            result = await self.session.execute(query)
+            rows = result.all()
+            
+            requests = []
+            for req, fname, lname in rows:
+                r_dict = req.model_dump()
+                r_dict["requester_name"] = f"{fname} {lname}"
+                r_dict["created_at"] = req.created_at.isoformat()
+                requests.append(r_dict)
+            return requests
+        except Exception as e:
+            print(f"Error listing approval requests: {e}")
+            return []
+
+    async def process_approval_request(self, request_id: UUID, decision: ApprovalDecisionRequest) -> ApprovalRequest:
+        """Process an approval request (approve or reject)."""
+        try:
+            # 1. Fetch Request
+            print(f"DEBUG: Processing approval request {request_id}")
+            query = select(ApprovalRequest).where(
+                ApprovalRequest.id == request_id,
+                ApprovalRequest.organization_id == self.organization_id
+            )
+            result = await self.session.execute(query)
+            req = result.scalar_one_or_none()
+            
+            if not req:
+                raise HTTPException(status_code=404, detail="Request not found")
+            
+            if req.status != "pending":
+                raise HTTPException(status_code=400, detail="Request is already processed")
+            
+            # 2. Update Request Status
+            req.status = decision.status  # approved or rejected
+            req.reviewer_id = self.current_user.id
+            req.review_notes = decision.review_notes
+            req.assigned_tech_id = decision.assigned_tech_id
+            req.updated_at = datetime.utcnow()
+            
+            # 3. Update Entity Status & Notify
+            notification_title = f"{req.request_type.capitalize()} Request {decision.status.capitalize()}"
+            notification_msg = f"Your request to create {req.request_type} has been {decision.status}."
+            if decision.review_notes:
+                notification_msg += f"\nNotes: {decision.review_notes}"
+
+            if req.request_type == "project":
+                # Fetch project
+                p_query = select(Project).where(Project.id == req.entity_id)
+                p_res = await self.session.execute(p_query)
+                project = p_res.scalar_one_or_none()
+                
+                if project:
+                    if decision.status == "approved":
+                        project.status = "active"
+                        notification_msg += f"\nProject '{project.name}' is now active."
+                    else:
+                        project.status = "rejected"
+                        project.is_deleted = True # Soft-delete on rejection
+                        notification_msg += f"\nProject '{project.name}' has been rejected and removed."
+                        
+                        # Force update via direct SQL to avoid ORM state issues
+                        from sqlalchemy import update
+                        await self.session.execute(
+                            update(Project)
+                            .where(Project.id == project.id)
+                            .values(status='rejected', is_deleted=True)
+                        )
+                    # self.session.add(project) # No longer needed if using update
+                    
+            elif req.request_type == "position":
+                # Fetch position
+                pos_query = select(Position).where(Position.id == req.entity_id)
+                pos_res = await self.session.execute(pos_query)
+                position = pos_res.scalar_one_or_none()
+                
+                if position:
+                    if decision.status == "approved":
+                        # CHANGED: Admin approval now sends to Technical Review
+                        position.status = "technical_review"
+                        req.status = "technical_review" # Keep the request alive/in-review
+                        
+                        # Apply overrides and assignment
+                        if decision.assigned_tech_id:
+                            position.assigned_tech_id = decision.assigned_tech_id
+                            req.assigned_tech_id = decision.assigned_tech_id
+                        
+                        notification_msg += f"\nPosition '{position.job_title}' has been approved by Admin and is now pending Technical Review."
+                        
+                        # Notify Technical Recruiter
+                        if position.assigned_tech_id:
+                            tech_notification = Notification(
+                                organization_id=self.organization_id,
+                                recipient_user_id=position.assigned_tech_id,
+                                type="alert",
+                                title="Technical Review Assigned",
+                                message=f"You have been assigned to review the position '{position.job_title}'. Please review and approve it.",
+                                is_read=False,
+                                created_at=datetime.utcnow()
+                            )
+                            self.session.add(tech_notification)
+
+                    else:
+                        position.status = "rejected"
+                        position.is_deleted = True # Soft-delete on rejection
+                        notification_msg += f"\nPosition '{position.job_title}' has been rejected and removed."
+                    
+                    self.session.add(position)
+            
+            # Create Notification
+            notification = Notification(
+                organization_id=self.organization_id,
+                recipient_user_id=req.requester_id,
+                type="alert",
+                title=notification_title,
+                message=notification_msg,
+                is_read=False,
+                created_at=datetime.utcnow()
+            )
+            self.session.add(notification)
+            
+            self.session.add(req)
+            await self.session.commit()
+            await self.session.refresh(req)
+            
+            return req
+        except Exception as e:
+            print(f"Error processing approval request: {e}")
+            await self.session.rollback()
+            raise e
+
+    async def get_alerts(self, skip: int = 0, limit: int = 50) -> list[Notification]:
+        """Fetch all organization alerts/notifications."""
+        try:
+            query = select(Notification).where(
+                Notification.organization_id == self.organization_id
+            ).order_by(desc(Notification.created_at)).offset(skip).limit(limit)
+            
+            result = await self.session.execute(query)
+            return result.scalars().all()
+        except Exception as e:
+            print(f"Error fetching alerts: {e}")
             return []

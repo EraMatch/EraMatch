@@ -4,22 +4,22 @@ Delegation endpoints - recruiter assignment management.
 from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
-from app.api.deps import DbSession, AdminUser
+from app.api.deps import DbSession, AdminUser, RecruiterUser
 from app.services import AdminService
 from app.schemas.admin import RecruiterListResponse, ReassignRequest
 
 router = APIRouter(prefix="/delegation", tags=["Delegation"])
 
 @router.get("/hr", response_model=list[RecruiterListResponse])
-async def list_hr_recruiters(session: DbSession, admin: AdminUser):
-    """List all HR recruiters. Requires admin role."""
-    service = AdminService(session, admin)
+async def list_hr_recruiters(session: DbSession, user: RecruiterUser):
+    """List all HR recruiters. Requires recruiter role."""
+    service = AdminService(session, user)
     return await service.list_recruiters_by_role("hr")
 
 @router.get("/technical", response_model=list[RecruiterListResponse])
-async def list_tech_recruiters(session: DbSession, admin: AdminUser):
-    """List all Technical recruiters. Requires admin role."""
-    service = AdminService(session, admin)
+async def list_tech_recruiters(session: DbSession, user: RecruiterUser):
+    """List all Technical recruiters. Requires recruiter role."""
+    service = AdminService(session, user)
     return await service.list_recruiters_by_role("technical")
 
 @router.patch("/positions/{position_id}/reassign")

@@ -16,8 +16,10 @@ interface AdminSettingsProps {
 }
 
 export function AdminSettings({ onSignOut }: AdminSettingsProps) {
-  const [activeTab, setActiveTab] = useState<'profile' | 'organization' | 'notifications' | 'security' | 'subscription'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'organization' | 'notifications' | 'security' | 'subscription' | 'workflow'>('profile');
   const [isLoading, setIsLoading] = useState(true);
+
+
 
   // Profile state
   const [firstName, setFirstName] = useState('');
@@ -34,6 +36,9 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
   // Security state
   const [twoFactorAuth, setTwoFactorAuth] = useState(false);
   const [sessionTimeout, setSessionTimeout] = useState(true);
+
+  // Workflow state
+  const [bypassAdminApproval, setBypassAdminApproval] = useState(false);
 
   // Organization state
   const [orgName, setOrgName] = useState('');
@@ -94,6 +99,9 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
       setWeeklySummary(settingsData.weekly_summary ?? false);
       setTwoFactorAuth(settingsData.two_factor_auth ?? false);
       setSessionTimeout(settingsData.session_timeout ?? true);
+
+      // Preferences (Workflow)
+      setBypassAdminApproval(settingsData.bypass_admin_approval ?? false);
 
       // Subscription
       if (subscriptionData) {
@@ -290,6 +298,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
           <TabButton id="organization" label="Organization" icon={Globe} />
           <TabButton id="notifications" label="Notifications" icon={Bell} />
           <TabButton id="security" label="Security" icon={Lock} />
+          <TabButton id="workflow" label="Workflow" icon={Zap} />
           <TabButton id="subscription" label="Subscription" icon={CreditCard} />
         </div>
 
@@ -433,6 +442,29 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
                   <Button variant="outline" className="rounded-full px-6 border-indigo-200 text-indigo-600 hover:bg-indigo-50" onClick={() => setIsPasswordModalOpen(true)}>
                     Change Password
                   </Button>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {activeTab === 'workflow' && (
+            <Card className="p-6">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-indigo-50">
+                  <Zap className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="text-gray-700 font-medium">Workflow Settings</h3>
+                  <p className="text-gray-500 text-sm">Manage approval workflows and automation</p>
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                  <div>
+                    <p className="text-gray-700 font-medium">Bypass Admin Approval</p>
+                    <p className="text-gray-500 text-sm">HR requests go directly to Technical Review</p>
+                  </div>
+                  <Switch checked={bypassAdminApproval} onCheckedChange={(val) => handleTogglePreference('bypass_admin_approval', val, setBypassAdminApproval)} />
                 </div>
               </div>
             </Card>

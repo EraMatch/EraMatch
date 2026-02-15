@@ -79,7 +79,8 @@ export const adminService = {
             assignedHR: p.assignedHR || p.assigned_hr_name || 'Not Assigned',
             assignedTechnicalRecruiter: p.assignedTechnicalRecruiter || p.assigned_tech_name || 'Not Assigned',
             candidatesCount: p.candidatesCount ?? p.candidates_count ?? 0,
-            status: p.status || 'open'
+            status: p.status || 'open',
+            projectId: p.project_id || p.projectId
         }));
 
         const transformedGroups = (groups || []).map((g: any) => ({
@@ -294,6 +295,34 @@ export const adminService = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
+        });
+    },
+    // Approval Requests
+    createApprovalRequest: async (data: { request_type: 'project' | 'position', data: any }) => {
+        return fetchAPI('/admin/requests', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    listApprovalRequests: async (status: string = 'pending') => {
+        return fetchAPI<any[]>(`/admin/requests?status=${status}`);
+    },
+
+    approveRequest: async (requestId: string, decision: { assigned_tech_id?: string, review_notes?: string }) => {
+        return fetchAPI(`/admin/requests/${requestId}/approve`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'approved', ...decision })
+        });
+    },
+
+    rejectRequest: async (requestId: string, review_notes: string) => {
+        return fetchAPI(`/admin/requests/${requestId}/reject`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'rejected', review_notes })
         });
     }
 };

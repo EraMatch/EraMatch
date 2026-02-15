@@ -6,17 +6,21 @@ interface ProjectCardProps {
   roles: number;
   applicants: number | string;
   isOpen?: boolean;
+  status?: string;
   showOpenBadge?: boolean;
   onView?: () => void;
   onEdit?: () => void;
   showEditButton?: boolean;
 }
 
-export function ProjectCard({ title, roles, applicants, isOpen, showOpenBadge = false, onView, onEdit, showEditButton = true }: ProjectCardProps) {
+export function ProjectCard({ title, roles, applicants, isOpen, status, showOpenBadge = false, onView, onEdit, showEditButton = true }: ProjectCardProps) {
   // Format applicants for display
   const formattedApplicants = typeof applicants === 'number'
     ? applicants
     : applicants;
+
+  const isPending = status?.toLowerCase() === 'pending';
+  const isRejected = status?.toLowerCase() === 'rejected';
 
   return (
     <div className="bg-[#f7fafe] h-[88px] rounded-[14px] w-full">
@@ -32,14 +36,39 @@ export function ProjectCard({ title, roles, applicants, isOpen, showOpenBadge = 
             </p>
           </div>
 
-          {/* Currently Open Badge, Roles and Applicants */}
+          {/* Status Badges, Roles and Applicants */}
           <div className="flex items-center gap-[32px] shrink-0">
-            {showOpenBadge && isOpen && (
-              <div className="h-[30px] rounded-full border border-[#18ba84] px-[13px] flex items-center justify-center">
-                <p className="font-['Arimo',sans-serif] leading-[20px] text-[#18ba84] text-[14px] whitespace-nowrap">
-                  Currently Open
-                </p>
-              </div>
+            {showOpenBadge && (
+              <>
+                {isPending && (
+                  <div className="h-[30px] rounded-full border border-[#f59e0b] px-[13px] flex items-center justify-center bg-[#fffbeb]">
+                    <p className="font-['Arimo',sans-serif] leading-[20px] text-[#f59e0b] text-[14px] whitespace-nowrap">
+                      Pending Approval
+                    </p>
+                  </div>
+                )}
+                {isRejected && (
+                  <div className="h-[30px] rounded-full border border-[#ef4444] px-[13px] flex items-center justify-center bg-[#fef2f2]">
+                    <p className="font-['Arimo',sans-serif] leading-[20px] text-[#ef4444] text-[14px] whitespace-nowrap">
+                      Rejected
+                    </p>
+                  </div>
+                )}
+                {status?.toLowerCase() === 'technical_review' && (
+                  <div className="h-[30px] rounded-full border border-indigo-400 px-[13px] flex items-center justify-center bg-indigo-50">
+                    <p className="font-['Arimo',sans-serif] leading-[20px] text-indigo-600 text-[14px] whitespace-nowrap">
+                      Technical Review
+                    </p>
+                  </div>
+                )}
+                {isOpen && !isPending && !isRejected && status?.toLowerCase() !== 'technical_review' && (
+                  <div className="h-[30px] rounded-full border border-[#18ba84] px-[13px] flex items-center justify-center">
+                    <p className="font-['Arimo',sans-serif] leading-[20px] text-[#18ba84] text-[14px] whitespace-nowrap">
+                      Currently Open
+                    </p>
+                  </div>
+                )}
+              </>
             )}
 
             <div className="h-[24px]">
