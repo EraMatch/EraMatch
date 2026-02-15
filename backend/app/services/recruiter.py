@@ -291,20 +291,81 @@ class RecruiterService:
                         Hire.position_id.in_(pos_ids)
                     )
                     
-                    res_apps, res_groups, res_hires = await asyncio.gather(
+                    # 4. Conversion Rate: Hires / Total Apps
+                    # We need total hires count explicitly
+                    q_hire_count = select(func.count(Hire.id)).where(
+                        Hire.position_id.in_(pos_ids)
+                    )
+
+                    # 5. Quality Score: Avg of assessment & interview scores
+                    q_scores = select(CandidateStageProgress.score).join(
+                        CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                    ).where(
+                        CandidateApplication.position_id.in_(pos_ids),
+                        CandidateStageProgress.stage_type.in_(["assessment", "interview"]),
+                        CandidateStageProgress.score.isnot(None)
+                    )
+
+                    # 6. Stage Timing
+                    q_stages = select(
+                        CandidateStageProgress.stage_type,
+                        func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
+                    ).join(
+                        CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                    ).where(
+                        CandidateApplication.position_id.in_(pos_ids),
+                        CandidateStageProgress.completed_at.isnot(None),
+                        CandidateStageProgress.started_at.isnot(None)
+                    ).group_by(CandidateStageProgress.stage_type)
+
+
+                    res_apps, res_groups, res_hires, res_hire_count, res_scores, res_stages = await asyncio.gather(
                         self.session.execute(q_apps),
                         self.session.execute(q_groups),
-                        self.session.execute(q_hires)
+                        self.session.execute(q_hires),
+                        self.session.execute(q_hire_count),
+                        self.session.execute(q_scores),
+                        self.session.execute(q_stages)
                     )
                     
                     app_count = res_apps.scalar() or 0
                     group_count = res_groups.scalar() or 0
+                    hire_count = res_hire_count.scalar() or 0
                     
                     hire_data = res_hires.all()
                     if hire_data:
                         diffs = [(h - a).days for h, a in hire_data if h and a]
                         if diffs:
                             avg_time = sum(diffs) / len(diffs)
+                            
+                    # Conversion
+                    conversion = (hire_count / app_count * 100) if app_count > 0 else 0.0
+                    
+                    # Quality
+                    scores = [float(s) for s in res_scores.scalars().all()]
+                    quality_score = (sum(scores) / len(scores)) if scores else 0.0
+
+                    # Stage Timing
+                    stage_data = res_stages.all()
+                    stage_map = {str(s).lower(): round(float(d.total_seconds() / 86400.0), 1) if d else 0 for s, d in stage_data}
+                    
+                    # Targets
+                    targets = {"screening": 3, "assessment": 5, "interview": 7, "offer": 5}
+                    stage_timing = []
+                    for s_type, target in targets.items():
+                        days = stage_map.get(s_type, 0)
+                        stage_timing.append({
+                            "stage": s_type.replace('_', ' ').title(),
+                            "days": int(days) if days > 0 else 0,
+                            "target": target,
+                            "status": "good" if (days <= target or days == 0) else "slow"
+                        })
+
+                else:
+                    # Defaults if no positions
+                    conversion = 0.0
+                    quality_score = 0.0
+                    stage_timing = []
                 
                 enriched_projects.append({
                     "project_id": str(p.id),
@@ -319,7 +380,10 @@ class RecruiterService:
                     "applicantsCount": app_count,
                     "subGroupsCount": group_count,
                     "avgTimeToFill": round(avg_time, 1),
-                    "openDate": p.created_at.isoformat()
+                    "openDate": p.created_at.isoformat(),
+                    "conversion_rate": round(conversion, 1),
+                    "quality_score": round(quality_score, 1),
+                    "stage_timing": stage_timing
                 })
             
             return enriched_projects
@@ -333,6 +397,18 @@ class RecruiterService:
     async def create_position(self, data: PositionCreate) -> Position:
         """Create a new position with validation for unique title in organization."""
         org_id = self.organization_id
+
+        # DEBUG LOGS
+        print(f"DEBUG: create_position role={self.current_user.role}")
+        print(f"DEBUG: assigned_hr_id={data.assigned_hr_id} type={type(data.assigned_hr_id)}")
+        print(f"DEBUG: assigned_tech_id={data.assigned_tech_id} type={type(data.assigned_tech_id)}")
+
+        # Validation for Admins: Must assign HR and Tech Recruiter
+        if self.current_user.role == "admin":
+             if not data.assigned_hr_id or not data.assigned_tech_id:
+                  print("DEBUG: Validation FAILED")
+                  from fastapi import HTTPException
+                  raise HTTPException(status_code=400, detail="Admins must assign both HR and Technical Recruiter to create a position.")
         
         # 0. Check Project Status
         # Get project to check status
@@ -399,6 +475,12 @@ class RecruiterService:
                 initial_status = "pending"
                 approval_status = "pending"
 
+        # Admin logic change:
+        if self.current_user.role == "admin" and data.assigned_tech_id:
+             # Admin created and assigned a tech recruiter -> Require technical review for JD
+             initial_status = "technical_review"
+             approval_status = "technical_review"
+        
         position = Position(
             **data.model_dump(),
             organization_id=org_id,
@@ -421,7 +503,7 @@ class RecruiterService:
                 data=request_data,
                 status=approval_status,
                 entity_id=position.id,
-                assigned_tech_id=data.assigned_tech_id # Pass this through if HR assigned it
+                assigned_tech_id=data.assigned_tech_id
             )
             self.session.add(approval_req)
         

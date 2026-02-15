@@ -53,6 +53,11 @@ class ProjectListResponse(BaseModel):
     subGroupsCount: int = Field(default=0)
     avgTimeToFill: float = Field(default=0.0, serialization_alias="avgTimeToFill")
     
+    # New Dynamic Metrics
+    conversion_rate: float = Field(default=0.0, serialization_alias="conversionRate")
+    quality_score: float = Field(default=0.0, serialization_alias="qualityScore")
+    stage_timing: list[dict] = Field(default_factory=list, serialization_alias="stageTiming")
+    
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 

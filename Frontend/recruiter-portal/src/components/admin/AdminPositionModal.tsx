@@ -147,6 +147,8 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                 status: 'Open'
             };
 
+            console.log('DEBUG: submitting position payload:', payload);
+
             if (position) {
                 await api.recruiter.updatePosition(position.id || position.position_id, payload);
                 toast.success('Position updated successfully');
@@ -305,7 +307,7 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                         <div className="grid grid-cols-2 gap-4">
                             {isAdmin && (
                                 <div className="space-y-2">
-                                    <Label className="text-sm font-semibold text-gray-700">Assign HR Recruiter</Label>
+                                    <Label className="text-sm font-semibold text-gray-700">Assign HR Recruiter <span className="text-red-500">*</span></Label>
                                     <Select value={assignedHRId} onValueChange={setAssignedHRId}>
                                         <SelectTrigger className="bg-white/50 border-gray-200 rounded-xl">
                                             <SelectValue placeholder="Select HR recruiter" />
@@ -321,7 +323,7 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                                 </div>
                             )}
                             <div className="space-y-2">
-                                <Label className="text-sm font-semibold text-gray-700">Assign Technical Recruiter</Label>
+                                <Label className="text-sm font-semibold text-gray-700">Assign Technical Recruiter {isAdmin && <span className="text-red-500">*</span>}</Label>
                                 <Select value={assignedTechId} onValueChange={setAssignedTechId}>
                                     <SelectTrigger className="bg-white/50 border-gray-200 rounded-xl">
                                         <SelectValue placeholder="Select technical recruiter" />
@@ -359,7 +361,7 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                         </Button>
                         <Button
                             type="submit"
-                            disabled={isLoading || !jobTitle.trim()}
+                            disabled={isLoading || !jobTitle.trim() || (isAdmin && (!assignedHRId || !assignedTechId))}
                             className="rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg"
                         >
                             {isLoading && <Loader2 className="w-4 h-4 animate-spin mr-2" />}

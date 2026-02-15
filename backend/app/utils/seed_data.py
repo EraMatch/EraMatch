@@ -256,16 +256,17 @@ def generate_positions(org_id, user_ids, project_ids):
     cur = conn.cursor()
     titles = [
         "Senior Backend Engineer", "Frontend React Developer", "DevOps Engineer", "Product Manager", 
-        "Data Scientist", "Mobile Developer (iOS)", "Mobile Developer (Android)", "Full Stack Developer",
-        "Site Reliability Engineer (SRE)", "Cloud Architect", "Machine Learning Engineer", "AI Researcher",
-        "UI Designer", "UX Researcher", "QA Automation Engineer", "Security Engineer", "Database Administrator",
-        "Network Engineer", "Systems Analyst", "Game Developer (Unity)", "Embedded Systems Engineer",
-        "Blockchain Developer", "Technical Writer", "Customer Support Engineer", "Sales Engineer",
-        "Solutions Architect", "IT Manager", "Chief Technology Officer (CTO)", "VP of Engineering",
-        "Human Resources Manager", "Talent Acquisition Specialist", "Marketing Manager", "SEO Specialist",
-        "Content Strategist", "Data Analyst", "Business Analyst", "Project Manager", "Scrum Master",
-        "Product Owner", "Release Engineer"
+        "Data Scientist"
     ]
+    # , "Mobile Developer (iOS)", "Mobile Developer (Android)", "Full Stack Developer",
+    #     "Site Reliability Engineer (SRE)", "Cloud Architect", "Machine Learning Engineer", "AI Researcher",
+    #     "UI Designer", "UX Researcher", "QA Automation Engineer", "Security Engineer", "Database Administrator",
+    #     "Network Engineer", "Systems Analyst", "Game Developer (Unity)", "Embedded Systems Engineer",
+    #     "Blockchain Developer", "Technical Writer", "Customer Support Engineer", "Sales Engineer",
+    #     "Solutions Architect", "IT Manager", "Chief Technology Officer (CTO)", "VP of Engineering",
+    #     "Human Resources Manager", "Talent Acquisition Specialist", "Marketing Manager", "SEO Specialist",
+    #     "Content Strategist", "Data Analyst", "Business Analyst", "Project Manager", "Scrum Master",
+    #     "Product Owner", "Release Engineer"
 
     position_ids = []
     

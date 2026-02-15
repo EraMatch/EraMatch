@@ -1314,18 +1314,16 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Overall Conversion Rate</span>
                   <span className="text-lg font-semibold text-gray-900">
-                    {selectedProject.applicantsCount > 0
-                      ? (Math.min(selectedProject.applicantsCount, (pipelineData?.find((s: any) => s.stage === 'Offer')?.count || 0)) / selectedProject.applicantsCount * 100).toFixed(1)
-                      : "0.0"}%
+                    {selectedProject.conversionRate ? selectedProject.conversionRate.toFixed(1) : "0.0"}%
                   </span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div className="h-full bg-indigo-500 rounded-full" style={{
-                    width: `${selectedProject.applicantsCount > 0 ? (pipelineData?.find((s: any) => s.stage === 'Offer')?.count || 0) / selectedProject.applicantsCount * 100 : 0}%`
+                    width: `${selectedProject.conversionRate || 0}%`
                   }} />
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {pipelineData?.find((s: any) => s.stage === 'Offer')?.count || 0} offers from {selectedProject.applicantsCount} applicants
+                  based on hires vs applicants
                 </p>
               </div>
 
@@ -1333,13 +1331,7 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Avg Quality Score</span>
                   <span className="text-lg font-semibold text-emerald-600">
-                    {(() => {
-                      if (!globalStats?.analytics?.quality) return '0%';
-                      const { high, needsImprove } = globalStats.analytics.quality;
-                      const total = high + needsImprove;
-                      if (total === 0) return '0%';
-                      return `${Math.round((high / total) * 100)}%`;
-                    })()}
+                    {selectedProject.qualityScore ? Math.round(selectedProject.qualityScore) : 0}%
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-2">
@@ -1391,17 +1383,16 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
               <div className="pt-3 border-t">
                 <div className="text-sm text-gray-600 mb-3">Stage Timing</div>
                 <div className="space-y-2">
-                  {(globalStats?.analytics?.stageTiming || [
-                    { stage: 'Screening', days: 3, target: 3, status: 'good' },
-                    { stage: 'Assessment', days: 7, target: 5, status: 'slow' },
-                    { stage: 'Interview', days: 12, target: 7, status: 'slow' },
-                    { stage: 'Offer', days: 4, target: 5, status: 'good' }
+                  {(selectedProject.stageTiming && selectedProject.stageTiming.length > 0 ? selectedProject.stageTiming : [
+                    { stage: 'Screening', days: 0, target: 3, status: 'good' },
+                    { stage: 'Assessment', days: 0, target: 5, status: 'good' },
+                    { stage: 'Interview', days: 0, target: 7, status: 'good' },
+                    { stage: 'Offer', days: 0, target: 5, status: 'good' }
                   ]).map((item: any) => (
                     <div key={item.stage} className="flex items-center justify-between">
                       <span className="text-xs text-gray-600">{item.stage}</span>
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs font-medium ${item.status === 'slow' ? 'text-orange-600' : 'text-emerald-600'
-                          }`}>
+                        <span className={`text-xs font-medium ${item.status === 'slow' ? 'text-orange-600' : 'text-emerald-600'}`}>
                           {item.days}d
                         </span>
                         {item.status === 'slow' && (

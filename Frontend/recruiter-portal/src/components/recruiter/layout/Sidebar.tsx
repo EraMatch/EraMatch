@@ -7,8 +7,19 @@ export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   useEffect(() => {
+    const userStr = localStorage.getItem('user');
+    if (userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        setUserRole(user.role?.toLowerCase());
+      } catch (e) {
+        console.error("Failed to parse user from local storage", e);
+      }
+    }
+
     const fetchNotifications = async () => {
       try {
         const notifications = await api.recruiter.getNotifications();
@@ -74,12 +85,14 @@ export function Sidebar() {
           <Settings size={24} />
         </NavLink>
 
-        {/* Reviews Button */}
-        <NavLink to="/recruiter/reviews" className={({ isActive }) => getLinkClass(isActive)} title="Reviews">
-          <div className="relative">
-            <ClipboardCheck size={24} />
-          </div>
-        </NavLink>
+        {/* Reviews Button - Technical Only */}
+        {userRole === 'technical' && (
+          <NavLink to="/recruiter/reviews" className={({ isActive }) => getLinkClass(isActive)} title="Reviews">
+            <div className="relative">
+              <ClipboardCheck size={24} />
+            </div>
+          </NavLink>
+        )}
       </div>
 
       {/* Sign Out */}
