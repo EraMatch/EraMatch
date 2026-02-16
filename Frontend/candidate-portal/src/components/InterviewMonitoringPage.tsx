@@ -39,9 +39,9 @@ export function InterviewMonitoringPage() {
     const fetchCandidates = async () => {
         try {
             setRefreshing(true);
-            const response = await fetch(`http://localhost:8000/api/v1/interview/monitoring/candidates`, {
+            const response = await fetch('/api/v1/interview/monitoring/candidates', {
                 headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`
                 }
             });
 
@@ -60,9 +60,9 @@ export function InterviewMonitoringPage() {
     const fetchResponses = async (candidateId: string) => {
         try {
             setLoading(true);
-            const response = await fetch(`http://localhost:8000/api/v1/interview/monitoring/responses/${candidateId}`, {
+            const response = await fetch(`/api/v1/interview/monitoring/responses/${candidateId}`, {
                 headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`
                 }
             });
 

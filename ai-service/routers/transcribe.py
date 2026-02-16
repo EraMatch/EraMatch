@@ -26,14 +26,14 @@ class TranscribeResponse(BaseModel):
 @router.post("/", response_model=TranscribeResponse)
 async def transcribe(request: TranscribeRequest):
     """
-    get the audio url (for now we store in the disk, which will be the vm disk or we can get an external disk on cloud..)
-
-    return: 
-    transcript 
-    confidence 
-    duration 
-    language 
-        """
+    Transcribe audio/video to text using Whisper.
+    
+    Args:
+        request: Contains audio_url and optional language
+        
+    Returns:
+        Transcript text with confidence score
+    """
     try:
         result = await transcribe_audio(request.audio_url, request.language)
         return TranscribeResponse(

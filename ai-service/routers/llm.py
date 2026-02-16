@@ -60,7 +60,7 @@ async def evaluate(request: EvaluateRequest):
     """
     for the ai video based interivew, pairs of q and reference a and prompt fo a model here 
     """
-    # evaluation prompt for the llm that will judge 
+    # Build smart evaluation prompt
     has_reference = bool(request.reference_answer and request.reference_answer.strip())
     
     prompt = f"""You are an expert interview evaluator. Analyze this candidate response.

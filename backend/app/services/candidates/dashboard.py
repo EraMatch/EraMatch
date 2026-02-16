@@ -146,27 +146,28 @@ class CandidateDashboardService:
                 stage_configs_result = await self.session.execute(
                     text("""
                         SELECT 
-                            gps.stage_id,
-                            gps.stage_type,
-                            gps.stage_order,
-                            gps.config_id,
-                            gps.state,
-                            COALESCE(cpp.status, 'locked') as progress_status,
-                            cpp.score,
-                            cpp.started_at,
-                            cpp.completed_at,
+                            gsc.config_id,
+                            gsc.stage_type,
+                            gsc.stage_order,
+                            gsc.stage_config_id,
+                            gsc.state,
+                            COALESCE(csp.status, 'locked') as progress_status,
+                            csp.score,
+                            csp.started_at,
+                            csp.completed_at,
                             -- Get title from appropriate config table
-                            CASE gps.stage_type
-                                WHEN 'assessment' THEN (SELECT title FROM assessments WHERE assessment_id = gps.config_id)
-                                WHEN 'ai_interview' THEN (SELECT title FROM ai_interview_configs WHERE config_id = gps.config_id)
-                                WHEN 'live_interview' THEN (SELECT title FROM live_interview_configs WHERE config_id = gps.config_id)
+                            CASE gsc.stage_type
+                                WHEN 'assessment' THEN (SELECT title FROM assessments WHERE assessment_id = gsc.stage_config_id)
+                                WHEN 'ai_interview' THEN (SELECT title FROM ai_interview_configs WHERE config_id = gsc.stage_config_id)
+                                WHEN 'live_interview' THEN (SELECT title FROM live_interview_configs WHERE config_id = gsc.stage_config_id)
                             END as stage_title
-                        FROM group_pipeline_stages gps
-                        LEFT JOIN candidate_pipeline_progress cpp 
-                            ON cpp.application_id = :app_id 
-                            AND cpp.stage_id = gps.stage_id
-                        WHERE gps.group_id = :gid
-                        ORDER BY gps.stage_order
+                        FROM group_stage_config gsc
+                        LEFT JOIN candidate_stage_progress csp 
+                            ON csp.application_id = :app_id 
+                            AND csp.stage_type = gsc.stage_type 
+                            AND csp.stage_order = gsc.stage_order
+                        WHERE gsc.group_id = :gid
+                        ORDER BY gsc.stage_order
                     """),
                     {"gid": str(app_row[3]), "app_id": str(app_row[0])}
                 )
@@ -181,7 +182,7 @@ class CandidateDashboardService:
                     title = row[9] or stage_type.replace("_", " ").title()
                     
                     stage_data = {
-                        "stage_id": str(row[0]),
+                        "config_id": str(row[0]),
                         "stage_type": stage_type,
                         "stage_order": stage_order,
                         "status": progress_status,
@@ -261,7 +262,8 @@ class CandidateDashboardService:
         
         assessments = []
         for i, stage in enumerate(stage_configs):
-            progress = progress_map.get(str(stage.stage_id))
+            stage_key = f"{stage.stage_type}_{stage.stage_order}"
+            progress = progress_map.get(stage_key)
             
             # Determine status
             if progress:
@@ -271,7 +273,8 @@ class CandidateDashboardService:
                 if i == 0:
                     status = "unlocked"  # First stage is always unlocked
                 else:
-                    prev_progress = progress_map.get(str(stage_configs[i-1].stage_id))
+                    prev_key = f"{stage_configs[i-1].stage_type}_{stage_configs[i-1].stage_order}"
+                    prev_progress = progress_map.get(prev_key)
                     if prev_progress and prev_progress.status == "completed":
                         status = "unlocked"
                     else:
@@ -281,7 +284,7 @@ class CandidateDashboardService:
             stage_details = await self._get_stage_details(stage)
             
             assessments.append({
-                "id": str(stage.stage_id),
+                "id": str(stage.config_id),
                 "type": stage.stage_type,
                 "stage_order": stage.stage_order,
                 "status": status,
@@ -357,7 +360,7 @@ class CandidateDashboardService:
         return list(result.scalars().all())
     
     async def _get_stage_progress_map(self, application_id: UUID) -> dict:
-        """Get map of stage progress keyed by stage_id."""
+        """Get map of stage progress keyed by 'stage_type_stage_order'."""
         stmt = select(CandidateStageProgress).where(
             CandidateStageProgress.application_id == application_id
         )
@@ -365,7 +368,7 @@ class CandidateDashboardService:
         progress_list = result.scalars().all()
         
         return {
-            str(p.stage_id): p
+            f"{p.stage_type}_{p.stage_order}": p
             for p in progress_list
         }
     
@@ -373,7 +376,7 @@ class CandidateDashboardService:
         """Get title and details for a stage based on its type and config."""
         if stage.stage_type == "assessment":
             # Try to get assessment config
-            stmt = select(Assessment).where(Assessment.id == stage.config_id)
+            stmt = select(Assessment).where(Assessment.id == stage.stage_config_id)
             result = await self.session.execute(stmt)
             assessment = result.scalar_one_or_none()
             
@@ -393,7 +396,7 @@ class CandidateDashboardService:
                 }
         
         elif stage.stage_type == "ai_interview":
-            stmt = select(AIInterviewConfig).where(AIInterviewConfig.config_id == stage.config_id)
+            stmt = select(AIInterviewConfig).where(AIInterviewConfig.id == stage.stage_config_id)
             result = await self.session.execute(stmt)
             config = result.scalar_one_or_none()
             

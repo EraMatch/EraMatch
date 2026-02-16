@@ -6,7 +6,14 @@
 
 ## Why a Separate AI Service Layer?
 
-### Architectural Benefit
+### Architectural Benefits
+
+1. **Isolation**: Heavy AI inference doesn't block main API requests
+2. **Scalability**: Scale AI workers independently (add GPUs, increase replicas)
+3. **Flexibility**: Swap models (Whisper → AssemblyAI, Gemma → GPT-4) without touching main backend
+4. **Cost Control**: Deploy AI service on GPU instances, main backend on cheaper CPU-only servers
+5. **Development**: AI team can iterate on models without backend deployments
+
 ### Current Setup
 
 ```

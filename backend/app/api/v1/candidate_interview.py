@@ -92,8 +92,8 @@ async def get_interview_config(candidate: CurrentCandidate, session: DbSession):
                 COALESCE(aic.answer_time_seconds, 120) as answer_time,
                 COALESCE(aic.max_retakes, 1) as max_retakes
             FROM candidate_applications ca
-            JOIN group_pipeline_stages gps ON ca.group_id = gps.group_id AND gps.stage_type = 'ai_interview'
-            JOIN ai_interview_configs aic ON gps.config_id = aic.config_id
+            JOIN group_stage_config gsc ON ca.group_id = gsc.group_id AND gsc.stage_type = 'ai_interview'
+            JOIN ai_interview_configs aic ON gsc.stage_config_id = aic.config_id
             WHERE ca.candidate_id = :cid AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
             LIMIT 1
         """),
@@ -158,9 +158,9 @@ async def start_interview_session(
                 aic.organization_id,
                 aic.interview_type
             FROM candidate_applications ca
-            JOIN group_pipeline_stages gps ON ca.group_id = gps.group_id 
-                AND gps.stage_type = 'ai_interview'
-            JOIN ai_interview_configs aic ON gps.config_id = aic.config_id
+            JOIN group_stage_config gsc ON ca.group_id = gsc.group_id 
+                AND gsc.stage_type = 'ai_interview'
+            JOIN ai_interview_configs aic ON gsc.stage_config_id = aic.config_id
             WHERE ca.candidate_id = :cid 
                 AND aic.config_id = :config_id
                 AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
@@ -402,26 +402,6 @@ async def complete_interview_session(
         """),
         {"sid": request.session_id}
     )
-    
-    # Update candidate pipeline progress for this stage
-    await session.execute(
-        text("""
-            UPDATE candidate_pipeline_progress cpp
-            SET status = 'completed',
-                completed_at = NOW(),
-                session_id = :sid,
-                session_type = 'ai_interview'
-            FROM ongoing_interviews oi
-            JOIN candidate_applications ca ON oi.application_id = ca.application_id
-            JOIN group_pipeline_stages gps ON ca.group_id = gps.group_id 
-                AND gps.stage_type = 'ai_interview'
-            WHERE oi.session_id = :sid
-              AND cpp.application_id = ca.application_id
-              AND cpp.stage_id = gps.stage_id
-        """),
-        {"sid": request.session_id}
-    )
-    
     await session.commit()
     
     return CompleteSessionResponse(
