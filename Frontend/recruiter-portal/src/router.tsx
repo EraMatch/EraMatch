@@ -25,7 +25,10 @@ import { LandingPage } from './components/common/LandingPage';
 import { SuspectReviewWrapper } from './components/recruiter/candidates/SuspectReviewWrapper';
 import { RecruiterSettings } from './components/recruiter/settings/RecruiterSettings';
 import { SuspiciousActivityLog } from './components/recruiter/dashboard/SuspiciousActivityLog';
+import { ReviewRequests } from './components/recruiter/reviews/ReviewRequests';
 import { api, PositionGroup } from './services/api';
+
+import AdminRequests from './components/admin/AdminRequests';
 
 // Error Page Component
 const ErrorPage = () => (
@@ -234,6 +237,15 @@ export const router = createBrowserRouter([
         errorElement: <ErrorPage />,
     },
     {
+        path: "/admin/requests",
+        element: (
+            <AdminLayout>
+                <AdminRequests />
+            </AdminLayout>
+        ),
+        errorElement: <ErrorPage />,
+    },
+    {
         path: "/admin/members",
         element: (
             <AdminLayout>
@@ -334,6 +346,14 @@ export const router = createBrowserRouter([
         element: (
             <RecruiterLayout>
                 <SuspectReviewWrapper />
+            </RecruiterLayout>
+        )
+    },
+    {
+        path: "/recruiter/reviews",
+        element: (
+            <RecruiterLayout>
+                <ReviewRequests />
             </RecruiterLayout>
         )
     },

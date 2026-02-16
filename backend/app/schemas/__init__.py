@@ -2,7 +2,8 @@ from app.schemas.admin import (
     GlobalStatsResponse, PipelineStatsResponse, HealthAnalyticsResponse, 
     PaymentMethodResponse, MemberStatsResponse, MemberPrivilegesResponse, 
     MemberPrivilegesUpdate, MemberRegisterRequest, MemberRegisterResponse,
-    PaymentMethodCreate, SubscriptionUpgradeRequest, NotificationResponse
+    PaymentMethodCreate, SubscriptionUpgradeRequest, NotificationResponse,
+    ApprovalRequestResponse, ApprovalDecisionRequest
 )
 from app.schemas.auth import (
     LoginRequest,
@@ -33,6 +34,8 @@ from app.schemas.project import (
     PositionCreate,
     PositionUpdate,
     PositionResponse,
+    PositionCandidateResponse,
+    PositionDetailsResponse,
     ProjectSummaryResponse,
     PositionInsightsResponse,
     PositionGroupResponse,
@@ -58,6 +61,26 @@ from app.schemas.analytics import (
     RecentActivity,
     WeeklyTrend,
     RecruiterAnalyticsResponse,
+)
+
+from app.schemas.group import (
+    GroupDetailResponse,
+    GroupStatsResponse,
+    CandidateProgressResponse,
+    CandidateProgressItem,
+    StartStageRequest,
+    StartStageResponse,
+    ActivityLogResponse,
+    AssessmentMonitoringResponse,
+    AssignInterviewRequest,
+    AssignInterviewResponse,
+    AcceptanceCriteriaUpdate,
+    AcceptanceCriteriaUpdateResponse,
+    CandidateNoteCreate,
+    CandidateNoteResponse,
+    CandidateDetailResponse,
+    IntegrityFlagsResponse,
+    ExportGroupRequest,
 )
 
 __all__ = [
@@ -88,6 +111,8 @@ __all__ = [
     "PositionCreate",
     "PositionUpdate",
     "PositionResponse",
+    "PositionCandidateResponse",
+    "PositionDetailsResponse",
     # Admin
     "GlobalStatsResponse",
     "PipelineStatsResponse",
@@ -101,6 +126,8 @@ __all__ = [
     "PaymentMethodCreate",
     "SubscriptionUpgradeRequest",
     "NotificationResponse",
+    "ApprovalRequestResponse",
+    "ApprovalDecisionRequest",
     "ProjectSummaryResponse",
     "PositionInsightsResponse",
     "PositionGroupResponse",
@@ -124,4 +151,22 @@ __all__ = [
     "RecentActivity",
     "WeeklyTrend",
     "RecruiterAnalyticsResponse",
+    # Group management
+    "GroupDetailResponse",
+    "GroupStatsResponse",
+    "CandidateProgressResponse",
+    "CandidateProgressItem",
+    "StartStageRequest",
+    "StartStageResponse",
+    "ActivityLogResponse",
+    "AssessmentMonitoringResponse",
+    "AssignInterviewRequest",
+    "AssignInterviewResponse",
+    "AcceptanceCriteriaUpdate",
+    "AcceptanceCriteriaUpdateResponse",
+    "CandidateNoteCreate",
+    "CandidateNoteResponse",
+    "CandidateDetailResponse",
+    "IntegrityFlagsResponse",
+    "ExportGroupRequest",
 ]

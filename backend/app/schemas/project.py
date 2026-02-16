@@ -1,6 +1,7 @@
 """
 Project and position schemas.
 """
+from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
@@ -12,6 +13,11 @@ class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
     target_hire_count: int = 1
+    budget: float | None = None
+    priority: str = "medium"
+    department: str | None = None
+    start_date: str | None = None # ISO date
+    end_date: str | None = None # ISO date
 
 
 class ProjectUpdate(BaseModel):
@@ -47,6 +53,11 @@ class ProjectListResponse(BaseModel):
     subGroupsCount: int = Field(default=0)
     avgTimeToFill: float = Field(default=0.0, serialization_alias="avgTimeToFill")
     
+    # New Dynamic Metrics
+    conversion_rate: float = Field(default=0.0, serialization_alias="conversionRate")
+    quality_score: float = Field(default=0.0, serialization_alias="qualityScore")
+    stage_timing: list[dict] = Field(default_factory=list, serialization_alias="stageTiming")
+    
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
@@ -54,12 +65,20 @@ class PositionCreate(BaseModel):
     """Create a new position."""
     project_id: UUID
     job_title: str
-    job_description: str
+    job_description: str | None = None
     required_skills: list[str] = []
     experience_level: str | None = None
     work_type: str | None = None
     salary_min: float | None = None
     salary_max: float | None = None
+    employment_type: str = "full-time"
+    location_type: str = "remote"
+    location_data: dict | None = None
+    years_of_experience: int = 0
+    education_level: str | None = None
+    benefits: list[str] = []
+    assigned_hr_id: UUID | None = None
+    assigned_tech_id: UUID | None = None
 
 
 class PositionUpdate(BaseModel):
@@ -88,10 +107,18 @@ class PositionResponse(BaseModel):
     work_type: str | None = Field(default=None, serialization_alias="workType")
     salary_min: float | None = Field(default=None, serialization_alias="salaryMin")
     salary_max: float | None = Field(default=None, serialization_alias="salaryMax")
+    employment_type: str = Field(default="full-time", serialization_alias="employmentType")
+    location_type: str = Field(default="remote", serialization_alias="locationType")
+    location_data: dict | None = Field(default=None, serialization_alias="locationData")
+    years_of_experience: int = Field(default=0, serialization_alias="yearsOfExperience")
+    education_level: str | None = Field(default=None, serialization_alias="educationLevel")
+    benefits: list[str] = Field(default_factory=list, serialization_alias="benefits")
     status: str
     created_at: datetime | None = None
     
     # Enriched fields
+    assigned_hr_id: UUID | None = None
+    assigned_tech_id: UUID | None = None
     assignedHR: str | None = Field(default=None, serialization_alias="assignedHR")
     assignedTechnicalRecruiter: str | None = Field(default=None, serialization_alias="assignedTechnicalRecruiter")
     candidatesCount: int = Field(default=0, serialization_alias="candidatesCount")
@@ -102,21 +129,15 @@ class PositionResponse(BaseModel):
 
 
 
-class ProjectSummaryResponse(BaseModel):
-    openPositions: int
-    totalApplicants: int
-    subGroups: int
-    avgTimeToFill: float
-
-class InsightScores(BaseModel):
-    assessment: float
-    interview: float
-
-class PositionInsightsResponse(BaseModel):
-    conversion: float
-    qualityScore: float
-    scores: InsightScores
-    integrityIssues: int
+class PositionCandidateResponse(BaseModel):
+    id: UUID
+    name: str
+    email: str
+    score: float
+    match: float
+    color: str = "#6366f1"
+    starred: bool = False
+    selected: bool = False
 
 class PositionGroupResponse(BaseModel):
     groupID: UUID
@@ -129,6 +150,64 @@ class PositionGroupResponse(BaseModel):
     hasAIInterview: bool = False
     hasLiveInterview: bool = False
     position_id: UUID | None = None
+    progress: int = 0
+    recruiter: str = "Unassigned"
+    stage: str = "Initial"
+    lastUpdated: str = "Just now"
+
+class PositionDetailsResponse(BaseModel):
+    candidates: list[PositionCandidateResponse] = []
+    groups: list[PositionGroupResponse] = []
+
+class ProjectSummaryResponse(BaseModel):
+    openPositions: int
+    totalApplicants: int
+    subGroups: int
+    avgTimeToFill: float
+
+class InsightScores(BaseModel):
+    assessment: float
+    interview: float
+
+class DistributionItem(BaseModel):
+    name: str
+    value: int
+    color: str | None = None
+
+class ScoreBucket(BaseModel):
+    range: str
+    count: int
+
+class SkillDistributionItem(BaseModel):
+    skill: str
+    count: int
+    percentage: float
+
+class SeniorityDistributionItem(BaseModel):
+    level: str
+    count: int
+    percentage: float
+
+class UniversityDistributionItem(BaseModel):
+    university: str
+    count: int
+
+class AvailabilityDistributionItem(BaseModel):
+    availability: str
+    count: int
+
+class PositionInsightsResponse(BaseModel):
+    conversion: float
+    qualityScore: float
+    scores: InsightScores
+    integrityIssues: int
+    fittingData: list[DistributionItem] = []
+    scoreData: list[ScoreBucket] = []
+    skillDistribution: list[SkillDistributionItem] = []
+    seniorityDistribution: list[SeniorityDistributionItem] = []
+    universityDistribution: list[UniversityDistributionItem] = []
+    availabilityDistribution: list[AvailabilityDistributionItem] = []
+
 
 class GroupAnalysisResponse(BaseModel):
     matchAccuracy: float

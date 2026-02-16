@@ -6,7 +6,8 @@ import {
   Archive,
   CreditCard,
   LogOut,
-  Bell,
+
+  ClipboardCheck,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
@@ -25,8 +26,10 @@ export function AdminSidebar() {
           <LayoutDashboard size={24} />
         </NavLink>
 
-        <NavLink to="/admin/notifications" className={({ isActive }) => getLinkClass(isActive)} title="Notifications">
-          <Bell size={24} />
+
+
+        <NavLink to="/admin/requests" className={({ isActive }) => getLinkClass(isActive)} title="Projects & Positions">
+          <ClipboardCheck size={24} />
         </NavLink>
 
 

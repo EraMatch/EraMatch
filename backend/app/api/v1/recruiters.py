@@ -20,6 +20,7 @@ from app.schemas import (
     ProjectListResponse,
     PositionInsightsResponse,
     PositionGroupResponse,
+    PositionDetailsResponse,
     GroupAnalysisResponse,
     TechnicalAIResponse,
     RiskBreakdownResponse,
@@ -27,6 +28,24 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/recruiter", tags=["Recruiters"])
+
+
+# =============================================================================
+# NOTIFICATIONS
+# =============================================================================
+
+from app.schemas import NotificationResponse
+
+@router.get("/notifications", response_model=list[NotificationResponse])
+async def get_notifications(
+    session: DbSession,
+    current_user: RecruiterUser,
+    skip: int = 0,
+    limit: int = 50,
+):
+    """Get recruiter notifications."""
+    service = RecruiterService(session, current_user)
+    return await service.get_notifications(skip=skip, limit=limit)
 
 
 # =============================================================================
@@ -95,6 +114,15 @@ async def get_project_summary(
     return await service.get_project_summary(project_id)
 
 
+@router.delete("/projects/{project_id}", status_code=204)
+async def delete_project(
+    project_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Delete a project (soft delete)."""
+    service = RecruiterService(session, current_user)
+    await service.delete_project(project_id)
+
+
 # =============================================================================
 # POSITIONS
 # =============================================================================
@@ -142,6 +170,24 @@ async def update_position(
     """Update a position."""
     service = RecruiterService(session, current_user)
     return await service.update_position(position_id, data)
+
+
+@router.delete("/positions/{position_id}", status_code=204)
+async def delete_position(
+    position_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Delete a position (soft delete)."""
+    service = RecruiterService(session, current_user)
+    await service.delete_position(position_id)
+
+
+@router.get("/positions/{position_id}/details", response_model=PositionDetailsResponse)
+async def get_position_details(
+    position_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Get position details (candidates and groups)."""
+    service = RecruiterService(session, current_user)
+    return await service.get_position_details(position_id)
 
 
 @router.get("/positions/{position_id}/insights", response_model=PositionInsightsResponse)
@@ -225,6 +271,39 @@ async def get_group_risks(
     """Get group risks."""
     service = RecruiterService(session, current_user)
     return await service.get_group_risks(group_id)
+
+
+# =============================================================================
+# APPROVALS (TECHNICAL REVIEW)
+# =============================================================================
+
+
+@router.get("/requests/assigned", response_model=list[dict])
+async def list_assigned_requests(
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """List approval requests assigned to the current technical recruiter."""
+    service = RecruiterService(session, current_user)
+    return await service.list_assigned_requests()
+
+
+from pydantic import BaseModel
+class ReviewRequest(BaseModel):
+    status: str
+    review_notes: str | None = None
+
+@router.patch("/requests/{request_id}/review")
+async def review_approval_request(
+    request_id: UUID,
+    data: ReviewRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Review an approval request."""
+    service = RecruiterService(session, current_user)
+    await service.review_approval_request(request_id, data.status, data.review_notes)
+    return {"status": "success"}
 
 
 # =============================================================================

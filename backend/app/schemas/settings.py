@@ -23,6 +23,7 @@ class PreferencesUpdate(BaseModel):
     weekly_summary: bool | None = None
     two_factor_auth: bool | None = None
     session_timeout: bool | None = None
+    bypass_admin_approval: bool | None = None
 
 class AdminSettingsResponse(BaseModel):
     # Profile
@@ -45,3 +46,6 @@ class AdminSettingsResponse(BaseModel):
     # Preferences (Security)
     two_factor_auth: bool
     session_timeout: bool
+
+    # Preferences (Workflow)
+    bypass_admin_approval: bool

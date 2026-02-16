@@ -1,20 +1,53 @@
-import { useState, useEffect } from 'react';
-import { Eye, ArrowUpDown, X, TrendingUp, TrendingDown, AlertTriangle, ArrowLeft, Download, Users, Briefcase, Target, Clock, Award, Activity, AlertOctagon, CheckCircle, XCircle, BarChart3, Loader2 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import {
+  Users,
+  Briefcase,
+  FileText,
+  TrendingUp,
+  CheckCircle,
+  AlertCircle,
+  Clock,
+  Plus,
+  LayoutDashboard,
+  ArrowRight,
+  MapPin,
+  DollarSign,
+  Loader2,
+  AlertTriangle,
+  ArrowLeft,
+  Target,
+  TrendingDown,
+  Activity,
+  BarChart3,
+  Award,
+  AlertOctagon,
+  XCircle,
+  Download,
+  ClipboardCheck,
+  ArrowUpDown,
+  Eye,
+  Trash2, // Added
+  Edit, // Added
+  MoreHorizontal // Added
+} from 'lucide-react';
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api, JobPosition, Project, PositionGroup } from '../../services/api';
 import EraMatchLogo from '../../assets/image-eramatch.png';
+import { AdminProjectModal } from './AdminProjectModal';
+import { AdminPositionModal } from './AdminPositionModal';
 
 interface AdminDashboardProps {
   onSignOut: () => void;
+  initialView?: ViewMode;
 }
 
 type ViewMode = 'dashboard' | 'projects' | 'positions' | 'groups' | 'insights';
 
-export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
+export function AdminDashboard({ onSignOut, initialView = 'dashboard' }: AdminDashboardProps) {
   const [sortField, setSortField] = useState<string>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
+  const [viewMode, setViewMode] = useState<ViewMode>(initialView);
   const [selectedPosition, setSelectedPosition] = useState<JobPosition | null>(null);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedPositionForGroups, setSelectedPositionForGroups] = useState<JobPosition | null>(null);
@@ -29,31 +62,39 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
   const [globalStats, setGlobalStats] = useState<any>(null);
   const [groupAnalytics, setGroupAnalytics] = useState<any>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
+
+  // Modal states
+  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
+  const [isPositionModalOpen, setIsPositionModalOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editingPosition, setEditingPosition] = useState<JobPosition | null>(null);
+
+  const fetchDashboardData = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const stats = await api.admin.getDashboardStats();
+
+      setGlobalStats(stats);
+      setProjects(stats.projects || []);
+      setPositionGroups(stats.positionGroups || []);
+      setJobPositions(stats.jobPositions || []);
+      setPipelineData(stats.pipelineData || []);
+
+      // Fetch pending requests count
+      const pendingRes = await api.admin.listApprovalRequests('pending');
+      setPendingRequestsCount(pendingRes?.length || 0);
+
+    } catch (error) {
+      toast.error('Failed to load dashboard data');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        const stats = await api.admin.getDashboardStats();
-
-        setGlobalStats(stats);
-        console.log('📊 GlobalStats set to:', stats);
-        console.log('📊 Analytics in stats?', stats.analytics);
-        setProjects(stats.projects || []);
-        console.log('📋 Projects array:', stats.projects);
-        console.log('📋 First project:', stats.projects?.[0]);
-        setPositionGroups(stats.positionGroups || []);
-        setJobPositions(stats.jobPositions || []);
-        setPipelineData(stats.pipelineData || []);
-
-      } catch (error) {
-        toast.error('Failed to load dashboard data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchData();
-  }, []);
+    fetchDashboardData();
+  }, [fetchDashboardData]);
 
   useEffect(() => {
     console.log('🔄 GlobalStats changed:', globalStats);
@@ -123,6 +164,42 @@ export function AdminDashboard({ onSignOut }: AdminDashboardProps) {
       setSortField(field);
       setSortDirection('desc');
     }
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    if (window.confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
+      try {
+        await api.recruiter.deleteProject(projectId);
+        toast.success('Project deleted successfully');
+        fetchDashboardData();
+      } catch (error) {
+        console.error('Failed to delete project:', error);
+        toast.error('Failed to delete project');
+      }
+    }
+  };
+
+  const handleDeletePosition = async (positionId: string) => {
+    if (window.confirm('Are you sure you want to delete this position?')) {
+      try {
+        await api.recruiter.deletePosition(positionId);
+        toast.success('Position deleted successfully');
+        fetchDashboardData();
+      } catch (error) {
+        console.error('Failed to delete position:', error);
+        toast.error('Failed to delete position');
+      }
+    }
+  };
+
+  const handleEditProject = (project: Project) => {
+    setEditingProject(project);
+    setIsProjectModalOpen(true);
+  };
+
+  const handleEditPosition = (position: JobPosition) => {
+    setEditingPosition(position);
+    setIsPositionModalOpen(true);
   };
 
   const getStatusBadgeColor = (status: string) => {
@@ -841,26 +918,26 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
       };
     } else if (viewMode === 'positions' && selectedProject) {
       // Project-level context: Show metrics for this project
-      const projectPositions = jobPositions.slice(0, selectedProject.positionsCount);
+      const projectPositions = jobPositions.filter(p => p.projectId === selectedProject.id);
       return {
         title: selectedProject.projectName,
         subtitle: `Project Overview`,
         stats: [
           {
             label: 'Positions',
-            value: selectedProject.positionsCount.toString(),
+            value: projectPositions.length.toString(),
             sublabel: 'in this project',
             icon: <Briefcase className="w-5 h-5 text-indigo-600" />
           },
           {
             label: 'Total Applicants',
-            value: selectedProject.applicantsCount.toString(),
+            value: projectPositions.reduce((sum, p) => sum + p.applicantsCount, 0).toString(),
             sublabel: 'across positions',
             icon: <Users className="w-5 h-5 text-purple-600" />
           },
           {
             label: 'Sub-Groups',
-            value: selectedProject.subGroupsCount.toString(),
+            value: positionGroups.filter(g => projectPositions.some(p => p.id === g.position_id)).length.toString(),
             sublabel: 'evaluation groups',
             icon: <Target className="w-5 h-5 text-emerald-600" />
           },
@@ -885,10 +962,11 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
             icon: <Briefcase className="w-5 h-5 text-indigo-600" />
           },
           {
-            label: 'Total Positions',
-            value: (globalStats?.openPositions ?? projects.reduce((sum, p) => sum + p.positionsCount, 0)).toString(),
-            sublabel: 'across all projects',
-            icon: <Target className="w-5 h-5 text-purple-600" />
+            label: 'Pending Approvals',
+            value: pendingRequestsCount.toString(),
+            sublabel: 'awaiting review',
+            icon: <ClipboardCheck className={`w-5 h-5 ${pendingRequestsCount > 0 ? 'text-amber-600' : 'text-gray-400'}`} />,
+            onClick: () => window.location.href = '/admin/requests'
           },
           {
             label: 'Total Applicants',
@@ -933,16 +1011,22 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
               </span>
             </button>
           )}
-          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">{dashboardMetrics.title}</h1>
-          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">{dashboardMetrics.subtitle}</p>
+          <>
+            <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">{dashboardMetrics.title}</h1>
+            <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">{dashboardMetrics.subtitle}</p>
+          </>
         </div>
         <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
-      {/* Context-Aware Stats Cards */}
+      {/* Context-Aware Stats Cards - Hidden for 'requests' view to avoid clobbering */}
       <div className="grid grid-cols-4 gap-6 mb-12">
-        {dashboardMetrics.stats.map((stat, index) => (
-          <div key={index} className="bg-white rounded-3xl px-8 py-9 shadow-sm">
+        {dashboardMetrics.stats.map((stat: any, index: number) => (
+          <div
+            key={index}
+            className={`bg-white rounded-3xl px-8 py-9 shadow-sm ${stat.onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+            onClick={stat.onClick}
+          >
             <div className="flex items-center gap-3">
               <div className="flex-shrink-0">
                 {stat.icon}
@@ -1230,18 +1314,16 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Overall Conversion Rate</span>
                   <span className="text-lg font-semibold text-gray-900">
-                    {selectedProject.applicantsCount > 0
-                      ? (Math.min(selectedProject.applicantsCount, (pipelineData?.find((s: any) => s.stage === 'Offer')?.count || 0)) / selectedProject.applicantsCount * 100).toFixed(1)
-                      : "0.0"}%
+                    {selectedProject.conversionRate ? selectedProject.conversionRate.toFixed(1) : "0.0"}%
                   </span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div className="h-full bg-indigo-500 rounded-full" style={{
-                    width: `${selectedProject.applicantsCount > 0 ? (pipelineData?.find((s: any) => s.stage === 'Offer')?.count || 0) / selectedProject.applicantsCount * 100 : 0}%`
+                    width: `${selectedProject.conversionRate || 0}%`
                   }} />
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {pipelineData?.find((s: any) => s.stage === 'Offer')?.count || 0} offers from {selectedProject.applicantsCount} applicants
+                  based on hires vs applicants
                 </p>
               </div>
 
@@ -1249,13 +1331,7 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm text-gray-600">Avg Quality Score</span>
                   <span className="text-lg font-semibold text-emerald-600">
-                    {(() => {
-                      if (!globalStats?.analytics?.quality) return '0%';
-                      const { high, needsImprove } = globalStats.analytics.quality;
-                      const total = high + needsImprove;
-                      if (total === 0) return '0%';
-                      return `${Math.round((high / total) * 100)}%`;
-                    })()}
+                    {selectedProject.qualityScore ? Math.round(selectedProject.qualityScore) : 0}%
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 mt-2">
@@ -1307,17 +1383,16 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
               <div className="pt-3 border-t">
                 <div className="text-sm text-gray-600 mb-3">Stage Timing</div>
                 <div className="space-y-2">
-                  {(globalStats?.analytics?.stageTiming || [
-                    { stage: 'Screening', days: 3, target: 3, status: 'good' },
-                    { stage: 'Assessment', days: 7, target: 5, status: 'slow' },
-                    { stage: 'Interview', days: 12, target: 7, status: 'slow' },
-                    { stage: 'Offer', days: 4, target: 5, status: 'good' }
+                  {(selectedProject.stageTiming && selectedProject.stageTiming.length > 0 ? selectedProject.stageTiming : [
+                    { stage: 'Screening', days: 0, target: 3, status: 'good' },
+                    { stage: 'Assessment', days: 0, target: 5, status: 'good' },
+                    { stage: 'Interview', days: 0, target: 7, status: 'good' },
+                    { stage: 'Offer', days: 0, target: 5, status: 'good' }
                   ]).map((item: any) => (
                     <div key={item.stage} className="flex items-center justify-between">
                       <span className="text-xs text-gray-600">{item.stage}</span>
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs font-medium ${item.status === 'slow' ? 'text-orange-600' : 'text-emerald-600'
-                          }`}>
+                        <span className={`text-xs font-medium ${item.status === 'slow' ? 'text-orange-600' : 'text-emerald-600'}`}>
                           {item.days}d
                         </span>
                         {item.status === 'slow' && (
@@ -1486,9 +1561,14 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
       {viewMode === 'dashboard' && (
         /* Opened Projects Table */
         <div className="bg-white rounded-3xl p-6 shadow-sm">
-          <div className="mb-4">
-            <h3 className="text-gray-900">Active Projects</h3>
-            <p className="text-gray-500 text-sm mt-1">All recruitment projects currently in progress</p>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-gray-900">Active Projects</h3>
+              <p className="text-gray-500 text-sm mt-1">All recruitment projects currently in progress</p>
+            </div>
+            <div className="flex items-center gap-3">
+              {/* Buttons removed to keep dashboard strictly for analytics */}
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -1576,18 +1656,40 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                       </span>
                     </td>
                     <td className="p-4 flex justify-center">
-                      <button
-                        className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
-                        onClick={() => {
-                          setSelectedProject(project);
-                          setViewMode('positions');
-                        }}
-                      >
-                        <Eye size={16} className="text-[#6366f1]" />
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#111827]">
-                          View Positions
-                        </span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="p-1 text-gray-400 hover:text-indigo-600 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditProject(project);
+                          }}
+                          title="Edit Project"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button
+                          className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteProject(project.id);
+                          }}
+                          title="Delete Project"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                        <button
+                          className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
+                          onClick={() => {
+                            setSelectedProject(project);
+                            setViewMode('positions');
+                          }}
+                        >
+                          <Eye size={16} className="text-[#6366f1]" />
+                          <span className="font-['Arimo',sans-serif] text-[13px] text-[#111827]">
+                            View Positions
+                          </span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1600,9 +1702,12 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
       {viewMode === 'positions' && selectedProject && (
         /* Job Positions Table */
         <div className="bg-white rounded-3xl p-6 shadow-sm">
-          <div className="mb-4">
-            <h3 className="text-gray-900">Positions in {selectedProject.projectName}</h3>
-            <p className="text-gray-500 text-sm mt-1">All positions under this project</p>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-gray-900">Positions in {selectedProject.projectName}</h3>
+              <p className="text-gray-500 text-sm mt-1">All positions under this project</p>
+            </div>
+
           </div>
 
           <div className="overflow-x-auto">
@@ -1662,53 +1767,71 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                 </tr>
               </thead>
               <tbody>
-                {jobPositions.slice(0, selectedProject.positionsCount).map((position) => (
-                  <tr key={position.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="p-4 text-left">
-                      <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
-                        {position.jobTitle}
-                      </span>
-                    </td>
-                    <td className="p-4 text-center">
-                      <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                        {position.assignedHR}
-                      </span>
-                    </td>
-                    <td className="p-4 text-center">
-                      <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                        {position.assignedTechnicalRecruiter}
-                      </span>
-                    </td>
-                    <td className="p-4 text-center">
-                      <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                        {position.applicantsCount}
-                      </span>
-                    </td>
-                    <td className="p-4 text-center">
-                      <span
-                        className={`inline-block px-3 py-1 rounded-full font-['Arimo',sans-serif] text-[12px] ${getStatusBadgeColor(
-                          position.status
-                        )}`}
-                      >
-                        {position.status}
-                      </span>
-                    </td>
-                    <td className="p-4 flex justify-center">
-                      <button
-                        className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
-                        onClick={() => {
-                          setSelectedPositionForGroups(position);
-                          setViewMode('groups');
-                        }}
-                      >
-                        <Eye size={16} className="text-[#6366f1]" />
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#111827]">
-                          View Groups
+                {jobPositions
+                  .filter(p => p.projectId === selectedProject.id)
+                  .map((position) => (
+                    <tr key={position.id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="p-4 text-left">
+                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
+                          {position.jobTitle}
                         </span>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                          {position.assignedHR}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                          {position.assignedTechnicalRecruiter}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                          {position.applicantsCount}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <span
+                          className={`inline-block px-3 py-1 rounded-full font-['Arimo',sans-serif] text-[12px] ${getStatusBadgeColor(
+                            position.status
+                          )}`}
+                        >
+                          {position.status}
+                        </span>
+                      </td>
+                      <td className="p-4 flex justify-center">
+                        <div className="flex items-center gap-2">
+                          <button
+                            className="p-1 text-gray-400 hover:text-indigo-600 transition-colors"
+                            onClick={() => handleEditPosition(position)}
+                            title="Edit Position"
+                          >
+                            <Edit size={16} />
+                          </button>
+                          <button
+                            className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                            onClick={() => handleDeletePosition(position.id)}
+                            title="Delete Position"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                          <button
+                            className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
+                            onClick={() => {
+                              setSelectedPositionForGroups(position);
+                              setViewMode('groups');
+                            }}
+                          >
+                            <Eye size={16} className="text-[#6366f1]" />
+                            <span className="font-['Arimo',sans-serif] text-[13px] text-[#111827]">
+                              View Groups
+                            </span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
@@ -1819,6 +1942,29 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
             </table>
           </div>
         </div>
+      )}
+      {/* Modals */}
+      <AdminProjectModal
+        isOpen={isProjectModalOpen}
+        onClose={() => {
+          setIsProjectModalOpen(false);
+          setEditingProject(null);
+        }}
+        onSuccess={fetchDashboardData}
+        project={editingProject}
+      />
+
+      {isPositionModalOpen && selectedProject && (
+        <AdminPositionModal
+          isOpen={isPositionModalOpen}
+          onClose={() => {
+            setIsPositionModalOpen(false);
+            setEditingPosition(null);
+          }}
+          onSuccess={fetchDashboardData}
+          projectId={selectedProject.id}
+          position={editingPosition}
+        />
       )}
     </div>
   );

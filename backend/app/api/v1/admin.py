@@ -12,7 +12,8 @@ from app.schemas import (
     PaymentMethodResponse, MemberStatsResponse, MemberPrivilegesResponse, MemberPrivilegesUpdate,
     MemberRegisterRequest, MemberRegisterResponse, AdminSettingsResponse, AdminProfileUpdate,
     OrganizationSettingsUpdate, PreferencesUpdate, PositionGroupResponse,
-    PaymentMethodCreate, SubscriptionUpgradeRequest, NotificationResponse
+    PaymentMethodCreate, SubscriptionUpgradeRequest, NotificationResponse,
+    ApprovalRequestResponse, ApprovalDecisionRequest
 )
 
 router = APIRouter(prefix="/admin", tags=["Admin"])

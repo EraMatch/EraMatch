@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Bell, AlertTriangle, CheckCircle, UserPlus, FileCheck, Video, Github, Clock, ChevronRight, Loader2 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../services/api';
 import EraMatchLogo from '../../assets/image-eramatch.png';
 
@@ -9,7 +10,7 @@ interface AlertsNotificationsProps {
 
 interface Notification {
   id: string;
-  type: 'match' | 'flag' | 'assessment' | 'interview' | 'github';
+  type: 'match' | 'flag' | 'assessment' | 'interview' | 'github' | 'alert';
   title: string;
   description: string;
   candidateId: number;
@@ -22,13 +23,22 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const location = useLocation();
+  const isRecruiter = location.pathname.startsWith('/recruiter');
 
   // Fetch alerts from API
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
         setIsLoading(true);
-        const data = await api.admin.getAlerts() as any[];
+        let data: any[] = [];
+
+        if (isRecruiter) {
+          data = await api.recruiter.getNotifications() as any[];
+        } else {
+          data = await api.admin.getAlerts() as any[];
+        }
+
         // Map API data to component format
         const mappedAlerts: Notification[] = data.map((alert: any) => ({
           id: String(alert.id),
@@ -49,7 +59,7 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
     };
 
     fetchAlerts();
-  }, []);
+  }, [isRecruiter]);
 
   const getIcon = (type: string) => {
     switch (type) {
