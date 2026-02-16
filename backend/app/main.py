@@ -40,7 +40,7 @@ app.add_middleware(
 
 app.include_router(api_v1_router, prefix=settings.API_V1_STR)
 
-# Mount static files
+# mount  static files where we will download the videos 
 static_dir = os.path.join(os.getcwd(), "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
