@@ -1,7 +1,5 @@
 """
-Whisper transcription service using faster-whisper.
-
-Uses faster-whisper for local STT inference - efficient and GPU-optional.
+version:
 https://github.com/guillaumekln/faster-whisper
 """
 import os
@@ -10,26 +8,24 @@ import httpx
 from pathlib import Path
 
 from config import settings
+import base64
 
-
-# Lazy load model to avoid startup delay
+# lazy load, remember 
 _model = None
 
 
 def get_model():
-    """Load Whisper model (lazy loading)."""
     global _model
     if _model is None:
         try:
             from faster_whisper import WhisperModel
-            # Use small model for speed, can upgrade to medium/large for accuracy
             _model = WhisperModel(
                 settings.WHISPER_MODEL,
                 device=settings.WHISPER_DEVICE,
                 compute_type=settings.WHISPER_COMPUTE_TYPE,
             )
         except ImportError:
-            print("faster-whisper not installed, using mock transcription")
+            print("cant load whisper")
             _model = "mock"
     return _model
 
@@ -37,23 +33,17 @@ def get_model():
 async def download_audio(url: str) -> Path:
     """Download audio/video file to temp location (supports http/https and data URIs)."""
     
-    # Handle Data URIs (base64)
+    # base64 
     if url.startswith("data:"):
-        import base64
-        import binascii
+    
         
         try:
-            # Parse data URI: data:[<mediatype>][;base64],<data>
             header, data = url.split(",", 1)
-            
-            # Determine suffix from mediatype if possible
             suffix = ".webm"  # Default
             if "video/mp4" in header:
                 suffix = ".mp4"
             elif "audio/wav" in header:
                 suffix = ".wav"
-                
-            # Decode base64
             binary_data = base64.b64decode(data)
             
             # Write to temp file
@@ -80,16 +70,9 @@ async def download_audio(url: str) -> Path:
 
 
 async def transcribe_audio(audio_url: str, language: str = "en") -> dict:
-    """
-    Transcribe audio from URL using Whisper.
-    
-    Args:
-        audio_url: URL to audio/video file
-        language: Language code (default: en)
-        
-    Returns:
-        dict with transcript, confidence, duration
-    """
+
+ #   tanscribe 
+
     if settings.USE_MOCK:
         return _mock_transcription()
     
@@ -99,16 +82,13 @@ async def transcribe_audio(audio_url: str, language: str = "en") -> dict:
         return _mock_transcription()
     
     try:
-        # Download audio file
         audio_path = await download_audio(audio_url)
-        
         # Transcribe
         segments, info = model.transcribe(
             str(audio_path),
             language=language,
             beam_size=5,
         )
-        
         # Combine segments
         transcript = " ".join([segment.text.strip() for segment in segments])
         

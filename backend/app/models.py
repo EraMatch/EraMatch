@@ -251,35 +251,43 @@ class CandidateGroup(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class GroupStageConfig(BaseModel, table=True):
-    __tablename__ = "group_stage_config"
+class GroupStageConfig(SQLModel, table=True):
+    """Group pipeline stage configuration - uses stage_id as primary key."""
+    __tablename__ = "group_pipeline_stages"
     
-    id: UUID = Field(default_factory=uuid4, alias="config_id", sa_column=Column("config_id", PG_UUID(as_uuid=True), primary_key=True))
+    stage_id: UUID = Field(default_factory=uuid4, primary_key=True)
     group_id: UUID = Field(foreign_key="candidate_groups.group_id")
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     stage_type: str = Field(max_length=30)  # assessment, ai_interview, live_interview
     stage_order: int
-    state: str = Field(default="not_started", max_length=20)
+    stage_name: str | None = Field(default=None, max_length=100)
+    config_id: UUID | None = Field(default=None)  # FK to ai_interview_configs or assessments
     acceptance_criteria: dict | None = Field(default=None, sa_column=Column(JSONB))
+    state: str = Field(default="not_started", max_length=20)
     started_at: datetime | None = Field(default=None)
     closed_at: datetime | None = Field(default=None)
+    started_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class CandidateStageProgress(BaseModel, table=True):
-    __tablename__ = "candidate_stage_progress"
+class CandidateStageProgress(SQLModel, table=True):
+    """Tracks each candidate's progress through pipeline stages."""
+    __tablename__ = "candidate_pipeline_progress"
     
-    id: UUID = Field(default_factory=uuid4, alias="progress_id", sa_column=Column("progress_id", PG_UUID(as_uuid=True), primary_key=True))
+    progress_id: UUID = Field(default_factory=uuid4, primary_key=True)
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
-    group_id: UUID = Field(foreign_key="candidate_groups.group_id")
-    stage_type: str = Field(max_length=30)
-    stage_order: int
+    stage_id: UUID = Field(foreign_key="group_pipeline_stages.stage_id")
     status: str = Field(default="locked", max_length=20)
     session_id: UUID | None = Field(default=None)
+    session_type: str | None = Field(default=None, max_length=30)
     score: Decimal | None = Field(default=None)
+    max_score: Decimal | None = Field(default=None)
+    passed: bool | None = Field(default=None)
+    unlocked_at: datetime | None = Field(default=None)
     started_at: datetime | None = Field(default=None)
     completed_at: datetime | None = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    acceptance_result: dict | None = Field(default=None, sa_column=Column(JSONB))
 
 
 # =============================================================================
@@ -443,52 +451,67 @@ class StageOnboarding(BaseModel, table=True):
 # SECTION 7: AI INTERVIEW CONFIG & SESSIONS (4 Tables)
 # =============================================================================
 
-class AIInterviewConfig(BaseModel, table=True):
+class AIInterviewConfig(SQLModel, table=True):
+    """AI interview configuration - uses config_id as primary key."""
     __tablename__ = "ai_interview_configs"
     
-    id: UUID = Field(default_factory=uuid4, alias="config_id", sa_column=Column("config_id", PG_UUID(as_uuid=True), primary_key=True))
-    organization_id: UUID = Field(foreign_key="organizations.organization_id")
-    position_id: UUID | None = Field(default=None, foreign_key="positions.position_id")
+    config_id: UUID = Field(default_factory=uuid4, primary_key=True)
+    organization_id: UUID = Field(foreign_key="organizations.id")
+    position_id: UUID | None = Field(default=None, foreign_key="positions.id")
     title: str = Field(max_length=255)
     interview_type: str = Field(max_length=20)  # recorded, live_ai
     instructions: str | None = Field(default=None, sa_column=Column(Text))
     max_retakes: int = Field(default=1)
+    think_time_seconds: int | None = Field(default=30)
+    answer_time_seconds: int | None = Field(default=120)
     questions: dict = Field(sa_column=Column(JSONB))
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    live_interview_context: str | None = Field(default=None, sa_column=Column(Text))
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
 
 
-class OngoingInterview(BaseModel, table=True):
+class OngoingInterview(SQLModel, table=True):
+    """Ongoing interview session - uses session_id as primary key."""
     __tablename__ = "ongoing_interviews"
     
-    id: UUID = Field(default_factory=uuid4, alias="session_id", sa_column=Column("session_id", PG_UUID(as_uuid=True), primary_key=True))
+    session_id: UUID = Field(default_factory=uuid4, primary_key=True)
     config_id: UUID = Field(foreign_key="ai_interview_configs.config_id")
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
-    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    organization_id: UUID = Field(foreign_key="organizations.id")
     interview_type: str = Field(max_length=20)
     status: str = Field(default="not_started", max_length=20)
     started_at: datetime | None = Field(default=None)
     completed_at: datetime | None = Field(default=None)
     overall_score: Decimal | None = Field(default=None)
+    technical_score: Decimal | None = Field(default=None)
+    communication_score: Decimal | None = Field(default=None)
+    confidence_score: Decimal | None = Field(default=None)
     ai_analysis: dict | None = Field(default=None, sa_column=Column(JSONB))
+    ai_recommendation: str | None = Field(default=None, max_length=50)
     recording_url: str | None = Field(default=None, max_length=500)
     flag_count: int = Field(default=0)
 
 
-class InterviewResponse(BaseModel, table=True):
+class InterviewResponse(SQLModel, table=True):
+    """Interview response - uses response_id as primary key."""
     __tablename__ = "interview_responses"
     
-    id: UUID = Field(default_factory=uuid4, alias="response_id", sa_column=Column("response_id", PG_UUID(as_uuid=True), primary_key=True))
+    response_id: UUID = Field(default_factory=uuid4, primary_key=True)
     session_id: UUID = Field(foreign_key="ongoing_interviews.session_id")
     question_id: str = Field(max_length=50)
     question_order: int
+    question_text: str = Field(sa_column=Column(Text))
     video_url: str | None = Field(default=None, sa_column=Column(Text))
+    audio_url: str | None = Field(default=None, max_length=500)
     transcript: str | None = Field(default=None, sa_column=Column(Text))
+    transcript_confidence: Decimal | None = Field(default=None)
     retake_number: int = Field(default=1)
     duration_seconds: int | None = Field(default=None)
     ai_score: Decimal | None = Field(default=None)
     ai_feedback: dict | None = Field(default=None, sa_column=Column(JSONB))
+    emotion_analysis: dict | None = Field(default=None, sa_column=Column(JSONB))
     answered_at: datetime | None = Field(default=None)
     processing_status: str = Field(default="pending", max_length=50)
 

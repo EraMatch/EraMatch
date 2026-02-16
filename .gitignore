@@ -84,3 +84,5 @@ backend/uv.lock
 backend/seed_test_users.py
 backend/pyproject.toml
 COMMIT_SUMMARY.md
+backend/uv.lock
+backend/uv.lock
