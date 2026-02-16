@@ -24,7 +24,7 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
         setIsLoading(true);
         const [analyticsData, projectsData] = await Promise.all([
           api.recruiter.getDashboardAnalytics(),
-          api.recruiter.getProjects()
+          api.recruiter.getProjects('active')
         ]);
         setAnalytics(analyticsData);
         setProjects(projectsData);

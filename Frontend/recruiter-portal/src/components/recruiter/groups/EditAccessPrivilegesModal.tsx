@@ -1,13 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { Card } from '../../ui/card';
 import { Button } from '../../ui/button';
+import { toast } from 'sonner';
+import { api } from '../../../services/api';
 
 interface Member {
-  id: number;
+  id: string;
   name: string;
   email: string;
   role: string;
+  status: string;
   position: string;
   department: string;
   joinDate: string;
@@ -19,7 +22,7 @@ interface EditAccessPrivilegesModalProps {
 }
 
 // Permission definitions
-type Permission = 'managePositions' | 'assignRecruiters' | 'manageCandidates' | 'viewAnalytics' | 'exportData';
+type Permission = 'managePositions' | 'manageUsers' | 'manageCandidates' | 'viewAnalytics' | 'exportData';
 
 interface PermissionItem {
   id: Permission;
@@ -34,9 +37,9 @@ const permissionItems: PermissionItem[] = [
     description: 'Create, edit, and delete job positions'
   },
   {
-    id: 'assignRecruiters',
-    name: 'Assign HR / Technical Recruiters',
-    description: 'Assign recruiters to positions and manage recruitment teams'
+    id: 'manageUsers',
+    name: 'Manage Users & Assignments',
+    description: 'Manage organization members and recruitment assignments'
   },
   {
     id: 'manageCandidates',
@@ -57,12 +60,32 @@ const permissionItems: PermissionItem[] = [
 
 export function EditAccessPrivilegesModal({ member, onClose }: EditAccessPrivilegesModalProps) {
   const [permissions, setPermissions] = useState<Record<Permission, boolean>>({
-    managePositions: true,
-    assignRecruiters: false,
-    manageCandidates: true,
-    viewAnalytics: true,
+    managePositions: false,
+    manageUsers: false,
+    manageCandidates: false,
+    viewAnalytics: false,
     exportData: false
   });
+  const [isLoading, setIsLoading] = useState(false);
+  const [firstName, setFirstName] = useState(member.name.split(' ')[0]);
+
+  useEffect(() => {
+    const fetchPrivileges = async () => {
+      try {
+        setIsLoading(true);
+        const data = await api.admin.getMemberPrivileges(member.id.toString());
+        if (data && data.permissions) {
+          setPermissions(data.permissions);
+          if (data.firstName) setFirstName(data.firstName);
+        }
+      } catch (error) {
+        toast.error('Failed to load access privileges');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchPrivileges();
+  }, [member.id]);
 
   const handleToggle = (permission: Permission) => {
     setPermissions(prev => ({
@@ -135,13 +158,21 @@ export function EditAccessPrivilegesModal({ member, onClose }: EditAccessPrivile
           <Button
             className="rounded-full px-6 text-white"
             style={{ backgroundColor: '#6366F1' }}
-            onClick={() => {
-              // Save changes logic here
-              console.log('Saving permissions for', member.name, ':', permissions);
-              onClose();
+            disabled={isLoading}
+            onClick={async () => {
+              try {
+                setIsLoading(true);
+                await api.admin.updateMemberPrivileges(member.id.toString(), permissions);
+                toast.success(`Access privileges updated for ${firstName}`);
+                onClose();
+              } catch (error) {
+                toast.error('Failed to update privileges');
+              } finally {
+                setIsLoading(false);
+              }
             }}
           >
-            Save Changes
+            {isLoading ? 'Saving...' : 'Save Changes'}
           </Button>
         </div>
       </Card>

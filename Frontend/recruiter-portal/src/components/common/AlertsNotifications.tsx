@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Bell, AlertTriangle, CheckCircle, UserPlus, FileCheck, Video, Github, Clock, ChevronRight, Loader2 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AlertsNotificationsProps {
   onViewCandidate: (candidateId: number) => void;
@@ -8,7 +10,7 @@ interface AlertsNotificationsProps {
 
 interface Notification {
   id: string;
-  type: 'match' | 'flag' | 'assessment' | 'interview' | 'github';
+  type: 'match' | 'flag' | 'assessment' | 'interview' | 'github' | 'alert';
   title: string;
   description: string;
   candidateId: number;
@@ -21,24 +23,32 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const location = useLocation();
+  const isRecruiter = location.pathname.startsWith('/recruiter');
 
   // Fetch alerts from API
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
         setIsLoading(true);
-        const data = await api.admin.getAlerts() as any[];
-        // Map API data to component format - alerts API returns different structure
-        // For now, use empty array or create mock mapping
-        const mappedAlerts: Notification[] = data.map((alert: any, index: number) => ({
-          id: String(alert.id || index),
-          type: 'match' as const, // Default type, could be enhanced
+        let data: any[] = [];
+
+        if (isRecruiter) {
+          data = await api.recruiter.getNotifications() as any[];
+        } else {
+          data = await api.admin.getAlerts() as any[];
+        }
+
+        // Map API data to component format
+        const mappedAlerts: Notification[] = data.map((alert: any) => ({
+          id: String(alert.id),
+          type: (alert.type || 'match') as Notification['type'],
           title: alert.title,
-          description: alert.message,
-          candidateId: 1, // Would need to be provided by API
-          candidateName: 'Unknown', // Would need to be provided by API
-          timestamp: alert.timestamp,
-          read: false
+          description: alert.message || '',
+          candidateId: alert.data?.candidate_id || 0,
+          candidateName: alert.data?.candidate_name || 'System',
+          timestamp: alert.created_at ? new Date(alert.created_at).toLocaleString() : 'Just now',
+          read: alert.is_read || false
         }));
         setNotifications(mappedAlerts);
       } catch (error) {
@@ -49,7 +59,7 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
     };
 
     fetchAlerts();
-  }, []);
+  }, [isRecruiter]);
 
   const getIcon = (type: string) => {
     switch (type) {
@@ -105,11 +115,14 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
     <div className="w-full">
       <div className="w-full px-[48px] py-[24px]">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Notifications</h1>
-          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-            Stay updated on candidate activities and important events
-          </p>
+        <div className="mb-8 flex items-start justify-between">
+          <div>
+            <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Notifications</h1>
+            <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+              Stay updated on candidate activities and important events
+            </p>
+          </div>
+          <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
         </div>
 
         {/* Centered Content */}

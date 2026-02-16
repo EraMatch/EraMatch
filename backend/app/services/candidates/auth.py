@@ -43,10 +43,10 @@ class CandidateAuthService:
             print(f"[DEBUG] Password verified, creating tokens...")
             # Create tokens with candidate_id as subject and user_type to distinguish
             access_token = create_access_token(
-                subject=str(candidate.candidate_id),
+                subject=str(candidate.id),
                 extra_data={"user_type": "candidate", "org_id": str(candidate.organization_id)}
             )
-            refresh_token = create_refresh_token(subject=str(candidate.candidate_id))
+            refresh_token = create_refresh_token(subject=str(candidate.id))
             
             print(f"[DEBUG] Login successful")
             return TokenResponse(
@@ -72,10 +72,10 @@ class CandidateAuthService:
             raise UnauthorizedException("Candidate not found")
         
         access_token = create_access_token(
-            subject=str(candidate.candidate_id),
+            subject=str(candidate.id),
             extra_data={"user_type": "candidate", "org_id": str(candidate.organization_id)}
         )
-        new_refresh_token = create_refresh_token(subject=str(candidate.candidate_id))
+        new_refresh_token = create_refresh_token(subject=str(candidate.id))
         
         return TokenResponse(
             access_token=access_token,
@@ -113,7 +113,7 @@ class CandidateAuthService:
     async def _get_candidate_by_id(self, candidate_id: UUID) -> CandidateProfile | None:
         """Get candidate by ID."""
         statement = select(CandidateProfile).where(
-            CandidateProfile.candidate_id == candidate_id,
+            CandidateProfile.id == candidate_id,
             CandidateProfile.is_deleted == False
         )
         result = await self.session.execute(statement)

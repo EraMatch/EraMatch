@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Users, FileText, Briefcase, Search, Filter, ChevronDown, UserPlus, Loader2 } from 'lucide-react';
+import { Users, FileText, Briefcase, Search, Filter, ChevronDown, UserPlus, Loader2, Trash2 } from 'lucide-react';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -9,6 +9,7 @@ import { EditAccessPrivilegesModal } from '../recruiter/groups/EditAccessPrivile
 
 import { toast } from 'sonner';
 import { api, Member } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminOrganizationMembersProps {
   onSignOut: () => void;
@@ -28,16 +29,16 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
 
   // Employee Registration state
   const [employeeEmail, setEmployeeEmail] = useState('');
-  const [employeePassword, setEmployeePassword] = useState('');
-  const [employeeTitle, setEmployeeTitle] = useState<'Technical Recruiter' | 'HR Member'>('HR Member');
+  const [employeeTitle, setEmployeeTitle] = useState<'technical' | 'hr'>('hr');
   const [employeeFirstName, setEmployeeFirstName] = useState('');
   const [employeeLastName, setEmployeeLastName] = useState('');
 
   const [isLoading, setIsLoading] = useState(true);
   const [members, setMembers] = useState<Member[]>([]);
 
-  const [openRolesCount, setOpenRolesCount] = useState(0);
-  const [activeRecruitersCount, setActiveRecruitersCount] = useState(0);
+  const [recruitersCount, setRecruitersCount] = useState(0);
+  const [totalActiveCount, setTotalActiveCount] = useState(0);
+  const [adminsCount, setAdminsCount] = useState(0);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -45,18 +46,12 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
         setIsLoading(true);
         const [membersData, statsData] = await Promise.all([
           api.admin.getMembers(),
-          api.admin.getDashboardStats()
+          api.admin.getMemberStats()
         ]);
         setMembers(membersData);
-        // Calculate open roles from jobPositions if available, or use a default/mock
-        if (statsData.jobPositions) {
-          setOpenRolesCount(statsData.jobPositions.filter((p: any) => p.status === 'Open').length);
-        } else {
-          setOpenRolesCount(0);
-        }
-        if (statsData.activeRecruiters) {
-          setActiveRecruitersCount(statsData.activeRecruiters);
-        }
+        setRecruitersCount(statsData.recruitersCount || 0);
+        setTotalActiveCount(statsData.totalActive || 0);
+        setAdminsCount(statsData.adminsCount || 0);
       } catch (error) {
         toast.error('Failed to load organization data');
       } finally {
@@ -79,35 +74,84 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
     setShowEditModal(true);
   };
 
-  const handleRegisterEmployee = async () => {
-    if (!employeeEmail || !employeePassword || !employeeFirstName || !employeeLastName) {
-      toast.error('Please fill in all employee fields');
+  const handleRemoveMember = async (userId: string) => {
+    if (!window.confirm('Are you sure you want to remove this member? This action cannot be undone.')) {
       return;
     }
 
     try {
-      await api.admin.registerEmployee({
-        email: employeeEmail,
-        password: employeePassword,
-        firstName: employeeFirstName,
-        lastName: employeeLastName,
-        title: employeeTitle
-      });
-      toast.success(`Employee registered successfully as ${employeeTitle}!`);
-
-      // Reset form
-      setEmployeeEmail('');
-      setEmployeePassword('');
-      setEmployeeFirstName('');
-      setEmployeeLastName('');
-      setEmployeeTitle('HR Member');
-
+      await api.admin.removeMember(userId);
+      toast.success('Member removed successfully');
       // Refresh members list
       const updatedMembers = await api.admin.getMembers();
       setMembers(updatedMembers);
+    } catch (error) {
+      toast.error('Failed to remove member');
+    }
+  };
+
+  const handleToggleStatus = async (member: Member) => {
+    const isSuspended = member.status?.toLowerCase() === 'suspended';
+    const newStatus = isSuspended ? 'active' : 'suspended';
+
+    if (!window.confirm(`Are you sure you want to ${isSuspended ? 'open' : 'suspend'} this member?`)) {
+      return;
+    }
+
+    try {
+      await api.admin.updateUserStatus(member.id, newStatus);
+      toast.success(`Member ${isSuspended ? 'opened' : 'suspended'} successfully`);
+
+      // Refresh members list and stats
+      const [updatedMembers, updatedStats] = await Promise.all([
+        api.admin.getMembers(),
+        api.admin.getMemberStats()
+      ]);
+
+      setMembers(updatedMembers);
+
+      if (updatedStats) {
+        setRecruitersCount(updatedStats.recruitersCount || 0);
+        setTotalActiveCount(updatedStats.totalActive || 0);
+        // Admins count likely hasn't changed but good to refresh
+        setAdminsCount(updatedStats.adminsCount || 0);
+      }
+    } catch (error: any) {
+      toast.error(error?.detail || `Failed to ${isSuspended ? 'activate' : 'suspend'} member`);
+    }
+  };
+
+  const handleRegisterEmployee = async () => {
+    if (!employeeEmail || !employeeFirstName || !employeeLastName) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      await api.admin.registerEmployee({
+        email: employeeEmail,
+        firstName: employeeFirstName,
+        lastName: employeeLastName,
+        role: employeeTitle
+      });
+      toast.success(`${employeeFirstName} registered successfully! A temporary password has been generated.`);
+
+      // Reset form
+      setEmployeeEmail('');
+      setEmployeeFirstName('');
+      setEmployeeLastName('');
+      setEmployeeTitle('hr');
+
+      // Refresh members list and switch back to list view
+      const updatedMembers = await api.admin.getMembers();
+      setMembers(updatedMembers);
+      setActiveTab('members');
 
     } catch (error) {
       toast.error('Failed to register employee');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -132,39 +176,42 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
   return (
     <div className="px-12 py-8">
       {/* Page Header */}
-      <div className="mb-8">
-        <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Organization Members</h1>
-        <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Overview of your organization's team and access</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Organization Members</h1>
+          <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Overview of your organization's team and access</p>
+        </div>
+        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-3 gap-6 mb-12">
         <div className="bg-white rounded-3xl px-8 py-9 shadow-sm">
           <div className="flex items-center gap-3">
-            <span className="text-5xl text-gray-900">{members.length}</span>
+            <span className="text-5xl text-gray-900">{totalActiveCount}</span>
             <div className="flex-1">
-              <div className="text-gray-900 mb-1">Total Members</div>
-              <div className="text-gray-400 text-sm">active in organization</div>
+              <div className="text-gray-900 mb-1">Active Members</div>
+              <div className="text-gray-400 text-sm">currently in organization</div>
             </div>
           </div>
         </div>
 
         <div className="bg-white rounded-3xl px-8 py-9 shadow-sm">
           <div className="flex items-center gap-3">
-            <span className="text-5xl text-gray-900">{openRolesCount}</span>
+            <span className="text-5xl text-gray-900">{recruitersCount}</span>
             <div className="flex-1">
-              <div className="text-gray-900 mb-1">Open Roles</div>
-              <div className="text-gray-400 text-sm">currently hiring</div>
+              <div className="text-gray-900 mb-1">Recruiting Force</div>
+              <div className="text-gray-400 text-sm">active recruiters & HR</div>
             </div>
           </div>
         </div>
 
         <div className="bg-white rounded-3xl px-8 py-9 shadow-sm">
           <div className="flex items-center gap-3">
-            <span className="text-5xl text-gray-900">{activeRecruitersCount}</span>
+            <span className="text-5xl text-gray-900">{adminsCount}</span>
             <div className="flex-1">
-              <div className="text-gray-900 mb-1">Active Recruiters</div>
-              <div className="text-gray-400 text-sm">hiring active</div>
+              <div className="text-gray-900 mb-1">System Admins</div>
+              <div className="text-gray-400 text-sm">full administrative access</div>
             </div>
           </div>
         </div>
@@ -297,29 +344,30 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-200">
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Name</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Role</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Position</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Department</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Join Date</th>
-                    <th className="text-left py-3 px-4 text-gray-600 text-sm">Actions</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-left">Name</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Role</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Status</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Position</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Department</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Join Date</th>
+                    <th className="py-3 px-4 text-gray-600 text-sm text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredMembers.map((member) => (
                     <tr key={member.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-4 px-4">
+                      <td className="py-4 px-4 flex justify-start">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: '#6366F1' }}>
                             {member.name.split(' ').map(n => n[0]).join('')}
                           </div>
-                          <div>
+                          <div className="text-left">
                             <p className="text-gray-900 text-sm">{member.name}</p>
                             <p className="text-gray-500 text-xs">{member.email}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="py-4 px-4">
+                      <td className="py-4 px-4 text-center">
                         <span
                           className="px-3 py-1 rounded-full text-xs text-white inline-block"
                           style={{
@@ -329,18 +377,58 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
                           {member.role}
                         </span>
                       </td>
-                      <td className="py-4 px-4 text-gray-900 text-sm">{member.position}</td>
-                      <td className="py-4 px-4 text-gray-900 text-sm">{member.department}</td>
-                      <td className="py-4 px-4 text-gray-500 text-sm">{member.joinDate}</td>
-                      <td className="py-4 px-4">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="rounded-lg text-sm"
-                          onClick={() => handleEditPrivileges(member)}
+                      <td className="py-4 px-4 text-center">
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs inline-block ${member.status?.toLowerCase() === 'active'
+                            ? 'bg-green-100 text-green-700'
+                            : member.status?.toLowerCase() === 'suspended'
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-gray-100 text-gray-700'
+                            }`}
                         >
-                          Edit Privileges
-                        </Button>
+                          {member.status || 'Active'}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 text-gray-900 text-sm text-center">{member.position}</td>
+                      <td className="py-4 px-4 text-gray-900 text-sm text-center">{member.department}</td>
+                      <td className="py-4 px-4 text-gray-500 text-sm text-center">{member.joinDate}</td>
+                      <td className="py-4 px-4">
+                        <div className="flex items-center justify-center gap-2">
+                          {member.role?.toLowerCase() !== 'admin' ? (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-lg text-sm"
+                                onClick={() => handleEditPrivileges(member)}
+                              >
+                                Edit Privileges
+                              </Button>
+
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className={`rounded-lg text-sm ${member.status?.toLowerCase() === 'suspended'
+                                  ? 'border-green-200 hover:bg-green-50 text-green-600'
+                                  : 'border-amber-200 hover:bg-amber-50 text-amber-600'}`}
+                                onClick={() => handleToggleStatus(member)}
+                              >
+                                {member.status?.toLowerCase() === 'suspended' ? 'Open' : 'Suspend'}
+                              </Button>
+
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-lg text-sm border-red-200 hover:bg-red-50 text-red-600 hover:text-red-700"
+                                onClick={() => handleRemoveMember(member.id)}
+                              >
+                                <Trash2 size={16} />
+                              </Button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-gray-400 italic">System Protected</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -397,16 +485,11 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
                 />
               </div>
 
+
               <div className="space-y-2">
-                <Label htmlFor="employeePassword">Password</Label>
-                <Input
-                  id="employeePassword"
-                  type="password"
-                  placeholder="Password"
-                  value={employeePassword}
-                  onChange={(e) => setEmployeePassword(e.target.value)}
-                  className="rounded-lg"
-                />
+                <p className="text-gray-500 text-sm italic">
+                  * A temporary password will be automatically generated for the new member.
+                </p>
               </div>
 
               <div className="space-y-2">
@@ -415,10 +498,10 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
                   id="employeeTitle"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   value={employeeTitle}
-                  onChange={(e) => setEmployeeTitle(e.target.value as 'Technical Recruiter' | 'HR Member')}
+                  onChange={(e) => setEmployeeTitle(e.target.value as 'technical' | 'hr')}
                 >
-                  <option>HR Member</option>
-                  <option>Technical Recruiter</option>
+                  <option value="hr">HR Member</option>
+                  <option value="technical">Technical Recruiter</option>
                 </select>
               </div>
             </div>
@@ -437,15 +520,17 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
       </Card>
 
       {/* Edit Access Privileges Modal */}
-      {showEditModal && selectedMember && (
-        <EditAccessPrivilegesModal
-          member={selectedMember}
-          onClose={() => {
-            setShowEditModal(false);
-            setSelectedMember(null);
-          }}
-        />
-      )}
-    </div>
+      {
+        showEditModal && selectedMember && (
+          <EditAccessPrivilegesModal
+            member={selectedMember}
+            onClose={() => {
+              setShowEditModal(false);
+              setSelectedMember(null);
+            }}
+          />
+        )
+      }
+    </div >
   );
 }

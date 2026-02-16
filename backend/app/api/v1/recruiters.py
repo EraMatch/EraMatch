@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
-from app.api.deps import DbSession, CurrentUser
+from app.api.deps import DbSession, RecruiterUser
 from app.services import RecruiterService
 from app.schemas import (
     ProjectCreate,
@@ -16,9 +16,36 @@ from app.schemas import (
     PositionResponse,
     ApplicationUpdate,
     ApplicationResponse,
+    ProjectSummaryResponse,
+    ProjectListResponse,
+    PositionInsightsResponse,
+    PositionGroupResponse,
+    PositionDetailsResponse,
+    GroupAnalysisResponse,
+    TechnicalAIResponse,
+    RiskBreakdownResponse,
+    RecruiterAnalyticsResponse,
 )
 
-router = APIRouter(prefix="/recruiters", tags=["Recruiters"])
+router = APIRouter(prefix="/recruiter", tags=["Recruiters"])
+
+
+# =============================================================================
+# NOTIFICATIONS
+# =============================================================================
+
+from app.schemas import NotificationResponse
+
+@router.get("/notifications", response_model=list[NotificationResponse])
+async def get_notifications(
+    session: DbSession,
+    current_user: RecruiterUser,
+    skip: int = 0,
+    limit: int = 50,
+):
+    """Get recruiter notifications."""
+    service = RecruiterService(session, current_user)
+    return await service.get_notifications(skip=skip, limit=limit)
 
 
 # =============================================================================
@@ -28,32 +55,42 @@ router = APIRouter(prefix="/recruiters", tags=["Recruiters"])
 
 @router.post("/projects", response_model=ProjectResponse, status_code=201)
 async def create_project(
-    data: ProjectCreate, session: DbSession, current_user: CurrentUser
+    data: ProjectCreate, session: DbSession, current_user: RecruiterUser
 ):
     """Create a new project."""
     service = RecruiterService(session, current_user)
     return await service.create_project(data)
 
 
-@router.get("/projects", response_model=list[ProjectResponse])
+@router.get("/projects", response_model=list[ProjectListResponse])
 async def list_projects(
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
+    status: str | None = None,
     skip: int = 0,
     limit: int = 50,
 ):
     """List all projects."""
     service = RecruiterService(session, current_user)
-    return await service.list_projects(skip=skip, limit=limit)
+    return await service.list_projects(status=status, skip=skip, limit=limit)
 
 
 @router.get("/projects/{project_id}", response_model=ProjectResponse)
 async def get_project(
-    project_id: UUID, session: DbSession, current_user: CurrentUser
+    project_id: UUID, session: DbSession, current_user: RecruiterUser
 ):
     """Get a project by ID."""
     service = RecruiterService(session, current_user)
     return await service.get_project(project_id)
+
+
+@router.get("/projects/{project_id}/positions", response_model=list[PositionResponse])
+async def get_project_positions(
+    project_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Get all positions for a project."""
+    service = RecruiterService(session, current_user)
+    return await service.get_project_positions(project_id)
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectResponse)
@@ -61,11 +98,29 @@ async def update_project(
     project_id: UUID,
     data: ProjectUpdate,
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
 ):
     """Update a project."""
     service = RecruiterService(session, current_user)
     return await service.update_project(project_id, data)
+
+
+@router.get("/projects/{project_id}/summary", response_model=ProjectSummaryResponse)
+async def get_project_summary(
+    project_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Get project summary stats."""
+    service = RecruiterService(session, current_user)
+    return await service.get_project_summary(project_id)
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+async def delete_project(
+    project_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Delete a project (soft delete)."""
+    service = RecruiterService(session, current_user)
+    await service.delete_project(project_id)
 
 
 # =============================================================================
@@ -75,7 +130,7 @@ async def update_project(
 
 @router.post("/positions", response_model=PositionResponse, status_code=201)
 async def create_position(
-    data: PositionCreate, session: DbSession, current_user: CurrentUser
+    data: PositionCreate, session: DbSession, current_user: RecruiterUser
 ):
     """Create a new position."""
     service = RecruiterService(session, current_user)
@@ -85,19 +140,20 @@ async def create_position(
 @router.get("/positions", response_model=list[PositionResponse])
 async def list_positions(
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
     project_id: UUID | None = None,
+    status: str | None = None,
     skip: int = 0,
     limit: int = 50,
 ):
     """List positions, optionally filtered by project."""
     service = RecruiterService(session, current_user)
-    return await service.list_positions(project_id=project_id, skip=skip, limit=limit)
+    return await service.list_positions(project_id=project_id, status=status, skip=skip, limit=limit)
 
 
 @router.get("/positions/{position_id}", response_model=PositionResponse)
 async def get_position(
-    position_id: UUID, session: DbSession, current_user: CurrentUser
+    position_id: UUID, session: DbSession, current_user: RecruiterUser
 ):
     """Get a position by ID."""
     service = RecruiterService(session, current_user)
@@ -109,11 +165,47 @@ async def update_position(
     position_id: UUID,
     data: PositionUpdate,
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
 ):
     """Update a position."""
     service = RecruiterService(session, current_user)
     return await service.update_position(position_id, data)
+
+
+@router.delete("/positions/{position_id}", status_code=204)
+async def delete_position(
+    position_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Delete a position (soft delete)."""
+    service = RecruiterService(session, current_user)
+    await service.delete_position(position_id)
+
+
+@router.get("/positions/{position_id}/details", response_model=PositionDetailsResponse)
+async def get_position_details(
+    position_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Get position details (candidates and groups)."""
+    service = RecruiterService(session, current_user)
+    return await service.get_position_details(position_id)
+
+
+@router.get("/positions/{position_id}/insights", response_model=PositionInsightsResponse)
+async def get_position_insights(
+    position_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Get position insights."""
+    service = RecruiterService(session, current_user)
+    return await service.get_position_insights(position_id)
+
+
+@router.get("/positions/{position_id}/groups", response_model=list[PositionGroupResponse])
+async def get_position_groups(
+    position_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Get position groups."""
+    service = RecruiterService(session, current_user)
+    return await service.get_position_groups(position_id)
 
 
 # =============================================================================
@@ -124,7 +216,7 @@ async def update_position(
 @router.get("/applications", response_model=list[ApplicationResponse])
 async def list_applications(
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
     position_id: UUID | None = None,
     status: str | None = None,
     skip: int = 0,
@@ -142,8 +234,88 @@ async def update_application(
     application_id: UUID,
     data: ApplicationUpdate,
     session: DbSession,
-    current_user: CurrentUser,
+    current_user: RecruiterUser,
 ):
     """Update application status."""
     service = RecruiterService(session, current_user)
     return await service.update_application_status(application_id, data)
+
+
+# =============================================================================
+# GROUPS
+# =============================================================================
+
+
+@router.get("/groups/{group_id}/analysis", response_model=GroupAnalysisResponse)
+async def get_group_analysis(
+    group_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Get group analysis."""
+    service = RecruiterService(session, current_user)
+    return await service.get_group_analysis(group_id)
+
+
+@router.get("/groups/{group_id}/technical-ai", response_model=TechnicalAIResponse)
+async def get_group_technical_ai(
+    group_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Get group technical & AI stats."""
+    service = RecruiterService(session, current_user)
+    return await service.get_group_technical_ai(group_id)
+
+
+@router.get("/groups/{group_id}/risks", response_model=RiskBreakdownResponse)
+async def get_group_risks(
+    group_id: UUID, session: DbSession, current_user: RecruiterUser
+):
+    """Get group risks."""
+    service = RecruiterService(session, current_user)
+    return await service.get_group_risks(group_id)
+
+
+# =============================================================================
+# APPROVALS (TECHNICAL REVIEW)
+# =============================================================================
+
+
+@router.get("/requests/assigned", response_model=list[dict])
+async def list_assigned_requests(
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """List approval requests assigned to the current technical recruiter."""
+    service = RecruiterService(session, current_user)
+    return await service.list_assigned_requests()
+
+
+from pydantic import BaseModel
+class ReviewRequest(BaseModel):
+    status: str
+    review_notes: str | None = None
+
+@router.patch("/requests/{request_id}/review")
+async def review_approval_request(
+    request_id: UUID,
+    data: ReviewRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Review an approval request."""
+    service = RecruiterService(session, current_user)
+    await service.review_approval_request(request_id, data.status, data.review_notes)
+    return {"status": "success"}
+
+
+# =============================================================================
+# ANALYTICS
+# =============================================================================
+
+
+@router.get("/analytics", response_model=RecruiterAnalyticsResponse)
+async def get_analytics(
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Get recruiter analytics."""
+    service = RecruiterService(session, current_user)
+    return await service.get_analytics(current_user.id)

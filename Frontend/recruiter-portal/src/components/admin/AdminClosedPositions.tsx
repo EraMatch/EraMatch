@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Eye, ArrowUpDown, Calendar, Users, FileText, CheckCircle, XCircle, Clock, Briefcase, Award, TrendingUp, Loader2 } from 'lucide-react';
 import { Card } from '../ui/card';
 import { api, ClosedProject, ClosedPosition } from '../../services/api';
+import EraMatchLogo from '../../assets/image-eramatch.png';
 
 interface AdminClosedPositionsProps {
   onSignOut: () => void;
@@ -21,19 +22,18 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
   const [closedPositions, setClosedPositions] = useState<ClosedPosition[]>([]);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchProjects = async () => {
       try {
         setIsLoading(true);
-        const data = await api.admin.getClosedPositions();
-        setClosedProjects(data.projects);
-        setClosedPositions(data.positions);
+        const data = await api.admin.getArchivedProjects();
+        setClosedProjects(data);
       } catch (error) {
-        console.error("Error loading closed positions:", error);
+        console.error("Error loading archived projects:", error);
       } finally {
         setIsLoading(false);
       }
     };
-    fetchData();
+    fetchProjects();
   }, []);
 
   if (isLoading) {
@@ -75,11 +75,14 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
       {/* Projects View */}
       {viewMode === 'projects' && (
         <div>
-          <div className="mb-8">
-            <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Closed Projects Archive</h1>
-            <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-              Browse closed projects and view position archives
-            </p>
+          <div className="mb-8 flex items-start justify-between">
+            <div>
+              <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Closed Projects Archive</h1>
+              <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                Browse closed projects and view position archives
+              </p>
+            </div>
+            <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
           </div>
 
           <div className="bg-white rounded-3xl p-6 shadow-sm">
@@ -93,41 +96,41 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                 <table className="w-full">
                   <thead className="bg-[#f9fafb] border-b border-[#e5e7eb]">
                     <tr>
-                      <th className="text-left p-4">
+                      <th className="p-4">
                         <button
                           onClick={() => handleSort('projectName')}
-                          className="flex items-center gap-1 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                          className="flex items-center justify-start gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                         >
                           Project Name
                           <ArrowUpDown size={14} />
                         </button>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Open Date
                         </span>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Closed Date
                         </span>
                       </th>
-                      <th className="text-left p-4">
+                      <th className="p-4">
                         <button
                           onClick={() => handleSort('positionsCount')}
-                          className="flex items-center gap-1 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                          className="flex items-center justify-center gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                         >
                           Positions
                           <ArrowUpDown size={14} />
                         </button>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Total Candidates
                         </span>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Actions
                         </span>
                       </th>
@@ -139,43 +142,61 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                         key={project.id}
                         className={`border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors cursor-pointer ${index === closedProjects.length - 1 ? 'border-b-0' : ''
                           }`}
-                        onClick={() => {
-                          setSelectedProject(project);
-                          setViewMode('positions');
+                        onClick={async () => {
+                          setIsLoading(true);
+                          try {
+                            const positions = await api.admin.getArchivedPositions(project.id);
+                            setClosedPositions(positions);
+                            setSelectedProject(project);
+                            setViewMode('positions');
+                          } catch (error) {
+                            console.error("Error loading archived positions:", error);
+                          } finally {
+                            setIsLoading(false);
+                          }
                         }}
                       >
-                        <td className="p-4">
+                        <td className="p-4 text-left">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                             {project.projectName}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                             {new Date(project.openDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                             {new Date(project.closedDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                             {project.positionsCount}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                             {project.totalCandidates}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 flex justify-center">
                           <button
                             className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
-                              setSelectedProject(project);
-                              setViewMode('positions');
+                              setIsLoading(true);
+                              try {
+                                const positions = await api.admin.getArchivedPositions(project.id);
+                                setClosedPositions(positions);
+                                setSelectedProject(project);
+                                setViewMode('positions');
+                              } catch (error) {
+                                console.error("Error loading archived positions:", error);
+                              } finally {
+                                setIsLoading(false);
+                              }
                             }}
                           >
                             <Eye size={16} className="text-[#6366f1]" />
@@ -197,20 +218,23 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
       {/* Positions View */}
       {viewMode === 'positions' && selectedProject && (
         <div>
-          <div className="mb-6 flex items-center gap-3">
-            <button
-              onClick={() => {
-                setViewMode('projects');
-                setSelectedProject(null);
-              }}
-              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
-            >
-              <ArrowLeft size={20} />
-            </button>
-            <div>
-              <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Project Archive: {selectedProject.projectName}</h1>
-              <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Select a position to view detailed archive data</p>
+          <div className="mb-6 flex items-start justify-between">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setViewMode('projects');
+                  setSelectedProject(null);
+                }}
+                className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                <ArrowLeft size={20} />
+              </button>
+              <div>
+                <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Project Archive: {selectedProject.projectName}</h1>
+                <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Select a position to view detailed archive data</p>
+              </div>
             </div>
+            <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
           </div>
 
           <div className="bg-white rounded-3xl p-6 shadow-sm">
@@ -224,41 +248,41 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                 <table className="w-full">
                   <thead className="bg-[#f9fafb] border-b border-[#e5e7eb]">
                     <tr>
-                      <th className="text-left p-4">
+                      <th className="p-4">
                         <button
                           onClick={() => handleSort('jobTitle')}
-                          className="flex items-center gap-1 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                          className="flex items-center justify-start gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                         >
                           Job Title
                           <ArrowUpDown size={14} />
                         </button>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Closure Status
                         </span>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Closed Date
                         </span>
                       </th>
-                      <th className="text-left p-4">
+                      <th className="p-4">
                         <button
                           onClick={() => handleSort('candidatesCount')}
-                          className="flex items-center gap-1 font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
+                          className="flex items-center justify-center gap-1 w-full font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#111827]"
                         >
                           Candidates
                           <ArrowUpDown size={14} />
                         </button>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Groups Created
                         </span>
                       </th>
-                      <th className="text-left p-4">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      <th className="p-4">
+                        <span className="flex justify-center font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Actions
                         </span>
                       </th>
@@ -270,17 +294,35 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                         key={position.id}
                         className={`border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors cursor-pointer ${index === getPositionsForProject(selectedProject.projectName).length - 1 ? 'border-b-0' : ''
                           }`}
-                        onClick={() => {
-                          setSelectedPosition(position);
-                          setViewMode('details');
+                        onClick={async () => {
+                          setIsLoading(true);
+                          try {
+                            const details = await api.admin.getPositionArchiveDetails(position.id);
+                            setSelectedPosition({
+                              ...position,
+                              jobTitle: details.jobTitle,
+                              closureStatus: details.closureStatus,
+                              candidatesCount: details.totalCandidates,
+                              groupsCreated: details.groupsCreated,
+                              assessmentsPassed: details.assessmentsPassed,
+                              aiInterviewsPassed: details.aiInterviewsPassed,
+                              liveInterviewsPassed: details.liveInterviewsPassed,
+                              selectedCandidates: details.hiredCandidate ? [details.hiredCandidate] : []
+                            });
+                            setViewMode('details');
+                          } catch (error) {
+                            console.error("Error loading position archive details:", error);
+                          } finally {
+                            setIsLoading(false);
+                          }
                         }}
                       >
-                        <td className="p-4">
+                        <td className="p-4 text-left">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                             {position.jobTitle}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span
                             className={`inline-block px-3 py-1 rounded-full font-['Arimo',sans-serif] text-[12px] ${getStatusBadgeColor(
                               position.closureStatus
@@ -289,28 +331,46 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                             {position.closureStatus}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                             {new Date(position.closedDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
                             {position.candidatesCount}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 text-center">
                           <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                             {position.groupsCreated}
                           </span>
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 flex justify-center">
                           <button
                             className="flex items-center gap-2 h-[32px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
-                              setSelectedPosition(position);
-                              setViewMode('details');
+                              setIsLoading(true);
+                              try {
+                                const details = await api.admin.getPositionArchiveDetails(position.id);
+                                setSelectedPosition({
+                                  ...position,
+                                  jobTitle: details.jobTitle,
+                                  closureStatus: details.closureStatus,
+                                  candidatesCount: details.totalCandidates,
+                                  groupsCreated: details.groupsCreated,
+                                  assessmentsPassed: details.assessmentsPassed,
+                                  aiInterviewsPassed: details.aiInterviewsPassed,
+                                  liveInterviewsPassed: details.liveInterviewsPassed,
+                                  selectedCandidates: details.hiredCandidate ? [details.hiredCandidate] : []
+                                });
+                                setViewMode('details');
+                              } catch (error) {
+                                console.error("Error loading position archive details:", error);
+                              } finally {
+                                setIsLoading(false);
+                              }
                             }}
                           >
                             <Eye size={16} className="text-[#6366f1]" />
@@ -332,20 +392,23 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
       {/* Archive Details View */}
       {viewMode === 'details' && selectedPosition && selectedProject && (
         <div>
-          <div className="mb-6 flex items-center gap-3">
-            <button
-              onClick={() => {
-                setViewMode('positions');
-                setSelectedPosition(null);
-              }}
-              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
-            >
-              <ArrowLeft size={20} />
-            </button>
-            <div>
-              <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Position Archive: {selectedPosition.jobTitle}</h1>
-              <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Detailed closure information and statistics</p>
+          <div className="mb-6 flex items-start justify-between">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  setViewMode('positions');
+                  setSelectedPosition(null);
+                }}
+                className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                <ArrowLeft size={20} />
+              </button>
+              <div>
+                <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Position Archive: {selectedPosition.jobTitle}</h1>
+                <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Detailed closure information and statistics</p>
+              </div>
             </div>
+            <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
           </div>
 
           <div className="grid grid-cols-2 gap-6">

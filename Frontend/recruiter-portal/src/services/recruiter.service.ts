@@ -13,42 +13,63 @@ export const recruiterService = {
 
     getDashboardAnalytics: async () => fetchAPI<any>('/recruiter/analytics'),
 
-    // Project Management
-    getProjects: async () => fetchAPI<Project[]>('/projects'),
+    // Notifications
+    getNotifications: async () => fetchAPI<any[]>('/recruiter/notifications'),
 
-    getProjectDetails: async (projectId: string) => {
-        const projects = await fetchAPI<Project[]>('/projects');
-        return projects.find(p => p.id.toString() === projectId) || projects[0];
+    // Project Management
+    getProjects: async (status?: string) => {
+        const query = status ? `?status=${status}` : '';
+        return fetchAPI<Project[]>(`/recruiter/projects${query}`);
     },
 
-    getProjectPositions: async (projectId: number) => {
-        const positions = await fetchAPI<JobPosition[]>('/positions');
-        return positions.filter(p => p.projectId === projectId);
+    getProjectDetails: async (projectId: string) => {
+        return fetchAPI<Project>(`/recruiter/projects/${projectId}`);
+    },
+
+    getProjectPositions: async (projectId: number | string) => {
+        return fetchAPI<JobPosition[]>(`/recruiter/projects/${projectId}/positions`);
     },
 
     getClosedProjects: async () => fetchAPI<ClosedProject[]>('/projects/closed'),
 
     getProjectGroups: async (projectId: string) => fetchAPI<PositionGroup[]>('/groups'),
 
-    createProject: async (data: Partial<Project>) => {
-        return fetchAPI<Project>('/projects', {
+    createProject: async (data: Partial<Project> & { name?: string }) => {
+        const payload = {
+            ...data,
+            name: data.name || data.projectName // Map projectName to name for backend
+        };
+        return fetchAPI<Project>('/recruiter/projects', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            body: JSON.stringify(payload)
         });
     },
 
-    updateProject: async (id: number | string, data: Partial<Project>) => {
-        return fetchAPI(`/projects/${id}`, {
-            method: 'PUT',
+    updateProject: async (id: number | string, data: Partial<Project> & { name?: string }) => {
+        // Ensure 'name' is sent if 'projectName' is provided, or allow 'name' in data
+        const payload = {
+            ...data,
+            name: data.name || data.projectName // Map projectName to name for backend
+        };
+        return fetchAPI(`/recruiter/projects/${id}`, { // Updated endpoint to /recruiter/projects
+            method: 'PATCH', // Changed to PATCH as per backend
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            body: JSON.stringify(payload)
+        });
+    },
+
+    deleteProject: async (id: number | string) => {
+        return fetchAPI(`/recruiter/projects/${id}`, {
+            method: 'DELETE'
         });
     },
 
     // Position Management
+    getPositions: async () => fetchAPI<JobPosition[]>('/recruiter/positions'),
+
     createPosition: async (data: Partial<JobPosition>) => {
-        return fetchAPI<JobPosition>('/positions', {
+        return fetchAPI<JobPosition>('/recruiter/positions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -56,26 +77,26 @@ export const recruiterService = {
     },
 
     updatePosition: async (id: number | string, data: Partial<JobPosition>) => {
-        return fetchAPI(`/positions/${id}`, {
-            method: 'PUT',
+        return fetchAPI(`/recruiter/positions/${id}`, {
+            method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
     },
 
     deletePosition: async (id: number | string) => {
-        return fetchAPI(`/positions/${id}`, {
+        return fetchAPI(`/recruiter/positions/${id}`, {
             method: 'DELETE'
         });
     },
 
-    getPositionDetails: async (positionId: string) => fetchAPI(`/positions/${positionId}/details`),
+    getPositionDetails: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/details`),
 
-    getPositionInsights: async (positionId: string) => fetchAPI(`/positions/${positionId}/insights`),
+    getPositionInsights: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/insights`),
 
-    getFiltrationFlowConfig: async (positionId: string) => fetchAPI(`/positions/${positionId}/filtration-flow`),
+    getFiltrationFlowConfig: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/filtration-flow`),
 
-    getSkillClusters: async (positionId: string) => fetchAPI(`/positions/${positionId}/skills`),
+    getSkillClusters: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/skills`),
 
     // Candidate Management
     getCandidates: async () => fetchAPI('/groups/candidates/all'),
@@ -100,8 +121,8 @@ export const recruiterService = {
     // Recruiter Management
     getRecruiters: async () => {
         const [hr, tech] = await Promise.all([
-            fetchAPI<string[]>('/recruiters/hr'),
-            fetchAPI<string[]>('/recruiters/technical')
+            fetchAPI<string[]>('/recruiter/hr'),
+            fetchAPI<string[]>('/recruiter/technical')
         ]);
         const mapToObj = (names: string[], role: string) => names.map((n, i) => ({ id: `${role}-${i}`, name: n, role }));
         return [...mapToObj(hr, 'HR Recruiter'), ...mapToObj(tech, 'Technical Recruiter')];
@@ -147,5 +168,16 @@ export const recruiterService = {
 
     getLiveInterviewQuestions: async (interviewId: string) => fetchAPI(`/interviews/${interviewId}/questions`),
 
-    getRecordedInterviewQuestions: async (interviewId: string) => fetchAPI(`/interviews/recorded/questions/${interviewId}`)
+    getRecordedInterviewQuestions: async (interviewId: string) => fetchAPI(`/interviews/recorded/questions/${interviewId}`),
+
+    // Review (Technical Recruiter)
+    getAssignedRequests: async () => fetchAPI<any[]>('/recruiter/requests/assigned'),
+
+    reviewRequest: async (requestId: string, status: 'approved' | 'rejected', reviewNotes?: string) => {
+        return fetchAPI(`/recruiter/requests/${requestId}/review`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status, review_notes: reviewNotes })
+        });
+    }
 };

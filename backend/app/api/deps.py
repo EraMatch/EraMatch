@@ -54,11 +54,31 @@ async def require_admin(
     return current_user
 
 
-# Type aliases for cleaner route signatures
-DbSession = Annotated[AsyncSession, Depends(get_db)]
-CurrentUser = Annotated[User, Depends(get_current_active_user)]
-AdminUser = Annotated[User, Depends(require_admin)]
+async def require_recruiter(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> User:
+    """Require admin, hr, or technical role."""
+    if current_user.role not in ["admin", "hr", "technical"]:
+        raise UnauthorizedException("Recruiter access required")
+    return current_user
 
+
+async def require_hr(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> User:
+    """Require hr role."""
+    if current_user.role != "hr":
+        raise UnauthorizedException("HR access required")
+    return current_user
+
+
+async def require_technical(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> User:
+    """Require technical role."""
+    if current_user.role != "technical":
+        raise UnauthorizedException("Technical access required")
+    return current_user
 
 
 async def get_current_candidate(
@@ -70,6 +90,13 @@ async def get_current_candidate(
     return await auth_service.get_current_candidate(token)
 
 
+# Type aliases for cleaner route signatures
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+CurrentUser = Annotated[User, Depends(get_current_active_user)]
+AdminUser = Annotated[User, Depends(require_admin)]
+RecruiterUser = Annotated[User, Depends(require_recruiter)]
+HRUser = Annotated[User, Depends(require_hr)]
+TechnicalUser = Annotated[User, Depends(require_technical)]
+
 # injects the authenticated candidate's profile into the endpoint handler.
 CurrentCandidate = Annotated[CandidateProfile, Depends(get_current_candidate)]
-
