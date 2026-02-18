@@ -1374,249 +1374,284 @@ export function EnhancedGroupOverviewV2({
                 </tr>
               </thead>
               <tbody>
-                {candidateStatuses
-                  .filter(candidate => {
-                    // Apply filters
-                    if (moduleFilters.meetsCriteria !== 'all') {
-                      if (moduleFilters.meetsCriteria === 'yes' && !candidate.meetsCriteria) return false;
-                      if (moduleFilters.meetsCriteria === 'no' && candidate.meetsCriteria) return false;
-                    }
-                    if (moduleFilters.flagsFilter !== 'all') {
-                      if (moduleFilters.flagsFilter === 'integrity' && candidate.flags.length === 0) return false;
-                    }
-                    if (moduleFilters.hasHRComment) {
-                      const comments = getCandidateComments(candidate.id);
-                      if (!comments.some(c => c.author === 'hr')) return false;
-                    }
-                    if (moduleFilters.hasTechnicalComment) {
-                      const comments = getCandidateComments(candidate.id);
-                      if (!comments.some(c => c.author === 'technical')) return false;
-                    }
-                    return true;
-                  })
-                  .map((candidate) => {
+                {candidateStatuses.length === 0 ? (
+                  <tr>
+                    <td colSpan={userRole === 'recruiter' && stageState === 'review-mode' ? 9 : 8} className="p-8 text-center">
+                      <div className="flex flex-col items-center justify-center text-[#6b7280]">
+                        <Users size={40} className="mb-3 opacity-20" />
+                        <p className="font-['Arimo',sans-serif] text-[15px]">No candidates in this group yet.</p>
+                        <p className="text-[13px]">Add candidates to track their progress.</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : candidateStatuses.filter(candidate => {
+                  // Apply filters
+                  if (moduleFilters.meetsCriteria !== 'all') {
+                    if (moduleFilters.meetsCriteria === 'yes' && !candidate.meetsCriteria) return false;
+                    if (moduleFilters.meetsCriteria === 'no' && candidate.meetsCriteria) return false;
+                  }
+                  if (moduleFilters.flagsFilter !== 'all') {
+                    if (moduleFilters.flagsFilter === 'integrity' && candidate.flags.length === 0) return false;
+                  }
+                  if (moduleFilters.hasHRComment) {
                     const comments = getCandidateComments(candidate.id);
-                    return (
-                      <tr key={candidate.id} className="border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
-                        {/* Selection checkbox - HR only in review mode */}
-                        {userRole === 'recruiter' && stageState === 'review-mode' && (
+                    if (!comments.some(c => c.author === 'hr')) return false;
+                  }
+                  if (moduleFilters.hasTechnicalComment) {
+                    const comments = getCandidateComments(candidate.id);
+                    if (!comments.some(c => c.author === 'technical')) return false;
+                  }
+                  return true;
+                }).length === 0 ? (
+                  <tr>
+                    <td colSpan={userRole === 'recruiter' && stageState === 'review-mode' ? 9 : 8} className="p-8 text-center text-[#6b7280]">
+                      <p className="font-['Arimo',sans-serif] text-[15px]">No candidates match your current filters.</p>
+                    </td>
+                  </tr>
+                ) : (
+                  candidateStatuses
+                    .filter(candidate => {
+                      // Apply filters
+                      if (moduleFilters.meetsCriteria !== 'all') {
+                        if (moduleFilters.meetsCriteria === 'yes' && !candidate.meetsCriteria) return false;
+                        if (moduleFilters.meetsCriteria === 'no' && candidate.meetsCriteria) return false;
+                      }
+                      if (moduleFilters.flagsFilter !== 'all') {
+                        if (moduleFilters.flagsFilter === 'integrity' && candidate.flags.length === 0) return false;
+                      }
+                      if (moduleFilters.hasHRComment) {
+                        const comments = getCandidateComments(candidate.id);
+                        if (!comments.some(c => c.author === 'hr')) return false;
+                      }
+                      if (moduleFilters.hasTechnicalComment) {
+                        const comments = getCandidateComments(candidate.id);
+                        if (!comments.some(c => c.author === 'technical')) return false;
+                      }
+                      return true;
+                    })
+                    .map((candidate) => {
+                      const comments = getCandidateComments(candidate.id);
+                      return (
+                        <tr key={candidate.id} className="border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
+                          {/* Selection checkbox - HR only in review mode */}
+                          {userRole === 'recruiter' && stageState === 'review-mode' && (
+                            <td className="p-4">
+                              {candidate.progressionState === 'active' && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedCandidates.includes(candidate.id)}
+                                  onChange={() => handleToggleCandidateSelection(candidate.id)}
+                                  className="w-4 h-4 rounded border-gray-300 text-[#6366f1]"
+                                />
+                              )}
+                            </td>
+                          )}
                           <td className="p-4">
-                            {candidate.progressionState === 'active' && (
-                              <input
-                                type="checkbox"
-                                checked={selectedCandidates.includes(candidate.id)}
-                                onChange={() => handleToggleCandidateSelection(candidate.id)}
-                                className="w-4 h-4 rounded border-gray-300 text-[#6366f1]"
-                              />
-                            )}
-                          </td>
-                        )}
-                        <td className="p-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-[40px] h-[40px] rounded-full bg-[#ede9fe] flex items-center justify-center">
-                              <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
-                                {candidate.avatar}
-                              </span>
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => onViewCandidate(candidate.id)}
-                                  className="font-['Arimo',sans-serif] text-[14px] text-[#111827] hover:text-[#6366f1] hover:underline"
-                                >
-                                  {candidate.name}
-                                </button>
-                                {candidate.overrideApplied && (
-                                  <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] rounded-full flex items-center gap-1">
-                                    <AlertTriangle size={10} />
-                                    Override
-                                  </span>
+                            <div className="flex items-center gap-3">
+                              <div className="w-[40px] h-[40px] rounded-full bg-[#ede9fe] flex items-center justify-center">
+                                <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
+                                  {candidate.avatar}
+                                </span>
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => onViewCandidate(candidate.id)}
+                                    className="font-['Arimo',sans-serif] text-[14px] text-[#111827] hover:text-[#6366f1] hover:underline"
+                                  >
+                                    {candidate.name}
+                                  </button>
+                                  {candidate.overrideApplied && (
+                                    <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] rounded-full flex items-center gap-1">
+                                      <AlertTriangle size={10} />
+                                      Override
+                                    </span>
+                                  )}
+                                </div>
+                                {candidate.flags.length > 0 && (
+                                  <div className="flex items-center gap-1 mt-1">
+                                    {candidate.flags.map((flag, idx) => (
+                                      <span
+                                        key={idx}
+                                        className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] rounded-full"
+                                      >
+                                        {flag}
+                                      </span>
+                                    ))}
+                                  </div>
                                 )}
                               </div>
-                              {candidate.flags.length > 0 && (
-                                <div className="flex items-center gap-1 mt-1">
-                                  {candidate.flags.map((flag, idx) => (
-                                    <span
-                                      key={idx}
-                                      className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] rounded-full"
+                            </div>
+                          </td>
+                          <td className="p-4 text-center">
+                            <button
+                              onClick={() => {
+                                if (candidate.assessmentScore > 0 && onViewModuleDetail) {
+                                  onViewModuleDetail({
+                                    type: 'assessment',
+                                    candidateId: candidate.id,
+                                    candidateName: candidate.name,
+                                    score: candidate.assessmentScore,
+                                    completedDate: new Date().toLocaleDateString()
+                                  });
+                                }
+                              }}
+                              className={`flex flex-col items-center gap-1 mx-auto ${candidate.assessmentScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
+                            >
+                              {getStatusIcon(candidate.assessment)}
+                              {candidate.assessmentScore > 0 && (
+                                <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
+                                  {candidate.assessmentScore}%
+                                </span>
+                              )}
+                            </button>
+                          </td>
+                          <td className="p-4 text-center">
+                            <button
+                              onClick={() => {
+                                if (candidate.aiInterviewScore > 0 && onViewModuleDetail) {
+                                  onViewModuleDetail({
+                                    type: 'ai-interview',
+                                    candidateId: candidate.id,
+                                    candidateName: candidate.name,
+                                    score: candidate.aiInterviewScore,
+                                    completedDate: new Date().toLocaleDateString()
+                                  });
+                                }
+                              }}
+                              className={`flex flex-col items-center gap-1 mx-auto ${candidate.aiInterviewScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
+                            >
+                              {getStatusIcon(candidate.aiInterview)}
+                              {candidate.aiInterviewScore > 0 && (
+                                <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
+                                  {candidate.aiInterviewScore}%
+                                </span>
+                              )}
+                            </button>
+                          </td>
+                          <td className="p-4 text-center">
+                            {candidate.meetsCriteria !== undefined ? (
+                              <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-[12px] font-medium ${candidate.meetsCriteria
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-red-100 text-red-700'
+                                }`}>
+                                {candidate.meetsCriteria ? (
+                                  <><CheckCircle size={12} /> Yes</>
+                                ) : (
+                                  <><XCircle size={12} /> No</>
+                                )}
+                              </span>
+                            ) : (
+                              <span className="text-[#9ca3af] text-[12px]">Pending</span>
+                            )}
+                          </td>
+                          {userRole === 'technical' && (
+                            <td className="p-4 text-center">
+                              <button
+                                onClick={() => setShowVerdictModal(candidate.id)}
+                                className={`px-3 py-1 rounded-full text-[12px] font-medium ${candidate.technicalVerdict === 'pass'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : candidate.technicalVerdict === 'fail'
+                                    ? 'bg-red-100 text-red-700'
+                                    : candidate.technicalVerdict === 'conditional'
+                                      ? 'bg-amber-100 text-amber-700'
+                                      : 'bg-gray-100 text-gray-600 border border-dashed'
+                                  }`}
+                              >
+                                {candidate.technicalVerdict ? candidate.technicalVerdict : 'Set Verdict'}
+                              </button>
+                            </td>
+                          )}
+                          <td className="p-4 text-center">
+                            <button
+                              onClick={() => setShowCommentModal(candidate.id)}
+                              className="flex items-center gap-1 mx-auto px-3 py-1 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors"
+                            >
+                              <MessageSquare size={14} className="text-[#6b7280]" />
+                              <span className="text-[12px] text-[#374151]">
+                                {comments.length > 0 ? comments.length : 'Add'}
+                              </span>
+                            </button>
+                          </td>
+                          <td className="p-4 text-center">
+                            {candidate.progressionState && candidate.progressionState !== 'active' ? (
+                              <span className={`px-3 py-1 rounded-full text-[12px] font-medium ${candidate.progressionState === 'selected'
+                                ? 'bg-blue-100 text-blue-700'
+                                : candidate.progressionState === 'rejected'
+                                  ? 'bg-red-100 text-red-700'
+                                  : candidate.progressionState === 'on-hold'
+                                    ? 'bg-yellow-100 text-yellow-700'
+                                    : 'bg-gray-100 text-gray-700'
+                                }`}>
+                                {candidate.progressionState.replace('-', ' ')}
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 rounded-full text-[12px] font-medium bg-emerald-100 text-emerald-700">
+                                Active
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center justify-center gap-2">
+                              {userRole === 'recruiter' && stageState === 'review-mode' && !candidate.meetsCriteria && !candidate.overrideApplied && (
+                                <button
+                                  onClick={() => handleOverride(candidate.id)}
+                                  className="p-2 rounded-[6px] border border-orange-300 bg-orange-50 hover:bg-orange-100 transition-colors"
+                                  title="Override criteria"
+                                >
+                                  <AlertTriangle size={14} className="text-orange-600" />
+                                </button>
+                              )}
+                              {userRole === 'technical' && (
+                                <button
+                                  onClick={() => {
+                                    if (candidate.flags.length > 0) {
+                                      setShowSuspectReview(candidate.id);
+                                    } else {
+                                      showToast('No integrity flags for this candidate');
+                                    }
+                                  }}
+                                  disabled={candidate.flags.length === 0}
+                                  className="p-2 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                  <Flag size={14} className="text-[#6b7280]" />
+                                </button>
+                              )}
+                              {userRole === 'recruiter' && candidate.progressionState === 'active' && (
+                                <div className="relative group">
+                                  <button className="p-2 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
+                                    <MoreVertical size={14} className="text-[#6b7280]" />
+                                  </button>
+                                  <div className="absolute right-0 mt-1 w-[160px] bg-white border border-[#e5e7eb] rounded-[8px] shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                                    <button
+                                      onClick={() => handleMarkCandidateState(candidate.id, 'rejected')}
+                                      className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-red-600"
                                     >
-                                      {flag}
-                                    </span>
-                                  ))}
+                                      <Ban size={14} />
+                                      Mark Rejected
+                                    </button>
+                                    <button
+                                      onClick={() => handleMarkCandidateState(candidate.id, 'on-hold')}
+                                      className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-amber-600"
+                                    >
+                                      <Clock size={14} />
+                                      Mark On Hold
+                                    </button>
+                                    <button
+                                      onClick={() => handleMarkCandidateState(candidate.id, 'archived')}
+                                      className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-gray-600"
+                                    >
+                                      <Archive size={14} />
+                                      Archive
+                                    </button>
+                                  </div>
                                 </div>
                               )}
                             </div>
-                          </div>
-                        </td>
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={() => {
-                              if (candidate.assessmentScore > 0 && onViewModuleDetail) {
-                                onViewModuleDetail({
-                                  type: 'assessment',
-                                  candidateId: candidate.id,
-                                  candidateName: candidate.name,
-                                  score: candidate.assessmentScore,
-                                  completedDate: new Date().toLocaleDateString()
-                                });
-                              }
-                            }}
-                            className={`flex flex-col items-center gap-1 mx-auto ${candidate.assessmentScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
-                          >
-                            {getStatusIcon(candidate.assessment)}
-                            {candidate.assessmentScore > 0 && (
-                              <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
-                                {candidate.assessmentScore}%
-                              </span>
-                            )}
-                          </button>
-                        </td>
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={() => {
-                              if (candidate.aiInterviewScore > 0 && onViewModuleDetail) {
-                                onViewModuleDetail({
-                                  type: 'ai-interview',
-                                  candidateId: candidate.id,
-                                  candidateName: candidate.name,
-                                  score: candidate.aiInterviewScore,
-                                  completedDate: new Date().toLocaleDateString()
-                                });
-                              }
-                            }}
-                            className={`flex flex-col items-center gap-1 mx-auto ${candidate.aiInterviewScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
-                          >
-                            {getStatusIcon(candidate.aiInterview)}
-                            {candidate.aiInterviewScore > 0 && (
-                              <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
-                                {candidate.aiInterviewScore}%
-                              </span>
-                            )}
-                          </button>
-                        </td>
-                        <td className="p-4 text-center">
-                          {candidate.meetsCriteria !== undefined ? (
-                            <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-[12px] font-medium ${candidate.meetsCriteria
-                              ? 'bg-emerald-100 text-emerald-700'
-                              : 'bg-red-100 text-red-700'
-                              }`}>
-                              {candidate.meetsCriteria ? (
-                                <><CheckCircle size={12} /> Yes</>
-                              ) : (
-                                <><XCircle size={12} /> No</>
-                              )}
-                            </span>
-                          ) : (
-                            <span className="text-[#9ca3af] text-[12px]">Pending</span>
-                          )}
-                        </td>
-                        {userRole === 'technical' && (
-                          <td className="p-4 text-center">
-                            <button
-                              onClick={() => setShowVerdictModal(candidate.id)}
-                              className={`px-3 py-1 rounded-full text-[12px] font-medium ${candidate.technicalVerdict === 'pass'
-                                ? 'bg-emerald-100 text-emerald-700'
-                                : candidate.technicalVerdict === 'fail'
-                                  ? 'bg-red-100 text-red-700'
-                                  : candidate.technicalVerdict === 'conditional'
-                                    ? 'bg-amber-100 text-amber-700'
-                                    : 'bg-gray-100 text-gray-600 border border-dashed'
-                                }`}
-                            >
-                              {candidate.technicalVerdict ? candidate.technicalVerdict : 'Set Verdict'}
-                            </button>
                           </td>
-                        )}
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={() => setShowCommentModal(candidate.id)}
-                            className="flex items-center gap-1 mx-auto px-3 py-1 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors"
-                          >
-                            <MessageSquare size={14} className="text-[#6b7280]" />
-                            <span className="text-[12px] text-[#374151]">
-                              {comments.length > 0 ? comments.length : 'Add'}
-                            </span>
-                          </button>
-                        </td>
-                        <td className="p-4 text-center">
-                          {candidate.progressionState && candidate.progressionState !== 'active' ? (
-                            <span className={`px-3 py-1 rounded-full text-[12px] font-medium ${candidate.progressionState === 'selected'
-                              ? 'bg-blue-100 text-blue-700'
-                              : candidate.progressionState === 'rejected'
-                                ? 'bg-red-100 text-red-700'
-                                : candidate.progressionState === 'on-hold'
-                                  ? 'bg-yellow-100 text-yellow-700'
-                                  : 'bg-gray-100 text-gray-700'
-                              }`}>
-                              {candidate.progressionState.replace('-', ' ')}
-                            </span>
-                          ) : (
-                            <span className="px-3 py-1 rounded-full text-[12px] font-medium bg-emerald-100 text-emerald-700">
-                              Active
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-4">
-                          <div className="flex items-center justify-center gap-2">
-                            {userRole === 'recruiter' && stageState === 'review-mode' && !candidate.meetsCriteria && !candidate.overrideApplied && (
-                              <button
-                                onClick={() => handleOverride(candidate.id)}
-                                className="p-2 rounded-[6px] border border-orange-300 bg-orange-50 hover:bg-orange-100 transition-colors"
-                                title="Override criteria"
-                              >
-                                <AlertTriangle size={14} className="text-orange-600" />
-                              </button>
-                            )}
-                            {userRole === 'technical' && (
-                              <button
-                                onClick={() => {
-                                  if (candidate.flags.length > 0) {
-                                    setShowSuspectReview(candidate.id);
-                                  } else {
-                                    showToast('No integrity flags for this candidate');
-                                  }
-                                }}
-                                disabled={candidate.flags.length === 0}
-                                className="p-2 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                              >
-                                <Flag size={14} className="text-[#6b7280]" />
-                              </button>
-                            )}
-                            {userRole === 'recruiter' && candidate.progressionState === 'active' && (
-                              <div className="relative group">
-                                <button className="p-2 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
-                                  <MoreVertical size={14} className="text-[#6b7280]" />
-                                </button>
-                                <div className="absolute right-0 mt-1 w-[160px] bg-white border border-[#e5e7eb] rounded-[8px] shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
-                                  <button
-                                    onClick={() => handleMarkCandidateState(candidate.id, 'rejected')}
-                                    className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-red-600"
-                                  >
-                                    <Ban size={14} />
-                                    Mark Rejected
-                                  </button>
-                                  <button
-                                    onClick={() => handleMarkCandidateState(candidate.id, 'on-hold')}
-                                    className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-amber-600"
-                                  >
-                                    <Clock size={14} />
-                                    Mark On Hold
-                                  </button>
-                                  <button
-                                    onClick={() => handleMarkCandidateState(candidate.id, 'archived')}
-                                    className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-gray-600"
-                                  >
-                                    <Archive size={14} />
-                                    Archive
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        </tr>
+                      );
+                    }))}
               </tbody>
             </table>
           </div>

@@ -80,11 +80,6 @@ export function Sidebar() {
           <BookOpen size={24} />
         </NavLink>
 
-        {/* Settings Button */}
-        <NavLink to="/recruiter/settings" className={({ isActive }) => getLinkClass(isActive)} title="Settings">
-          <Settings size={24} />
-        </NavLink>
-
         {/* Reviews Button - Technical Only */}
         {userRole === 'technical' && (
           <NavLink to="/recruiter/reviews" className={({ isActive }) => getLinkClass(isActive)} title="Reviews">
@@ -93,6 +88,11 @@ export function Sidebar() {
             </div>
           </NavLink>
         )}
+
+        {/* Settings Button */}
+        <NavLink to="/recruiter/settings" className={({ isActive }) => getLinkClass(isActive)} title="Settings">
+          <Settings size={24} />
+        </NavLink>
       </div>
 
       {/* Sign Out */}
