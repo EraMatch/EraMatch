@@ -266,7 +266,7 @@ class GroupStageConfig(SQLModel, table=True):
     state: str = Field(default="not_started", max_length=20)
     started_at: datetime | None = Field(default=None)
     closed_at: datetime | None = Field(default=None)
-    started_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.id")
+    started_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -327,7 +327,7 @@ class CandidateApplication(SQLModel, table=True):
     source: str | None = Field(default=None, max_length=50)
     status: str = Field(default="applied", max_length=30)
     applied_at: datetime = Field(default_factory=datetime.utcnow)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    # created_at: datetime = Field(default_factory=datetime.utcnow) # Removed as inconsistent with DB
     is_deleted: bool = Field(default=False)
 
 
@@ -466,7 +466,7 @@ class AIInterviewConfig(SQLModel, table=True):
     answer_time_seconds: int | None = Field(default=120)
     questions: dict = Field(sa_column=Column(JSONB))
     live_interview_context: str | None = Field(default=None, sa_column=Column(Text))
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.id")
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)

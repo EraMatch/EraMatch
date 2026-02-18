@@ -336,6 +336,8 @@ class AuthService:
         """Get current user from token."""
         try:
             payload = decode_token(token)
+            if not payload:
+                raise UnauthorizedException("Invalid token")
             user_id = payload.get("sub")
             role = payload.get("role")
             

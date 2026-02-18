@@ -10,8 +10,9 @@ from decimal import Decimal
 from uuid import UUID
 
 import asyncio
-from sqlmodel import select, func
-from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlalchemy import select, func, or_, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import NotFoundException
 from app.models import (
@@ -96,7 +97,6 @@ class GroupService:
             raise NotFoundException("Position not found for group")
         return pos
 
-    @staticmethod
     def _parse_flow(raw: list | dict | None) -> list[FiltrationFlowStage]:
         """Normalise the JSON filtration_flow stored on the group."""
         if raw is None:
@@ -112,157 +112,9 @@ class GroupService:
                 ))
         return result
 
-    # ── 1. GET /recruiter/groups/{groupId} ────────────────────────────────────
-
-    async def get_group_details(self, group_id: UUID) -> GroupDetailResponse:
-        group = await self._get_group(group_id)
-        position = await self._get_position_for_group(group)
-
-        # Assigned HR
-        assigned_hr: AssignedHRResponse | None = None
-        if group.assigned_hr_id:
-            res_hr = await self.session.execute(
-                select(OrganizationUser).where(OrganizationUser.id == group.assigned_hr_id)
-            )
-            hr = res_hr.scalars().first()
-            if hr:
-                assigned_hr = AssignedHRResponse(id=hr.id, name=f"{hr.first_name} {hr.last_name}")
-
-        # Filtration flow from GroupStageConfig rows (authoritative) or group JSON
-        stage_configs_res = await self.session.execute(
-            select(GroupStageConfig)
-            .where(GroupStageConfig.group_id == group_id)
-            .order_by(GroupStageConfig.stage_order)
-        )
-        stage_configs = stage_configs_res.scalars().all()
-
-        if stage_configs:
-            flow = [
-                FiltrationFlowStage(order=sc.stage_order, stage=sc.stage_type, status=sc.state)
-                for sc in stage_configs
-            ]
-        else:
-            flow = self._parse_flow(group.filtration_flow)
-
-        # Assessment / interview config ids from stage configs
-        assessment_config_id: UUID | None = None
-        interview_config_id: UUID | None = None
-        for sc in stage_configs:
-            if sc.stage_type == "assessment" and sc.acceptance_criteria:
-                assessment_config_id = sc.acceptance_criteria.get("assessment_id") if isinstance(sc.acceptance_criteria, dict) else None
-            if sc.stage_type == "ai_interview" and sc.acceptance_criteria:
-                interview_config_id = sc.acceptance_criteria.get("interview_config_id") if isinstance(sc.acceptance_criteria, dict) else None
-
-        # Acceptance criteria — merge from all stage configs
-        criteria = AcceptanceCriteriaResponse()
-        for sc in stage_configs:
-            if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
-                if "min_technical_score" in sc.acceptance_criteria:
-                    criteria.min_technical_score = sc.acceptance_criteria["min_technical_score"]
-                if "allowed_integrity_risk" in sc.acceptance_criteria:
-                    criteria.allowed_integrity_risk = sc.acceptance_criteria["allowed_integrity_risk"]
-                if "required_verdict" in sc.acceptance_criteria:
-                    criteria.required_verdict = sc.acceptance_criteria["required_verdict"]
-
-        return GroupDetailResponse(
-            id=group.id,
-            name=group.group_name,
-            position_id=group.position_id,
-            project_id=position.project_id,
-            organization_id=group.organization_id,
-            assigned_hr=assigned_hr,
-            created_date=group.created_at,
-            status=group.status,
-            filtration_flow=flow,
-            assessment_config_id=assessment_config_id,
-            interview_config_id=interview_config_id,
-            acceptance_criteria=criteria,
-        )
-
-    # ── 2. GET /recruiter/groups/{groupId}/stats ──────────────────────────────
-
-    async def get_group_stats(self, group_id: UUID) -> GroupStatsResponse:
-        await self._get_group(group_id)
-
-        # Application IDs in this group
-        app_ids_res = await self.session.execute(
-            select(CandidateApplication.id).where(
-                CandidateApplication.group_id == group_id,
-                CandidateApplication.is_deleted == False,
-            )
-        )
-        app_ids = app_ids_res.scalars().all()
-        total = len(app_ids)
-
-        if not app_ids:
-            return GroupStatsResponse()
-
-        # Assessment stats
-        q_assess = select(
-            func.count().label("completed"),
-            func.avg(CandidateStageProgress.score).label("avg"),
-        ).where(
-            CandidateStageProgress.group_id == group_id,
-            CandidateStageProgress.stage_type == "assessment",
-            CandidateStageProgress.status == "completed",
-        )
-
-        # AI interview stats
-        q_ai = select(
-            func.count().label("completed"),
-            func.avg(CandidateStageProgress.score).label("avg"),
-        ).where(
-            CandidateStageProgress.group_id == group_id,
-            CandidateStageProgress.stage_type == "ai_interview",
-            CandidateStageProgress.status == "completed",
-        )
-
-        # Offers
-        q_offers = select(func.count()).where(Offer.application_id.in_(app_ids))
-
-        # Flags
-        q_flags = select(func.count()).where(ProctoringFlag.application_id.in_(app_ids))
-
-        # Review count — candidates who finished all stages but no offer yet
-        q_review = select(func.count()).where(
-            CandidateApplication.id.in_(app_ids),
-            CandidateApplication.status.in_(["in_pipeline", "screening"]),
-        )
-
-        res_assess, res_ai, res_offers, res_flags, res_review = await asyncio.gather(
-            self.session.execute(q_assess),
-            self.session.execute(q_ai),
-            self.session.execute(q_offers),
-            self.session.execute(q_flags),
-            self.session.execute(q_review),
-        )
-
-        assess_row = res_assess.first()
-        ai_row = res_ai.first()
-
-        return GroupStatsResponse(
-            technical_assessment=StageStatsResponse(
-                completed=assess_row.completed if assess_row else 0,
-                total=total,
-                avg_score=round(float(assess_row.avg or 0), 1) if assess_row else 0.0,
-            ),
-            ai_interview=StageStatsResponse(
-                completed=ai_row.completed if ai_row else 0,
-                total=total,
-                avg_score=round(float(ai_row.avg or 0), 1) if ai_row else 0.0,
-            ),
-            review={"count": res_review.scalar() or 0},
-            offer={"count": res_offers.scalar() or 0},
-            flagged={"count": res_flags.scalar() or 0},
-        )
-
-    # ── 3. GET /recruiter/groups/{groupId}/candidates/progress ───────────────
-
-    async def get_candidate_progress(
-        self, group_id: UUID, filter: str | None = None, sort: str | None = None
-    ) -> CandidateProgressResponse:
-        await self._get_group(group_id)
-
+    async def _get_candidates_progress_data(
+        self, group_id: UUID, filter_str: str | None = None, sort_str: str | None = None
+    ) -> list[CandidateProgressItem]:
         # Acceptance criteria for meets_criteria calculation
         sc_res = await self.session.execute(
             select(GroupStageConfig).where(GroupStageConfig.group_id == group_id)
@@ -288,22 +140,24 @@ class GroupService:
         rows = res.all()
 
         if not rows:
-            return CandidateProgressResponse()
+            return []
 
         app_ids = [app.id for app, _ in rows]
 
         # Fetch stage progress for all apps in one query
         prog_res = await self.session.execute(
-            select(CandidateStageProgress).where(
+            select(CandidateStageProgress, GroupStageConfig.stage_type)
+            .join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id)
+            .where(
                 CandidateStageProgress.application_id.in_(app_ids),
-                CandidateStageProgress.group_id == group_id,
+                GroupStageConfig.group_id == group_id,
             )
         )
-        all_progress = prog_res.scalars().all()
+        all_progress = prog_res.all()
         # Index by (application_id, stage_type)
         prog_map: dict[tuple[UUID, str], CandidateStageProgress] = {}
-        for p in all_progress:
-            prog_map[(p.application_id, p.stage_type)] = p
+        for p, s_type in all_progress:
+            prog_map[(p.application_id, s_type)] = p
 
         # Fetch flags
         flag_res = await self.session.execute(
@@ -375,10 +229,10 @@ class GroupService:
                 status=app.status.replace("_", " ").title() if app.status else "Active",
                 has_notes=app.id in apps_with_notes,
             ))
-
-        # Apply optional filters
-        if filter:
-            fl = filter.lower()
+        
+        # Apply filters
+        if filter_str:
+            fl = filter_str.lower()
             if fl == "completed":
                 items = [i for i in items if i.assessment.status == "completed" and i.ai_interview.status == "completed"]
             elif fl == "flagged":
@@ -386,13 +240,211 @@ class GroupService:
             elif fl == "pending":
                 items = [i for i in items if i.assessment.status != "completed" or i.ai_interview.status != "completed"]
 
-        # Apply optional sort
-        if sort:
-            if sort == "score":
+        # Apply sort
+        if sort_str:
+            if sort_str == "score":
                 items.sort(key=lambda i: (i.assessment.score or 0), reverse=True)
-            elif sort == "name":
+            elif sort_str == "name":
                 items.sort(key=lambda i: i.name.lower())
 
+        return items
+
+    # ── 1. GET /recruiter/groups/{groupId} ────────────────────────────────────
+
+    async def get_group_details(self, group_id: UUID) -> GroupDetailResponse:
+        group = await self._get_group(group_id)
+        position = await self._get_position_for_group(group)
+
+        # Assigned HR
+        assigned_hr: AssignedHRResponse | None = None
+        if group.assigned_hr_id:
+            res_hr = await self.session.execute(
+                select(OrganizationUser).where(OrganizationUser.id == group.assigned_hr_id)
+            )
+            hr = res_hr.scalars().first()
+            if hr:
+                assigned_hr = AssignedHRResponse(id=hr.id, name=f"{hr.first_name} {hr.last_name}")
+
+        # Filtration flow from GroupStageConfig rows (authoritative) or group JSON
+        stage_configs_res = await self.session.execute(
+            select(GroupStageConfig)
+            .where(GroupStageConfig.group_id == group_id)
+            .order_by(GroupStageConfig.stage_order)
+        )
+        stage_configs = stage_configs_res.scalars().all()
+
+        if stage_configs:
+            flow = [
+                FiltrationFlowStage(order=sc.stage_order, stage=sc.stage_type, status=sc.state)
+                for sc in stage_configs
+            ]
+        else:
+            flow = self._parse_flow(group.filtration_flow)
+
+        # Assessment / interview config ids from stage configs
+        assessment_config_id: UUID | None = None
+        interview_config_id: UUID | None = None
+        for sc in stage_configs:
+            if sc.stage_type == "assessment" and sc.acceptance_criteria:
+                assessment_config_id = sc.acceptance_criteria.get("assessment_id") if isinstance(sc.acceptance_criteria, dict) else None
+            if sc.stage_type == "ai_interview" and sc.acceptance_criteria:
+                interview_config_id = sc.acceptance_criteria.get("interview_config_id") if isinstance(sc.acceptance_criteria, dict) else None
+
+        # Acceptance criteria — merge from all stage configs
+        criteria = AcceptanceCriteriaResponse()
+        for sc in stage_configs:
+            if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
+                if "min_technical_score" in sc.acceptance_criteria:
+                    criteria.min_technical_score = sc.acceptance_criteria["min_technical_score"]
+                if "allowed_integrity_risk" in sc.acceptance_criteria:
+                    criteria.allowed_integrity_risk = sc.acceptance_criteria["allowed_integrity_risk"]
+                if "required_verdict" in sc.acceptance_criteria:
+                    criteria.required_verdict = sc.acceptance_criteria["required_verdict"]
+
+        # Fetch detailed candidates
+        candidates = await self._get_candidates_progress_data(group_id)
+
+        # Calculate pipeline stages
+        pipeline_stages = []
+        from app.schemas.group import PipelineStage
+        
+        # Helper specific to frontend display names
+        stage_names = {
+            "assessment": "Technical Assessment",
+            "ai_interview": "AI Interview",
+            "live_interview": "Live Interview",
+            "review": "Review",
+            "offer": "Offer"
+        }
+
+        # Use flow to determine stages
+        for stage_conf in flow:
+            st_type = stage_conf.stage.lower().replace("-", "_") # normalize
+            st_name = stage_names.get(st_type, stage_conf.stage.title())
+            
+            # Calculate stats
+            total_c = len(candidates)
+            completed_c = 0
+            pending_c = 0
+            
+            if st_type == "assessment":
+                completed_c = sum(1 for c in candidates if c.assessment.status == "completed")
+                pending_c = sum(1 for c in candidates if c.assessment.status != "completed")
+            elif st_type == "ai_interview":
+                completed_c = sum(1 for c in candidates if c.ai_interview.status == "completed")
+                pending_c = sum(1 for c in candidates if c.ai_interview.status != "completed")
+            # TODO: Add logic for other stages if present in candidates model
+            
+            pipeline_stages.append(PipelineStage(
+                id=stage_conf.stage.replace("_", "-"), # Normalize to frontend format (ai-interview)
+                name=st_name,
+                completed=completed_c,
+                total=total_c,
+                pending=pending_c,
+                state=stage_conf.status or "not-started"
+            ))
+
+        return GroupDetailResponse(
+            id=group.id,
+            name=group.group_name,
+            position_id=group.position_id,
+            project_id=position.project_id,
+            organization_id=group.organization_id,
+            assigned_hr=assigned_hr,
+            created_date=group.created_at,
+            status=group.status,
+            filtration_flow=flow,
+            assessment_config_id=assessment_config_id,
+            interview_config_id=interview_config_id,
+            acceptance_criteria=criteria,
+            candidates=candidates,
+            pipeline_stages=pipeline_stages
+        )
+
+    # ── 2. GET /recruiter/groups/{groupId}/stats ──────────────────────────────
+
+    async def get_group_stats(self, group_id: UUID) -> GroupStatsResponse:
+        await self._get_group(group_id)
+
+        # Application IDs in this group
+        app_ids_res = await self.session.execute(
+            select(CandidateApplication.id).where(
+                CandidateApplication.group_id == group_id,
+                CandidateApplication.is_deleted == False,
+            )
+        )
+        app_ids = app_ids_res.scalars().all()
+        total = len(app_ids)
+
+        if not app_ids:
+            return GroupStatsResponse()
+
+        # Assessment stats
+        q_assess = select(
+            func.count().label("completed"),
+            func.avg(CandidateStageProgress.score).label("avg"),
+        ).join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id).where(
+            GroupStageConfig.group_id == group_id,
+            GroupStageConfig.stage_type == "assessment",
+            CandidateStageProgress.status == "completed",
+        )
+
+        # AI interview stats
+        q_ai = select(
+            func.count().label("completed"),
+            func.avg(CandidateStageProgress.score).label("avg"),
+        ).join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id).where(
+            GroupStageConfig.group_id == group_id,
+            GroupStageConfig.stage_type == "ai_interview",
+            CandidateStageProgress.status == "completed",
+        )
+
+        # Offers
+        q_offers = select(func.count()).where(Offer.application_id.in_(app_ids))
+
+        # Flags
+        q_flags = select(func.count()).where(ProctoringFlag.application_id.in_(app_ids))
+
+        # Review count — candidates who finished all stages but no offer yet
+        q_review = select(func.count()).where(
+            CandidateApplication.id.in_(app_ids),
+            CandidateApplication.status.in_(["in_pipeline", "screening"]),
+        )
+
+        res_assess, res_ai, res_offers, res_flags, res_review = await asyncio.gather(
+            self.session.execute(q_assess),
+            self.session.execute(q_ai),
+            self.session.execute(q_offers),
+            self.session.execute(q_flags),
+            self.session.execute(q_review),
+        )
+
+        assess_row = res_assess.first()
+        ai_row = res_ai.first()
+
+        return GroupStatsResponse(
+            technical_assessment=StageStatsResponse(
+                completed=assess_row.completed if assess_row else 0,
+                total=total,
+                avg_score=round(float(assess_row.avg or 0), 1) if assess_row else 0.0,
+            ),
+            ai_interview=StageStatsResponse(
+                completed=ai_row.completed if ai_row else 0,
+                total=total,
+                avg_score=round(float(ai_row.avg or 0), 1) if ai_row else 0.0,
+            ),
+            review={"count": res_review.scalar() or 0},
+            offer={"count": res_offers.scalar() or 0},
+            flagged={"count": res_flags.scalar() or 0},
+        )
+
+    # ── 3. GET /recruiter/groups/{groupId}/candidates/progress ───────────────
+
+    async def get_candidate_progress(
+        self, group_id: UUID, filter: str | None = None, sort: str | None = None
+    ) -> CandidateProgressResponse:
+        await self._get_group(group_id)
+        items = await self._get_candidates_progress_data(group_id, filter, sort)
         return CandidateProgressResponse(candidates=items)
 
     # ── 4. POST /recruiter/groups/{groupId}/stages/start ─────────────────────
@@ -430,8 +482,7 @@ class GroupService:
             prog_res = await self.session.execute(
                 select(CandidateStageProgress).where(
                     CandidateStageProgress.application_id == app.id,
-                    CandidateStageProgress.group_id == group_id,
-                    CandidateStageProgress.stage_type == stage,
+                    CandidateStageProgress.stage_id == stage_config.stage_id,
                 )
             )
             prog = prog_res.scalars().first()
@@ -442,13 +493,9 @@ class GroupService:
                     self.session.add(prog)
                     invitations_sent += 1
             else:
-                # Determine stage order
-                order = stage_config.stage_order if stage_config else 1
                 new_prog = CandidateStageProgress(
                     application_id=app.id,
-                    group_id=group_id,
-                    stage_type=stage,
-                    stage_order=order,
+                    stage_id=stage_config.stage_id,
                     status="unlocked",
                     started_at=datetime.now(timezone.utc),
                 )
@@ -606,6 +653,37 @@ class GroupService:
                 c.status,
             ])
         return buf.getvalue()
+
+    async def delete_group(self, group_id: UUID) -> None:
+        """Soft delete a group and release all candidates."""
+        try:
+            # Check if group exists
+            await self._get_group(group_id)
+
+            gid_str = str(group_id)
+
+            # 1. Release candidates (unlink from group)
+            await self.session.execute(
+                text(f"UPDATE candidate_applications SET group_id = NULL WHERE group_id = '{gid_str}'")
+            )
+
+            # 2. Soft delete group
+            await self.session.execute(
+                text(f"UPDATE candidate_groups SET status = 'archived' WHERE group_id = '{gid_str}'")
+            )
+            
+            await self.session.commit()
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+
+    async def rename_group(self, group_id: UUID, new_name: str) -> GroupDetailResponse:
+        """Rename a group."""
+        group = await self._get_group(group_id)
+        group.group_name = new_name
+        self.session.add(group)
+        await self.session.commit()
+        return await self.get_group_details(group_id)
 
     # ── 7. GET /recruiter/groups/{groupId}/assessments/monitoring ─────────────
 
@@ -979,3 +1057,88 @@ class GroupService:
                 for f in flags
             ]
         )
+
+    async def create_group(self, data: GroupCreateRequest) -> CandidateGroup:
+        """Create a new candidate group."""
+        # 1. Validate Position
+        from app.models import Position
+        query_pos = select(Position).where(
+            Position.id == data.position_id,
+            Position.organization_id == self.org_id
+        )
+        res_pos = await self.session.execute(query_pos)
+        position = res_pos.scalars().first()
+        if not position:
+            raise NotFoundException("Position not found")
+
+        # 2. Create Group
+        group = CandidateGroup(
+            position_id=data.position_id,
+            organization_id=self.org_id,
+            group_name=data.name,
+            assigned_hr_id=position.assigned_hr_id,
+            assigned_tech_id=position.assigned_tech_id,
+            # filtration_flow=... logic for default flow or custom query
+            filtration_flow=[
+                {"stage": "screening", "status": "active", "order": 1},
+                {"stage": "assessment", "status": "pending", "order": 2},
+                {"stage": "interview", "status": "pending", "order": 3}
+            ],
+            status="active",
+            created_by_user_id=self.user.id
+        )
+        self.session.add(group)
+        await self.session.flush()
+
+        # 3. Create Group Stages
+        # Should create GroupStageConfig for each stage in flow
+        stage_configs = []
+        for stage in group.filtration_flow:
+            stage_config = GroupStageConfig(
+                group_id=group.id,
+                organization_id=self.org_id,
+                stage_type=stage["stage"],
+                stage_order=stage["order"],
+                state="active" if stage["order"] == 1 else "not_started"
+            )
+            self.session.add(stage_config)
+            stage_configs.append(stage_config)
+        await self.session.flush()
+        
+        # 4. Associate Candidates
+        # candidate_ids in request are actually Application IDs (app.id) 
+        # returned by get_position_details API.
+        for app_id in data.candidate_ids:
+            # Fetch application
+            q_app = select(CandidateApplication).where(
+                CandidateApplication.id == app_id,
+                CandidateApplication.position_id == data.position_id
+            )
+            res_app = await self.session.execute(q_app)
+            app = res_app.scalars().first()
+            
+            if app:
+                app.group_id = group.id
+                self.session.add(app)
+                
+                # Create Stage Progress for the first stage
+                first_stage = next((s for s in stage_configs if s.stage_order == 1), None)
+                if first_stage:
+                     q_prog = select(CandidateStageProgress).where(
+                         CandidateStageProgress.application_id == app.id,
+                         CandidateStageProgress.stage_id == first_stage.stage_id
+                     )
+                     formatted_res_prog = await self.session.execute(q_prog)
+                     existing_prog = formatted_res_prog.scalars().first()
+                     if not existing_prog:
+                         progress = CandidateStageProgress(
+                             application_id=app.id,
+                             stage_id=first_stage.stage_id,
+                             status="in_progress",
+                             started_at=datetime.utcnow()
+                         )
+                         self.session.add(progress)
+
+        await self.session.commit()
+        await self.session.refresh(group)
+        return group

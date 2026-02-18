@@ -26,6 +26,7 @@ from app.schemas.group import (
     GroupDetailResponse,
     GroupStatsResponse,
     CandidateProgressResponse,
+    GroupUpdateRequest,
     StartStageRequest,
     StartStageResponse,
     ActivityLogResponse,
@@ -81,7 +82,37 @@ async def get_group_details(
     """Retrieve complete group configuration including metadata, assigned HR,
     filtration flow, and acceptance criteria."""
     svc = GroupService(session, current_user)
+    svc = GroupService(session, current_user)
     return await svc.get_group_details(group_id)
+
+
+@router.patch(
+    "/recruiter/groups/{group_id}",
+    response_model=GroupDetailResponse,
+)
+async def update_group(
+    group_id: UUID,
+    body: GroupUpdateRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Update group details (rename)."""
+    svc = GroupService(session, current_user)
+    return await svc.rename_group(group_id, body.name)
+
+
+@router.delete(
+    "/recruiter/groups/{group_id}",
+    status_code=204,
+)
+async def delete_group(
+    group_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Soft delete a group and release all assigned candidates."""
+    svc = GroupService(session, current_user)
+    await svc.delete_group(group_id)
 
 
 # ─── Group Statistics ────────────────────────────────────────────────────────

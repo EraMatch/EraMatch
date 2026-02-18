@@ -25,38 +25,18 @@ class AcceptanceCriteriaResponse(BaseModel):
     required_verdict: str = "Pass"
 
 
-class GroupDetailResponse(BaseModel):
-    id: UUID
+class PipelineStage(BaseModel):
+    id: str
     name: str
-    position_id: UUID
-    project_id: UUID
-    organization_id: UUID
-    assigned_hr: AssignedHRResponse | None = None
-    created_date: datetime
-    status: str
-    filtration_flow: list[FiltrationFlowStage] = []
-    assessment_config_id: UUID | None = None
-    interview_config_id: UUID | None = None
-    acceptance_criteria: AcceptanceCriteriaResponse = Field(default_factory=AcceptanceCriteriaResponse)
-
-
-# ─── Get Group Statistics ─────────────────────────────────────────────────────
-
-class StageStatsResponse(BaseModel):
     completed: int = 0
     total: int = 0
-    avg_score: float = 0.0
+    pending: int = 0
+    state: str = "not-started"
+    start_date: datetime | None = None
+    expected_end_date: datetime | None = None
+    actual_end_date: datetime | None = None
 
 
-class GroupStatsResponse(BaseModel):
-    technical_assessment: StageStatsResponse = Field(default_factory=StageStatsResponse)
-    ai_interview: StageStatsResponse = Field(default_factory=StageStatsResponse)
-    review: dict = Field(default_factory=lambda: {"count": 0})
-    offer: dict = Field(default_factory=lambda: {"count": 0})
-    flagged: dict = Field(default_factory=lambda: {"count": 0})
-
-
-# ─── Candidate Progress Matrix ───────────────────────────────────────────────
 
 class CandidateStageStatus(BaseModel):
     score: float | None = None
@@ -85,6 +65,62 @@ class CandidateProgressItem(BaseModel):
 
 class CandidateProgressResponse(BaseModel):
     candidates: list[CandidateProgressItem] = []
+
+
+class GroupDetailResponse(BaseModel):
+    id: UUID
+    name: str
+    position_id: UUID
+    project_id: UUID
+    organization_id: UUID
+    assigned_hr: AssignedHRResponse | None = None
+    created_date: datetime
+    status: str
+    filtration_flow: list[FiltrationFlowStage] = []
+    assessment_config_id: UUID | None = None
+    interview_config_id: UUID | None = None
+    acceptance_criteria: AcceptanceCriteriaResponse = Field(default_factory=AcceptanceCriteriaResponse)
+    candidates: list[CandidateProgressItem] = []
+    pipeline_stages: list[PipelineStage] = Field(default_factory=list, alias="pipelineStages")
+
+    class Config:
+        populate_by_name = True
+
+
+# ─── Get Group Statistics ─────────────────────────────────────────────────────
+
+class StageStatsResponse(BaseModel):
+    completed: int = 0
+    total: int = 0
+    avg_score: float = 0.0
+
+
+class GroupStatsResponse(BaseModel):
+    technical_assessment: StageStatsResponse = Field(default_factory=StageStatsResponse)
+    ai_interview: StageStatsResponse = Field(default_factory=StageStatsResponse)
+    review: dict = Field(default_factory=lambda: {"count": 0})
+    offer: dict = Field(default_factory=lambda: {"count": 0})
+    flagged: dict = Field(default_factory=lambda: {"count": 0})
+
+
+# ─── Candidate Progress Matrix ───────────────────────────────────────────────
+
+
+
+
+# ─── Group Creation ──────────────────────────────────────────────────────────
+
+class GroupCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    position_id: UUID
+    candidate_ids: list[UUID] = Field(default_factory=list)
+    description: str | None = None
+    ai_ranking_used: bool = False
+    nlp_query: str | None = None
+
+
+class GroupUpdateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
 
 
 # ─── Start Stage ──────────────────────────────────────────────────────────────

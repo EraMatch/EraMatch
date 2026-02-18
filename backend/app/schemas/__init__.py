@@ -25,6 +25,7 @@ from app.schemas.candidate import (
     ApplicationCreate,
     ApplicationUpdate,
     ApplicationResponse,
+    CandidateUploadResponse,
 )
 from app.schemas.project import (
     ProjectCreate,
@@ -81,6 +82,7 @@ from app.schemas.group import (
     CandidateDetailResponse,
     IntegrityFlagsResponse,
     ExportGroupRequest,
+    GroupCreateRequest,
 )
 
 __all__ = [
@@ -103,6 +105,7 @@ __all__ = [
     "ApplicationCreate",
     "ApplicationUpdate",
     "ApplicationResponse",
+    "CandidateUploadResponse",
     # Project
     "ProjectCreate",
     "ProjectUpdate",
@@ -169,4 +172,5 @@ __all__ = [
     "CandidateDetailResponse",
     "IntegrityFlagsResponse",
     "ExportGroupRequest",
+    "GroupCreateRequest",
 ]

@@ -7,7 +7,7 @@ from app.models import (
     User, Organization, Position, Project, CandidateApplication, Hire, 
     CandidateStageProgress, OrganizationUser, UserPermission, PaymentMethod,
     SystemLog, CandidateGroup, Offer, SubscriptionPlan, ProctoringFlag,
-    ApprovalRequest, Notification
+    ApprovalRequest, Notification, GroupStageConfig
 )
 from app.core.exceptions import ForbiddenException
 from app.schemas.admin import (
@@ -195,8 +195,10 @@ class AdminService:
             # Calculate from CandidateStageProgress timestamps
             # We want average days per stage for this organization
             q_stages = select(
-                CandidateStageProgress.stage_type,
+                GroupStageConfig.stage_type,
                 func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
+            ).join(
+                GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
             ).join(
                 CandidateApplication
             ).join(
@@ -210,7 +212,7 @@ class AdminService:
                 Project.is_deleted == False,
 CandidateStageProgress.completed_at.isnot(None),
                 CandidateStageProgress.started_at.isnot(None)
-            ).group_by(CandidateStageProgress.stage_type)
+            ).group_by(GroupStageConfig.stage_type)
             
             res_stages = await self.session.execute(q_stages)
             stage_data = res_stages.all()
@@ -276,6 +278,8 @@ CandidateStageProgress.completed_at.isnot(None),
             
             # Quality: Assessment scores
             q_scores = select(CandidateStageProgress.score).join(
+                GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
+            ).join(
                 CandidateApplication
             ).join(
                 Position, CandidateApplication.position_id == Position.id
@@ -286,7 +290,7 @@ CandidateStageProgress.completed_at.isnot(None),
                 CandidateApplication.is_deleted == False,
                 Position.is_deleted == False,
                 Project.is_deleted == False,
-CandidateStageProgress.stage_type == "assessment",
+                GroupStageConfig.stage_type == "assessment",
                 CandidateStageProgress.score.isnot(None)
             )
             res_scores = await self.session.execute(q_scores)
@@ -458,6 +462,8 @@ CandidateStageProgress.stage_type == "assessment",
 
             # 4. Quality (One query for all scores)
             q_scores = select(CandidateStageProgress.score).join(
+                GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
+            ).join(
                 CandidateApplication
             ).join(
                 Position, CandidateApplication.position_id == Position.id
@@ -468,7 +474,7 @@ CandidateStageProgress.stage_type == "assessment",
                 CandidateApplication.is_deleted == False,
                 Position.is_deleted == False,
                 Project.is_deleted == False,
-CandidateStageProgress.stage_type == "assessment",
+                GroupStageConfig.stage_type == "assessment",
                 CandidateStageProgress.score.isnot(None)
             )
             
@@ -484,8 +490,10 @@ CandidateStageProgress.stage_type == "assessment",
 
             # 5. Real Stage Timing
             q_stages = select(
-                CandidateStageProgress.stage_type,
+                GroupStageConfig.stage_type,
                 func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
+            ).join(
+                GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
             ).join(
                 CandidateApplication
             ).join(
@@ -499,7 +507,7 @@ CandidateStageProgress.stage_type == "assessment",
                 Project.is_deleted == False,
 CandidateStageProgress.completed_at.isnot(None),
                 CandidateStageProgress.started_at.isnot(None)
-            ).group_by(CandidateStageProgress.stage_type)
+            ).group_by(GroupStageConfig.stage_type)
             
             res_stages = await self.session.execute(q_stages)
             stage_data = res_stages.all()

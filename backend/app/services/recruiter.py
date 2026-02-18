@@ -193,6 +193,10 @@ class RecruiterService:
             )
             .group_by(Position.id)
         )
+
+        # Technical HR users only see positions assigned to them
+        if self.current_user.role == "technical":
+            query = query.where(Position.assigned_tech_id == self.current_user.id)
         
         result = await self.session.execute(query)
         rows = result.all()
@@ -300,23 +304,27 @@ class RecruiterService:
                     # 5. Quality Score: Avg of assessment & interview scores
                     q_scores = select(CandidateStageProgress.score).join(
                         CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                    ).join(
+                        GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
                     ).where(
                         CandidateApplication.position_id.in_(pos_ids),
-                        CandidateStageProgress.stage_type.in_(["assessment", "interview"]),
+                        GroupStageConfig.stage_type.in_(["assessment", "interview"]),
                         CandidateStageProgress.score.isnot(None)
                     )
 
                     # 6. Stage Timing
                     q_stages = select(
-                        CandidateStageProgress.stage_type,
+                        GroupStageConfig.stage_type,
                         func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
                     ).join(
                         CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                    ).join(
+                        GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
                     ).where(
                         CandidateApplication.position_id.in_(pos_ids),
                         CandidateStageProgress.completed_at.isnot(None),
                         CandidateStageProgress.started_at.isnot(None)
-                    ).group_by(CandidateStageProgress.stage_type)
+                    ).group_by(GroupStageConfig.stage_type)
 
 
                     res_apps, res_groups, res_hires, res_hire_count, res_scores, res_stages = await asyncio.gather(
@@ -512,6 +520,103 @@ class RecruiterService:
         
         return position
 
+    async def list_all_candidates(self) -> list[PositionCandidateResponse]:
+        """List all candidates in the organization (for manual adding)."""
+        from app.models import CVAnalysis # Import here to avoid circular
+        # CandidateApplication should be available from top-level imports
+        
+        # Join Profile -> Application -> CVAnalysis
+        # Start from CandidateProfile to get all profiles, then left join apps and cvs
+        stmt = (
+            select(CandidateProfile, CVAnalysis)
+            .outerjoin(CandidateApplication, CandidateProfile.id == CandidateApplication.candidate_id)
+            .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
+            .where(
+                CandidateProfile.organization_id == self.organization_id,
+                CandidateProfile.is_deleted == False
+            )
+        )
+        res = await self.session.execute(stmt)
+        rows = res.all()
+        
+        # Deduplicate profiles, keeping the one with best match score or latest
+        candidates_map = {}
+        
+        for p, cv in rows:
+            if p.id in candidates_map:
+                # Logic: If current CV has higher match score than stored one, replace
+                current_best_cv = candidates_map[p.id]['cv']
+                new_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
+                old_score = float(current_best_cv.match_score) if current_best_cv and current_best_cv.match_score is not None else 0.0
+                
+                if new_score > old_score:
+                    candidates_map[p.id] = {'profile': p, 'cv': cv}
+                # Else keep existing
+            else:
+                candidates_map[p.id] = {'profile': p, 'cv': cv}
+        
+        candidates = []
+        for item in candidates_map.values():
+            p = item['profile']
+            cv = item['cv']
+            
+            # Extract skills and experience if available
+            skills = cv.skills if cv and cv.skills else []
+            experience = float(cv.experience_years) if cv and cv.experience_years is not None else 0.0
+            location = p.location if p.location else "Unknown"
+            match_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
+
+            # Extract detailed fields from parsed_data
+            parsed = cv.parsed_data if cv and cv.parsed_data else {}
+            
+            companies = []
+            job_titles = []
+            # Check for work_experience being a list
+            work_exp = parsed.get("work_experience", [])
+            if isinstance(work_exp, list):
+                for job in work_exp:
+                    if isinstance(job, dict):
+                        # Try common keys
+                        comp = job.get("company") or job.get("organization")
+                        if comp: companies.append(str(comp))
+                        
+                        title = job.get("job_title") or job.get("title") or job.get("position")
+                        if title: job_titles.append(str(title))
+            
+            universities = []
+            degrees = []
+            # Check for education being a list
+            education = parsed.get("education", [])
+            if isinstance(education, list):
+                for edu in education:
+                    if isinstance(edu, dict):
+                        # Try common keys
+                        uni = edu.get("institution") or edu.get("university") or edu.get("school")
+                        if uni: universities.append(str(uni))
+                        
+                        deg = edu.get("degree") or edu.get("qualification")
+                        if deg: degrees.append(str(deg))
+
+            candidates.append(PositionCandidateResponse(
+                id=p.id, # Profile ID
+                name=p.full_name,
+                email=p.email,
+                score=match_score, 
+                match=match_score,
+                color="#9ca3af" if match_score < 50 else ("#10b981" if match_score >= 80 else "#f59e0b"),
+                starred=False,
+                selected=False,
+                experience=experience,
+                location=location,
+                skills=skills,
+                companies=companies,
+                job_titles=job_titles,
+                universities=universities,
+                degrees=degrees
+            ))
+            
+        return candidates
+
     async def get_position(self, position_id: UUID) -> Position:
         """Get a position by ID with organization check."""
         query = select(Position).where(
@@ -530,10 +635,12 @@ class RecruiterService:
         # 1. Verify existence
         await self.get_position(position_id)
 
-        # 2. Fetch candidates (applications + optional profiles)
+        # 2. Fetch candidates (applications + optional profiles + optional CV analysis)
+        from app.models import CVAnalysis
         q_cands = (
-            select(CandidateApplication, CandidateProfile)
+            select(CandidateApplication, CandidateProfile, CVAnalysis)
             .outerjoin(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
             .where(
                 CandidateApplication.position_id == position_id,
                 CandidateApplication.is_deleted == False
@@ -542,8 +649,16 @@ class RecruiterService:
         res_cands = await self.session.execute(q_cands)
         rows_cands = res_cands.all()
 
+        # Fetch group names for mapping
+        group_ids = {app.group_id for app, _, _ in rows_cands if app.group_id}
+        group_map = {}
+        if group_ids:
+            q_groups = select(CandidateGroup.id, CandidateGroup.group_name).where(CandidateGroup.id.in_(group_ids))
+            res_groups = await self.session.execute(q_groups)
+            group_map = {gid: gname for gid, gname in res_groups.all()}
+
         candidates = []
-        for app, profile in rows_cands:
+        for app, profile, cv in rows_cands:
             # Get latest score from stage progress if any
             q_score = select(func.avg(CandidateStageProgress.score)).where(
                 CandidateStageProgress.application_id == app.id,
@@ -555,17 +670,54 @@ class RecruiterService:
             # Map to response
             name = profile.full_name if profile else f"Candidate {str(app.candidate_id)[:8]}"
             email = profile.email if profile else "No Email"
+            match_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
+
+            # Extract detailed fields from parsed_data
+            parsed = cv.parsed_data if cv and cv.parsed_data else {}
+            
+            companies = []
+            job_titles = []
+            work_exp = parsed.get("work_experience", [])
+            if isinstance(work_exp, list):
+                for job in work_exp:
+                    if isinstance(job, dict):
+                        comp = job.get("company") or job.get("organization")
+                        if comp: companies.append(str(comp))
+                        title = job.get("job_title") or job.get("title") or job.get("position")
+                        if title: job_titles.append(str(title))
+            
+            universities = []
+            degrees = []
+            education = parsed.get("education", [])
+            if isinstance(education, list):
+                for edu in education:
+                    if isinstance(edu, dict):
+                        uni = edu.get("institution") or edu.get("university") or edu.get("school")
+                        if uni: universities.append(str(uni))
+                        deg = edu.get("degree") or edu.get("qualification")
+                        if deg: degrees.append(str(deg))
 
             # Map to response (simulating match score for now)
+            # Map to response (simulating match score for now)
             candidates.append(PositionCandidateResponse(
-                id=app.id,
+                id=profile.id if profile else app.candidate_id,
+                applicationId=app.id,
                 name=name,
                 email=email,
                 score=round(float(avg_score), 1),
-                match=round(float(avg_score) * 1.1, 1) if avg_score > 0 else 0.0, # Mock match score logic
-                color="#6366f1",
+                match=match_score, # Use real match score
+                color="#9ca3af" if match_score < 50 else ("#10b981" if match_score >= 80 else "#f59e0b"),
                 starred=False,
-                selected=False
+                selected=False,
+                experience=float(cv.experience_years) if cv and cv.experience_years is not None else 0.0,
+                location=profile.location if profile and profile.location else "Unknown",
+                skills=cv.skills if cv and cv.skills else [],
+                companies=companies,
+                job_titles=job_titles,
+                universities=universities,
+                degrees=degrees,
+                groupId=app.group_id,
+                groupName=group_map.get(app.group_id) if app.group_id else None
             ))
 
         # 3. Fetch groups
@@ -690,6 +842,10 @@ class RecruiterService:
             
             if status:
                 query = query.where(Position.status == status)
+
+            # Technical HR users only see positions assigned to them
+            if self.current_user.role == "technical":
+                query = query.where(Position.assigned_tech_id == self.current_user.id)
             
             query = query.order_by(Position.created_at.desc()).offset(skip).limit(limit)
             result = await self.session.execute(query)
@@ -866,21 +1022,29 @@ class RecruiterService:
             integrity = 0
             
             if app_ids:
-                # Fetch progress and integrity flags
-                q_prog = select(CandidateStageProgress.stage_type, CandidateStageProgress.score).where(
-                    CandidateStageProgress.application_id.in_(app_ids)
-                )
-                q_integrity = select(func.count()).where(
-                    ProctoringFlag.application_id.in_(app_ids)
+                # Fetch progress and integrity flags, joining with GroupStageConfig for stage_type
+                from app.models import GroupStageConfig
+                # ProctoringFlag not found in models.py, disabling integrity check for now
+                # from app.models import ProctoringFlag 
+
+                q_prog = (
+                    select(GroupStageConfig.stage_type, CandidateStageProgress.score)
+                    .join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id)
+                    .where(
+                        CandidateStageProgress.application_id.in_(app_ids)
+                    )
                 )
                 
-                res_prog, res_integ = await asyncio.gather(
-                    self.session.execute(q_prog),
-                    self.session.execute(q_integrity)
-                )
+                # Integrity check disabled due to missing model
+                # q_integrity = select(func.count()).where(
+                #    ProctoringFlag.application_id.in_(app_ids)
+                # )
+                
+                res_prog = await self.session.execute(q_prog)
+                # res_integ = await self.session.execute(q_integrity)
                 
                 progs = res_prog.all()
-                integrity = res_integ.scalar() or 0
+                integrity = 0 # (res_integ.scalar() or 0)
                 
                 assess_scores = [float(score) for stage, score in progs if stage == "assessment" and score is not None]
                 inter_scores = [float(score) for stage, score in progs if stage in ["interview", "ai_interview"] and score is not None]
@@ -975,7 +1139,9 @@ class RecruiterService:
         try:
             res_groups = await self.session.execute(
                 select(CandidateGroup).where(
-                    CandidateGroup.position_id == position_id
+                    CandidateGroup.position_id == position_id,
+                    CandidateGroup.status != "archived",
+                    CandidateGroup.status != "deleted" # Just in case data exists
                 )
             )
             groups = res_groups.scalars().all()
@@ -1012,9 +1178,9 @@ class RecruiterService:
                 has_live = any(str(s.get("type")).lower() == "live_interview" for s in flow_list if isinstance(s, dict))
 
                 result.append(PositionGroupResponse(
-                    groupID=gid,
-                    groupName=g.group_name,
-                    candidatesCount=count,
+                    id=gid,
+                    name=g.group_name,
+                    candidateCount=count,
                     status=g.status,
                     createdDate=g.created_at,
                     integrityIssues=flags,

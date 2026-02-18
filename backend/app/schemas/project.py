@@ -138,11 +138,27 @@ class PositionCandidateResponse(BaseModel):
     color: str = "#6366f1"
     starred: bool = False
     selected: bool = False
+    
+    # Group Assignment
+    groupId: UUID | None = None
+    groupName: str | None = None
+    applicationId: UUID | None = None
+    
+    # New fields for Group Creation
+    experience: float = 0.0
+    location: str | None = "Unknown"
+    skills: list[str] = []
+    
+    # Detailed fields for filtering
+    companies: list[str] = []
+    job_titles: list[str] = []
+    universities: list[str] = []
+    degrees: list[str] = []
 
 class PositionGroupResponse(BaseModel):
-    groupID: UUID
-    groupName: str
-    candidatesCount: int
+    id: UUID = Field(alias="id")
+    name: str = Field(alias="name")
+    candidateCount: int = Field(alias="candidateCount")
     status: str
     createdDate: datetime
     integrityIssues: int = 0
