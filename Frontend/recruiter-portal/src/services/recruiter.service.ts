@@ -96,18 +96,20 @@ export const recruiterService = {
 
     getFiltrationFlowConfig: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/filtration-flow`),
 
+    getPositionGroups: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/groups`),
+
     getSkillClusters: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/skills`),
 
     // Candidate Management
-    getCandidates: async () => fetchAPI('/groups/candidates/all'),
+    getCandidates: async () => fetchAPI<any[]>('/recruiter/candidates'),
 
     getGroupCandidates: async () => fetchAPI('/groups/candidates/all'),
 
-    getCandidate: async (candidateId: number) => fetchAPI<any>(`/candidates/${candidateId}`),
+    getCandidate: async (candidateId: string) => fetchAPI<any>(`/candidates/${candidateId}`),
 
-    getSuspectReview: async (candidateId: number) => fetchAPI(`/candidates/${candidateId}/suspect-review`),
+    getSuspectReview: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/suspect-review`),
 
-    getKnowledgeGraphData: async (candidateId: number) => fetchAPI(`/candidates/${candidateId}/knowledge-graph`),
+    getKnowledgeGraphData: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/knowledge-graph`),
 
     getCandidateSkills: async (candidateIds: number[]) => {
         const res = await fetch(`${API_URL}/candidates/skills`, {
@@ -129,9 +131,9 @@ export const recruiterService = {
     },
 
     // Group Management
-    getGroupDetails: async (groupId: string) => fetchAPI(`/groups/${groupId}/details`),
+    getGroupDetails: async (groupId: string) => fetchAPI(`/recruiter/groups/${groupId}`),
 
-    getGroupOverviewV2: async (groupId: string) => fetchAPI(`/groups/${groupId}/overview`),
+    getGroupOverviewV2: async (groupId: string) => fetchAPI(`/recruiter/groups/${groupId}`),
 
     getGroupCreationConfig: async () => fetchAPI('/groups/config/creation'),
 
@@ -178,6 +180,71 @@ export const recruiterService = {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status, review_notes: reviewNotes })
+        });
+    },
+
+    // Candidate Import & Group Creation
+    uploadCandidates: async (positionId: string, file: File) => {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Note: fetchAPI wrapper might default to JSON content type. 
+        // If fetchAPI sets 'Content-Type': 'application/json' automatically, this might fail.
+        // We might need to use raw fetch or ensure fetchAPI handles FormData.
+        // Assuming fetchAPI handles it or we override.
+        // Actually, let's use API_URL + fetch directly to be safe if fetchAPI is rigid.
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/recruiter/positions/${positionId}/candidates/upload`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`
+                // No Content-Type header, browser sets it with boundary for FormData
+            },
+            body: formData
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            let errorMessage = 'Upload failed';
+            if (err.detail) {
+                if (typeof err.detail === 'string') {
+                    errorMessage = err.detail;
+                } else if (Array.isArray(err.detail)) {
+                    errorMessage = err.detail.map((e: any) => e.msg).join(', ');
+                } else {
+                    errorMessage = JSON.stringify(err.detail);
+                }
+            }
+            throw new Error(errorMessage);
+        }
+        return res.json();
+    },
+
+    createGroup: async (data: {
+        name: string;
+        position_id: string;
+        candidate_ids: string[]; // Frontend likely uses string IDs, backend expects UUIDs
+        description?: string;
+        ai_ranking_used?: boolean;
+        nlp_query?: string;
+    }) => {
+        return fetchAPI<any>(`/recruiter/positions/${data.position_id}/groups`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    deleteGroup: async (groupId: string) => {
+        return fetchAPI(`/recruiter/groups/${groupId}`, {
+            method: 'DELETE'
+        });
+    },
+
+    renameGroup: async (groupId: string, name: string) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
         });
     }
 };

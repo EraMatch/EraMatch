@@ -13,7 +13,7 @@ import { api, JobPosition } from '../../../services/api';
 import { AdminPositionModal } from '../../admin/AdminPositionModal';
 
 interface Position {
-  id: number;
+  id: string;
   title: string;
   description?: string;
   screeningConditions?: string;
@@ -70,7 +70,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
           }
           const projectPositions = await api.recruiter.getProjectPositions(project.id);
           const mappedPositions: Position[] = projectPositions.map(p => ({
-            id: Number(p.id),
+            id: p.id,
             title: p.jobTitle,
             description: `Department: ${p.department}`,
             screeningConditions: 'Standard screening requirements apply',
@@ -98,7 +98,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
   const [activeTab, setActiveTab] = useState<'positions' | 'analytics'>('positions');
 
   // Store assessments per position
-  const [positionAssessments, setPositionAssessments] = useState<{ [positionId: number]: any[] }>({});
+  const [positionAssessments, setPositionAssessments] = useState<{ [positionId: string]: any[] }>({});
 
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -159,7 +159,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
         if (projectId) {
           const projectPositions = await api.recruiter.getProjectPositions(Number(projectId));
           const mappedPositions: Position[] = projectPositions.map(p => ({
-            id: Number(p.id),
+            id: p.id,
             title: p.jobTitle,
             description: `Department: ${p.department}`,
             screeningConditions: 'Standard screening requirements apply',
@@ -246,7 +246,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
   if (viewingPosition) {
     return (
       <PositionDetailView
-        positionId={viewingPosition.id.toString()}
+        positionId={viewingPosition.id}
         positionTitle={viewingPosition.title}
         projectTitle={projectTitle}
         description={viewingPosition.description}
@@ -825,7 +825,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
             // Reload positions
             api.recruiter.getProjectPositions(Number(projectId)).then(projectPositions => {
               const mappedPositions: Position[] = projectPositions.map(p => ({
-                id: Number(p.id),
+                id: p.id,
                 title: p.jobTitle,
                 description: `Department: ${p.department}`,
                 screeningConditions: 'Standard screening requirements apply',

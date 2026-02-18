@@ -1,6 +1,7 @@
-import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2 } from 'lucide-react';
+import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../../services/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../ui/dialog';
 import { Switch } from '../../ui/switch';
@@ -9,9 +10,10 @@ import { GroupCreationPage } from '../groups/GroupCreationPage';
 import { FiltrationFlowConfigModal } from '../groups/FiltrationFlowConfigModal';
 import { CandidateProfile } from '../candidates/CandidateProfile';
 import { SimpleGroupCreationModal } from '../groups/SimpleGroupCreationModal';
+import { CandidateFilterSidebar, CandidateFilters } from '../candidates/CandidateFilterSidebar';
 
 interface Candidate {
-  id: number;
+  id: string;
   name: string;
   email: string;
   score: number;
@@ -19,6 +21,14 @@ interface Candidate {
   color: string;
   starred: boolean;
   selected: boolean;
+  // New fields for filtering
+  experience: number;
+  location: string;
+  companies: string[];
+  skills: string[];
+  job_titles: string[];
+  degrees: string[];
+  universities: string[];
 }
 
 interface Assessment {
@@ -84,6 +94,79 @@ export function PositionDetailView({
   const [pendingGroupData, setPendingGroupData] = useState<any>(null);
   const [viewingCandidateId, setViewingCandidateId] = useState<number | null>(null);
 
+  // Filtering State
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [filters, setFilters] = useState<CandidateFilters>({
+    keywords: '',
+    locations: [],
+    companies: [],
+    schools: [],
+    experienceRange: [0, 20],
+    skills: [],
+    jobTitles: [],
+    degrees: []
+  });
+
+  // Rename Group State
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editGroupName, setEditGroupName] = useState('');
+
+  // Derived Filter Options
+  const filterOptions = {
+    locations: Array.from(new Set(candidates.map(c => c.location || 'Unknown'))).filter(Boolean).sort(),
+    companies: Array.from(new Set(candidates.flatMap(c => c.companies || []))).filter(Boolean).sort(),
+    schools: Array.from(new Set(candidates.flatMap(c => c.universities || []))).filter(Boolean).sort(),
+    skills: Array.from(new Set(candidates.flatMap(c => c.skills || []))).filter(Boolean).sort(),
+    jobTitles: Array.from(new Set(candidates.flatMap(c => c.job_titles || []))).filter(Boolean).sort(),
+    degrees: Array.from(new Set(candidates.flatMap(c => c.degrees || []))).filter(Boolean).sort(),
+  };
+
+  // Filter Logic
+  const filteredCandidates = candidates.filter(c => {
+    // Keywords (Name, Email, Job Titles, Skills)
+    if (filters.keywords) {
+      const term = filters.keywords.toLowerCase();
+      const matchesKeyword =
+        c.name.toLowerCase().includes(term) ||
+        c.email.toLowerCase().includes(term) ||
+        c.job_titles?.some(t => t.toLowerCase().includes(term)) ||
+        c.skills?.some(s => s.toLowerCase().includes(term));
+
+      if (!matchesKeyword) return false;
+    }
+
+    // Locations
+    if (filters.locations.length > 0 && !filters.locations.includes(c.location || 'Unknown')) return false;
+
+    // Experience
+    if (c.experience !== undefined) {
+      const min = filters.experienceRange[0];
+      const max = filters.experienceRange[1];
+      if (c.experience < min) return false;
+      if (max < 20 && c.experience > max) return false;
+    }
+
+    // Skills (OR logic: has at least one of selected)
+    if (filters.skills.length > 0) {
+      const hasSkill = c.skills?.some(s => filters.skills.includes(s));
+      if (!hasSkill) return false;
+    }
+
+    // Companies
+    if (filters.companies.length > 0) {
+      const hasCompany = c.companies?.some(comp => filters.companies.includes(comp));
+      if (!hasCompany) return false;
+    }
+
+    // Schools
+    if (filters.schools.length > 0) {
+      const hasSchool = c.universities?.some(u => filters.schools.includes(u));
+      if (!hasSchool) return false;
+    }
+
+    return true;
+  });
+
   // Assessment management - use savedAssessments from props
   const assessments = savedAssessments;
 
@@ -91,35 +174,74 @@ export function PositionDetailView({
     const fetchData = async () => {
       try {
         setIsLoading(true);
-        const [details, insights] = await Promise.all([
+        const [detailsRes, insightsRes] = await Promise.all([
           api.recruiter.getPositionDetails(positionId),
           api.recruiter.getPositionInsights(positionId)
         ]);
+        const details = detailsRes as any;
+        const insights = insightsRes as any;
 
         setCandidates(details.candidates);
         setGroups(details.groups);
-        setFittingData(insights.fittingData);
-        setScoreData(insights.scoreData);
-        setSkillDistribution(insights.skillDistribution);
+
+        // Set metrics individually as setMetrics state object does not exist
+        // Assuming these states exist based on previous code reading, or if not, I should check defaults.
+        // Actually, looking at lines 1-150, I don't see 'setMetrics'. 
+        // I see 'setFittingData', 'setScoreData' etc.
+        // I should just set the insights data as before but safely.
+
+        setFittingData(insights.fittingData || []);
+        setScoreData(insights.scoreData || []);
+        setSkillDistribution(insights.skillDistribution || []);
+        setSeniorityDistribution(insights.seniorityDistribution || []);
+        setUniversityDistribution(insights.universityDistribution || []);
+        setAvailabilityDistribution(insights.availabilityDistribution || []);
         setSeniorityDistribution(insights.seniorityDistribution);
         setUniversityDistribution(insights.universityDistribution);
         setAvailabilityDistribution(insights.availabilityDistribution);
       } catch (error) {
-        console.error('Failed to fetch position data:', error);
+        console.error('Failed to fetch position details:', error);
       } finally {
         setIsLoading(false);
       }
     };
-    fetchData();
-  }, []);
+    if (positionId) { fetchData(); }
+  }, [positionId]);
 
-  const toggleStar = (id: number) => {
+  // Auth / Role Check
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const isHR = user.role === 'hr' || user.role === 'admin';
+  const navigate = useNavigate();
+
+  // Upload Logic
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+
+  const handleZipUpload = async () => {
+    if (!zipFile || !positionId) return;
+
+    setIsUploading(true);
+    setUploadError(null);
+    try {
+      const res = await api.recruiter.uploadCandidates(positionId, zipFile);
+      setUploadSuccess(`Successfully processed ${res.total_processed} files. Created ${res.success_count} candidates.`);
+      // Optionally refresh candidates list here
+    } catch (err: any) {
+      setUploadError(err.message || "Upload failed");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const toggleStar = (id: string) => {
     setCandidates(candidates.map(c =>
       c.id === id ? { ...c, starred: !c.starred } : c
     ));
   };
 
-  const toggleSelect = (id: number) => {
+  const toggleSelect = (id: string) => {
     setCandidates(candidates.map(c =>
       c.id === id ? { ...c, selected: !c.selected } : c
     ));
@@ -137,6 +259,28 @@ export function PositionDetailView({
     if (editPositionTitle.trim()) {
       onSave(editPositionTitle, editPositionDescription, editPositionScreening, editPositionIsOpen);
       setIsEditDialogOpen(false);
+    }
+  };
+
+  const startRenaming = (group: any) => {
+    setEditingGroupId(group.id);
+    setEditGroupName(group.name);
+  };
+
+  const cancelRenaming = () => {
+    setEditingGroupId(null);
+    setEditGroupName('');
+  };
+
+  const saveRenaming = async (groupId: string) => {
+    if (!editGroupName.trim()) return;
+    try {
+      await api.recruiter.renameGroup(groupId, editGroupName);
+      const updatedGroups = await api.recruiter.getPositionGroups(positionId) as any[];
+      setGroups(updatedGroups);
+      setEditingGroupId(null);
+    } catch (err) {
+      console.error("Failed to rename group", err);
     }
   };
 
@@ -307,7 +451,7 @@ export function PositionDetailView({
                   <Users size={18} className="text-[#6366f1]" />
                 </div>
                 <p className="font-['Arimo',sans-serif] text-[28px] text-black">
-                  {candidates.length}
+                  {filteredCandidates.length}
                 </p>
               </div>
 
@@ -332,9 +476,15 @@ export function PositionDetailView({
                   </h4>
                   <div className="w-[8px] h-[8px] rounded-full bg-[#10b981]"></div>
                 </div>
-                <p className="font-['Arimo',sans-serif] text-[28px] text-black">
+                <p className="font-['Arimo',sans-serif] text-[28px] text-black mb-2">
                   {groups.reduce((sum, g) => sum + g.candidateCount, 0)}
                 </p>
+                <div className="w-full h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#10b981]"
+                    style={{ width: `${(groups.reduce((sum, g) => sum + g.candidateCount, 0) / (candidates.length || 1)) * 100}%` }}
+                  ></div>
+                </div>
               </div>
 
               {/* Unassigned Candidates */}
@@ -345,9 +495,15 @@ export function PositionDetailView({
                   </h4>
                   <div className="w-[8px] h-[8px] rounded-full bg-[#f59e0b]"></div>
                 </div>
-                <p className="font-['Arimo',sans-serif] text-[28px] text-black">
+                <p className="font-['Arimo',sans-serif] text-[28px] text-black mb-2">
                   {candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)}
                 </p>
+                <div className="w-full h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#f59e0b]"
+                    style={{ width: `${((candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)) / (candidates.length || 1)) * 100}%` }}
+                  ></div>
+                </div>
               </div>
             </div>
 
@@ -406,10 +562,17 @@ export function PositionDetailView({
             <div className="bg-white rounded-[12px] p-6 shadow-sm">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="font-['Arimo',sans-serif] text-[18px] text-black">
-                  All Candidates ({candidates.length})
+                  All Candidates ({filteredCandidates.length})
                 </h3>
                 <div className="flex items-center gap-2">
-                  <button className="flex items-center justify-center w-[32px] h-[32px] rounded-[6px] hover:bg-[#f3f4f6] transition-colors">
+                  <button
+                    onClick={() => setIsFilterOpen(true)}
+                    className={`flex items-center justify-center w-[32px] h-[32px] rounded-[6px] transition-colors ${Object.values(filters).some(v => Array.isArray(v) ? v.length > 0 : !!v) &&
+                      (filters.experienceRange[0] > 0 || filters.experienceRange[1] < 20)
+                      ? 'bg-[#6366f1] text-white hover:bg-[#5558e3]'
+                      : 'hover:bg-[#f3f4f6] text-[#6366f1]'
+                      }`}
+                  >
                     <Filter size={18} className="text-[#6366f1]" strokeWidth={1.5} />
                   </button>
                   <button className="flex items-center justify-center w-[32px] h-[32px] rounded-[6px] hover:bg-[#f3f4f6] transition-colors">
@@ -420,17 +583,11 @@ export function PositionDetailView({
 
               <div className="max-h-[500px] overflow-y-auto pr-2">
                 <div className="flex flex-col gap-3">
-                  {candidates.map((candidate) => (
+                  {filteredCandidates.map((candidate) => (
                     <div
                       key={candidate.id}
                       className="flex items-center gap-4 p-4 rounded-[10px] bg-[#f9fafb] hover:bg-[#f3f4f6] transition-colors"
                     >
-                      <input
-                        type="checkbox"
-                        checked={candidate.selected}
-                        onChange={() => toggleSelect(candidate.id)}
-                        className="w-[18px] h-[18px] rounded-[3px] border border-[#d1d5db] text-[#6366f1] focus:ring-2 focus:ring-[#6366f1] focus:ring-offset-0 cursor-pointer accent-[#6366f1]"
-                      />
                       <div className={`w-[4px] h-[44px] rounded-full`} style={{ backgroundColor: candidate.color }}></div>
                       <div className="flex-1 min-w-0">
                         <p className="font-['Arimo',sans-serif] text-[15px] text-black">
@@ -449,17 +606,7 @@ export function PositionDetailView({
                         </p>
                       </div>
                       <button
-                        onClick={() => toggleStar(candidate.id)}
-                        className="flex items-center justify-center w-[32px] h-[32px] hover:bg-white rounded-[4px] transition-colors"
-                      >
-                        <Star
-                          size={22}
-                          className={candidate.starred ? 'text-[#f59e0b] fill-[#f59e0b]' : 'text-[#d1d5db]'}
-                          strokeWidth={1.5}
-                        />
-                      </button>
-                      <button
-                        onClick={() => setViewingCandidateId(candidate.id)}
+                        onClick={() => navigate(`/recruiter/candidates/${candidate.id}`)}
                         className="h-[40px] px-[20px] rounded-[8px] bg-[#5b21b6] hover:bg-[#6d28d9] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
                       >
                         View Report
@@ -476,16 +623,27 @@ export function PositionDetailView({
         {activeTab === 'groups' && (
           <>
             {showGroupCreationPage ? (
-              <div className="fixed inset-0 bg-[#edf0f8] z-50">
+              <div className="fixed inset-0 bg-[#edf0f8] z-[100]">
                 <GroupCreationPage
                   positionTitle={positionTitle}
+                  positionId={positionId}
                   onCancel={() => setShowGroupCreationPage(false)}
-                  onCreate={(groupData) => {
-                    console.log('Group created:', groupData);
-                    setShowGroupCreationPage(false);
-                    // Store group data and show flow config modal
-                    setPendingGroupData(groupData);
-                    setShowFlowConfigModal(true);
+                  onCreate={async (data) => {
+                    try {
+                      await api.recruiter.createGroup({
+                        name: data.name,
+                        position_id: positionId,
+                        candidate_ids: data.candidateIds,
+                        ai_ranking_used: data.aiRankingUsed,
+                        nlp_query: data.nlpQuery
+                      });
+                      setShowGroupCreationPage(false);
+                      // Refresh groups
+                      const groups = await api.recruiter.getPositionGroups(positionId) as any[];
+                      setGroups(groups);
+                    } catch (err) {
+                      console.error("Failed to create group", err);
+                    }
                   }}
                 />
               </div>
@@ -495,15 +653,17 @@ export function PositionDetailView({
                   <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
                     Candidate Groups
                   </h2>
-                  <button
-                    onClick={() => setShowGroupCreationPage(true)}
-                    className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] transition-colors"
-                  >
-                    <Plus size={18} className="text-white" strokeWidth={2} />
-                    <span className="font-['Arimo',sans-serif] text-[14px] text-white">
-                      Create Group
-                    </span>
-                  </button>
+                  {isHR && (
+                    <button
+                      onClick={() => setShowGroupCreationPage(true)}
+                      className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] transition-colors"
+                    >
+                      <Plus size={18} className="text-white" strokeWidth={2} />
+                      <span className="font-['Arimo',sans-serif] text-[14px] text-white">
+                        Create Group
+                      </span>
+                    </button>
+                  )}
                 </div>
 
                 {groups.length === 0 ? (
@@ -531,9 +691,40 @@ export function PositionDetailView({
                         <div className="flex items-start justify-between mb-4">
                           <div className="flex-1">
                             <div className="flex items-center gap-3 mb-2">
-                              <h3 className="font-['Arimo',sans-serif] text-[17px] text-black">
-                                {group.name}
-                              </h3>
+                              {editingGroupId === group.id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={editGroupName}
+                                    onChange={(e) => setEditGroupName(e.target.value)}
+                                    className="border border-[#d1d5db] rounded-[4px] px-2 py-1 font-['Arimo',sans-serif] text-[17px] text-black w-[200px]"
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') saveRenaming(group.id);
+                                      if (e.key === 'Escape') cancelRenaming();
+                                    }}
+                                  />
+                                  <button
+                                    onClick={() => saveRenaming(group.id)}
+                                    className="p-1 hover:bg-[#dcfce7] rounded text-[#10b981]"
+                                  >
+                                    <CheckCircle size={18} />
+                                  </button>
+                                  <button
+                                    onClick={cancelRenaming}
+                                    className="p-1 hover:bg-[#fee2e2] rounded text-[#ef4444]"
+                                  >
+                                    <X size={18} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <h3
+                                  onClick={() => onViewGroup && onViewGroup(group.id)}
+                                  className="font-['Arimo',sans-serif] text-[17px] text-black cursor-pointer hover:text-[#6366f1] hover:underline"
+                                >
+                                  {group.name}
+                                </h3>
+                              )}
                               <span className={`px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${group.status === 'Live' ? 'bg-[#dcfce7] text-[#10b981]' :
                                 group.status === 'Paused' ? 'bg-[#fef3c7] text-[#f59e0b]' :
                                   'bg-[#f3f4f6] text-[#6b7280]'
@@ -575,17 +766,34 @@ export function PositionDetailView({
                           >
                             Open
                           </button>
-                          <button className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#374151] transition-colors">
+                          <button
+                            onClick={() => startRenaming(group)}
+                            className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#374151] transition-colors"
+                          >
                             Rename
                           </button>
-                          <button className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#374151] transition-colors">
-                            Duplicate
-                          </button>
-                          <button className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#374151] transition-colors">
-                            Export
-                          </button>
-                          <button className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#ef4444] font-['Arimo',sans-serif] text-[13px] text-[#ef4444] transition-colors ml-auto">
-                            Archive
+                          <button
+                            onClick={async () => {
+                              if (window.confirm('Are you sure you want to delete this group? Candidates will be unassigned.')) {
+                                try {
+                                  await api.recruiter.deleteGroup(group.id);
+                                  // Refresh groups
+                                  const updatedGroups = await api.recruiter.getPositionGroups(positionId) as any[];
+                                  setGroups(updatedGroups);
+                                  // Refresh candidates to show them as unassigned
+                                  const details = await api.recruiter.getPositionDetails(positionId) as any;
+                                  if (details && details.candidates) {
+                                    setCandidates(details.candidates);
+                                  }
+                                } catch (err) {
+                                  console.error("Failed to delete group", err);
+                                  alert("Failed to delete group");
+                                }
+                              }
+                            }}
+                            className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#ef4444] font-['Arimo',sans-serif] text-[13px] text-[#ef4444] transition-colors"
+                          >
+                            Delete
                           </button>
                         </div>
                       </div>
@@ -950,52 +1158,108 @@ export function PositionDetailView({
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-[#111827] text-[20px]">Upload CVs (.zip)</h3>
               <button
-                onClick={() => setShowZipUploadModal(false)}
+                onClick={() => {
+                  setShowZipUploadModal(false);
+                  setZipFile(null);
+                  setUploadError(null);
+                  setUploadSuccess(null);
+                }}
                 className="w-[32px] h-[32px] flex items-center justify-center rounded-[6px] hover:bg-[#f3f4f6] transition-colors"
               >
                 <X size={18} className="text-[#6b7280]" />
               </button>
             </div>
 
-            <div className="border-2 border-dashed border-[#e5e7eb] rounded-[12px] p-12 text-center mb-6 hover:border-[#6366f1] hover:bg-[#f9fafb] transition-colors cursor-pointer">
-              <Upload size={48} className="text-[#6b7280] mx-auto mb-4" />
-              <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] mb-2">
-                Drag and drop your ZIP file here, or click to browse
-              </p>
-              <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                Supported format: .zip (max 100MB)
-              </p>
-            </div>
+            {!uploadSuccess ? (
+              <>
+                <div
+                  className={`border-2 border-dashed rounded-[12px] p-12 text-center mb-6 transition-colors cursor-pointer relative ${zipFile ? 'border-[#6366f1] bg-[#eef2ff]' : 'border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb]'
+                    }`}
+                >
+                  <input
+                    type="file"
+                    accept=".zip"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setZipFile(e.target.files[0]);
+                        setUploadError(null);
+                      }
+                    }}
+                  />
+                  <Upload size={48} className={`mx-auto mb-4 ${zipFile ? 'text-[#6366f1]' : 'text-[#6b7280]'}`} />
+                  <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] mb-2">
+                    {zipFile ? zipFile.name : "Drag and drop your ZIP file here, or click to browse"}
+                  </p>
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                    Supported format: .zip (max 100MB)
+                  </p>
+                </div>
 
-            <div className="bg-[#f9fafb] rounded-[8px] p-4 mb-6">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-[6px] h-[6px] rounded-full bg-[#6366f1]" />
-                <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-                  Parsing Status
-                </span>
-              </div>
-              <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden mb-2">
-                <div className="h-full bg-[#6366f1] rounded-full w-0" style={{ width: '0%' }} />
-              </div>
-              <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                Waiting for upload...
-              </p>
-            </div>
+                {uploadError && (
+                  <div className="mb-4 text-red-500 text-sm font-['Arimo',sans-serif]">
+                    {uploadError}
+                  </div>
+                )}
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowZipUploadModal(false)}
-                className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                disabled
-                className="flex-1 h-[44px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
-              >
-                Add to Position
-              </button>
-            </div>
+                {isUploading && (
+                  <div className="bg-[#f9fafb] rounded-[8px] p-4 mb-6">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-[6px] h-[6px] rounded-full bg-[#6366f1]" />
+                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
+                        Uploading & Processing...
+                      </span>
+                    </div>
+                    <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden mb-2">
+                      <div className="h-full bg-[#6366f1] rounded-full w-full animate-pulse" />
+                    </div>
+                    <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                      Please wait while we extract and process the candidates.
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      setShowZipUploadModal(false);
+                      setZipFile(null);
+                    }}
+                    className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleZipUpload}
+                    disabled={!zipFile || isUploading}
+                    className="flex-1 h-[44px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors flex items-center justify-center gap-2"
+                  >
+                    {isUploading ? <Loader2 size={16} className="animate-spin" /> : null}
+                    Add to Position
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle size={32} className="text-green-600" />
+                </div>
+                <h4 className="text-lg font-medium text-gray-900 mb-2">Upload Complete!</h4>
+                <p className="text-sm text-gray-500 mb-6">{uploadSuccess}</p>
+                <button
+                  onClick={() => {
+                    setShowZipUploadModal(false);
+                    setZipFile(null);
+                    setUploadSuccess(null);
+                    // Refresh data
+                    window.location.reload(); // Quick refresh or re-fetch
+                  }}
+                  className="px-6 py-2 bg-[#6366f1] text-white rounded-lg hover:bg-[#5558e3]"
+                >
+                  Done
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

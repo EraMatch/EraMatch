@@ -9,7 +9,7 @@ import { Button } from '../../ui/button';
 import { api } from '../../../services/api';
 
 interface CandidateProfileProps {
-  candidateId: number;
+  candidateId: string;
   onBack: () => void;
   onViewKnowledgeGraph?: () => void;
   showFinalReport?: boolean;
@@ -96,7 +96,6 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     { id: 'interview', label: 'AI Interview', icon: Video },
     { id: 'live-interview', label: 'Live Interview', icon: Play },
     { id: 'notes', label: 'Notes', icon: MessageSquare },
-    { id: 'knowledge-graph', label: 'Knowledge Graph', icon: Network },
     { id: 'final-report', label: 'Final Report', icon: CheckCircle }
   ];
 
@@ -249,7 +248,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
         {/* Tabs */}
         <div className="bg-white rounded-[12px] border border-[#e5e7eb] overflow-hidden">
           <div className="border-b border-[#e5e7eb] px-6">
-            <div className="flex gap-1 overflow-x-auto">
+            <div className="flex gap-1 overflow-x-auto justify-center">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 return (
@@ -1123,16 +1122,6 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
               </div>
             )}
 
-            {activeTab === 'knowledge-graph' && (
-              <div className="h-[800px]">
-                <KnowledgeGraph
-                  candidateId={candidateId}
-                  candidateName={candidate.name}
-                  onBack={() => setActiveTab('overview')}
-                />
-              </div>
-            )}
-
             {activeTab === 'final-report' && (
               <div className="space-y-6">
                 {/* Decision Summary */}
@@ -1299,62 +1288,6 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                   <p className="text-sm text-gray-700 leading-relaxed">
                     <strong>Recommendation:</strong> Strongly recommend proceeding with offer. Suggested salary range: $150,000 - $170,000 based on market benchmarks and candidate experience. Start date confirmed for March 15, 2024.
                   </p>
-                </div>
-
-                {/* Offer Details */}
-                <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-6">
-                  <h3 className="text-indigo-900 mb-4">Offer Package Details</h3>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <div className="text-sm text-indigo-700 mb-1">Base Salary</div>
-                      <div className="text-lg font-semibold text-indigo-900">$160,000/year</div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-indigo-700 mb-1">Equity Package</div>
-                      <div className="text-lg font-semibold text-indigo-900">0.25% vesting 4yrs</div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-indigo-700 mb-1">Sign-on Bonus</div>
-                      <div className="text-lg font-semibold text-indigo-900">$15,000</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Approval Signatures */}
-                <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
-                  <h3 className="text-[#111827] mb-4">Approval Signatures</h3>
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-emerald-50 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <CheckCircle className="w-5 h-5 text-emerald-600" />
-                        <div>
-                          <div className="font-medium text-gray-900">Sarah Johnson</div>
-                          <div className="text-sm text-gray-500">HR Manager</div>
-                        </div>
-                      </div>
-                      <div className="text-sm text-gray-500">Approved on Mar 1, 2024</div>
-                    </div>
-                    <div className="flex items-center justify-between p-4 bg-emerald-50 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <CheckCircle className="w-5 h-5 text-emerald-600" />
-                        <div>
-                          <div className="font-medium text-gray-900">Michael Chen</div>
-                          <div className="text-sm text-gray-500">Technical Lead</div>
-                        </div>
-                      </div>
-                      <div className="text-sm text-gray-500">Approved on Mar 1, 2024</div>
-                    </div>
-                    <div className="flex items-center justify-between p-4 bg-emerald-50 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <CheckCircle className="w-5 h-5 text-emerald-600" />
-                        <div>
-                          <div className="font-medium text-gray-900">David Kim</div>
-                          <div className="text-sm text-gray-500">Engineering Director</div>
-                        </div>
-                      </div>
-                      <div className="text-sm text-gray-500">Approved on Mar 1, 2024</div>
-                    </div>
-                  </div>
                 </div>
               </div>
             )}

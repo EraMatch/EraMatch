@@ -203,7 +203,7 @@ export function EnhancedGroupOverviewV2({
     const fetchData = async () => {
       try {
         setIsLoading(true);
-        const data = await api.recruiter.getGroupDetails(groupId);
+        const data = await api.recruiter.getGroupDetails(groupId) as any;
 
         // Map pipeline stages
         const moduleMap: Record<string, { name: string; icon: any }> = {
@@ -227,24 +227,24 @@ export function EnhancedGroupOverviewV2({
 
         // Map candidates
         const candidates: CandidateStatus[] = data.candidates.map((c: any) => ({
-          id: c.id,
+          id: c.candidate_id, // backend sends candidate_id
           name: c.name,
           email: c.email,
-          phone: c.phone || `+1-555-${String(c.id).padStart(4, '0')}`,
+          phone: c.phone || `+1-555-${String(c.candidate_id).slice(-4)}`,
           avatar: c.name.split(' ').map((n: string) => n[0]).join(''),
-          assessment: (c.pipelineStatus.assessment as any) || 'not-started',
-          aiInterview: (c.pipelineStatus.aiInterview as any) || 'not-started',
-          liveInterview: (c.pipelineStatus.liveInterview as any) || 'not-started',
-          review: (c.pipelineStatus.review as any) || 'not-started',
-          offer: (c.pipelineStatus.offer as any) || 'not-started',
-          assessmentScore: c.assessmentScore || 0,
-          aiInterviewScore: c.aiInterviewScore || 0,
-          flags: c.flags || [],
-          currentStage: c.currentStage || 'Assessment',
-          technicalVerdict: c.technicalVerdict,
-          meetsCriteria: c.meetsCriteria,
-          progressionState: c.progressionState || 'active',
-          overrideApplied: c.overrideApplied
+          assessment: (c.assessment?.status as any) || 'not-started',
+          aiInterview: (c.ai_interview?.status as any) || 'not-started',
+          liveInterview: 'not-started', // Backend doesn't send this yet
+          review: 'not-started',
+          offer: 'not-started',
+          assessmentScore: c.assessment?.score || 0,
+          aiInterviewScore: c.ai_interview?.score || 0,
+          flags: c.flags ? c.flags.map((f: any) => f.description) : [],
+          currentStage: c.currentStage || 'assessment', // fallback
+          technicalVerdict: c.verdict === 'pass' || c.verdict === 'fail' || c.verdict === 'conditional' ? c.verdict : undefined,
+          meetsCriteria: c.meets_criteria,
+          progressionState: 'active', // default
+          overrideApplied: false
         }));
 
         setCandidateStatuses(candidates);
@@ -611,6 +611,18 @@ export function EnhancedGroupOverviewV2({
     const currentStepData = pipelineSteps.find(s => s.id === currentStage);
     if (!currentStepData) return null;
 
+    // HR users are in monitoring/read-only mode — no stage actions allowed
+    if (userRole === 'recruiter') {
+      return (
+        <div className="flex items-center gap-2 px-4 py-2 rounded-[8px] bg-blue-50 border border-blue-200 text-blue-700">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+          <span className="font-['Arimo',sans-serif] text-[13px]">
+            Monitoring mode — only the Technical Recruiter can take stage actions
+          </span>
+        </div>
+      );
+    }
+
     // Check if this is the last stage and it's closed - show Final Decision button
     const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
     const isLastStage = currentStepIndex === pipelineSteps.length - 1;
@@ -791,49 +803,6 @@ export function EnhancedGroupOverviewV2({
               {description || 'No description provided'}
             </p>
 
-            {/* Filtration Flow Indicator */}
-            <div className="mb-3 p-3 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-[8px] border border-emerald-200">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp size={14} className="text-emerald-600" />
-                <span className="font-['Arimo',sans-serif] text-[12px] font-medium text-emerald-900">
-                  Configured Filtration Flow
-                </span>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                {filtrationFlow.map((moduleType, index) => {
-                  const moduleInfo = {
-                    'assessment': { name: 'Assessment', icon: FileText, color: 'emerald' },
-                    'ai-interview': { name: 'AI Interview', icon: Video, color: 'blue' },
-                    'live-interview': { name: 'Live Interview', icon: MessageSquare, color: 'purple' }
-                  };
-                  const info = moduleInfo[moduleType];
-                  const Icon = info.icon;
-
-                  return (
-                    <div key={moduleType} className="flex items-center gap-2">
-                      <div className={`flex items-center gap-1.5 px-2.5 py-1 bg-white border border-${info.color}-200 rounded-[6px]`}>
-                        <div className={`w-5 h-5 rounded bg-${info.color}-100 flex items-center justify-center`}>
-                          <Icon size={12} className={`text-${info.color}-600`} />
-                        </div>
-                        <span className="font-['Arimo',sans-serif] text-[12px] text-gray-700">
-                          {index + 1}. {info.name}
-                        </span>
-                      </div>
-                      {index < filtrationFlow.length - 1 && (
-                        <span className="text-emerald-400">→</span>
-                      )}
-                    </div>
-                  );
-                })}
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-[6px]">
-                  <CheckCircle size={12} className="text-gray-500" />
-                  <span className="font-['Arimo',sans-serif] text-[12px] text-gray-500">
-                    Review & Offer
-                  </span>
-                </div>
-              </div>
-            </div>
-
             <div className="flex items-center gap-2">
               <Users size={14} className="text-[#6b7280]" />
               <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
@@ -867,62 +836,110 @@ export function EnhancedGroupOverviewV2({
           </div>
         </div>
 
-        {/* Pipeline Progress with Stage States */}
-        <div className="mt-6 grid grid-cols-5 gap-4">
-          {pipelineSteps.map((step, index) => {
-            const isCurrentStage = step.id === currentStage;
-            const isPastStage = pipelineSteps.findIndex(s => s.id === currentStage) > index;
-            const isFutureStage = pipelineSteps.findIndex(s => s.id === currentStage) < index;
-
-            return (
-              <div
-                key={step.id}
-                className={`p-4 rounded-[12px] border-2 transition-all ${isCurrentStage
-                  ? 'border-[#6366f1] bg-[#f5f3ff]'
-                  : isPastStage
-                    ? 'border-[#e5e7eb] bg-white opacity-60'
-                    : 'border-[#e5e7eb] bg-white opacity-40'
-                  }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className={`font-['Arimo',sans-serif] text-[13px] ${isCurrentStage ? 'text-[#6366f1] font-semibold' : 'text-[#6b7280]'
-                    }`}>
-                    {step.name}
-                  </span>
-                  {step.state !== 'not-started' && (
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${step.state === 'active' ? 'bg-emerald-100 text-emerald-700' :
-                      step.state === 'closed' ? 'bg-amber-100 text-amber-700' :
-                        step.state === 'review-mode' ? 'bg-purple-100 text-purple-700' :
-                          'bg-gray-100 text-gray-600'
-                      }`}>
-                      {step.state.replace('-', ' ')}
-                    </span>
-                  )}
-                  {isFutureStage && (
-                    <Lock size={12} className="text-gray-400" />
-                  )}
-                </div>
-                <div className="flex items-baseline gap-1">
-                  <span className={`text-[20px] ${isCurrentStage ? 'text-[#6366f1]' : 'text-[#111827]'
-                    }`}>
-                    {step.completed}
-                  </span>
-                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                    / {step.total}
-                  </span>
-                </div>
-                {!isFutureStage && (
-                  <div className="mt-2 h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
-                    <div
-                      className={`h-full ${isCurrentStage ? 'bg-[#6366f1]' : 'bg-[#10b981]'
-                        } transition-all`}
-                      style={{ width: `${(step.completed / step.total) * 100}%` }}
-                    />
-                  </div>
-                )}
+        {/* Filtration Flow Indicator */}
+        {filtrationFlow.length > 0 && (
+          <div className="mt-4 px-8 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-100">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <TrendingUp size={13} className="text-emerald-600" />
+                <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-emerald-900">
+                  Filtration Flow:
+                </span>
               </div>
-            );
-          })}
+              {filtrationFlow.map((moduleType, index) => {
+                const moduleInfo = {
+                  'assessment': { name: 'Assessment', icon: FileText, color: 'emerald' },
+                  'ai-interview': { name: 'AI Interview', icon: Video, color: 'blue' },
+                  'live-interview': { name: 'Live Interview', icon: MessageSquare, color: 'purple' }
+                };
+                const info = moduleInfo[moduleType];
+                const Icon = info.icon;
+                return (
+                  <div key={moduleType} className="flex items-center gap-2">
+                    <div className={`flex items-center gap-1.5 px-2.5 py-1 bg-white border border-${info.color}-200 rounded-[6px]`}>
+                      <div className={`w-5 h-5 rounded bg-${info.color}-100 flex items-center justify-center`}>
+                        <Icon size={12} className={`text-${info.color}-600`} />
+                      </div>
+                      <span className="font-['Arimo',sans-serif] text-[12px] text-gray-700">
+                        {index + 1}. {info.name}
+                      </span>
+                    </div>
+                    {index < filtrationFlow.length - 1 && (
+                      <span className="text-emerald-400 font-medium">→</span>
+                    )}
+                  </div>
+                );
+              })}
+              <span className="text-emerald-400 font-medium">→</span>
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-[6px]">
+                <CheckCircle size={12} className="text-gray-500" />
+                <span className="font-['Arimo',sans-serif] text-[12px] text-gray-500">Review & Offer</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Pipeline Progress with Stage States */}
+        <div className="px-8 mt-6">
+          <div className={`grid gap-4 ${pipelineSteps.length <= 3 ? 'grid-cols-3' :
+            pipelineSteps.length === 4 ? 'grid-cols-4' :
+              'grid-cols-5'
+            }`}>
+            {pipelineSteps.map((step, index) => {
+              const isCurrentStage = step.id === currentStage;
+              const isPastStage = pipelineSteps.findIndex(s => s.id === currentStage) > index;
+              const isFutureStage = pipelineSteps.findIndex(s => s.id === currentStage) < index;
+
+              return (
+                <div
+                  key={step.id}
+                  className={`p-4 rounded-[12px] border-2 transition-all ${isCurrentStage
+                    ? 'border-[#6366f1] bg-[#f5f3ff]'
+                    : isPastStage
+                      ? 'border-[#e5e7eb] bg-white opacity-60'
+                      : 'border-[#e5e7eb] bg-white opacity-40'
+                    }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className={`font-['Arimo',sans-serif] text-[13px] ${isCurrentStage ? 'text-[#6366f1] font-semibold' : 'text-[#6b7280]'
+                      }`}>
+                      {step.name}
+                    </span>
+                    {step.state !== 'not-started' && (
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${step.state === 'active' ? 'bg-emerald-100 text-emerald-700' :
+                        step.state === 'closed' ? 'bg-amber-100 text-amber-700' :
+                          step.state === 'review-mode' ? 'bg-purple-100 text-purple-700' :
+                            'bg-gray-100 text-gray-600'
+                        }`}>
+                        {step.state.replace('-', ' ')}
+                      </span>
+                    )}
+                    {isFutureStage && (
+                      <Lock size={12} className="text-gray-400" />
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className={`text-[20px] ${isCurrentStage ? 'text-[#6366f1]' : 'text-[#111827]'
+                      }`}>
+                      {step.completed}
+                    </span>
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      / {step.total}
+                    </span>
+                  </div>
+                  {!isFutureStage && (
+                    <div className="mt-2 h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                      <div
+                        className={`h-full ${isCurrentStage ? 'bg-[#6366f1]' : 'bg-[#10b981]'
+                          } transition-all`}
+                        style={{ width: `${(step.completed / step.total) * 100}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Stage Configuration Section */}
@@ -985,53 +1002,43 @@ export function EnhancedGroupOverviewV2({
               </div>
             )}
 
-            {/* Configuration Buttons */}
-            <div className="flex gap-3">
-              {userRole === 'technical' && (
-                <>
-                  <button
-                    onClick={() => {
-                      if (stageConfigLocked) {
-                        showToast('Cannot modify configuration - stage is active');
-                        return;
-                      }
-                      setShowAssessmentCreation(true);
-                    }}
-                    disabled={stageConfigLocked}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Plus size={16} />
-                    <span className="font-['Arimo',sans-serif] text-[14px]">
-                      Add Tech Assessment
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (stageConfigLocked) {
-                        showToast('Cannot modify configuration - stage is active');
-                        return;
-                      }
-                      setShowCreateAIInterview(true);
-                    }}
-                    disabled={stageConfigLocked}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Activity size={16} />
-                    <span className="font-['Arimo',sans-serif] text-[14px]">
-                      AI Interview Settings
-                    </span>
-                  </button>
-                </>
-              )}
-              {userRole === 'recruiter' && (
-                <div className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#f9fafb] border border-[#e5e7eb]">
-                  <Shield size={16} className="text-[#6b7280]" />
-                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                    Switch to Technical Recruiter to configure assessments and interviews
+            {/* Configuration Buttons - Technical Recruiter Only */}
+            {userRole === 'technical' && (
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    if (stageConfigLocked) {
+                      showToast('Cannot modify configuration - stage is active');
+                      return;
+                    }
+                    setShowAssessmentCreation(true);
+                  }}
+                  disabled={stageConfigLocked}
+                  className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus size={16} />
+                  <span className="font-['Arimo',sans-serif] text-[14px]">
+                    Add Tech Assessment
                   </span>
-                </div>
-              )}
-            </div>
+                </button>
+                <button
+                  onClick={() => {
+                    if (stageConfigLocked) {
+                      showToast('Cannot modify configuration - stage is active');
+                      return;
+                    }
+                    setShowCreateAIInterview(true);
+                  }}
+                  disabled={stageConfigLocked}
+                  className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Activity size={16} />
+                  <span className="font-['Arimo',sans-serif] text-[14px]">
+                    AI Interview Settings
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Display Created Assessments (Technical Recruiter Only) */}
@@ -1617,272 +1624,286 @@ export function EnhancedGroupOverviewV2({
       </div>
 
       {/* Comment Modal */}
-      {showCommentModal !== null && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-          <div className="bg-white rounded-[16px] shadow-2xl max-w-2xl w-full">
-            <div className="px-8 py-6 border-b border-[#e5e7eb]">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[#111827]">
-                  Comments for {candidateStatuses.find(c => c.id === showCommentModal)?.name}
-                </h3>
+      {
+        showCommentModal !== null && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+            <div className="bg-white rounded-[16px] shadow-2xl max-w-2xl w-full">
+              <div className="px-8 py-6 border-b border-[#e5e7eb]">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[#111827]">
+                    Comments for {candidateStatuses.find(c => c.id === showCommentModal)?.name}
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowCommentModal(null);
+                      setCommentText('');
+                    }}
+                    className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+                  >
+                    <X size={20} className="text-[#6b7280]" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-8">
+                {/* Existing comments */}
+                <div className="mb-6 space-y-3 max-h-[300px] overflow-y-auto">
+                  {getCandidateComments(showCommentModal).length > 0 ? (
+                    getCandidateComments(showCommentModal).map((comment) => (
+                      <div
+                        key={comment.id}
+                        className={`p-4 rounded-[12px] border ${comment.author === 'technical'
+                          ? 'bg-emerald-50 border-emerald-200'
+                          : 'bg-blue-50 border-blue-200'
+                          }`}
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className={`px-2 py-1 rounded-full text-[10px] font-medium ${comment.author === 'technical'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-blue-100 text-blue-700'
+                            }`}>
+                            {comment.author === 'technical' ? (
+                              <><Shield size={10} className="inline mr-1" />Technical</>
+                            ) : (
+                              <><Users size={10} className="inline mr-1" />HR</>
+                            )}
+                          </span>
+                          <span className="text-[12px] text-[#6b7280]">
+                            {comment.timestamp.toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="text-[14px] text-[#374151]">{comment.text}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-center text-[14px] text-[#6b7280] py-8">
+                      No comments yet. Add the first comment below.
+                    </p>
+                  )}
+                </div>
+
+                {/* Add new comment */}
+                <div>
+                  <label className="block text-[13px] text-[#374151] mb-2">
+                    Add Comment ({userRole === 'technical' ? 'Technical Recruiter' : 'HR Recruiter'})
+                  </label>
+                  <textarea
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    placeholder="Enter your comment..."
+                    rows={3}
+                    className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                  />
+                </div>
+              </div>
+
+              <div className="px-8 py-4 border-t border-[#e5e7eb] flex justify-end gap-3">
                 <button
                   onClick={() => {
                     setShowCommentModal(null);
                     setCommentText('');
                   }}
-                  className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+                  className="px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
                 >
-                  <X size={20} className="text-[#6b7280]" />
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleAddComment(showCommentModal)}
+                  disabled={!commentText.trim()}
+                  className="px-6 py-2 rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] text-white text-[14px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add Comment
                 </button>
               </div>
             </div>
+          </div>
+        )
+      }
 
-            <div className="p-8">
-              {/* Existing comments */}
-              <div className="mb-6 space-y-3 max-h-[300px] overflow-y-auto">
-                {getCandidateComments(showCommentModal).length > 0 ? (
-                  getCandidateComments(showCommentModal).map((comment) => (
-                    <div
-                      key={comment.id}
-                      className={`p-4 rounded-[12px] border ${comment.author === 'technical'
-                        ? 'bg-emerald-50 border-emerald-200'
-                        : 'bg-blue-50 border-blue-200'
-                        }`}
-                    >
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className={`px-2 py-1 rounded-full text-[10px] font-medium ${comment.author === 'technical'
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : 'bg-blue-100 text-blue-700'
-                          }`}>
-                          {comment.author === 'technical' ? (
-                            <><Shield size={10} className="inline mr-1" />Technical</>
-                          ) : (
-                            <><Users size={10} className="inline mr-1" />HR</>
-                          )}
-                        </span>
-                        <span className="text-[12px] text-[#6b7280]">
-                          {comment.timestamp.toLocaleString()}
-                        </span>
-                      </div>
-                      <p className="text-[14px] text-[#374151]">{comment.text}</p>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-center text-[14px] text-[#6b7280] py-8">
-                    No comments yet. Add the first comment below.
-                  </p>
-                )}
+      {/* Verdict Modal - Technical Recruiter Only */}
+      {
+        showVerdictModal !== null && userRole === 'technical' && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+            <div className="bg-white rounded-[16px] shadow-2xl max-w-md w-full p-8">
+              <h3 className="text-[#111827] mb-4">
+                Set Technical Verdict for {candidateStatuses.find(c => c.id === showVerdictModal)?.name}
+              </h3>
+              <div className="space-y-3">
+                <button
+                  onClick={() => handleSetVerdict(showVerdictModal, 'pass')}
+                  className="w-full p-4 rounded-[8px] border-2 border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 font-medium transition-colors"
+                >
+                  Pass
+                </button>
+                <button
+                  onClick={() => handleSetVerdict(showVerdictModal, 'conditional')}
+                  className="w-full p-4 rounded-[8px] border-2 border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-medium transition-colors"
+                >
+                  Conditional
+                </button>
+                <button
+                  onClick={() => handleSetVerdict(showVerdictModal, 'fail')}
+                  className="w-full p-4 rounded-[8px] border-2 border-red-300 bg-red-50 hover:bg-red-100 text-red-900 font-medium transition-colors"
+                >
+                  Fail
+                </button>
               </div>
-
-              {/* Add new comment */}
-              <div>
-                <label className="block text-[13px] text-[#374151] mb-2">
-                  Add Comment ({userRole === 'technical' ? 'Technical Recruiter' : 'HR Recruiter'})
-                </label>
-                <textarea
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  placeholder="Enter your comment..."
-                  rows={3}
-                  className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
-                />
-              </div>
-            </div>
-
-            <div className="px-8 py-4 border-t border-[#e5e7eb] flex justify-end gap-3">
               <button
-                onClick={() => {
-                  setShowCommentModal(null);
-                  setCommentText('');
-                }}
-                className="px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
+                onClick={() => setShowVerdictModal(null)}
+                className="mt-6 w-full px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
               >
                 Cancel
               </button>
-              <button
-                onClick={() => handleAddComment(showCommentModal)}
-                disabled={!commentText.trim()}
-                className="px-6 py-2 rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] text-white text-[14px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Add Comment
-              </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Verdict Modal - Technical Recruiter Only */}
-      {showVerdictModal !== null && userRole === 'technical' && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-          <div className="bg-white rounded-[16px] shadow-2xl max-w-md w-full p-8">
-            <h3 className="text-[#111827] mb-4">
-              Set Technical Verdict for {candidateStatuses.find(c => c.id === showVerdictModal)?.name}
-            </h3>
-            <div className="space-y-3">
-              <button
-                onClick={() => handleSetVerdict(showVerdictModal, 'pass')}
-                className="w-full p-4 rounded-[8px] border-2 border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 font-medium transition-colors"
-              >
-                Pass
-              </button>
-              <button
-                onClick={() => handleSetVerdict(showVerdictModal, 'conditional')}
-                className="w-full p-4 rounded-[8px] border-2 border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-medium transition-colors"
-              >
-                Conditional
-              </button>
-              <button
-                onClick={() => handleSetVerdict(showVerdictModal, 'fail')}
-                className="w-full p-4 rounded-[8px] border-2 border-red-300 bg-red-50 hover:bg-red-100 text-red-900 font-medium transition-colors"
-              >
-                Fail
-              </button>
-            </div>
-            <button
-              onClick={() => setShowVerdictModal(null)}
-              className="mt-6 w-full px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Activity Log Modal */}
-      {showActivityLog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-          <div className="bg-white rounded-[16px] shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="px-8 py-6 border-b border-[#e5e7eb]">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[#111827]">Activity & Decision Log</h3>
+      {
+        showActivityLog && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+            <div className="bg-white rounded-[16px] shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+              <div className="px-8 py-6 border-b border-[#e5e7eb]">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[#111827]">Activity & Decision Log</h3>
+                  <button
+                    onClick={() => setShowActivityLog(false)}
+                    className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+                  >
+                    <X size={20} className="text-[#6b7280]" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8">
+                <div className="space-y-4">
+                  {activityLog.map((entry) => (
+                    <div key={entry.id} className="flex gap-4">
+                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-[#f3f4f6] flex items-center justify-center">
+                        {entry.actorRole === 'technical' ? (
+                          <Shield size={16} className="text-[#10b981]" />
+                        ) : (
+                          <Users size={16} className="text-[#6366f1]" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[14px] text-[#111827] font-medium">
+                            {entry.actor}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${entry.actorRole === 'technical'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-blue-100 text-blue-700'
+                            }`}>
+                            {entry.actorRole === 'technical' ? 'Technical' : 'HR'}
+                          </span>
+                          <span className="text-[12px] text-[#9ca3af]">
+                            {entry.timestamp.toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="text-[14px] text-[#6b7280]">{entry.description}</p>
+                        {entry.metadata && (
+                          <div className="mt-2 p-2 bg-gray-50 rounded-[6px] text-[12px] text-gray-600">
+                            <code>{JSON.stringify(entry.metadata, null, 2)}</code>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="px-8 py-4 border-t border-[#e5e7eb] flex justify-end">
                 <button
                   onClick={() => setShowActivityLog(false)}
-                  className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+                  className="px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
                 >
-                  <X size={20} className="text-[#6b7280]" />
+                  Close
                 </button>
               </div>
             </div>
-
-            <div className="flex-1 overflow-y-auto p-8">
-              <div className="space-y-4">
-                {activityLog.map((entry) => (
-                  <div key={entry.id} className="flex gap-4">
-                    <div className="flex-shrink-0 w-10 h-10 rounded-full bg-[#f3f4f6] flex items-center justify-center">
-                      {entry.actorRole === 'technical' ? (
-                        <Shield size={16} className="text-[#10b981]" />
-                      ) : (
-                        <Users size={16} className="text-[#6366f1]" />
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[14px] text-[#111827] font-medium">
-                          {entry.actor}
-                        </span>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${entry.actorRole === 'technical'
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : 'bg-blue-100 text-blue-700'
-                          }`}>
-                          {entry.actorRole === 'technical' ? 'Technical' : 'HR'}
-                        </span>
-                        <span className="text-[12px] text-[#9ca3af]">
-                          {entry.timestamp.toLocaleString()}
-                        </span>
-                      </div>
-                      <p className="text-[14px] text-[#6b7280]">{entry.description}</p>
-                      {entry.metadata && (
-                        <div className="mt-2 p-2 bg-gray-50 rounded-[6px] text-[12px] text-gray-600">
-                          <code>{JSON.stringify(entry.metadata, null, 2)}</code>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="px-8 py-4 border-t border-[#e5e7eb] flex justify-end">
-              <button
-                onClick={() => setShowActivityLog(false)}
-                className="px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
-              >
-                Close
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
 
 
       {/* Start Stage Modal */}
-      {showStartStageModal && (
-        <StartStageModal
-          stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
-          onConfirm={handleConfirmStartStage}
-          onCancel={() => setShowStartStageModal(false)}
-        />
-      )}
+      {
+        showStartStageModal && (
+          <StartStageModal
+            stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
+            onConfirm={handleConfirmStartStage}
+            onCancel={() => setShowStartStageModal(false)}
+          />
+        )
+      }
 
-      {/* Stage Results Dashboard */}
-      {showStageResults && (
-        <StageResultsDashboard
-          stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
-          stageId={currentStage}
-          candidates={candidateStatuses}
-          onClose={() => setShowStageResults(false)}
-          onEnterReviewMode={handleEnterReviewMode}
-          startDate={pipelineSteps.find(s => s.id === currentStage)?.startDate || new Date()}
-          endDate={pipelineSteps.find(s => s.id === currentStage)?.actualEndDate || new Date()}
-        />
-      )}
+      {/* Stage Results Dashboard - Full Screen */}
+      {
+        showStageResults && (
+          <StageResultsDashboard
+            stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
+            stageId={currentStage}
+            candidates={candidateStatuses}
+            onClose={() => setShowStageResults(false)}
+            onEnterReviewMode={handleEnterReviewMode}
+            startDate={pipelineSteps.find(s => s.id === currentStage)?.startDate || new Date()}
+            endDate={pipelineSteps.find(s => s.id === currentStage)?.actualEndDate || new Date()}
+          />
+        )
+      }
 
-      {/* Module Monitoring Dashboard */}
-      {showModuleMonitoring && (
-        <ModuleMonitoringDashboard
-          moduleType={showModuleMonitoring}
-          candidates={candidateStatuses}
-          onClose={() => setShowModuleMonitoring(null)}
-          onViewCandidate={(candidateId) => {
-            setShowModuleMonitoring(null);
-            onViewCandidate(candidateId);
-          }}
-          onAddVerdict={(candidateId) => {
-            setShowModuleMonitoring(null);
-            setShowVerdictModal(candidateId);
-          }}
-          onReviewFlags={(candidateId) => {
-            setShowModuleMonitoring(null);
-            setShowSuspectReview(candidateId);
-          }}
-        />
-      )}
+      {/* Module Monitoring Dashboard - Full Screen */}
+      {
+        showModuleMonitoring && (
+          <ModuleMonitoringDashboard
+            moduleType={showModuleMonitoring}
+            candidates={candidateStatuses}
+            onClose={() => setShowModuleMonitoring(null)}
+            onViewCandidate={(candidateId) => {
+              setShowModuleMonitoring(null);
+              onViewCandidate(candidateId);
+            }}
+            onAddVerdict={(candidateId) => {
+              setShowModuleMonitoring(null);
+              setShowVerdictModal(candidateId);
+            }}
+            onReviewFlags={(candidateId) => {
+              setShowModuleMonitoring(null);
+              setShowSuspectReview(candidateId);
+            }}
+          />
+        )
+      }
 
       {/* Bulk Progression Modal */}
-      {showBulkProgressionModal && (
-        <BulkProgressionModal
-          currentStage={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
-          nextStage={
-            (() => {
-              const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
-              return pipelineSteps[currentStepIndex + 1]?.name || 'Review';
-            })()
-          }
-          candidates={candidateStatuses
-            .filter(c => c.progressionState === 'active' || !c.progressionState)
-            .map(c => ({
-              id: c.id,
-              name: c.name,
-              avatar: c.avatar,
-              score: c.assessmentScore,
-              flags: c.flags,
-              meetsCriteria: c.meetsCriteria || false
-            }))}
-          onConfirm={handleBulkProgression}
-          onCancel={() => setShowBulkProgressionModal(false)}
-        />
-      )}
+      {
+        showBulkProgressionModal && (
+          <BulkProgressionModal
+            currentStage={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
+            nextStage={
+              (() => {
+                const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
+                return pipelineSteps[currentStepIndex + 1]?.name || 'Review';
+              })()
+            }
+            candidates={candidateStatuses
+              .filter(c => c.progressionState === 'active' || !c.progressionState)
+              .map(c => ({
+                id: c.id,
+                name: c.name,
+                avatar: c.avatar,
+                score: c.assessmentScore,
+                flags: c.flags,
+                meetsCriteria: c.meetsCriteria || false
+              }))}
+            onConfirm={handleBulkProgression}
+            onCancel={() => setShowBulkProgressionModal(false)}
+          />
+        )
+      }
 
       {/* Final Decision Modal */}
       <FinalDecisionModal
@@ -1922,6 +1943,6 @@ export function EnhancedGroupOverviewV2({
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </div >
   );
 }

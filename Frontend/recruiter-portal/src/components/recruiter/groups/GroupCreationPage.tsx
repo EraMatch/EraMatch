@@ -6,7 +6,7 @@ import { AdvancedFilterDrawer } from '../candidates/AdvancedFilterDrawer';
 import { api } from '../../../services/api';
 
 interface Candidate {
-  id: number;
+  id: string;
   name: string;
   email: string;
   experience: number;
@@ -15,14 +15,23 @@ interface Candidate {
   match: number;
   aiScore?: number;
   starred: boolean;
+  // Detailed fields
+  companies?: string[];
+  job_titles?: string[];
+  universities?: string[];
+  degrees?: string[];
+  // Group fields
+  groupId?: string;
+  groupName?: string;
 }
 
 interface GroupCreationPageProps {
   positionTitle: string;
+  positionId: string;
   onCancel: () => void;
   onCreate: (groupData: {
     name: string;
-    candidateIds: number[];
+    candidateIds: string[];
     aiRankingUsed: boolean;
     nlpQuery?: string;
   }) => void;
@@ -30,6 +39,7 @@ interface GroupCreationPageProps {
 
 export function GroupCreationPage({
   positionTitle,
+  positionId,
   onCancel,
   onCreate
 }: GroupCreationPageProps) {
@@ -43,8 +53,26 @@ export function GroupCreationPage({
     const fetchCandidates = async () => {
       try {
         setLoading(true);
-        const data = await api.recruiter.getGroupCandidates();
-        setAllCandidates(data);
+        // Fetch candidates for this specific position
+        const response = await api.recruiter.getPositionDetails(positionId);
+        console.log('GroupCreationPage response:', response);
+
+        // Extract candidates from response details
+        if (response && (response as any).candidates) {
+          console.log('All candidates:', (response as any).candidates);
+          // Filter out candidates who are already in a group, UNLESS it's "Main Pipeline"
+          const availableCandidates = ((response as any).candidates as any[]).filter(c => {
+            const isMainPipeline = c.groupName === "Main Pipeline";
+            const available = (!c.groupId && !c.groupName) || isMainPipeline;
+
+            if (!available) console.log('Filtered out:', c.name, c.groupId, c.groupName);
+            return available;
+          });
+          console.log('Available candidates:', availableCandidates);
+          setAllCandidates(availableCandidates);
+        } else {
+          console.log('No candidates in response');
+        }
       } catch (error) {
         console.error('Failed to fetch group candidates:', error);
       } finally {
@@ -53,7 +81,7 @@ export function GroupCreationPage({
     };
 
     fetchCandidates();
-  }, []);
+  }, [positionId]);
 
   // Filters
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -66,7 +94,7 @@ export function GroupCreationPage({
   const [isAiProcessing, setIsAiProcessing] = useState(false);
 
   // Selection
-  const [selectedCandidates, setSelectedCandidates] = useState<Set<number>>(new Set());
+  const [selectedCandidates, setSelectedCandidates] = useState<Set<string>>(new Set());
   const [customBulkNumber, setCustomBulkNumber] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
 
@@ -76,15 +104,52 @@ export function GroupCreationPage({
   // Apply manual filters from advanced drawer
   const filteredCandidates = useMemo(() => {
     let filtered = [...allCandidates];
-    // Apply advanced filters logic here when implemented
-    // For now, return all candidates
-    return filtered;
-  }, [advancedFilters]);
+    const f = advancedFilters;
 
-  // Apply AI ranking
+    // 1. Identity
+    if (f.fullName) {
+      filtered = filtered.filter(c => c.name.toLowerCase().includes(f.fullName.toLowerCase()));
+    }
+    if (f.location) {
+      filtered = filtered.filter(c => c.location && c.location.toLowerCase().includes(f.location.toLowerCase()));
+    }
+
+    // 2. Education
+    if (f.school) {
+      filtered = filtered.filter(c => c.universities?.some(u => u.toLowerCase().includes(f.school.toLowerCase())));
+    }
+    if (f.degree && f.degree.length > 0) {
+      filtered = filtered.filter(c => c.degrees?.some(d => f.degree.some((fd: string) => d.toLowerCase().includes(fd.toLowerCase()))));
+    }
+
+    // 3. Work Experience
+    if (f.company) {
+      filtered = filtered.filter(c => c.companies?.some(comp => comp.toLowerCase().includes(f.company.toLowerCase())));
+    }
+    if (f.jobTitle) {
+      filtered = filtered.filter(c => c.job_titles?.some(t => t.toLowerCase().includes(f.jobTitle.toLowerCase())));
+    }
+    if (f.yearsMin > 0 || f.yearsMax < 20) {
+      filtered = filtered.filter(c => c.experience >= f.yearsMin && c.experience <= f.yearsMax);
+    }
+
+    // 4. Skills
+    if (f.techStack && f.techStack.length > 0) {
+      // Assume AND logic for now (must have all selected skills)
+      filtered = filtered.filter(c => f.techStack.every((s: string) => c.skills.some(cs => cs.toLowerCase().includes(s.toLowerCase()))));
+    }
+
+    // 5. Match Score (Optional, reusing assessment score slider if desired, or adding new one)
+    // For now, we don't have a specific Match Score filter in the drawer, but we could use the AI Ranking.
+
+    return filtered;
+  }, [allCandidates, advancedFilters]);
+
+  // Apply AI ranking or default sorting
   const displayCandidates = useMemo(() => {
     if (!aiRankingEnabled) {
-      return filteredCandidates;
+      // Sort by match score descending by default
+      return [...filteredCandidates].sort((a, b) => b.match - a.match);
     }
 
     // Simulate AI ranking by adding AI scores and reordering
@@ -114,7 +179,7 @@ export function GroupCreationPage({
     );
   };
 
-  const toggleCandidateSelection = (id: number) => {
+  const toggleCandidateSelection = (id: string) => {
     setSelectedCandidates(prev => {
       const newSet = new Set(prev);
       if (newSet.has(id)) {
@@ -179,86 +244,65 @@ export function GroupCreationPage({
           </p>
         </div>
 
-        {/* Zone A: Manual Filters */}
-        <div className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Filter size={16} className="text-[#6366f1]" />
-            <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-              Manual Filters
-            </span>
-          </div>
-          <div>
-            {/* Advanced Filters Button - Prominent */}
-            <button
-              onClick={() => setShowAdvancedFilters(true)}
-              className="h-[44px] px-[20px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] font-['Arimo',sans-serif] text-[14px] text-white flex items-center gap-2 transition-all shadow-md hover:shadow-lg"
-            >
-              <Sliders size={18} />
-              Open Advanced Filters
-              {activeFilterCount > 0 && (
-                <Badge className="bg-white text-[#6366f1] h-[20px] px-[7px] text-[11px]">{activeFilterCount}</Badge>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Zone B: AI Power */}
-        <div className="border-t border-[#e5e7eb] pt-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Sparkles size={16} className="text-[#10b981]" />
-            <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-              AI Enhancement
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-[14px] h-[36px] rounded-[8px] bg-[#f0fdf4] border border-[#bbf7d0]">
-              <span className="font-['Arimo',sans-serif] text-[13px] text-[#15803d]">
-                AI Semantic Rerank
-              </span>
-              <Switch
-                checked={aiRankingEnabled}
-                onCheckedChange={setAiRankingEnabled}
-              />
-            </div>
-            <div className="flex-1 flex items-center gap-2">
-              <div className="flex-1 relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7280]" />
-                <input
-                  type="text"
-                  value={nlpQuery}
-                  onChange={(e) => setNlpQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAiEnhance()}
-                  placeholder="e.g., 'Find Java experts with fintech background'"
-                  className="w-full h-[36px] pl-[36px] pr-[14px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                />
-              </div>
+        {/* Unified Search & Filter Toolbar */}
+        <div className="mb-6 flex items-center gap-4">
+          {/* Search Bar - Flex Grow */}
+          <div className="flex-1 relative">
+            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9ca3af]" />
+            <input
+              type="text"
+              value={nlpQuery}
+              onChange={(e) => setNlpQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAiEnhance()}
+              placeholder="Search by skills, role, or describe ideal profile (e.g. 'Java expert with fintech exp')..."
+              className="w-full h-[48px] pl-[40px] pr-[120px] rounded-[10px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent shadow-sm transition-all"
+            />
+            {/* Enhance Button inside Input */}
+            <div className="absolute right-2 top-1/2 -translate-y-1/2">
               <button
                 onClick={handleAiEnhance}
                 disabled={!nlpQuery.trim() || isAiProcessing}
-                className="h-[36px] px-[16px] rounded-[8px] bg-[#10b981] hover:bg-[#059669] disabled:bg-[#d1d5db] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[13px] text-white flex items-center gap-2 transition-colors"
+                className="h-[36px] px-[16px] rounded-[8px] bg-[#10b981] hover:bg-[#059669] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[13px] text-white flex items-center gap-1.5 transition-colors font-medium"
               >
                 {isAiProcessing ? (
-                  <>
-                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Processing...
-                  </>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
-                  <>
-                    <Sparkles size={14} />
-                    Enhance
-                  </>
+                  <><Sparkles size={14} /> AI Sort</>
                 )}
               </button>
             </div>
           </div>
-          {aiRankingEnabled && nlpQuery && (
-            <div className="mt-3 px-[14px] py-[8px] rounded-[8px] bg-[#f0fdf4] border border-[#bbf7d0]">
-              <p className="font-['Arimo',sans-serif] text-[12px] text-[#15803d]">
-                ✓ AI ranking active for query: "{nlpQuery}"
-              </p>
-            </div>
-          )}
+
+          {/* AI Toggle */}
+          <div className="flex items-center gap-3 h-[48px] px-[16px] rounded-[10px] bg-white border border-[#e5e7eb] shadow-sm">
+            <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-[#374151]">AI Rank</span>
+            <Switch checked={aiRankingEnabled} onCheckedChange={setAiRankingEnabled} />
+          </div>
+
+          {/* Advanced Filter Button */}
+          <button
+            onClick={() => setShowAdvancedFilters(true)}
+            className={`h-[48px] px-[20px] rounded-[10px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] flex items-center gap-2 transition-all shadow-sm ${activeFilterCount > 0 ? 'border-[#6366f1] text-[#6366f1] bg-[#eef2ff]' : ''}`}
+          >
+            <Sliders size={18} />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="bg-[#6366f1] text-white rounded-full min-w-[20px] h-[20px] px-1 flex items-center justify-center text-[11px] font-medium">{activeFilterCount}</span>
+            )}
+          </button>
         </div>
+
+        {/* Active Query Indicator */}
+        {aiRankingEnabled && nlpQuery && (
+          <div className="mb-6 px-[16px] py-[10px] rounded-[10px] bg-[#f0fdf4] border border-[#bbf7d0] flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+            <Sparkles size={16} className="text-[#15803d]" />
+            <p className="font-['Arimo',sans-serif] text-[13px] text-[#15803d] font-medium">
+              Active AI Context: "{nlpQuery}"
+            </p>
+          </div>
+        )}
+
+        {/* Middle Section - Candidate Grid */}
       </div>
 
       {/* Middle Section - Candidate Grid */}
@@ -470,7 +514,14 @@ export function GroupCreationPage({
           </table>
         </div>
 
-        {displayCandidates.length === 0 && (
+        {loading ? (
+          <div className="flex flex-col items-center justify-center p-12 bg-white rounded-[12px] border border-[#e5e7eb]">
+            <div className="w-10 h-10 border-4 border-[#e0e7ff] border-t-[#6366f1] rounded-full animate-spin mb-4" />
+            <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+              Finding the best matches...
+            </p>
+          </div>
+        ) : displayCandidates.length === 0 && (
           <div className="bg-white rounded-[12px] border border-[#e5e7eb] p-12 text-center">
             <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
               No candidates match your current filters
@@ -525,6 +576,7 @@ export function GroupCreationPage({
       {showAdvancedFilters && (
         <AdvancedFilterDrawer
           onClose={() => setShowAdvancedFilters(false)}
+          hidePostProcessFilters={true}
           onApply={(filters) => {
             setAdvancedFilters(filters);
             setShowAdvancedFilters(false);

@@ -124,6 +124,13 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        // Admins must assign both HR and Technical Recruiter
+        if (isAdmin && (!assignedHRId || !assignedTechId)) {
+            toast.error('Both HR Recruiter and Technical Recruiter must be assigned before creating a position.');
+            return;
+        }
+
         setIsLoading(true);
 
         try {

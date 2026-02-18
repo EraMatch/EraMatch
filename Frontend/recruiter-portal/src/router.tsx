@@ -139,18 +139,26 @@ const ProjectsPageWrapper = () => {
 const GroupOverviewWrapper = () => {
     const { groupId } = useParams();
     const navigate = useNavigate();
-    const [group, setGroup] = React.useState<PositionGroup | null>(null);
+    const [group, setGroup] = React.useState<any | null>(null);
     const [loading, setLoading] = React.useState(true);
+    const [error, setError] = React.useState<string | null>(null);
+
+    // Derive recruiterType from localStorage user role
+    const userStr = localStorage.getItem('user');
+    const userObj = userStr ? JSON.parse(userStr) : null;
+    const userRole: string = (userObj?.role || '').toLowerCase();
+    const recruiterType: 'recruiter' | 'technical' = userRole === 'technical' ? 'technical' : 'recruiter';
 
     React.useEffect(() => {
         const loadGroup = async () => {
             if (!groupId) return;
             try {
-                const groups = await api.recruiter.getProjectGroups('1');
-                const found = groups.find(g => g.id.toString() === groupId);
-                if (found) setGroup(found);
+                // Use the correct endpoint to get group details by ID
+                const groupData = await api.recruiter.getGroupDetails(groupId);
+                setGroup(groupData);
             } catch (err) {
-                console.error(err);
+                console.error("Failed to load group details:", err);
+                setError("Failed to load group details");
             } finally {
                 setLoading(false);
             }
@@ -158,24 +166,54 @@ const GroupOverviewWrapper = () => {
         loadGroup();
     }, [groupId]);
 
-    if (loading) return <div className="p-8">Loading group...</div>;
-    if (!group) return <div className="p-8">Group not found</div>;
+    if (loading) return (
+        <div className="flex items-center justify-center min-h-screen bg-[#f8fafc]">
+            <p className="text-[#64748b] font-medium">Loading group details...</p>
+        </div>
+    );
 
+    if (error || !group) return (
+        <div className="flex items-center justify-center min-h-screen bg-[#f8fafc]">
+            <p className="text-[#ef4444] font-medium">{error || "Group not found"}</p>
+        </div>
+    );
+
+    // Map filtration flow from backend response
     const flow: ('assessment' | 'ai-interview' | 'live-interview')[] = [];
-    if (group.hasAssessment) flow.push('assessment');
-    if (group.hasAIInterview) flow.push('ai-interview');
-    if (group.hasLiveInterview) flow.push('live-interview');
+    if (group.filtration_flow) {
+        group.filtration_flow.forEach((stage: any) => {
+            // Map stage names to frontend expected values
+            if (stage.stage === 'assessment') flow.push('assessment');
+            if (stage.stage === 'ai_interview') flow.push('ai-interview');
+            if (stage.stage === 'live_interview') flow.push('live-interview');
+        });
+    }
+
+    // Fallback if no flow matches (e.g. if backend returns empty or different format)
+    if (flow.length === 0) {
+        if (group.assessment_config_id) flow.push('assessment');
+        if (group.interview_config_id) flow.push('ai-interview');
+    }
 
     return (
         <EnhancedGroupOverviewV2
-            groupId={group.id.toString()}
-            groupName={group.groupName}
-            description="High-performing candidates filtered by criteria"
-            assignedRecruiter={"John Doe - Senior Recruiter"}
-            candidateIds={[1, 2, 3, 4, 5, 6, 7, 8]}
-            recruiterType="technical"
+            groupId={group.id}
+            groupName={group.name}
+            description={group.description || "High-performing candidates filtered by criteria"}
+            assignedRecruiter={group.assigned_hr?.name || "Unassigned"}
+            candidateIds={[]} // We'll let EnhancedGroupOverviewV2 fetch candidates if needed, or pass empty
+            recruiterType={recruiterType}
             filtrationFlow={flow}
-            onBack={() => navigate(-1)}
+            onBack={() => {
+                // Check if we should go back to projects with groups tab
+                const url = new URL(window.location.href);
+                if (url.searchParams.get('tab') === 'groups') {
+                    navigate(-1);
+                } else {
+                    // Default fallback
+                    navigate('/recruiter/projects');
+                }
+            }}
             onViewCandidate={(id) => navigate(`/recruiter/candidates/${id}`)}
         />
     );
@@ -185,8 +223,8 @@ const CandidateProfileWrapper = () => {
     const { candidateId } = useParams();
     const navigate = useNavigate();
 
-    // Ensure candidateId is a number
-    const id = candidateId ? parseInt(candidateId, 10) : 0;
+    // Pass candidateId as a string (UUID) directly
+    const id = candidateId ?? '';
 
     return (
         <CandidateProfile
