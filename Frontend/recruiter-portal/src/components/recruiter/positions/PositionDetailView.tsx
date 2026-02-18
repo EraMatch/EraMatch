@@ -92,7 +92,7 @@ export function PositionDetailView({
   const [showGroupCreationPage, setShowGroupCreationPage] = useState(false);
   const [showFlowConfigModal, setShowFlowConfigModal] = useState(false);
   const [pendingGroupData, setPendingGroupData] = useState<any>(null);
-  const [viewingCandidateId, setViewingCandidateId] = useState<number | null>(null);
+  const [viewingCandidateId, setViewingCandidateId] = useState<string | null>(null);
 
   // Filtering State
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -675,14 +675,18 @@ export function PositionDetailView({
                       No Groups Created Yet
                     </h3>
                     <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af] mb-6 max-w-[400px] mx-auto">
-                      Create candidate groups to organize and track subsets of candidates through your recruitment pipeline.
+                      {isHR
+                        ? "Create candidate groups to organize and track subsets of candidates through your recruitment pipeline."
+                        : "No candidate groups have been created for this position yet."}
                     </p>
-                    <button
-                      onClick={() => setShowGroupCreationPage(true)}
-                      className="h-[44px] px-[24px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
-                    >
-                      Create Your First Group
-                    </button>
+                    {isHR && (
+                      <button
+                        onClick={() => setShowGroupCreationPage(true)}
+                        className="h-[44px] px-[24px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
+                      >
+                        Create Your First Group
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">

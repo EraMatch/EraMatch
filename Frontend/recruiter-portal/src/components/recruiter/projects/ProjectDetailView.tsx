@@ -446,7 +446,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
                   Positions
                 </h2>
                 {/* Create Position Button */}
-                {(() => {
+                {userRole !== 'technical' && (() => {
                   const canCreate = internalProjectStatus === 'Active';
                   return (
                     <div className="relative group">

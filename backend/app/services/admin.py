@@ -1844,14 +1844,18 @@ CandidateStageProgress.completed_at.isnot(None),
                 
                 if position:
                     if decision.status == "approved":
-                        # CHANGED: Admin approval now sends to Technical Review
-                        position.status = "technical_review"
-                        req.status = "technical_review" # Keep the request alive/in-review
-                        
                         # Apply overrides and assignment
                         if decision.assigned_tech_id:
                             position.assigned_tech_id = decision.assigned_tech_id
                             req.assigned_tech_id = decision.assigned_tech_id
+
+                        # Enforce Technical Recruiter Assignment
+                        if not position.assigned_tech_id:
+                             raise HTTPException(status_code=400, detail="A Technical Recruiter must be assigned to approve a position.")
+
+                        # CHANGED: Admin approval now sends to Technical Review
+                        position.status = "technical_review"
+                        req.status = "technical_review" # Keep the request alive/in-review
                         
                         notification_msg += f"\nPosition '{position.job_title}' has been approved by Admin and is now pending Technical Review."
                         

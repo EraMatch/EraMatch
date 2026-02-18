@@ -77,8 +77,8 @@ class PositionCreate(BaseModel):
     years_of_experience: int = 0
     education_level: str | None = None
     benefits: list[str] = []
-    assigned_hr_id: UUID | None = None
-    assigned_tech_id: UUID | None = None
+    assigned_hr_id: UUID
+    assigned_tech_id: UUID
 
 
 class PositionUpdate(BaseModel):

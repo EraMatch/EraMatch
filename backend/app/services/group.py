@@ -1060,6 +1060,10 @@ class GroupService:
 
     async def create_group(self, data: GroupCreateRequest) -> CandidateGroup:
         """Create a new candidate group."""
+        if self.user.role == "technical":
+            from app.core.exceptions import UnauthorizedException
+            raise UnauthorizedException("Technical recruiters cannot create groups")
+
         # 1. Validate Position
         from app.models import Position
         query_pos = select(Position).where(

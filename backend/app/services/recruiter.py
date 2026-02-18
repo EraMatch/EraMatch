@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 from uuid import UUID
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select, func, col, desc
+from sqlmodel import select, func, col, desc, or_, exists
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from app.core.exceptions import NotFoundException, UnauthorizedException
@@ -38,6 +38,10 @@ class RecruiterService:
     # Project operations
     async def create_project(self, data: ProjectCreate) -> Project:
         """Create a new project."""
+        if self.current_user.role == "technical":
+            from app.core.exceptions import UnauthorizedException
+            raise UnauthorizedException("Technical recruiters cannot create projects")
+            
         # 1. Determine creator ID (Admins are not in organization_users table)
         creator_id = self.current_user.id
         if self.current_user.role == "admin":
@@ -118,11 +122,38 @@ class RecruiterService:
             
         # 2. Check recruiter access if not admin
         if self.current_user.role != "admin":
-            access_query = select(ProjectAccess).where(
-                ProjectAccess.project_id == project_id,
-                ProjectAccess.user_id == self.current_user.id
+            # Access granted if:
+            # 1. Explicit ProjectAccess record exists
+            # 2. OR user is assigned to a position within the project
+            
+            # Use exists to check for position assignment
+            pos_assignment_exists = exists(
+                select(1).where(
+                    Position.project_id == project_id,
+                    or_(
+                        Position.assigned_hr_id == self.current_user.id,
+                        Position.assigned_tech_id == self.current_user.id
+                    ),
+                    Position.is_deleted == False
+                )
             )
-            access_res = await self.session.execute(access_query)
+            
+            explicit_access_exists = exists(
+                select(1).where(
+                    ProjectAccess.project_id == project_id,
+                    ProjectAccess.user_id == self.current_user.id
+                )
+            )
+            
+            # Combine both checks
+            final_access_query = select(1).where(
+                or_(
+                    explicit_access_exists,
+                    pos_assignment_exists
+                )
+            )
+            
+            access_res = await self.session.execute(final_access_query)
             if not access_res.scalar():
                 raise UnauthorizedException("You do not have access to this project")
                 
@@ -237,10 +268,31 @@ class RecruiterService:
             
             # If not admin, restrict to projects the user has access to
             if self.current_user.role != "admin":
-                query = query.join(
-                    ProjectAccess, Project.id == ProjectAccess.project_id
-                ).where(
-                    ProjectAccess.user_id == self.current_user.id
+                # Subquery to check for position assignments in a project
+                pos_assignment_exists = exists(
+                    select(1).where(
+                        Position.project_id == Project.id,
+                        or_(
+                            Position.assigned_hr_id == self.current_user.id,
+                            Position.assigned_tech_id == self.current_user.id
+                        ),
+                        Position.is_deleted == False
+                    )
+                )
+                
+                # Check for explicit project access
+                explicit_access_exists = exists(
+                    select(1).where(
+                        ProjectAccess.project_id == Project.id,
+                        ProjectAccess.user_id == self.current_user.id
+                    )
+                )
+                
+                query = query.where(
+                    or_(
+                        explicit_access_exists,
+                        pos_assignment_exists
+                    )
                 )
             
             if status:
@@ -404,20 +456,25 @@ class RecruiterService:
     # Position operations
     async def create_position(self, data: PositionCreate) -> Position:
         """Create a new position with validation for unique title in organization."""
+        if self.current_user.role == "technical":
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail="Technical recruiters cannot create positions")
+
         org_id = self.organization_id
 
-        # DEBUG LOGS
-        print(f"DEBUG: create_position role={self.current_user.role}")
-        print(f"DEBUG: assigned_hr_id={data.assigned_hr_id} type={type(data.assigned_hr_id)}")
-        print(f"DEBUG: assigned_tech_id={data.assigned_tech_id} type={type(data.assigned_tech_id)}")
 
-        # Validation for Admins: Must assign HR and Tech Recruiter
-        if self.current_user.role == "admin":
-             if not data.assigned_hr_id or not data.assigned_tech_id:
-                  print("DEBUG: Validation FAILED")
-                  from fastapi import HTTPException
-                  raise HTTPException(status_code=400, detail="Admins must assign both HR and Technical Recruiter to create a position.")
+        # Validation: Every position must have an assigned HR and Tech recruiter
+        if not data.assigned_hr_id:
+            if self.current_user.role == "hr":
+                data.assigned_hr_id = self.current_user.id
+            else:
+                 from fastapi import HTTPException
+                 raise HTTPException(status_code=400, detail="HR Recruiter must be assigned to create a position.")
         
+        if not data.assigned_tech_id:
+             from fastapi import HTTPException
+             raise HTTPException(status_code=400, detail="Technical Recruiter must be assigned to create a position.")
+
         # 0. Check Project Status
         # Get project to check status
         project = await self.get_project(data.project_id)
