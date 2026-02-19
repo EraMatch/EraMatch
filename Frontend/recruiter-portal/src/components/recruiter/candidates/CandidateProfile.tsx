@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, Network, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2 } from 'lucide-react';
+import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, Network, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock } from 'lucide-react';
 import { KnowledgeGraph } from './KnowledgeGraph';
 import { EnhancedAssessmentReport } from '../assessments/EnhancedAssessmentReport';
 import { EnhancedAIInterviewReport } from '../interviews/EnhancedAIInterviewReport';
@@ -88,15 +88,21 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     finalDecision: { status: 'not-started' }
   };
 
+  // Determine which stages are accessible based on pipelineStatus
+  const isStageAccessible = (stageKey: string): boolean => {
+    const status = pipelineStatus[stageKey as keyof typeof pipelineStatus]?.status;
+    return status === 'completed' || status === 'in-progress';
+  };
+
   const tabs = [
-    { id: 'overview', label: 'Overview', icon: FileText },
-    { id: 'resume', label: 'Resume', icon: FileText },
-    { id: 'github', label: 'GitHub', icon: Github },
-    { id: 'assessment', label: 'Assessment', icon: BarChart3 },
-    { id: 'interview', label: 'AI Interview', icon: Video },
-    { id: 'live-interview', label: 'Live Interview', icon: Play },
-    { id: 'notes', label: 'Notes', icon: MessageSquare },
-    { id: 'final-report', label: 'Final Report', icon: CheckCircle }
+    { id: 'overview', label: 'Overview', icon: FileText, locked: false },
+    { id: 'resume', label: 'Resume', icon: FileText, locked: false },
+    { id: 'github', label: 'GitHub', icon: Github, locked: false },
+    { id: 'assessment', label: 'Assessment', icon: BarChart3, locked: !isStageAccessible('assessment') },
+    { id: 'interview', label: 'AI Interview', icon: Video, locked: !isStageAccessible('aiInterview') },
+    { id: 'live-interview', label: 'Live Interview', icon: Play, locked: !isStageAccessible('liveInterview') },
+    { id: 'notes', label: 'Notes', icon: MessageSquare, locked: false },
+    { id: 'final-report', label: 'Final Report', icon: CheckCircle, locked: false }
   ];
 
   return (
@@ -255,19 +261,24 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                   <button
                     key={tab.id}
                     onClick={() => {
+                      if (tab.locked) return;
                       if (tab.id === 'knowledge-graph') {
                         onViewKnowledgeGraph?.();
                       } else {
                         setActiveTab(tab.id as TabType);
                       }
                     }}
-                    className={`flex items-center gap-2 px-[20px] py-[14px] font-['Arimo',sans-serif] text-[14px] border-b-2 transition-colors whitespace-nowrap ${activeTab === tab.id
-                      ? 'border-[#6366f1] text-[#6366f1]'
-                      : 'border-transparent text-[#6b7280] hover:text-[#111827]'
+                    title={tab.locked ? 'This stage has not been reached yet' : undefined}
+                    className={`flex items-center gap-2 px-[20px] py-[14px] font-['Arimo',sans-serif] text-[14px] border-b-2 transition-colors whitespace-nowrap ${tab.locked
+                        ? 'border-transparent text-[#d1d5db] cursor-not-allowed'
+                        : activeTab === tab.id
+                          ? 'border-[#6366f1] text-[#6366f1]'
+                          : 'border-transparent text-[#6b7280] hover:text-[#111827]'
                       }`}
                   >
-                    <Icon size={16} />
+                    {tab.locked ? <Lock size={14} className="text-[#d1d5db]" /> : <Icon size={16} />}
                     {tab.label}
+                    {tab.locked && <span className="text-[10px] bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded ml-1">Pending</span>}
                   </button>
                 );
               })}

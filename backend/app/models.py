@@ -246,7 +246,7 @@ class CandidateGroup(SQLModel, table=True):
     assigned_hr_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     assigned_tech_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     filtration_flow: dict = Field(default_factory=list, sa_column=Column(JSONB))
-    status: str = Field(default="active", max_length=20)
+    status: str = Field(default="On Hold", max_length=20)
     created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

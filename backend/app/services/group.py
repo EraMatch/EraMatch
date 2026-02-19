@@ -1088,7 +1088,7 @@ class GroupService:
                 {"stage": "assessment", "status": "pending", "order": 2},
                 {"stage": "interview", "status": "pending", "order": 3}
             ],
-            status="active",
+            status="On Hold",
             created_by_user_id=self.user.id
         )
         self.session.add(group)
@@ -1145,4 +1145,59 @@ class GroupService:
 
         await self.session.commit()
         await self.session.refresh(group)
+
+        # 5. Send Notification to Technical Recruiter
+        if group.assigned_tech_id:
+            from app.services.notification import NotificationService
+            notif_service = NotificationService(self.session)
+            await notif_service.create_notification(
+                organization_id=self.org_id,
+                recipient_user_id=group.assigned_tech_id,
+                title="New Candidate Group Created",
+                message=f"A new group '{group.group_name}' requires flow configuration.",
+                notification_type="group_assignment",
+                data={"group_id": str(group.id), "position_id": str(group.position_id)}
+            )
+
         return group
+
+    async def delete_group(self, group_id: UUID) -> None:
+        """Soft delete a group and release all candidates."""
+        try:
+            # Check if group exists
+            await self._get_group(group_id)
+
+            gid_str = str(group_id)
+
+            # 1. Release candidates (unlink from group)
+            await self.session.execute(
+                text(f"UPDATE candidate_applications SET group_id = NULL WHERE group_id = '{gid_str}'")
+            )
+
+            # 2. Soft delete group
+            await self.session.execute(
+                text(f"UPDATE candidate_groups SET status = 'archived' WHERE group_id = '{gid_str}'")
+            )
+            
+            await self.session.commit()
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+
+    async def update_group(self, group_id: UUID, data: GroupUpdateRequest) -> GroupDetailResponse:
+        """Update a group."""
+        group = await self._get_group(group_id)
+        if data.name:
+            group.group_name = data.name
+        if data.status:
+            group.status = data.status
+        if data.filtration_flow is not None:
+            # Convert list of stage names to the expected JSONB format
+            group.filtration_flow = [
+                {"order": idx + 1, "type": stage, "status": "pending"}
+                for idx, stage in enumerate(data.filtration_flow)
+            ]
+        self.session.add(group)
+        await self.session.commit()
+        return await self.get_group_details(group_id)
+

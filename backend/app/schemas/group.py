@@ -120,7 +120,9 @@ class GroupCreateRequest(BaseModel):
 
 
 class GroupUpdateRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    status: str | None = None
+    filtration_flow: list[str] | None = None  # e.g. ["assessment", "ai-interview", "live-interview"]
 
 
 # ─── Start Stage ──────────────────────────────────────────────────────────────

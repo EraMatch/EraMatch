@@ -1,4 +1,4 @@
-import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle } from 'lucide-react';
+import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -275,7 +275,7 @@ export function PositionDetailView({
   const saveRenaming = async (groupId: string) => {
     if (!editGroupName.trim()) return;
     try {
-      await api.recruiter.renameGroup(groupId, editGroupName);
+      await api.recruiter.updateGroup(groupId, { name: editGroupName });
       const updatedGroups = await api.recruiter.getPositionGroups(positionId) as any[];
       setGroups(updatedGroups);
       setEditingGroupId(null);
@@ -630,19 +630,22 @@ export function PositionDetailView({
                   onCancel={() => setShowGroupCreationPage(false)}
                   onCreate={async (data) => {
                     try {
-                      await api.recruiter.createGroup({
+                      const newGroup = await api.recruiter.createGroup({
                         name: data.name,
                         position_id: positionId,
                         candidate_ids: data.candidateIds,
                         ai_ranking_used: data.aiRankingUsed,
                         nlp_query: data.nlpQuery
                       });
+
                       setShowGroupCreationPage(false);
+
                       // Refresh groups
                       const groups = await api.recruiter.getPositionGroups(positionId) as any[];
                       setGroups(groups);
                     } catch (err) {
                       console.error("Failed to create group", err);
+                      throw err;
                     }
                   }}
                 />
@@ -729,9 +732,10 @@ export function PositionDetailView({
                                   {group.name}
                                 </h3>
                               )}
-                              <span className={`px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${group.status === 'Live' ? 'bg-[#dcfce7] text-[#10b981]' :
-                                group.status === 'Paused' ? 'bg-[#fef3c7] text-[#f59e0b]' :
-                                  'bg-[#f3f4f6] text-[#6b7280]'
+                              <span className={`px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${group.status?.toLowerCase() === 'live' ? 'bg-[#dcfce7] text-[#10b981]' :
+                                  group.status?.toLowerCase() === 'paused' ? 'bg-[#fef3c7] text-[#f59e0b]' :
+                                    group.status?.toLowerCase() === 'on hold' ? 'bg-[#ffedd5] text-[#f97316]' :
+                                      'bg-[#f3f4f6] text-[#6b7280]'
                                 }`}>
                                 {group.status}
                               </span>
@@ -763,13 +767,34 @@ export function PositionDetailView({
                             />
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <button
-                            onClick={() => onViewGroup && onViewGroup(group.id)}
-                            className="h-[36px] px-[16px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[13px] text-white transition-colors"
+                            onClick={() => {
+                              if (group.status?.toLowerCase() !== 'on hold') {
+                                onViewGroup && onViewGroup(group.id);
+                              }
+                            }}
+                            disabled={group.status?.toLowerCase() === 'on hold'}
+                            title={group.status?.toLowerCase() === 'on hold' ? 'This group requires flow configuration by a Technical Recruiter before it can be opened' : undefined}
+                            className={`h-[36px] px-[16px] rounded-[8px] font-['Arimo',sans-serif] text-[13px] transition-colors ${group.status?.toLowerCase() === 'on hold'
+                              ? 'bg-[#e5e7eb] text-[#9ca3af] cursor-not-allowed'
+                              : 'bg-[#6366f1] hover:bg-[#5558e3] text-white'
+                              }`}
                           >
-                            Open
+                            {group.status?.toLowerCase() === 'on hold' ? '🔒 Awaiting Config' : 'Open'}
                           </button>
+                          {group.status?.toLowerCase() === 'on hold' && user.role === 'technical_recruiter' && (
+                            <button
+                              onClick={() => {
+                                setPendingGroupData(group);
+                                setShowFlowConfigModal(true);
+                              }}
+                              className="h-[36px] px-[16px] rounded-[8px] border border-[#6366f1] text-[#6366f1] hover:bg-[#eef2ff] font-['Arimo',sans-serif] text-[13px] transition-colors flex items-center gap-2"
+                            >
+                              <Sliders size={14} />
+                              Configure Flow
+                            </button>
+                          )}
                           <button
                             onClick={() => startRenaming(group)}
                             className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#374151] transition-colors"
@@ -1346,12 +1371,12 @@ export function PositionDetailView({
         <FiltrationFlowConfigModal
           onClose={() => setShowFlowConfigModal(false)}
           groupData={pendingGroupData}
-          onSave={(flowConfig) => {
-            console.log('Flow config saved:', flowConfig);
+          onSave={async (_flowConfig) => {
+            // The modal already called api.recruiter.updateGroup (sets status + filtration_flow)
+            // Just close and refresh the group list
             setShowFlowConfigModal(false);
-            if (onViewGroup) {
-              onViewGroup(`group-${Date.now()}`);
-            }
+            const groups = await api.recruiter.getPositionGroups(positionId) as any[];
+            setGroups(groups);
           }}
         />
       )}

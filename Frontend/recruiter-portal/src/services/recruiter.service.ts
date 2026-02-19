@@ -240,11 +240,11 @@ export const recruiterService = {
         });
     },
 
-    renameGroup: async (groupId: string, name: string) => {
+    updateGroup: async (groupId: string, data: { name?: string; status?: string }) => {
         return fetchAPI<any>(`/recruiter/groups/${groupId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name })
+            body: JSON.stringify(data)
         });
     }
 };

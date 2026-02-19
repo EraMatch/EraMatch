@@ -96,9 +96,9 @@ async def update_group(
     session: DbSession,
     current_user: RecruiterUser,
 ):
-    """Update group details (rename)."""
+    """Update group details (name, status)."""
     svc = GroupService(session, current_user)
-    return await svc.rename_group(group_id, body.name)
+    return await svc.update_group(group_id, body)
 
 
 @router.delete(

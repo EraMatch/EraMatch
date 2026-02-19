@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Search, Sparkles, Filter, X, ChevronDown, Check, User, MapPin, Briefcase, Star, ArrowUpDown, Users, Sliders, ChevronLeft } from 'lucide-react';
+import { Search, Sparkles, Filter, X, ChevronDown, Check, User, MapPin, Briefcase, Star, ArrowUpDown, Users, Sliders, ChevronLeft, ExternalLink } from 'lucide-react';
 import { Switch } from '../../ui/switch';
 import { Badge } from '../../ui/badge';
 import { AdvancedFilterDrawer } from '../candidates/AdvancedFilterDrawer';
@@ -103,6 +103,7 @@ export function GroupCreationPage({
 
   // Group Details
   const [groupName, setGroupName] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
 
   // Apply manual filters from advanced drawer
   const filteredCandidates = useMemo(() => {
@@ -194,6 +195,27 @@ export function GroupCreationPage({
     });
   };
 
+  const toggleSelectAll = () => {
+    const allIds = displayCandidates.map(c => c.id);
+    const allSelected = allIds.every(id => selectedCandidates.has(id));
+
+    if (allSelected) {
+      // Deselect all visible
+      setSelectedCandidates(prev => {
+        const newSet = new Set(prev);
+        allIds.forEach(id => newSet.delete(id));
+        return newSet;
+      });
+    } else {
+      // Select all visible
+      setSelectedCandidates(prev => {
+        const newSet = new Set(prev);
+        allIds.forEach(id => newSet.add(id));
+        return newSet;
+      });
+    }
+  };
+
   const selectTopN = (n: number) => {
     const topIds = displayCandidates.slice(0, n).map(c => c.id);
     setSelectedCandidates(new Set(topIds));
@@ -208,15 +230,21 @@ export function GroupCreationPage({
     }
   };
 
-  const handleCreateGroup = () => {
-    if (!groupName.trim() || selectedCandidates.size === 0) return;
+  const handleCreateGroup = async () => {
+    if (!groupName.trim() || selectedCandidates.size === 0 || isCreating) return;
 
-    onCreate({
-      name: groupName,
-      candidateIds: Array.from(selectedCandidates),
-      aiRankingUsed: aiRankingEnabled,
-      nlpQuery: nlpQuery || undefined
-    });
+    try {
+      setIsCreating(true);
+      await onCreate({
+        name: groupName,
+        candidateIds: Array.from(selectedCandidates),
+        aiRankingUsed: aiRankingEnabled,
+        nlpQuery: nlpQuery || undefined
+      });
+    } catch (error) {
+      console.error('Error creating group:', error);
+      setIsCreating(false);
+    }
   };
 
   const getMatchColor = (score: number) => {
@@ -401,7 +429,14 @@ export function GroupCreationPage({
           <table className="w-full">
             <thead className="bg-[#f9fafb] border-b border-[#e5e7eb]">
               <tr>
-                <th className="w-[50px] px-4 py-3"></th>
+                <th className="w-[50px] px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={displayCandidates.length > 0 && displayCandidates.every(c => selectedCandidates.has(c.id))}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-[#d1d5db] text-[#6366f1] focus:ring-[#6366f1]"
+                  />
+                </th>
                 <th className="text-left px-4 py-3 font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
                   <div className="flex items-center gap-2">
                     <User size={14} />
@@ -450,8 +485,17 @@ export function GroupCreationPage({
                   </td>
                   <td className="px-4 py-3">
                     <div>
-                      <div className="font-['Arimo',sans-serif] text-[13px] text-[#111827]">
-                        {candidate.name}
+                      <div className="flex items-center gap-2">
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            window.open(`/recruiter/candidates/${candidate.id}`, '_blank');
+                          }}
+                          className="font-['Arimo',sans-serif] text-[13px] text-[#111827] hover:text-[#6366f1] hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          {candidate.name}
+                          <ExternalLink size={12} className="text-[#9ca3af]" />
+                        </span>
                       </div>
                       <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
                         {candidate.email}
@@ -565,11 +609,12 @@ export function GroupCreationPage({
             </button>
             <button
               onClick={handleCreateGroup}
-              disabled={!groupName.trim() || selectedCandidates.size === 0}
+              disabled={!groupName.trim() || selectedCandidates.size === 0 || isCreating}
               className="h-[44px] px-[24px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#d1d5db] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors flex items-center gap-2"
             >
               <Users size={16} />
               Create Group
+              {isCreating && <div className="ml-2 w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
             </button>
           </div>
         </div>

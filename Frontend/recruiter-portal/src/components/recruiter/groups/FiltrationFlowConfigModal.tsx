@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X, FileText, Video, MessageSquare, GripVertical, CheckCircle, Loader2 } from 'lucide-react';
 import { api } from '../../../services/api';
 
@@ -6,10 +6,42 @@ interface FiltrationModule {
   id: string;
   type: 'assessment' | 'ai-interview' | 'live-interview';
   name: string;
+  description: string;
   icon: any;
   enabled: boolean;
   order: number;
 }
+
+// Hardcoded pipeline modules — these are the standard filtration stages
+const DEFAULT_MODULES: FiltrationModule[] = [
+  {
+    id: 'assessment',
+    type: 'assessment',
+    name: 'Technical Assessment',
+    description: 'Automated MCQ/Coding test to evaluate technical skills',
+    icon: FileText,
+    enabled: false,
+    order: 0,
+  },
+  {
+    id: 'ai-interview',
+    type: 'ai-interview',
+    name: 'AI Video Interview',
+    description: 'AI-powered async video interview for soft skills & communication',
+    icon: Video,
+    enabled: false,
+    order: 1,
+  },
+  {
+    id: 'live-interview',
+    type: 'live-interview',
+    name: 'Live Interview',
+    description: 'Human-conducted live interview for final evaluation',
+    icon: MessageSquare,
+    enabled: false,
+    order: 2,
+  },
+];
 
 interface FiltrationFlowConfigModalProps {
   groupData?: any;
@@ -22,37 +54,8 @@ export function FiltrationFlowConfigModal({
   onClose,
   onSave
 }: FiltrationFlowConfigModalProps) {
-  const [filtrationModules, setFiltrationModules] = useState<FiltrationModule[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchModules = async () => {
-      try {
-        setIsLoading(true);
-        const modulesData = await api.recruiter.getPipelineModules();
-
-        // Map icons to modules
-        const iconMap: Record<string, any> = {
-          'assessment': FileText,
-          'ai-interview': Video,
-          'live-interview': MessageSquare
-        };
-
-        const mappedModules = modulesData.map((m: any, index: number) => ({
-          ...m,
-          icon: iconMap[m.type] || FileText,
-          order: index
-        }));
-
-        setFiltrationModules(mappedModules);
-      } catch (error) {
-        console.error('Failed to fetch pipeline modules:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchModules();
-  }, []);
+  const [filtrationModules, setFiltrationModules] = useState<FiltrationModule[]>(DEFAULT_MODULES);
+  const [isSaving, setIsSaving] = useState(false);
 
   const [draggedModule, setDraggedModule] = useState<string | null>(null);
 
@@ -86,29 +89,34 @@ export function FiltrationFlowConfigModal({
     setDraggedModule(null);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const enabledFlow = filtrationModules
       .filter(m => m.enabled)
       .sort((a, b) => a.order - b.order)
       .map(m => m.type);
 
-    onSave(enabledFlow);
+    try {
+      setIsSaving(true);
+
+      // If we have a group, persist the filtration flow to the backend
+      if (groupData?.id) {
+        await api.recruiter.updateGroup(groupData.id, {
+          filtration_flow: enabledFlow,
+          status: 'Live',
+        } as any);
+      }
+
+      onSave(enabledFlow);
+    } catch (err) {
+      console.error('Failed to save flow config:', err);
+      // Still call onSave even if backend update fails
+      onSave(enabledFlow);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const enabledCount = filtrationModules.filter(m => m.enabled).length;
-
-  if (isLoading) {
-    return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-[16px] w-full max-w-[600px] h-[300px] flex items-center justify-center">
-          <div className="flex flex-col items-center gap-4">
-            <Loader2 className="w-10 h-10 text-[#6366f1] animate-spin" />
-            <p className="text-[#6b7280] font-medium font-['Arimo',sans-serif]">Loading flow modules...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -119,7 +127,7 @@ export function FiltrationFlowConfigModal({
               Configure Filtration Flow
             </h3>
             <p className="text-[#6b7280] text-[14px] font-['Arimo',sans-serif] mt-1">
-              {groupData?.name || 'New Group'} • {groupData?.selectedCandidates?.length || 0} candidates
+              {groupData?.name || 'New Group'} • {groupData?.candidateCount || 0} candidates
             </p>
           </div>
           <button
@@ -132,7 +140,7 @@ export function FiltrationFlowConfigModal({
 
         <div className="mb-6">
           <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280] mb-4">
-            Select and order the filtration stages for this candidate group. Drag to reorder.
+            Select and order the filtration stages for this candidate group. Enable stages and drag to reorder.
           </p>
 
           <div className="space-y-3">
@@ -146,23 +154,28 @@ export function FiltrationFlowConfigModal({
                 className={`flex items-center gap-4 p-4 rounded-[12px] border-2 transition-all ${module.enabled
                   ? 'border-[#6366f1] bg-[#eef2ff] cursor-move'
                   : 'border-[#e5e7eb] bg-white'
-                  } ${draggedModule === module.id ? 'opacity-50' : ''}`}
+                  } ${draggedModule === module.id ? 'opacity-50 scale-95' : ''}`}
               >
-                {module.enabled && (
-                  <GripVertical size={20} className="text-[#6b7280]" />
+                {module.enabled ? (
+                  <GripVertical size={20} className="text-[#6b7280] flex-shrink-0" />
+                ) : (
+                  <div className="w-[20px]" />
                 )}
 
-                <div className={`flex items-center justify-center w-[40px] h-[40px] rounded-[8px] ${module.enabled ? 'bg-[#6366f1]' : 'bg-[#e5e7eb]'
+                <div className={`flex items-center justify-center w-[40px] h-[40px] rounded-[8px] flex-shrink-0 ${module.enabled ? 'bg-[#6366f1]' : 'bg-[#e5e7eb]'
                   }`}>
                   <module.icon size={20} className={module.enabled ? 'text-white' : 'text-[#6b7280]'} />
                 </div>
 
-                <div className="flex-1">
-                  <h4 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-1">
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-0.5">
                     {module.name}
                   </h4>
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                    {module.description}
+                  </p>
                   {module.enabled && (
-                    <p className="font-['Arimo',sans-serif] text-[12px] text-[#6366f1]">
+                    <p className="font-['Arimo',sans-serif] text-[12px] text-[#6366f1] mt-1">
                       Stage {module.order + 1}
                     </p>
                   )}
@@ -170,7 +183,7 @@ export function FiltrationFlowConfigModal({
 
                 <button
                   onClick={() => toggleModule(module.id)}
-                  className={`flex items-center justify-center w-[24px] h-[24px] rounded-[6px] border-2 transition-all ${module.enabled
+                  className={`flex items-center justify-center w-[24px] h-[24px] rounded-[6px] border-2 transition-all flex-shrink-0 ${module.enabled
                     ? 'bg-[#6366f1] border-[#6366f1]'
                     : 'bg-white border-[#d1d5db]'
                     }`}
@@ -197,7 +210,7 @@ export function FiltrationFlowConfigModal({
                 .filter(m => m.enabled)
                 .sort((a, b) => a.order - b.order)
                 .map(m => m.name)
-                .join(' → ')}`
+                .join(' → ')} → Review & Offer`
             )}
           </p>
         </div>
@@ -211,10 +224,17 @@ export function FiltrationFlowConfigModal({
           </button>
           <button
             onClick={handleSave}
-            disabled={enabledCount === 0}
-            className="flex-1 h-[44px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
+            disabled={enabledCount === 0 || isSaving}
+            className="flex-1 h-[44px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors flex items-center justify-center gap-2"
           >
-            Save & Continue
+            {isSaving ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Saving...
+              </>
+            ) : (
+              'Save & Activate'
+            )}
           </button>
         </div>
       </div>
