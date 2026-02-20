@@ -9,6 +9,7 @@ import { ModuleMonitoringDashboard } from './ModuleMonitoringDashboard';
 import { StartStageModal } from './StartStageModal';
 import { BulkProgressionModal } from './BulkProgressionModal';
 import { FinalDecisionModal } from './FinalDecisionModal';
+import { FiltrationFlowConfigModal } from './FiltrationFlowConfigModal';
 import { api } from '../../../services/api';
 import { useEffect } from 'react';
 
@@ -126,6 +127,8 @@ export function EnhancedGroupOverviewV2({
   const [showMoveStageModal, setShowMoveStageModal] = useState(false);
   const [showRuleBuilderModal, setShowRuleBuilderModal] = useState(false);
   const [showAIInterviewSettingsModal, setShowAIInterviewSettingsModal] = useState(false);
+  const [showFlowConfigModal, setShowFlowConfigModal] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // New state for enhancements
   const [selectedCandidates, setSelectedCandidates] = useState<number[]>([]);
@@ -205,8 +208,36 @@ export function EnhancedGroupOverviewV2({
         setIsLoading(true);
         const data = await api.recruiter.getGroupDetails(groupId) as any;
 
-        // Map pipeline stages
-        const moduleMap: Record<string, { name: string; icon: any }> = {
+        // Map pipeline stages — use backend filtration_flow as primary source of truth if available
+        let activeFlow = filtrationFlow; // Default to prop
+        if (data.group && data.group.filtration_flow) {
+          // Parse backend response which might be object array or strings
+          // If getGroupDetails returns full group object in response
+          // Let's check structure. Response IS the group object mostly?
+          // User provided logs say "data" is the group detail response.
+          // Schema: filtration_flow is list of objects {stage: '...', ...}
+          const flowData = data.group.filtration_flow;
+          if (Array.isArray(flowData)) {
+            activeFlow = flowData.map((s: any) =>
+              (s.stage || s.type || '').toLowerCase().replace('_', '-')
+            ).filter((s: string) => ['assessment', 'ai-interview', 'live-interview'].includes(s))
+              .sort((a: string, b: string) => {
+                // Start with backend order if available? Backend sends ordered list.
+                return 0;
+              });
+          }
+        }
+        // Fallback or override prop
+        // Actually api.recruiter.getGroupDetails returns GroupDetailResponse which has filtration_flow
+        // structure: [{order, stage, status}, ...]
+        // Let's assume data.filtration_flow exists on response
+        if (data.filtration_flow && Array.isArray(data.filtration_flow)) {
+          activeFlow = data.filtration_flow.map((s: any) =>
+            (s.stage || s.type || '').toLowerCase().replace('_', '-')
+          ).filter((s: string) => ['assessment', 'ai-interview', 'live-interview'].includes(s));
+        }
+
+        const moduleMetaMap: Record<string, { name: string; icon: any }> = {
           'assessment': { name: 'Technical Assessment', icon: FileText },
           'ai-interview': { name: 'AI Interview', icon: Video },
           'live-interview': { name: 'Live Interview', icon: MessageSquare },
@@ -214,16 +245,34 @@ export function EnhancedGroupOverviewV2({
           'offer': { name: 'Offer', icon: Send }
         };
 
-        const steps: PipelineStep[] = data.pipelineStages.map((stage: any) => ({
-          id: stage.id || stage.name.toLowerCase().replace(' ', '-'),
-          name: stage.name,
-          completed: stage.completed,
-          total: stage.total,
-          pending: stage.pending,
-          state: (stage.state as StageState) || 'not-started'
-        }));
+        // Build a lookup from backend stages by a normalised key
+        const backendStageMap: Record<string, any> = {};
+        if (Array.isArray(data.pipelineStages)) {
+          data.pipelineStages.forEach((s: any) => {
+            const key = (s.id || s.name || '').toLowerCase().replace(/\s+/g, '-');
+            backendStageMap[key] = s;
+          });
+        }
+
+        // Build steps from the configured filtrationFlow so boxes always reflect the actual setup
+        const steps: PipelineStep[] = activeFlow.map((stageType) => {
+          const meta = moduleMetaMap[stageType] || { name: stageType, icon: FileText };
+          const backend = backendStageMap[stageType] || backendStageMap[meta.name.toLowerCase().replace(/\s+/g, '-')];
+          return {
+            id: stageType,
+            name: meta.name,
+            completed: backend?.completed ?? 0,
+            total: backend?.total ?? 0,
+            pending: backend?.pending ?? 0,
+            state: (backend?.state as StageState) || 'not-started'
+          };
+        });
 
         setPipelineSteps(steps);
+        // Also set currentStage to first step if not already set
+        if (steps.length > 0) {
+          setCurrentStage(steps[0].id);
+        }
 
         // Map candidates
         const candidates: CandidateStatus[] = data.candidates.map((c: any) => ({
@@ -268,7 +317,19 @@ export function EnhancedGroupOverviewV2({
     };
 
     fetchData();
-  }, [groupId]);
+  }, [groupId, refreshKey]);
+
+  const handleSaveFlow = async (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[]) => {
+    try {
+      await api.recruiter.updateGroup(groupId, { filtration_flow: flowConfig });
+      setShowFlowConfigModal(false);
+      setRefreshKey(prev => prev + 1); // Trigger refresh
+      showToast('Filtration flow updated successfully');
+    } catch (error) {
+      console.error('Failed to save flow:', error);
+      showToast('Failed to update filtration flow');
+    }
+  };
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -817,6 +878,18 @@ export function EnhancedGroupOverviewV2({
           </div>
 
           <div className="flex gap-2">
+            {userRole === 'technical' && (
+              <button
+                onClick={() => setShowFlowConfigModal(true)}
+                className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
+                title="Configure Pipeline Flow"
+              >
+                <Edit size={16} className="text-[#6b7280]" />
+                <span className="font-['Arimo',sans-serif] text-[#111827] text-[14px]">
+                  Configure Flow
+                </span>
+              </button>
+            )}
             {getStageActionButton()}
             <button
               onClick={() => setShowActivityLog(true)}
@@ -881,9 +954,11 @@ export function EnhancedGroupOverviewV2({
 
         {/* Pipeline Progress with Stage States */}
         <div className="px-8 mt-6">
-          <div className={`grid gap-4 ${pipelineSteps.length <= 3 ? 'grid-cols-3' :
-            pipelineSteps.length === 4 ? 'grid-cols-4' :
-              'grid-cols-5'
+          <div className={`grid gap-4 ${pipelineSteps.length === 1 ? 'grid-cols-1' :
+            pipelineSteps.length === 2 ? 'grid-cols-2' :
+              pipelineSteps.length === 3 ? 'grid-cols-3' :
+                pipelineSteps.length === 4 ? 'grid-cols-4' :
+                  'grid-cols-5'
             }`}>
             {pipelineSteps.map((step, index) => {
               const isCurrentStage = step.id === currentStage;
@@ -1978,6 +2053,17 @@ export function EnhancedGroupOverviewV2({
           </motion.div>
         )}
       </AnimatePresence>
-    </div >
+
+      {/* Filtration Flow Configuration Modal */}
+      {
+        showFlowConfigModal && (
+          <FiltrationFlowConfigModal
+            groupData={{ filtration_flow: pipelineSteps.map(s => s.id) }} // Pass current flow
+            onClose={() => setShowFlowConfigModal(false)}
+            onSave={handleSaveFlow}
+          />
+        )
+      }
+    </div>
   );
 }

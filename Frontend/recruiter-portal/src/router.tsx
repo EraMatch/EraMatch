@@ -178,21 +178,29 @@ const GroupOverviewWrapper = () => {
         </div>
     );
 
-    // Map filtration flow from backend response
+    // Map filtration flow from backend response — handles plain strings, {stage,...} and {type,...} objects
     const flow: ('assessment' | 'ai-interview' | 'live-interview')[] = [];
-    if (group.filtration_flow) {
-        group.filtration_flow.forEach((stage: any) => {
-            // Map stage names to frontend expected values
-            if (stage.stage === 'assessment') flow.push('assessment');
-            if (stage.stage === 'ai_interview') flow.push('ai-interview');
-            if (stage.stage === 'live_interview') flow.push('live-interview');
+    const stageAliases: Record<string, 'assessment' | 'ai-interview' | 'live-interview'> = {
+        'assessment': 'assessment',
+        'ai-interview': 'ai-interview',
+        'ai_interview': 'ai-interview',
+        'live-interview': 'live-interview',
+        'live_interview': 'live-interview',
+    };
+    if (Array.isArray(group.filtration_flow)) {
+        group.filtration_flow.forEach((item: any) => {
+            // item may be a plain string, {stage: '...'} or {type: '...'} object
+            let raw: string;
+            if (typeof item === 'string') {
+                raw = item;
+            } else if (typeof item === 'object' && item !== null) {
+                raw = item.stage || item.type || '';
+            } else {
+                raw = '';
+            }
+            const mapped = stageAliases[raw.toLowerCase()];
+            if (mapped && !flow.includes(mapped)) flow.push(mapped);
         });
-    }
-
-    // Fallback if no flow matches (e.g. if backend returns empty or different format)
-    if (flow.length === 0) {
-        if (group.assessment_config_id) flow.push('assessment');
-        if (group.interview_config_id) flow.push('ai-interview');
     }
 
     return (

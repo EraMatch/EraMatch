@@ -97,6 +97,7 @@ class GroupService:
             raise NotFoundException("Position not found for group")
         return pos
 
+    @staticmethod
     def _parse_flow(raw: list | dict | None) -> list[FiltrationFlowStage]:
         """Normalise the JSON filtration_flow stored on the group."""
         if raw is None:
@@ -104,10 +105,18 @@ class GroupService:
         stages: list = raw if isinstance(raw, list) else raw.get("stages", [])
         result: list[FiltrationFlowStage] = []
         for idx, s in enumerate(stages):
-            if isinstance(s, dict):
+            if isinstance(s, str):
+                # Plain string format: e.g. 'assessment'
+                result.append(FiltrationFlowStage(
+                    order=idx + 1,
+                    stage=s,
+                    status="pending",
+                ))
+            elif isinstance(s, dict):
+                stage_name = s.get("type") or s.get("stage") or "unknown"
                 result.append(FiltrationFlowStage(
                     order=s.get("order", idx + 1),
-                    stage=s.get("type", s.get("stage", "unknown")),
+                    stage=stage_name,
                     status=s.get("status", s.get("state", "pending")),
                 ))
         return result
@@ -125,7 +134,8 @@ class GroupService:
         for sc in stage_configs:
             if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
                 min_score = sc.acceptance_criteria.get("min_technical_score", min_score)
-                allowed_risk = sc.acceptance_criteria.get("allowed_integrity_risk", allowed_risk)
+                min_score = sc.acceptance_criteria.get("min_technical_score", min_score)
+                allowed_integrity_risk = sc.acceptance_criteria.get("allowed_integrity_risk", allowed_risk)
 
         # Fetch applications + candidate profiles
         q = (
@@ -268,7 +278,10 @@ class GroupService:
         # Filtration flow from GroupStageConfig rows (authoritative) or group JSON
         stage_configs_res = await self.session.execute(
             select(GroupStageConfig)
-            .where(GroupStageConfig.group_id == group_id)
+            .where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.state != 'inactive'
+            )
             .order_by(GroupStageConfig.stage_order)
         )
         stage_configs = stage_configs_res.scalars().all()
@@ -280,6 +293,38 @@ class GroupService:
             ]
         else:
             flow = self._parse_flow(group.filtration_flow)
+
+        # Lazy Repair: If we have mismatch between active GroupStageConfig rows and JSON flow, sync them.
+        # This fixes the issue where existing groups show only 'Assessment' despite having more in JSON.
+        json_flow = self._parse_flow(group.filtration_flow)
+        json_stage_names = [f.stage for f in json_flow]
+        
+        # Check if we need repair
+        # valid sync if: active stage configs match the json flow names (ignoring order for now, just existence)
+        active_config_names = {sc.stage_type for sc in stage_configs}
+        json_names_set = {n.lower().replace("-", "_") for n in json_stage_names}
+        
+        if json_names_set and json_names_set != active_config_names:
+            # Mismatch detected! Sync DB to match JSON.
+            # We use the JSON flow as the source of truth for the repair.
+            await self._sync_stage_configs(group, json_stage_names)
+            
+            # Re-fetch authoritative configs
+            stage_configs_res = await self.session.execute(
+                select(GroupStageConfig)
+                .where(
+                    GroupStageConfig.group_id == group_id,
+                    GroupStageConfig.state != 'inactive'
+                )
+                .order_by(GroupStageConfig.stage_order)
+            )
+            stage_configs = stage_configs_res.scalars().all()
+            
+            # Re-build flow from synced configs
+            flow = [
+                FiltrationFlowStage(order=sc.stage_order, stage=sc.stage_type, status=sc.state)
+                for sc in stage_configs
+            ]
 
         # Assessment / interview config ids from stage configs
         assessment_config_id: UUID | None = None
@@ -1193,10 +1238,70 @@ class GroupService:
             group.status = data.status
         if data.filtration_flow is not None:
             # Convert list of stage names to the expected JSONB format
+            # 1. Update JSON field for backward compatibility
             group.filtration_flow = [
                 {"order": idx + 1, "type": stage, "status": "pending"}
                 for idx, stage in enumerate(data.filtration_flow)
             ]
+
+            # 2. Synchronise GroupStageConfig rows (authoritative source)
+            await self._sync_stage_configs(group, data.filtration_flow)
+
+        self.session.add(group)
+        await self.session.commit()
+        return await self.get_group_details(group_id)
+
+    async def _sync_stage_configs(self, group: CandidateGroup, stage_names: list[str]) -> None:
+        """Synchronise GroupStageConfig rows with a list of stage names."""
+        group_id = group.id
+        
+        # Fetch existing configs
+        current_configs_res = await self.session.execute(
+            select(GroupStageConfig).where(GroupStageConfig.group_id == group_id)
+        )
+        current_configs = {c.stage_type: c for c in current_configs_res.scalars().all()}
+        
+        # Process new flow
+        new_flow_types = []
+        for idx, stage_str in enumerate(stage_names):
+            # Normalize: frontend uses dashes, backend uses underscores
+            stage_type = stage_str.lower().replace("-", "_")
+            new_flow_types.append(stage_type)
+            
+            # Pretty name
+            stage_name = stage_str.replace("-", " ").title()
+            if stage_type == "ai_interview": stage_name = "AI Interview"
+            elif stage_type == "assessment": stage_name = "Technical Assessment"
+            elif stage_type == "live_interview": stage_name = "Live Interview"
+            
+            if stage_type in current_configs:
+                # Update existing
+                conf = current_configs[stage_type]
+                conf.stage_order = idx
+                if conf.state == 'inactive':
+                    conf.state = 'not_started' # Reactivate
+                # Keep existing state if active/completed
+                self.session.add(conf)
+            else:
+                # Create new
+                new_conf = GroupStageConfig(
+                    group_id=group_id,
+                    organization_id=group.organization_id,
+                    stage_type=stage_type,
+                    stage_order=idx,
+                    stage_name=stage_name,
+                    state="not_started"
+                )
+                self.session.add(new_conf)
+        
+        # Mark removed stages as inactive
+        for st_type, conf in current_configs.items():
+            if st_type not in new_flow_types:
+                conf.state = 'inactive'
+                conf.stage_order = 999
+                self.session.add(conf)
+        
+        await self.session.commit()
         self.session.add(group)
         await self.session.commit()
         return await self.get_group_details(group_id)

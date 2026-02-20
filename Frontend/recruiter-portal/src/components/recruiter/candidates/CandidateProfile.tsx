@@ -102,7 +102,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     { id: 'interview', label: 'AI Interview', icon: Video, locked: !isStageAccessible('aiInterview') },
     { id: 'live-interview', label: 'Live Interview', icon: Play, locked: !isStageAccessible('liveInterview') },
     { id: 'notes', label: 'Notes', icon: MessageSquare, locked: false },
-    { id: 'final-report', label: 'Final Report', icon: CheckCircle, locked: false }
+    { id: 'final-report', label: 'Final Report', icon: CheckCircle, locked: pipelineStatus.finalDecision?.status !== 'completed' }
   ];
 
   return (
@@ -270,10 +270,10 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                     }}
                     title={tab.locked ? 'This stage has not been reached yet' : undefined}
                     className={`flex items-center gap-2 px-[20px] py-[14px] font-['Arimo',sans-serif] text-[14px] border-b-2 transition-colors whitespace-nowrap ${tab.locked
-                        ? 'border-transparent text-[#d1d5db] cursor-not-allowed'
-                        : activeTab === tab.id
-                          ? 'border-[#6366f1] text-[#6366f1]'
-                          : 'border-transparent text-[#6b7280] hover:text-[#111827]'
+                      ? 'border-transparent text-[#d1d5db] cursor-not-allowed'
+                      : activeTab === tab.id
+                        ? 'border-[#6366f1] text-[#6366f1]'
+                        : 'border-transparent text-[#6b7280] hover:text-[#111827]'
                       }`}
                   >
                     {tab.locked ? <Lock size={14} className="text-[#d1d5db]" /> : <Icon size={16} />}
@@ -1135,338 +1135,385 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
 
             {activeTab === 'final-report' && (
               <div className="space-y-6">
-                {/* Decision Summary */}
-                <div className="bg-gradient-to-r from-emerald-50 to-emerald-100 border-2 border-emerald-500 rounded-2xl p-6">
-                  <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0">
-                      <CheckCircle size={24} className="text-white" />
+                {pipelineStatus.finalDecision?.status !== 'completed' ? (
+                  /* ── Pipeline not finished yet — show pending state ── */
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <div className="w-20 h-20 rounded-full bg-amber-100 flex items-center justify-center mb-6">
+                      <Clock size={40} className="text-amber-500" />
                     </div>
-                    <div className="flex-1">
-                      <h3 className="text-emerald-900 mb-2">Hiring Decision: APPROVED</h3>
-                      <p className="text-emerald-800 text-sm">
-                        Candidate has been approved and selected for the position based on comprehensive evaluation across all assessment criteria.
-                      </p>
+                    <h3 className="text-[#111827] mb-2">Final Report Pending</h3>
+                    <p className="text-[#6b7280] text-[14px] max-w-[480px] mb-8">
+                      The Final Report will be available once all pipeline stages are completed and a final hiring decision has been made.
+                    </p>
+
+                    {/* Show which stages are done vs pending */}
+                    <div className="w-full max-w-[480px] bg-[#f9fafb] border border-[#e5e7eb] rounded-[12px] p-6 text-left space-y-3">
+                      <div className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#374151] mb-4">Pipeline Progress</div>
+                      {[
+                        { key: 'groupAssignment', label: 'Group Assignment' },
+                        { key: 'assessment', label: 'Technical Assessment' },
+                        { key: 'aiInterview', label: 'AI Video Interview' },
+                        { key: 'liveInterview', label: 'Live Interview' },
+                        { key: 'finalDecision', label: 'Final Decision' },
+                      ].map(({ key, label }) => {
+                        const st = pipelineStatus[key as keyof typeof pipelineStatus]?.status || 'not-started';
+                        return (
+                          <div key={key} className="flex items-center justify-between">
+                            <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">{label}</span>
+                            {st === 'completed' ? (
+                              <span className="flex items-center gap-1 text-emerald-600 text-[12px]">
+                                <CheckCircle size={14} /> Completed
+                              </span>
+                            ) : st === 'in-progress' ? (
+                              <span className="flex items-center gap-1 text-indigo-600 text-[12px]">
+                                <Activity size={14} className="animate-pulse" /> In Progress
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1 text-[#9ca3af] text-[12px]">
+                                <Clock size={14} /> Pending
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                </div>
-
-                {/* Evaluation Summary */}
-                <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
-                  <h3 className="text-[#111827] mb-4">Evaluation Summary</h3>
-
-                  <div className="grid grid-cols-2 gap-6 mb-6">
-                    <div>
-                      <div className="text-sm text-gray-500 mb-2">Final Evaluator</div>
-                      <div className="text-gray-900">Sarah Johnson - HR Manager</div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-500 mb-2">Technical Reviewer</div>
-                      <div className="text-gray-900">Michael Chen - Tech Lead</div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-500 mb-2">Decision Date</div>
-                      <div className="text-gray-900">March 1, 2024</div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-500 mb-2">Start Date</div>
-                      <div className="text-gray-900">March 15, 2024</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Performance Breakdown */}
-                <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
-                  <h3 className="text-[#111827] mb-4">Performance Breakdown</h3>
-
-                  <div className="space-y-4">
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-gray-700">Technical Assessment</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-900">{candidate.scores.assessment}/100</span>
-                          <CheckCircle className="w-4 h-4 text-emerald-600" />
+                ) : (
+                  <>
+                    {/* Decision Summary */}
+                    <div className="bg-gradient-to-r from-emerald-50 to-emerald-100 border-2 border-emerald-500 rounded-2xl p-6">
+                      <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0">
+                          <CheckCircle size={24} className="text-white" />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="text-emerald-900 mb-2">Hiring Decision: APPROVED</h3>
+                          <p className="text-emerald-800 text-sm">
+                            Candidate has been approved and selected for the position based on comprehensive evaluation across all assessment criteria.
+                          </p>
                         </div>
                       </div>
-                      <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-emerald-500 rounded-full"
-                          style={{ width: `${candidate.scores.assessment}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        Demonstrated exceptional proficiency in React, TypeScript, and system design
-                      </p>
                     </div>
 
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-gray-700">AI Interview</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-900">{candidate.scores.aiInterview}/100</span>
-                          <CheckCircle className="w-4 h-4 text-emerald-600" />
+                    {/* Evaluation Summary */}
+                    <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
+                      <h3 className="text-[#111827] mb-4">Evaluation Summary</h3>
+
+                      <div className="grid grid-cols-2 gap-6 mb-6">
+                        <div>
+                          <div className="text-sm text-gray-500 mb-2">Final Evaluator</div>
+                          <div className="text-gray-900">{candidate.assignedHR || 'HR Manager'}</div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-500 mb-2">Technical Reviewer</div>
+                          <div className="text-gray-900">{candidate.assignedTechnical || 'Technical Recruiter'}</div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-500 mb-2">Decision Date</div>
+                          <div className="text-gray-900">{pipelineStatus.finalDecision?.completedAt || '—'}</div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-500 mb-2">Position</div>
+                          <div className="text-gray-900">{candidate.positionTitle || '—'}</div>
                         </div>
                       </div>
-                      <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-indigo-500 rounded-full"
-                          style={{ width: `${candidate.scores.aiInterview}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        Strong communication skills and cultural fit. Excellent problem-solving approach
-                      </p>
                     </div>
 
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-gray-700">GitHub Analysis</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-900">{candidate.scores.github}/100</span>
-                          <CheckCircle className="w-4 h-4 text-emerald-600" />
+                    {/* Performance Breakdown */}
+                    <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
+                      <h3 className="text-[#111827] mb-4">Performance Breakdown</h3>
+
+                      <div className="space-y-4">
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm text-gray-700">Technical Assessment</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-900">{candidate.scores.assessment}/100</span>
+                              <CheckCircle className="w-4 h-4 text-emerald-600" />
+                            </div>
+                          </div>
+                          <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-500 rounded-full"
+                              style={{ width: `${candidate.scores.assessment}%` }}
+                            />
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Demonstrated exceptional proficiency in React, TypeScript, and system design
+                          </p>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm text-gray-700">AI Interview</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-900">{candidate.scores.aiInterview}/100</span>
+                              <CheckCircle className="w-4 h-4 text-emerald-600" />
+                            </div>
+                          </div>
+                          <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-indigo-500 rounded-full"
+                              style={{ width: `${candidate.scores.aiInterview}%` }}
+                            />
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Strong communication skills and cultural fit. Excellent problem-solving approach
+                          </p>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm text-gray-700">GitHub Analysis</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-900">{candidate.scores.github}/100</span>
+                              <CheckCircle className="w-4 h-4 text-emerald-600" />
+                            </div>
+                          </div>
+                          <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-purple-500 rounded-full"
+                              style={{ width: `${candidate.scores.github}%` }}
+                            />
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Consistent contribution history with high-quality code reviews and documentation
+                          </p>
                         </div>
                       </div>
-                      <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-purple-500 rounded-full"
-                          style={{ width: `${candidate.scores.github}%` }}
-                        />
+                    </div>
+
+                    {/* Strengths & Areas for Development */}
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
+                        <div className="flex items-center gap-2 mb-4">
+                          <TrendingUp className="w-5 h-5 text-emerald-600" />
+                          <h3 className="text-[#111827]">Key Strengths</h3>
+                        </div>
+                        <ul className="space-y-2">
+                          <li className="flex items-start gap-2">
+                            <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                            <span className="text-sm text-gray-700">8+ years of React and TypeScript experience</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                            <span className="text-sm text-gray-700">Led microservices architecture serving 10M+ users</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                            <span className="text-sm text-gray-700">Strong system design and scalability expertise</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                            <span className="text-sm text-gray-700">Excellent communication and leadership skills</span>
+                          </li>
+                        </ul>
                       </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        Consistent contribution history with high-quality code reviews and documentation
+
+                      <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
+                        <div className="flex items-center gap-2 mb-4">
+                          <AlertTriangle className="w-5 h-5 text-amber-600" />
+                          <h3 className="text-[#111827]">Development Areas</h3>
+                        </div>
+                        <ul className="space-y-2">
+                          <li className="flex items-start gap-2">
+                            <span className="w-4 h-4 rounded-full bg-amber-100 mt-0.5 flex-shrink-0" />
+                            <span className="text-sm text-gray-700">Could benefit from more Kubernetes hands-on experience</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <span className="w-4 h-4 rounded-full bg-amber-100 mt-0.5 flex-shrink-0" />
+                            <span className="text-sm text-gray-700">Limited exposure to our specific tech stack (Python/Django)</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <span className="w-4 h-4 rounded-full bg-amber-100 mt-0.5 flex-shrink-0" />
+                            <span className="text-sm text-gray-700">Recommend onboarding support for internal tools</span>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    {/* Final Recommendation */}
+                    <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
+                      <h3 className="text-[#111827] mb-3">Final Recommendation</h3>
+                      <p className="text-sm text-gray-700 leading-relaxed mb-4">
+                        After comprehensive evaluation across all assessment criteria, {candidate.name} has demonstrated exceptional technical proficiency, strong communication skills, and cultural alignment with our organization. The candidate's extensive experience with React and microservices architecture, combined with proven leadership in scaling systems to serve millions of users, makes them an ideal fit for the Senior Frontend Developer position.
+                      </p>
+                      <p className="text-sm text-gray-700 leading-relaxed mb-4">
+                        While there are minor areas for development, particularly in Kubernetes and our internal tech stack, these can be easily addressed through our structured onboarding program. The candidate's strong learning ability and proven track record of quickly adapting to new technologies minimizes any concerns in this area.
+                      </p>
+                      <p className="text-sm text-gray-700 leading-relaxed">
+                        <strong>Recommendation:</strong> Strongly recommend proceeding with offer. Suggested salary range: $150,000 - $170,000 based on market benchmarks and candidate experience. Start date confirmed for March 15, 2024.
                       </p>
                     </div>
-                  </div>
-                </div>
-
-                {/* Strengths & Areas for Development */}
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
-                    <div className="flex items-center gap-2 mb-4">
-                      <TrendingUp className="w-5 h-5 text-emerald-600" />
-                      <h3 className="text-[#111827]">Key Strengths</h3>
-                    </div>
-                    <ul className="space-y-2">
-                      <li className="flex items-start gap-2">
-                        <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm text-gray-700">8+ years of React and TypeScript experience</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm text-gray-700">Led microservices architecture serving 10M+ users</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm text-gray-700">Strong system design and scalability expertise</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm text-gray-700">Excellent communication and leadership skills</span>
-                      </li>
-                    </ul>
-                  </div>
-
-                  <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
-                    <div className="flex items-center gap-2 mb-4">
-                      <AlertTriangle className="w-5 h-5 text-amber-600" />
-                      <h3 className="text-[#111827]">Development Areas</h3>
-                    </div>
-                    <ul className="space-y-2">
-                      <li className="flex items-start gap-2">
-                        <span className="w-4 h-4 rounded-full bg-amber-100 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm text-gray-700">Could benefit from more Kubernetes hands-on experience</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="w-4 h-4 rounded-full bg-amber-100 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm text-gray-700">Limited exposure to our specific tech stack (Python/Django)</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="w-4 h-4 rounded-full bg-amber-100 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm text-gray-700">Recommend onboarding support for internal tools</span>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-
-                {/* Final Recommendation */}
-                <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
-                  <h3 className="text-[#111827] mb-3">Final Recommendation</h3>
-                  <p className="text-sm text-gray-700 leading-relaxed mb-4">
-                    After comprehensive evaluation across all assessment criteria, {candidate.name} has demonstrated exceptional technical proficiency, strong communication skills, and cultural alignment with our organization. The candidate's extensive experience with React and microservices architecture, combined with proven leadership in scaling systems to serve millions of users, makes them an ideal fit for the Senior Frontend Developer position.
-                  </p>
-                  <p className="text-sm text-gray-700 leading-relaxed mb-4">
-                    While there are minor areas for development, particularly in Kubernetes and our internal tech stack, these can be easily addressed through our structured onboarding program. The candidate's strong learning ability and proven track record of quickly adapting to new technologies minimizes any concerns in this area.
-                  </p>
-                  <p className="text-sm text-gray-700 leading-relaxed">
-                    <strong>Recommendation:</strong> Strongly recommend proceeding with offer. Suggested salary range: $150,000 - $170,000 based on market benchmarks and candidate experience. Start date confirmed for March 15, 2024.
-                  </p>
-                </div>
+                  </>
+                )}
               </div>
             )}
           </div>
         </div>
-      </div>
 
-      {/* Assessment Details Modal */}
-      <Dialog open={showAssessmentDetails} onOpenChange={setShowAssessmentDetails}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-2xl">Assessment Questions & Answers</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-6 mt-4">
-            {assessmentQuestions.map((q: any, i: number) => (
-              <div key={q.id} className="border border-[#e5e7eb] rounded-lg p-5">
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium">
-                        Q{i + 1}
-                      </span>
-                      <span className="text-sm text-gray-500">{q.topic}</span>
+        {/* Assessment Details Modal */}
+        <Dialog open={showAssessmentDetails} onOpenChange={setShowAssessmentDetails}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-2xl">Assessment Questions & Answers</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-6 mt-4">
+              {assessmentQuestions.map((q: any, i: number) => (
+                <div key={q.id} className="border border-[#e5e7eb] rounded-lg p-5">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium">
+                          Q{i + 1}
+                        </span>
+                        <span className="text-sm text-gray-500">{q.topic}</span>
+                      </div>
+                      <h4 className="text-lg font-medium text-gray-900 mb-3">{q.question}</h4>
                     </div>
-                    <h4 className="text-lg font-medium text-gray-900 mb-3">{q.question}</h4>
+                    {q.isCorrect ? (
+                      <CheckCircle size={24} className="text-emerald-600 flex-shrink-0" />
+                    ) : (
+                      <XCircle size={24} className="text-red-600 flex-shrink-0" />
+                    )}
                   </div>
-                  {q.isCorrect ? (
-                    <CheckCircle size={24} className="text-emerald-600 flex-shrink-0" />
-                  ) : (
-                    <XCircle size={24} className="text-red-600 flex-shrink-0" />
-                  )}
+
+                  <div className="space-y-4">
+                    <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+                      <div className="text-sm font-medium text-blue-900 mb-1">Candidate's Answer</div>
+                      <div className="text-sm text-blue-800">{q.candidateAnswer}</div>
+                    </div>
+
+                    <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded">
+                      <div className="text-sm font-medium text-emerald-900 mb-1">Correct Answer</div>
+                      <div className="text-sm text-emerald-800">{q.correctAnswer}</div>
+                    </div>
+                  </div>
                 </div>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
 
-                <div className="space-y-4">
-                  <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
-                    <div className="text-sm font-medium text-blue-900 mb-1">Candidate's Answer</div>
-                    <div className="text-sm text-blue-800">{q.candidateAnswer}</div>
+        {/* Video Response Modal */}
+        <Dialog open={showVideoResponse !== null} onOpenChange={() => setShowVideoResponse(null)}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Video Response</DialogTitle>
+            </DialogHeader>
+            {showVideoResponse && videoInterviewQuestions.find((q: any) => q.id === showVideoResponse) && (
+              <div className="mt-4">
+                <div className="bg-gray-100 rounded-lg aspect-video flex items-center justify-center mb-4">
+                  <div className="text-center">
+                    <Play size={64} className="text-gray-400 mx-auto mb-2" />
+                    <p className="text-gray-600">Video Player Placeholder</p>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Duration: {videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.duration}
+                    </p>
                   </div>
-
-                  <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded">
-                    <div className="text-sm font-medium text-emerald-900 mb-1">Correct Answer</div>
-                    <div className="text-sm text-emerald-800">{q.correctAnswer}</div>
-                  </div>
+                </div>
+                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                  <h4 className="font-medium text-indigo-900 mb-2">Question</h4>
+                  <p className="text-indigo-800">{videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.question}</p>
                 </div>
               </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+            )}
+          </DialogContent>
+        </Dialog>
 
-      {/* Video Response Modal */}
-      <Dialog open={showVideoResponse !== null} onOpenChange={() => setShowVideoResponse(null)}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Video Response</DialogTitle>
-          </DialogHeader>
-          {showVideoResponse && videoInterviewQuestions.find((q: any) => q.id === showVideoResponse) && (
-            <div className="mt-4">
-              <div className="bg-gray-100 rounded-lg aspect-video flex items-center justify-center mb-4">
-                <div className="text-center">
-                  <Play size={64} className="text-gray-400 mx-auto mb-2" />
-                  <p className="text-gray-600">Video Player Placeholder</p>
-                  <p className="text-sm text-gray-500 mt-1">
-                    Duration: {videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.duration}
+        {/* Video Transcript Modal */}
+        <Dialog open={showVideoTranscript !== null} onOpenChange={() => setShowVideoTranscript(null)}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Video Response Transcript</DialogTitle>
+            </DialogHeader>
+            {showVideoTranscript && videoInterviewQuestions.find((q: any) => q.id === showVideoTranscript) && (
+              <div className="mt-4">
+                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-4">
+                  <h4 className="font-medium text-indigo-900 mb-2">Question</h4>
+                  <p className="text-indigo-800">{videoInterviewQuestions.find((q: any) => q.id === showVideoTranscript)?.question}</p>
+                </div>
+                <div className="bg-white border border-gray-200 rounded-lg p-6">
+                  <h4 className="font-medium text-gray-900 mb-3">Transcript</h4>
+                  <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+                    {videoInterviewQuestions.find((q: any) => q.id === showVideoTranscript)?.transcript}
                   </p>
                 </div>
               </div>
-              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                <h4 className="font-medium text-indigo-900 mb-2">Question</h4>
-                <p className="text-indigo-800">{videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.question}</p>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            )}
+          </DialogContent>
+        </Dialog>
 
-      {/* Video Transcript Modal */}
-      <Dialog open={showVideoTranscript !== null} onOpenChange={() => setShowVideoTranscript(null)}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Video Response Transcript</DialogTitle>
-          </DialogHeader>
-          {showVideoTranscript && videoInterviewQuestions.find((q: any) => q.id === showVideoTranscript) && (
-            <div className="mt-4">
-              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-4">
-                <h4 className="font-medium text-indigo-900 mb-2">Question</h4>
-                <p className="text-indigo-800">{videoInterviewQuestions.find((q: any) => q.id === showVideoTranscript)?.question}</p>
-              </div>
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <h4 className="font-medium text-gray-900 mb-3">Transcript</h4>
-                <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
-                  {videoInterviewQuestions.find((q: any) => q.id === showVideoTranscript)?.transcript}
-                </p>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Live Interview Transcript Modal */}
-      <Dialog open={showLiveInterviewTranscript} onOpenChange={setShowLiveInterviewTranscript}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-2xl">Live Interview Transcript</DialogTitle>
-          </DialogHeader>
-          <div className="mt-4 space-y-4">
-            {/* Metadata Card */}
-            <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-5">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-sm text-indigo-700 mb-1">Candidate</div>
-                  <div className="font-semibold text-indigo-900">{candidate.name}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-indigo-700 mb-1">Date</div>
-                  <div className="font-semibold text-indigo-900">{liveInterviewData.completedAt}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-indigo-700 mb-1">Duration</div>
-                  <div className="font-semibold text-indigo-900">{liveInterviewData.duration}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-indigo-700 mb-1">Scores</div>
-                  <div className="font-semibold text-indigo-900">
-                    Confidence: {liveInterviewData.overallConfidence}% | Correctness: {liveInterviewData.overallCorrectness}%
+        {/* Live Interview Transcript Modal */}
+        <Dialog open={showLiveInterviewTranscript} onOpenChange={setShowLiveInterviewTranscript}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-2xl">Live Interview Transcript</DialogTitle>
+            </DialogHeader>
+            <div className="mt-4 space-y-4">
+              {/* Metadata Card */}
+              <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-xl p-5">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-sm text-indigo-700 mb-1">Candidate</div>
+                    <div className="font-semibold text-indigo-900">{candidate.name}</div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-indigo-700 mb-1">Date</div>
+                    <div className="font-semibold text-indigo-900">{liveInterviewData.completedAt}</div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-indigo-700 mb-1">Duration</div>
+                    <div className="font-semibold text-indigo-900">{liveInterviewData.duration}</div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-indigo-700 mb-1">Scores</div>
+                    <div className="font-semibold text-indigo-900">
+                      Confidence: {liveInterviewData.overallConfidence}% | Correctness: {liveInterviewData.overallCorrectness}%
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            {/* Transcript Content */}
-            <div className="bg-white border border-[#e5e7eb] rounded-xl p-6">
-              <h4 className="font-semibold text-gray-900 mb-4 text-lg">Full Transcript</h4>
-              <div className="space-y-4 text-gray-700 leading-relaxed">
-                {liveInterviewData.transcript.split('\n\n').map((paragraph: string, i: number) => {
-                  const lines = paragraph.split('\n');
-                  return (
-                    <div key={i} className="space-y-2">
-                      {lines.map((line: string, j: number) => {
-                        if (line.startsWith('Interviewer:')) {
-                          return (
-                            <p key={j} className="font-semibold text-indigo-600">
-                              {line}
-                            </p>
-                          );
-                        } else if (line.startsWith('Candidate:')) {
-                          return (
-                            <p key={j} className="font-semibold text-emerald-600">
-                              {line}
-                            </p>
-                          );
-                        } else if (line.trim()) {
-                          return (
-                            <p key={j} className="text-gray-700 ml-4">
-                              {line}
-                            </p>
-                          );
-                        }
-                        return null;
-                      })}
-                    </div>
-                  );
-                })}
+              {/* Transcript Content */}
+              <div className="bg-white border border-[#e5e7eb] rounded-xl p-6">
+                <h4 className="font-semibold text-gray-900 mb-4 text-lg">Full Transcript</h4>
+                <div className="space-y-4 text-gray-700 leading-relaxed">
+                  {liveInterviewData.transcript.split('\n\n').map((paragraph: string, i: number) => {
+                    const lines = paragraph.split('\n');
+                    return (
+                      <div key={i} className="space-y-2">
+                        {lines.map((line: string, j: number) => {
+                          if (line.startsWith('Interviewer:')) {
+                            return (
+                              <p key={j} className="font-semibold text-indigo-600">
+                                {line}
+                              </p>
+                            );
+                          } else if (line.startsWith('Candidate:')) {
+                            return (
+                              <p key={j} className="font-semibold text-emerald-600">
+                                {line}
+                              </p>
+                            );
+                          } else if (line.trim()) {
+                            return (
+                              <p key={j} className="text-gray-700 ml-4">
+                                {line}
+                              </p>
+                            );
+                          }
+                          return null;
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
+      </div>
     </div>
   );
 }

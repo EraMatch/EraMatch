@@ -733,9 +733,9 @@ export function PositionDetailView({
                                 </h3>
                               )}
                               <span className={`px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${group.status?.toLowerCase() === 'live' ? 'bg-[#dcfce7] text-[#10b981]' :
-                                  group.status?.toLowerCase() === 'paused' ? 'bg-[#fef3c7] text-[#f59e0b]' :
-                                    group.status?.toLowerCase() === 'on hold' ? 'bg-[#ffedd5] text-[#f97316]' :
-                                      'bg-[#f3f4f6] text-[#6b7280]'
+                                group.status?.toLowerCase() === 'paused' ? 'bg-[#fef3c7] text-[#f59e0b]' :
+                                  group.status?.toLowerCase() === 'on hold' ? 'bg-[#ffedd5] text-[#f97316]' :
+                                    'bg-[#f3f4f6] text-[#6b7280]'
                                 }`}>
                                 {group.status}
                               </span>
@@ -768,33 +768,38 @@ export function PositionDetailView({
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <button
-                            onClick={() => {
-                              if (group.status?.toLowerCase() !== 'on hold') {
-                                onViewGroup && onViewGroup(group.id);
-                              }
-                            }}
-                            disabled={group.status?.toLowerCase() === 'on hold'}
-                            title={group.status?.toLowerCase() === 'on hold' ? 'This group requires flow configuration by a Technical Recruiter before it can be opened' : undefined}
-                            className={`h-[36px] px-[16px] rounded-[8px] font-['Arimo',sans-serif] text-[13px] transition-colors ${group.status?.toLowerCase() === 'on hold'
-                              ? 'bg-[#e5e7eb] text-[#9ca3af] cursor-not-allowed'
-                              : 'bg-[#6366f1] hover:bg-[#5558e3] text-white'
-                              }`}
-                          >
-                            {group.status?.toLowerCase() === 'on hold' ? '🔒 Awaiting Config' : 'Open'}
-                          </button>
-                          {group.status?.toLowerCase() === 'on hold' && user.role === 'technical_recruiter' && (
+                          {group.status?.toLowerCase() === 'on hold' && user.role === 'technical' ? (
+                            // Tech HR sees an actionable button to configure the flow
                             <button
                               onClick={() => {
                                 setPendingGroupData(group);
                                 setShowFlowConfigModal(true);
                               }}
-                              className="h-[36px] px-[16px] rounded-[8px] border border-[#6366f1] text-[#6366f1] hover:bg-[#eef2ff] font-['Arimo',sans-serif] text-[13px] transition-colors flex items-center gap-2"
+                              title="Click to configure the filtration flow for this group"
+                              className="h-[36px] px-[16px] rounded-[8px] font-['Arimo',sans-serif] text-[13px] transition-colors bg-[#f97316] hover:bg-[#ea6c0a] text-white flex items-center gap-2"
                             >
                               <Sliders size={14} />
                               Configure Flow
                             </button>
+                          ) : (
+                            // HR / others see a disabled status indicator
+                            <button
+                              onClick={() => {
+                                if (group.status?.toLowerCase() !== 'on hold') {
+                                  onViewGroup && onViewGroup(group.id);
+                                }
+                              }}
+                              disabled={group.status?.toLowerCase() === 'on hold'}
+                              title={group.status?.toLowerCase() === 'on hold' ? 'Awaiting flow configuration by Technical HR' : undefined}
+                              className={`h-[36px] px-[16px] rounded-[8px] font-['Arimo',sans-serif] text-[13px] transition-colors ${group.status?.toLowerCase() === 'on hold'
+                                ? 'bg-[#e5e7eb] text-[#9ca3af] cursor-not-allowed'
+                                : 'bg-[#6366f1] hover:bg-[#5558e3] text-white'
+                                }`}
+                            >
+                              {group.status?.toLowerCase() === 'on hold' ? '🔒 Awaiting Config' : 'Open'}
+                            </button>
                           )}
+
                           <button
                             onClick={() => startRenaming(group)}
                             className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#374151] transition-colors"
