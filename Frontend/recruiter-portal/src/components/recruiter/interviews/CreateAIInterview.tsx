@@ -43,16 +43,21 @@ interface InterviewQuestion {
 interface CreateAIInterviewProps {
   onBack: () => void;
   onSave: (interview: any) => void;
+  allowedTypes?: ('live' | 'recorded')[];
 }
 
 type CreationStep = 'settings' | 'sections';
 
-export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
+export function CreateAIInterview({ onBack, onSave, allowedTypes = ['live', 'recorded'] }: CreateAIInterviewProps) {
   const [currentStep, setCurrentStep] = useState<CreationStep>('settings');
+
+  // Default to the first allowed type, or 'recorded' if none specified
+  const defaultType = allowedTypes.length > 0 ? allowedTypes[0] : 'recorded';
+
   const [interviewConfig, setInterviewConfig] = useState<AIInterviewConfig>({
     title: '',
     description: '',
-    interviewType: 'recorded',
+    interviewType: defaultType,
     duration: 30,
     difficulty: 'Mid Level',
     evaluationCriteria: ['Communication Skills', 'Technical Knowledge', 'Problem-Solving'],
@@ -134,7 +139,7 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
       timeLimit: interviewConfig.interviewType === 'recorded' ? 120 : undefined,
       tags: []
     };
-    
+
     setSections(sections.map(s => {
       if (s.id === sectionId) {
         return { ...s, questions: [...s.questions, newQuestion] };
@@ -267,40 +272,40 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
                   Interview Type
                 </label>
                 <div className="flex gap-3">
-                  <button
-                    onClick={() => setInterviewConfig({ ...interviewConfig, interviewType: 'live' })}
-                    className={`flex-1 h-[80px] rounded-[10px] border-2 transition-all ${
-                      interviewConfig.interviewType === 'live'
-                        ? 'border-[#6366f1] bg-[#f5f3ff]'
-                        : 'border-[#e5e7eb] bg-white hover:border-[#d1d5db]'
-                    }`}
-                  >
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Video size={20} className={interviewConfig.interviewType === 'live' ? 'text-[#6366f1]' : 'text-[#6b7280]'} />
-                      <span className={`font-['Arimo',sans-serif] text-[14px] ${
-                        interviewConfig.interviewType === 'live' ? 'text-[#6366f1] font-medium' : 'text-[#6b7280]'
-                      }`}>
-                        Live AI Interview
-                      </span>
-                    </div>
-                  </button>
-                  <button
-                    onClick={() => setInterviewConfig({ ...interviewConfig, interviewType: 'recorded' })}
-                    className={`flex-1 h-[80px] rounded-[10px] border-2 transition-all ${
-                      interviewConfig.interviewType === 'recorded'
-                        ? 'border-[#6366f1] bg-[#f5f3ff]'
-                        : 'border-[#e5e7eb] bg-white hover:border-[#d1d5db]'
-                    }`}
-                  >
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Mic size={20} className={interviewConfig.interviewType === 'recorded' ? 'text-[#6366f1]' : 'text-[#6b7280]'} />
-                      <span className={`font-['Arimo',sans-serif] text-[14px] ${
-                        interviewConfig.interviewType === 'recorded' ? 'text-[#6366f1] font-medium' : 'text-[#6b7280]'
-                      }`}>
-                        Recorded Responses
-                      </span>
-                    </div>
-                  </button>
+                  {allowedTypes.includes('live') && (
+                    <button
+                      onClick={() => setInterviewConfig({ ...interviewConfig, interviewType: 'live' })}
+                      className={`flex-1 h-[80px] rounded-[10px] border-2 transition-all ${interviewConfig.interviewType === 'live'
+                          ? 'border-[#6366f1] bg-[#f5f3ff]'
+                          : 'border-[#e5e7eb] bg-white hover:border-[#d1d5db]'
+                        }`}
+                    >
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <Video size={20} className={interviewConfig.interviewType === 'live' ? 'text-[#6366f1]' : 'text-[#6b7280]'} />
+                        <span className={`font-['Arimo',sans-serif] text-[14px] ${interviewConfig.interviewType === 'live' ? 'text-[#6366f1] font-medium' : 'text-[#6b7280]'
+                          }`}>
+                          Live AI Interview
+                        </span>
+                      </div>
+                    </button>
+                  )}
+                  {allowedTypes.includes('recorded') && (
+                    <button
+                      onClick={() => setInterviewConfig({ ...interviewConfig, interviewType: 'recorded' })}
+                      className={`flex-1 h-[80px] rounded-[10px] border-2 transition-all ${interviewConfig.interviewType === 'recorded'
+                          ? 'border-[#6366f1] bg-[#f5f3ff]'
+                          : 'border-[#e5e7eb] bg-white hover:border-[#d1d5db]'
+                        }`}
+                    >
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <Mic size={20} className={interviewConfig.interviewType === 'recorded' ? 'text-[#6366f1]' : 'text-[#6b7280]'} />
+                        <span className={`font-['Arimo',sans-serif] text-[14px] ${interviewConfig.interviewType === 'recorded' ? 'text-[#6366f1] font-medium' : 'text-[#6b7280]'
+                          }`}>
+                          Recorded Responses
+                        </span>
+                      </div>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -483,11 +488,10 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-2">
                 <h1 className="text-[#111827]">{interviewConfig.title}</h1>
-                <span className={`px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${
-                  interviewConfig.interviewType === 'live'
+                <span className={`px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${interviewConfig.interviewType === 'live'
                     ? 'bg-[#dbeafe] text-[#2563eb]'
                     : 'bg-[#fef3c7] text-[#f59e0b]'
-                }`}>
+                  }`}>
                   {interviewConfig.interviewType === 'live' ? 'Live AI' : 'Recorded'}
                 </span>
               </div>

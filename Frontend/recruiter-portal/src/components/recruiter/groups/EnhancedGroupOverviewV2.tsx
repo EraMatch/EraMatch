@@ -199,6 +199,7 @@ export function EnhancedGroupOverviewV2({
   // NEW: Pipeline steps state
   const [pipelineSteps, setPipelineSteps] = useState<PipelineStep[]>([]);
   const [candidateStatuses, setCandidateStatuses] = useState<CandidateStatus[]>([]);
+  const [activeFlow, setActiveFlow] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Fetch data on mount
@@ -208,34 +209,26 @@ export function EnhancedGroupOverviewV2({
         setIsLoading(true);
         const data = await api.recruiter.getGroupDetails(groupId) as any;
 
-        // Map pipeline stages — use backend filtration_flow as primary source of truth if available
-        let activeFlow = filtrationFlow; // Default to prop
+        let activeFlowRaw = filtrationFlow; // Default to prop
         if (data.group && data.group.filtration_flow) {
           // Parse backend response which might be object array or strings
           // If getGroupDetails returns full group object in response
-          // Let's check structure. Response IS the group object mostly?
-          // User provided logs say "data" is the group detail response.
-          // Schema: filtration_flow is list of objects {stage: '...', ...}
           const flowData = data.group.filtration_flow;
           if (Array.isArray(flowData)) {
-            activeFlow = flowData.map((s: any) =>
+            activeFlowRaw = flowData.map((s: any) =>
               (s.stage || s.type || '').toLowerCase().replace('_', '-')
-            ).filter((s: string) => ['assessment', 'ai-interview', 'live-interview'].includes(s))
-              .sort((a: string, b: string) => {
-                // Start with backend order if available? Backend sends ordered list.
-                return 0;
-              });
+            ).filter((s: string) => ['assessment', 'ai-interview', 'live-interview'].includes(s));
           }
         }
-        // Fallback or override prop
+
         // Actually api.recruiter.getGroupDetails returns GroupDetailResponse which has filtration_flow
-        // structure: [{order, stage, status}, ...]
-        // Let's assume data.filtration_flow exists on response
         if (data.filtration_flow && Array.isArray(data.filtration_flow)) {
-          activeFlow = data.filtration_flow.map((s: any) =>
+          activeFlowRaw = data.filtration_flow.map((s: any) =>
             (s.stage || s.type || '').toLowerCase().replace('_', '-')
           ).filter((s: string) => ['assessment', 'ai-interview', 'live-interview'].includes(s));
         }
+
+        setActiveFlow(activeFlowRaw);
 
         const moduleMetaMap: Record<string, { name: string; icon: any }> = {
           'assessment': { name: 'Technical Assessment', icon: FileText },
@@ -254,8 +247,7 @@ export function EnhancedGroupOverviewV2({
           });
         }
 
-        // Build steps from the configured filtrationFlow so boxes always reflect the actual setup
-        const steps: PipelineStep[] = activeFlow.map((stageType) => {
+        const steps: PipelineStep[] = activeFlowRaw.map((stageType) => {
           const meta = moduleMetaMap[stageType] || { name: stageType, icon: FileText };
           const backend = backendStageMap[stageType] || backendStageMap[meta.name.toLowerCase().replace(/\s+/g, '-')];
           return {
@@ -790,8 +782,13 @@ export function EnhancedGroupOverviewV2({
 
   // If creating an AI Interview
   if (showCreateAIInterview) {
+    const aiInterviewTypesAllowed: ('live' | 'recorded')[] = [];
+    if (activeFlow.includes('live-interview')) aiInterviewTypesAllowed.push('live');
+    if (activeFlow.includes('ai-interview')) aiInterviewTypesAllowed.push('recorded');
+
     return (
       <CreateAIInterview
+        allowedTypes={aiInterviewTypesAllowed.length > 0 ? aiInterviewTypesAllowed : ['recorded']}
         onBack={() => setShowCreateAIInterview(false)}
         onSave={(data) => {
           setShowCreateAIInterview(false);
@@ -910,7 +907,7 @@ export function EnhancedGroupOverviewV2({
         </div>
 
         {/* Filtration Flow Indicator */}
-        {filtrationFlow.length > 0 && (
+        {activeFlow.length > 0 && (
           <div className="mt-4 px-8 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-100">
             <div className="flex items-center gap-3 flex-wrap">
               <div className="flex items-center gap-1.5">
@@ -919,13 +916,13 @@ export function EnhancedGroupOverviewV2({
                   Filtration Flow:
                 </span>
               </div>
-              {filtrationFlow.map((moduleType, index) => {
-                const moduleInfo = {
-                  'assessment': { name: 'Assessment', icon: FileText, color: 'emerald' },
+              {activeFlow.map((moduleType, index) => {
+                const moduleInfo: Record<string, { name: string; icon: any; color: string }> = {
+                  'assessment': { name: 'Technical Assessment', icon: FileText, color: 'emerald' },
                   'ai-interview': { name: 'AI Interview', icon: Video, color: 'blue' },
                   'live-interview': { name: 'Live Interview', icon: MessageSquare, color: 'purple' }
                 };
-                const info = moduleInfo[moduleType];
+                const info = moduleInfo[moduleType] || { name: moduleType, icon: FileText, color: 'gray' };
                 const Icon = info.icon;
                 return (
                   <div key={moduleType} className="flex items-center gap-2">
@@ -937,7 +934,7 @@ export function EnhancedGroupOverviewV2({
                         {index + 1}. {info.name}
                       </span>
                     </div>
-                    {index < filtrationFlow.length - 1 && (
+                    {index < activeFlow.length - 1 && (
                       <span className="text-emerald-400 font-medium">→</span>
                     )}
                   </div>
@@ -1036,19 +1033,7 @@ export function EnhancedGroupOverviewV2({
               )}
             </div>
 
-            {/* Current Recruiter Type Badge */}
-            <div className="flex items-center gap-3">
-              <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                Logged in as:
-              </span>
-              <span className={`flex items-center gap-1.5 h-[32px] px-[12px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${userRole === 'technical'
-                ? 'bg-emerald-50 text-[#10b981] border border-emerald-200'
-                : 'bg-indigo-50 text-[#6366f1] border border-indigo-200'
-                }`}>
-                {userRole === 'technical' ? <Shield size={14} /> : <Users size={14} />}
-                {userRole === 'technical' ? 'Technical Recruiter' : 'HR Recruiter'}
-              </span>
-            </div>
+
           </div>
 
           <div className="space-y-3">
@@ -1056,62 +1041,70 @@ export function EnhancedGroupOverviewV2({
             {/* Module Monitoring Dashboard - Available to both HR and Technical */}
             {(userRole === 'technical' || userRole === 'recruiter') && (
               <div className="flex gap-3">
-                <button
-                  onClick={() => setShowModuleMonitoring('assessment')}
-                  className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm"
-                >
-                  <BarChart3 size={16} />
-                  <span className="font-['Arimo',sans-serif] text-[14px]">
-                    Monitor Assessment Results
-                  </span>
-                </button>
-                <button
-                  onClick={() => setShowModuleMonitoring('ai-interview')}
-                  className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm"
-                >
-                  <BarChart3 size={16} />
-                  <span className="font-['Arimo',sans-serif] text-[14px]">
-                    Monitor AI Interview Results
-                  </span>
-                </button>
+                {activeFlow.includes('assessment') && (
+                  <button
+                    onClick={() => setShowModuleMonitoring('assessment')}
+                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm"
+                  >
+                    <BarChart3 size={16} />
+                    <span className="font-['Arimo',sans-serif] text-[14px]">
+                      Monitor Assessment Results
+                    </span>
+                  </button>
+                )}
+                {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
+                  <button
+                    onClick={() => setShowModuleMonitoring('ai-interview')}
+                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm"
+                  >
+                    <BarChart3 size={16} />
+                    <span className="font-['Arimo',sans-serif] text-[14px]">
+                      Monitor AI Interview Results
+                    </span>
+                  </button>
+                )}
               </div>
             )}
 
             {/* Configuration Buttons - Technical Recruiter Only */}
             {userRole === 'technical' && (
               <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    if (stageConfigLocked) {
-                      showToast('Cannot modify configuration - stage is active');
-                      return;
-                    }
-                    setShowAssessmentCreation(true);
-                  }}
-                  disabled={stageConfigLocked}
-                  className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Plus size={16} />
-                  <span className="font-['Arimo',sans-serif] text-[14px]">
-                    Add Tech Assessment
-                  </span>
-                </button>
-                <button
-                  onClick={() => {
-                    if (stageConfigLocked) {
-                      showToast('Cannot modify configuration - stage is active');
-                      return;
-                    }
-                    setShowCreateAIInterview(true);
-                  }}
-                  disabled={stageConfigLocked}
-                  className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Activity size={16} />
-                  <span className="font-['Arimo',sans-serif] text-[14px]">
-                    AI Interview Settings
-                  </span>
-                </button>
+                {activeFlow.includes('assessment') && (
+                  <button
+                    onClick={() => {
+                      if (stageConfigLocked) {
+                        showToast('Cannot modify configuration - stage is active');
+                        return;
+                      }
+                      setShowAssessmentCreation(true);
+                    }}
+                    disabled={stageConfigLocked}
+                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus size={16} />
+                    <span className="font-['Arimo',sans-serif] text-[14px]">
+                      Add Tech Assessment
+                    </span>
+                  </button>
+                )}
+                {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
+                  <button
+                    onClick={() => {
+                      if (stageConfigLocked) {
+                        showToast('Cannot modify configuration - stage is active');
+                        return;
+                      }
+                      setShowCreateAIInterview(true);
+                    }}
+                    disabled={stageConfigLocked}
+                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Activity size={16} />
+                    <span className="font-['Arimo',sans-serif] text-[14px]">
+                      AI Interview Settings
+                    </span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1183,109 +1176,7 @@ export function EnhancedGroupOverviewV2({
             </div>
           )}
 
-          {/* Technical Acceptance Criteria - Technical Recruiter Only */}
-          {userRole === 'technical' && (
-            <div className="mt-4 pt-4 border-t border-[#e5e7eb]">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-semibold flex items-center gap-2">
-                  <CheckSquare size={16} className="text-[#10b981]" />
-                  Technical Acceptance Criteria
-                </h4>
-                <button
-                  onClick={() => setShowCriteriaEditor(!showCriteriaEditor)}
-                  disabled={stageConfigLocked}
-                  className="flex items-center gap-1 px-3 py-1 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors text-[13px] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Edit size={14} />
-                  Edit Criteria
-                </button>
-              </div>
 
-              <div className="grid grid-cols-3 gap-3 mb-3">
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-[8px]">
-                  <div className="text-[11px] text-blue-700 mb-1">Minimum Technical Score</div>
-                  <div className="text-[18px] font-semibold text-blue-900">{acceptanceCriteria.minimumTechnicalScore}%</div>
-                </div>
-                <div className="p-3 bg-purple-50 border border-purple-200 rounded-[8px]">
-                  <div className="text-[11px] text-purple-700 mb-1">Allowed Integrity Risk</div>
-                  <div className="text-[18px] font-semibold text-purple-900 capitalize">{acceptanceCriteria.allowedIntegrityRisk}</div>
-                </div>
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-[8px]">
-                  <div className="text-[11px] text-emerald-700 mb-1">Required Verdict</div>
-                  <div className="text-[18px] font-semibold text-emerald-900 capitalize">{acceptanceCriteria.requiredVerdict}</div>
-                </div>
-              </div>
-
-              {showCriteriaEditor && (
-                <div className="p-4 bg-gray-50 border border-gray-200 rounded-[8px] space-y-3">
-                  <div>
-                    <label className="block text-[13px] text-[#374151] mb-2">
-                      Minimum Technical Score (%)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={acceptanceCriteria.minimumTechnicalScore}
-                      onChange={(e) => setAcceptanceCriteria({
-                        ...acceptanceCriteria,
-                        minimumTechnicalScore: parseInt(e.target.value) || 0
-                      })}
-                      className="w-full h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[14px]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[13px] text-[#374151] mb-2">
-                      Allowed Integrity Risk
-                    </label>
-                    <select
-                      value={acceptanceCriteria.allowedIntegrityRisk}
-                      onChange={(e) => setAcceptanceCriteria({
-                        ...acceptanceCriteria,
-                        allowedIntegrityRisk: e.target.value as 'none' | 'low' | 'medium'
-                      })}
-                      className="w-full h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[14px]"
-                    >
-                      <option value="none">None</option>
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[13px] text-[#374151] mb-2">
-                      Required Technical Verdict
-                    </label>
-                    <select
-                      value={acceptanceCriteria.requiredVerdict}
-                      onChange={(e) => setAcceptanceCriteria({
-                        ...acceptanceCriteria,
-                        requiredVerdict: e.target.value as 'pass' | 'conditional' | 'any'
-                      })}
-                      className="w-full h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[14px]"
-                    >
-                      <option value="pass">Pass Only</option>
-                      <option value="conditional">Pass or Conditional</option>
-                      <option value="any">Any</option>
-                    </select>
-                  </div>
-                  <div className="flex justify-end gap-2 pt-2">
-                    <button
-                      onClick={() => setShowCriteriaEditor(false)}
-                      className="px-4 py-2 rounded-[6px] border border-[#e5e7eb] text-[13px] hover:bg-white transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleSaveCriteria}
-                      className="px-4 py-2 rounded-[6px] bg-[#10b981] hover:bg-[#059669] text-white text-[13px] transition-colors"
-                    >
-                      Save Criteria
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -2058,7 +1949,12 @@ export function EnhancedGroupOverviewV2({
       {
         showFlowConfigModal && (
           <FiltrationFlowConfigModal
-            groupData={{ filtration_flow: pipelineSteps.map(s => s.id) }} // Pass current flow
+            groupData={{
+              id: groupId,
+              name: groupName,
+              candidateCount: candidateStatuses.length,
+              filtration_flow: pipelineSteps.map(s => s.id)
+            }}
             onClose={() => setShowFlowConfigModal(false)}
             onSave={handleSaveFlow}
           />

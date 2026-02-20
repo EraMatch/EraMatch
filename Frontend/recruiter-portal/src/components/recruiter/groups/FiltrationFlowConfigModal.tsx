@@ -54,7 +54,27 @@ export function FiltrationFlowConfigModal({
   onClose,
   onSave
 }: FiltrationFlowConfigModalProps) {
-  const [filtrationModules, setFiltrationModules] = useState<FiltrationModule[]>(DEFAULT_MODULES);
+  const [filtrationModules, setFiltrationModules] = useState<FiltrationModule[]>(() => {
+    if (groupData?.filtration_flow && Array.isArray(groupData.filtration_flow)) {
+      const activeFlowIds = groupData.filtration_flow;
+
+      const orderedActiveModules = activeFlowIds.map((id: string, index: number) => {
+        const mod = DEFAULT_MODULES.find(m => m.id === id || m.type === id);
+        return mod ? { ...mod, enabled: true, order: index } : null;
+      }).filter(Boolean) as FiltrationModule[];
+
+      const inactiveModules = DEFAULT_MODULES.filter(
+        m => !activeFlowIds.includes(m.id) && !activeFlowIds.includes(m.type)
+      ).map((m, index) => ({
+        ...m,
+        enabled: false,
+        order: orderedActiveModules.length + index
+      }));
+
+      return [...orderedActiveModules, ...inactiveModules];
+    }
+    return DEFAULT_MODULES;
+  });
   const [isSaving, setIsSaving] = useState(false);
 
   const [draggedModule, setDraggedModule] = useState<string | null>(null);

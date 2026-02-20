@@ -1128,11 +1128,7 @@ class GroupService:
             assigned_hr_id=position.assigned_hr_id,
             assigned_tech_id=position.assigned_tech_id,
             # filtration_flow=... logic for default flow or custom query
-            filtration_flow=[
-                {"stage": "screening", "status": "active", "order": 1},
-                {"stage": "assessment", "status": "pending", "order": 2},
-                {"stage": "interview", "status": "pending", "order": 3}
-            ],
+            filtration_flow=[], # Empty flow pending Technical HR configuration
             status="On Hold",
             created_by_user_id=self.user.id
         )
