@@ -28,7 +28,7 @@ export function RecordedInterviewQuestionSetup({
     const fetchQuestions = async () => {
       try {
         setIsLoading(true);
-        const data = await api.recruiter.getRecordedInterviewQuestions();
+        const data = (await api.recruiter.getRecordedInterviewQuestions('new')) as any[];
         // Map API data to component format
         const mappedQuestions: Question[] = data.map((q: any) => ({
           id: String(q.id),

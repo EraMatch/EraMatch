@@ -52,11 +52,11 @@ export function SuspectReviewPage({
     const fetchSuspectReview = async () => {
       try {
         setLoading(true);
-        const data = await api.recruiter.getSuspectReview(candidateId);
+        const data: any = await api.recruiter.getSuspectReview(String(candidateId));
         setFlags(data.flags as FlagEvent[]);
         setDuration(data.duration);
         setFlagStatuses(
-          data.flags.reduce((acc, flag) => ({ ...acc, [flag.id]: flag.status }), {})
+          data.flags.reduce((acc: Record<number, 'pending' | 'cleared' | 'escalated'>, flag: FlagEvent) => ({ ...acc, [flag.id]: flag.status }), {})
         );
       } catch (error) {
         console.error('Failed to fetch suspect review:', error);
@@ -209,10 +209,10 @@ export function SuspectReviewPage({
                           setSelectedFlag(flag.id);
                         }}
                         className={`absolute w-[3px] h-[32px] rounded-full transition-all hover:w-[6px] ${flag.severity === 'high'
-                            ? 'bg-[#ef4444]'
-                            : flag.severity === 'medium'
-                              ? 'bg-[#f59e0b]'
-                              : 'bg-[#3b82f6]'
+                          ? 'bg-[#ef4444]'
+                          : flag.severity === 'medium'
+                            ? 'bg-[#f59e0b]'
+                            : 'bg-[#3b82f6]'
                           } ${selectedFlag === flag.id ? 'ring-2 ring-white w-[6px]' : ''}`}
                         style={{ left: `${(flag.timestamp / duration) * 100}%` }}
                         title={`${flag.timeDisplay} - ${flag.event}`}
@@ -254,8 +254,8 @@ export function SuspectReviewPage({
                       <button
                         key={speed}
                         className={`h-[28px] px-[10px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] transition-colors ${speed === '1x'
-                            ? 'bg-[#6366f1] text-white'
-                            : 'border border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'
+                          ? 'bg-[#6366f1] text-white'
+                          : 'border border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'
                           }`}
                       >
                         {speed}
@@ -324,8 +324,8 @@ export function SuspectReviewPage({
                       key={flag.id}
                       layout
                       className={`border rounded-[12px] p-4 transition-all ${selectedFlag === flag.id
-                          ? 'ring-2 ring-[#6366f1] border-[#6366f1]'
-                          : 'border-[#e5e7eb]'
+                        ? 'ring-2 ring-[#6366f1] border-[#6366f1]'
+                        : 'border-[#e5e7eb]'
                         }`}
                     >
                       <div className="flex items-start justify-between mb-3">

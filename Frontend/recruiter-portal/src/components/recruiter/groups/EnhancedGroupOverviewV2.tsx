@@ -783,8 +783,8 @@ export function EnhancedGroupOverviewV2({
   // If creating an AI Interview
   if (showCreateAIInterview) {
     const aiInterviewTypesAllowed: ('live' | 'recorded')[] = [];
-    if (activeFlow.includes('live-interview')) aiInterviewTypesAllowed.push('live');
-    if (activeFlow.includes('ai-interview')) aiInterviewTypesAllowed.push('recorded');
+    if (filtrationFlow.includes('live-interview')) aiInterviewTypesAllowed.push('live');
+    if (filtrationFlow.includes('ai-interview')) aiInterviewTypesAllowed.push('recorded');
 
     return (
       <CreateAIInterview

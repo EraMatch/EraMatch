@@ -238,7 +238,7 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
                         paddingAngle={2}
                         dataKey="count"
                       >
-                        {analytics.groupsByStatus.map((entry, index) => (
+                        {analytics.groupsByStatus.map((entry: any, index: number) => (
                           <Cell key={`cell-${index}`} fill={entry.color} />
                         ))}
                       </Pie>
@@ -256,7 +256,7 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
                   </ResponsiveContainer>
                 </div>
                 <div className="flex items-center justify-center gap-4 mt-4">
-                  {analytics.groupsByStatus.map((item, index) => (
+                  {analytics.groupsByStatus.map((item: any, index: number) => (
                     <div key={index} className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }}></div>
                       <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
@@ -298,7 +298,7 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
                         }}
                       />
                       <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={60}>
-                        {analytics.candidatesByStage.map((entry, index) => (
+                        {analytics.candidatesByStage.map((entry: any, index: number) => (
                           <Cell key={`cell-${index}`} fill={entry.color} />
                         ))}
                       </Bar>
@@ -397,7 +397,7 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
                 Recent Group Activity
               </h3>
               <div className="space-y-3">
-                {analytics.recentActivity.map((activity, index) => (
+                {analytics.recentActivity.map((activity: any, index: number) => (
                   <div key={index} className="flex items-center justify-between p-4 rounded-[8px] bg-[#f9fafb] hover:bg-[#f3f4f6] transition-colors">
                     <div className="flex items-center gap-4">
                       <div className="w-[4px] h-[44px] rounded-full bg-[#6366f1]"></div>
