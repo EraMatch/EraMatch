@@ -225,9 +225,11 @@ class RecruiterService:
             .group_by(Position.id)
         )
 
-        # Technical HR users only see positions assigned to them
+        # Restrict positions to explicitly assigned ones for non-admin users
         if self.current_user.role == "technical":
             query = query.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            query = query.where(Position.assigned_hr_id == self.current_user.id)
         
         result = await self.session.execute(query)
         rows = result.all()
@@ -316,14 +318,23 @@ class RecruiterService:
                     Position.project_id == pid,
                     Position.is_deleted == False
                 )
-                res_pos = await self.session.execute(q_pos)
-                pos_count = res_pos.scalar() or 0
                 
                 # Fetch position IDs for this project to query applicants and groups
                 q_pos_ids = select(Position.id).where(
                     Position.project_id == pid,
                     Position.is_deleted == False
                 )
+
+                if self.current_user.role == "technical":
+                    q_pos = q_pos.where(Position.assigned_tech_id == self.current_user.id)
+                    q_pos_ids = q_pos_ids.where(Position.assigned_tech_id == self.current_user.id)
+                elif self.current_user.role == "hr":
+                    q_pos = q_pos.where(Position.assigned_hr_id == self.current_user.id)
+                    q_pos_ids = q_pos_ids.where(Position.assigned_hr_id == self.current_user.id)
+                    
+                res_pos = await self.session.execute(q_pos)
+                pos_count = res_pos.scalar() or 0
+                
                 res_pos_ids = await self.session.execute(q_pos_ids)
                 pos_ids = res_pos_ids.scalars().all()
                 
@@ -979,6 +990,13 @@ class RecruiterService:
                 Position.project_id == project_id,
                 Position.is_deleted == False
             )
+
+            if self.current_user.role == "technical":
+                q_ops = q_ops.where(Position.assigned_tech_id == self.current_user.id)
+                q_pos_ids = q_pos_ids.where(Position.assigned_tech_id == self.current_user.id)
+            elif self.current_user.role == "hr":
+                q_ops = q_ops.where(Position.assigned_hr_id == self.current_user.id)
+                q_pos_ids = q_pos_ids.where(Position.assigned_hr_id == self.current_user.id)
             
             res_ops, res_pos_ids = await asyncio.gather(
                 self.session.execute(q_ops),
@@ -1425,6 +1443,15 @@ class RecruiterService:
             CandidateApplication, Position.id == CandidateApplication.position_id
         ).where(ProjectAccess.user_id == user_id)
         
+        if self.current_user.role == "technical":
+            q_positions = q_positions.where(Position.assigned_tech_id == self.current_user.id)
+            q_groups = q_groups.where(Position.assigned_tech_id == self.current_user.id)
+            q_candidates = q_candidates.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_positions = q_positions.where(Position.assigned_hr_id == self.current_user.id)
+            q_groups = q_groups.where(Position.assigned_hr_id == self.current_user.id)
+            q_candidates = q_candidates.where(Position.assigned_hr_id == self.current_user.id)
+
         res_overview = await asyncio.gather(
             self.session.execute(q_projects),
             self.session.execute(q_positions),
@@ -1448,7 +1475,14 @@ class RecruiterService:
             CandidateGroup, Position.id == CandidateGroup.position_id
         ).where(
             ProjectAccess.user_id == user_id
-        ).group_by(CandidateGroup.status)
+        )
+        
+        if self.current_user.role == "technical":
+            q_group_status = q_group_status.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_group_status = q_group_status.where(Position.assigned_hr_id == self.current_user.id)
+            
+        q_group_status = q_group_status.group_by(CandidateGroup.status)
         
         res_group_status = await self.session.execute(q_group_status)
         group_status_rows = res_group_status.all()
@@ -1490,7 +1524,14 @@ class RecruiterService:
         ).where(
             ProjectAccess.user_id == user_id,
             GroupStageConfig.started_at.isnot(None)
-        ).order_by(GroupStageConfig.group_id, GroupStageConfig.started_at.desc())
+        )
+        
+        if self.current_user.role == "technical":
+            q_stages = q_stages.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_stages = q_stages.where(Position.assigned_hr_id == self.current_user.id)
+            
+        q_stages = q_stages.order_by(GroupStageConfig.group_id, GroupStageConfig.started_at.desc())
         
         res_stages = await self.session.execute(q_stages)
         all_stage_configs = res_stages.scalars().all()
@@ -1537,7 +1578,14 @@ class RecruiterService:
             CandidateApplication, Position.id == CandidateApplication.position_id
         ).where(
             ProjectAccess.user_id == user_id
-        ).group_by(Project.id, Project.name)
+        )
+        
+        if self.current_user.role == "technical":
+            q_perf = q_perf.where(or_(Position.id.is_(None), Position.assigned_tech_id == self.current_user.id))
+        elif self.current_user.role == "hr":
+            q_perf = q_perf.where(or_(Position.id.is_(None), Position.assigned_hr_id == self.current_user.id))
+            
+        q_perf = q_perf.group_by(Project.id, Project.name)
         
         res_perf = await self.session.execute(q_perf)
         project_performance = [
@@ -1560,7 +1608,14 @@ class RecruiterService:
         ).where(
             ProjectAccess.user_id == user_id,
             GroupStageConfig.started_at.isnot(None)
-        ).order_by(GroupStageConfig.started_at.desc()).limit(5)
+        )
+        
+        if self.current_user.role == "technical":
+            q_activity = q_activity.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_activity = q_activity.where(Position.assigned_hr_id == self.current_user.id)
+            
+        q_activity = q_activity.order_by(GroupStageConfig.started_at.desc()).limit(5)
         
         res_activity = await self.session.execute(q_activity)
         activity_rows = res_activity.all()
@@ -1609,7 +1664,14 @@ class RecruiterService:
         ).where(
             ProjectAccess.user_id == user_id,
             CandidateApplication.applied_at >= date_7_days_ago
-        ).group_by(truncated_date)
+        )
+        
+        if self.current_user.role == "technical":
+            q_trend = q_trend.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_trend = q_trend.where(Position.assigned_hr_id == self.current_user.id)
+            
+        q_trend = q_trend.group_by(truncated_date)
         
         res_trend = await self.session.execute(q_trend)
         trend_rows = res_trend.all()
