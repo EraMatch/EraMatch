@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { ChevronLeft, Plus, Trash2, Play, Eye, EyeOff } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Play, Eye, EyeOff, Sparkles } from 'lucide-react';
 import { Button } from '../ui/button';
+import { TextRefiner } from '../recruiter/shared/TextRefiner';
 
 interface TestCase {
   id: string;
@@ -55,6 +56,7 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
   });
 
   const [newTag, setNewTag] = useState('');
+  const [showQuestionRefiner, setShowQuestionRefiner] = useState(false);
 
   const handleAddTestCase = () => {
     const newTestCase: TestCase = {
@@ -105,17 +107,17 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
       alert('Please enter a question');
       return;
     }
-    
+
     if (!questionData.testCases || questionData.testCases.length === 0) {
       alert('Please add at least one test case');
       return;
     }
-    
+
     if (questionData.testCases.some(tc => !tc.input.trim() || !tc.expectedOutput.trim())) {
       alert('All test cases must have input and expected output');
       return;
     }
-    
+
     onSave(questionData);
   };
 
@@ -150,6 +152,26 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
                 rows={6}
                 className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none font-mono"
               />
+              <button
+                onClick={() => setShowQuestionRefiner(true)}
+                className="mt-2 flex items-center gap-2 h-[30px] px-[16px] rounded-[8px] border border-dashed border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-colors"
+              >
+                <Sparkles size={16} className="text-[#6366f1]" />
+                <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
+                  Refine
+                </span>
+              </button>
+              {showQuestionRefiner && (
+                <TextRefiner
+                  originalText={questionData.questionText}
+                  onApply={(refinedText) => {
+                    setQuestionData({ ...questionData, questionText: refinedText });
+                    setShowQuestionRefiner(false);
+                  }}
+                  onClose={() => setShowQuestionRefiner(false)}
+                  context="question"
+                />
+              )}
             </div>
 
             {/* Language & Limits */}
@@ -250,11 +272,10 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
                         </span>
                         <button
                           onClick={() => handleUpdateTestCase(index, 'isHidden', !testCase.isHidden)}
-                          className={`flex items-center gap-1 px-2 py-1 rounded-[6px] text-[11px] font-medium transition-colors ${
-                            testCase.isHidden
+                          className={`flex items-center gap-1 px-2 py-1 rounded-[6px] text-[11px] font-medium transition-colors ${testCase.isHidden
                               ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
                               : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                          }`}
+                            }`}
                         >
                           {testCase.isHidden ? <EyeOff size={12} /> : <Eye size={12} />}
                           {testCase.isHidden ? 'Hidden' : 'Visible'}
@@ -332,15 +353,14 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
                   <button
                     key={difficulty}
                     onClick={() => setQuestionData({ ...questionData, difficulty })}
-                    className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${
-                      questionData.difficulty === difficulty
+                    className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${questionData.difficulty === difficulty
                         ? difficulty === 'Easy'
                           ? 'border-green-500 bg-green-50 text-green-700'
                           : difficulty === 'Medium'
-                          ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
-                          : 'border-red-500 bg-red-50 text-red-700'
+                            ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
+                            : 'border-red-500 bg-red-50 text-red-700'
                         : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]'
-                    }`}
+                      }`}
                   >
                     {difficulty}
                   </button>

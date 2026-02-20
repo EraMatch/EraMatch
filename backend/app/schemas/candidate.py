@@ -79,6 +79,7 @@ class CandidateResponse(BaseModel):
     liveInterviewData: dict | None = None
     offerStatus: str | None = "not_sent"
     offerAcceptedDate: str | None = None
+    filtrationFlow: list[str] | None = None
     
     class Config:
         from_attributes = True

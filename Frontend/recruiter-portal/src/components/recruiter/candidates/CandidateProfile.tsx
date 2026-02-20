@@ -94,16 +94,99 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     return status === 'completed' || status === 'in-progress';
   };
 
-  const tabs = [
+  const activeFlow = candidate.filtrationFlow || ['assessment', 'ai-interview', 'live-interview'];
+
+  const baseTabs = [
     { id: 'overview', label: 'Overview', icon: FileText, locked: false },
     { id: 'resume', label: 'Resume', icon: FileText, locked: false },
-    { id: 'github', label: 'GitHub', icon: Github, locked: false },
-    { id: 'assessment', label: 'Assessment', icon: BarChart3, locked: !isStageAccessible('assessment') },
-    { id: 'interview', label: 'AI Interview', icon: Video, locked: !isStageAccessible('aiInterview') },
-    { id: 'live-interview', label: 'Live Interview', icon: Play, locked: !isStageAccessible('liveInterview') },
-    { id: 'notes', label: 'Notes', icon: MessageSquare, locked: false },
-    { id: 'final-report', label: 'Final Report', icon: CheckCircle, locked: pipelineStatus.finalDecision?.status !== 'completed' }
+    { id: 'github', label: 'GitHub', icon: Github, locked: false }
   ];
+
+  if (activeFlow.includes('assessment')) {
+    baseTabs.push({ id: 'assessment', label: 'Assessment', icon: BarChart3, locked: !isStageAccessible('assessment') });
+  }
+
+  if (activeFlow.includes('ai-interview') || activeFlow.includes('aiInterview')) {
+    baseTabs.push({ id: 'interview', label: 'AI Interview', icon: Video, locked: !isStageAccessible('aiInterview') });
+  }
+
+  if (activeFlow.includes('live-interview') || activeFlow.includes('liveInterview')) {
+    baseTabs.push({ id: 'live-interview', label: 'Live Interview', icon: Play, locked: !isStageAccessible('liveInterview') });
+  }
+
+  baseTabs.push(
+    { id: 'notes', label: 'Notes', icon: MessageSquare, locked: false },
+    { id: 'knowledge-graph', label: 'Knowledge Graph', icon: Network, locked: false },
+    { id: 'final-report', label: 'Final Report', icon: CheckCircle, locked: pipelineStatus.finalDecision?.status !== 'completed' }
+  );
+
+  const tabs = baseTabs;
+
+  const timelineStages = [
+    {
+      id: 'groupAssignment',
+      label: 'Group Assignment',
+      icon: Clock,
+      completedIcon: CheckCircle,
+      inProgressIcon: Activity,
+      status: pipelineStatus.groupAssignment.status,
+      completedAt: pipelineStatus.groupAssignment.completedAt,
+    }
+  ];
+
+  activeFlow.forEach((stage: string) => {
+    if (stage === 'assessment') {
+      timelineStages.push({
+        id: 'assessment',
+        label: 'Assessment',
+        icon: BarChart3,
+        completedIcon: CheckCircle,
+        inProgressIcon: Activity,
+        status: pipelineStatus.assessment.status,
+        completedAt: pipelineStatus.assessment.completedAt,
+      });
+    } else if (stage === 'ai-interview' || stage === 'aiInterview') {
+      timelineStages.push({
+        id: 'aiInterview',
+        label: 'AI Video Interview',
+        icon: Video,
+        completedIcon: CheckCircle,
+        inProgressIcon: Activity,
+        status: pipelineStatus.aiInterview.status,
+        completedAt: pipelineStatus.aiInterview.completedAt,
+      });
+    } else if (stage === 'live-interview' || stage === 'liveInterview') {
+      timelineStages.push({
+        id: 'liveInterview',
+        label: 'Live Interview',
+        icon: Play,
+        completedIcon: CheckCircle,
+        inProgressIcon: Activity,
+        status: pipelineStatus.liveInterview.status,
+        completedAt: pipelineStatus.liveInterview.completedAt,
+      });
+    }
+  });
+
+  timelineStages.push({
+    id: 'finalDecision',
+    label: 'Final Decision',
+    icon: FileCheck,
+    completedIcon: CheckCircle,
+    inProgressIcon: Activity,
+    status: pipelineStatus.finalDecision.status,
+    completedAt: pipelineStatus.finalDecision.completedAt,
+  });
+
+  let lastActiveIndex = -1;
+  timelineStages.forEach((stage, index) => {
+    if (stage.status === 'completed' || stage.status === 'in-progress') {
+      lastActiveIndex = index;
+    }
+  });
+  const progressPercentage = timelineStages.length > 1
+    ? Math.max(0, (lastActiveIndex / (timelineStages.length - 1)) * 100)
+    : 0;
 
   return (
     <div className="h-full w-full overflow-auto bg-[#f9fafb]">
@@ -254,7 +337,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
         {/* Tabs */}
         <div className="bg-white rounded-[12px] border border-[#e5e7eb] overflow-hidden">
           <div className="border-b border-[#e5e7eb] px-6">
-            <div className="flex gap-1 overflow-x-auto justify-center">
+            <div className="flex gap-1 overflow-x-auto pb-1">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 return (
@@ -307,162 +390,42 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                         <div className="absolute top-6 left-0 right-0 h-1 bg-gray-200" style={{ zIndex: 0 }}>
                           <div
                             className="h-full bg-gradient-to-r from-indigo-500 to-emerald-500 transition-all duration-500"
-                            style={{
-                              width: pipelineStatus.liveInterview.status === 'completed'
-                                ? '100%'
-                                : pipelineStatus.liveInterview.status === 'in-progress'
-                                  ? '75%'
-                                  : pipelineStatus.aiInterview.status === 'completed'
-                                    ? '66%'
-                                    : pipelineStatus.assessment.status === 'completed'
-                                      ? '33%'
-                                      : '0%'
-                            }}
+                            style={{ width: `${progressPercentage}%` }}
                           />
                         </div>
 
                         {/* Pipeline Stages */}
-                        <div className="relative grid grid-cols-5 gap-4" style={{ zIndex: 1 }}>
-                          {/* Group Assignment */}
-                          <div className="flex flex-col items-center">
-                            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 border-4 ${pipelineStatus.groupAssignment.status === 'completed'
-                              ? 'bg-emerald-500 border-emerald-200'
-                              : 'bg-gray-300 border-gray-200'
-                              }`}>
-                              {pipelineStatus.groupAssignment.status === 'completed' ? (
-                                <CheckCircle size={24} className="text-white" />
-                              ) : (
-                                <Clock size={24} className="text-gray-500" />
-                              )}
-                            </div>
-                            <div className="text-center">
-                              <div className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#111827] mb-1">
-                                Group Assignment
+                        <div className="relative grid gap-4" style={{ gridTemplateColumns: `repeat(${timelineStages.length}, minmax(0, 1fr))`, zIndex: 1 }}>
+                          {timelineStages.map((stage) => {
+                            const Icon = stage.status === 'completed' ? stage.completedIcon : stage.status === 'in-progress' ? (stage.inProgressIcon || stage.icon) : stage.icon;
+                            return (
+                              <div key={stage.id} className="flex flex-col items-center">
+                                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 border-4 ${stage.status === 'completed'
+                                  ? 'bg-emerald-500 border-emerald-200'
+                                  : stage.status === 'in-progress'
+                                    ? 'bg-indigo-500 border-indigo-200'
+                                    : 'bg-gray-300 border-gray-200'
+                                  }`}>
+                                  <Icon size={24} className={stage.status === 'completed' ? 'text-white' : stage.status === 'in-progress' ? 'text-white animate-pulse' : 'text-gray-500'} />
+                                </div>
+                                <div className="text-center">
+                                  <div className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#111827] mb-1">
+                                    {stage.label}
+                                  </div>
+                                  {stage.completedAt && (
+                                    <div className="font-['Arimo',sans-serif] text-[10px] text-[#6b7280]">
+                                      {stage.completedAt}
+                                    </div>
+                                  )}
+                                  {stage.status === 'in-progress' && (
+                                    <div className="font-['Arimo',sans-serif] text-[10px] text-indigo-600 font-semibold">
+                                      In Progress
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                              {pipelineStatus.groupAssignment.completedAt && (
-                                <div className="font-['Arimo',sans-serif] text-[10px] text-[#6b7280]">
-                                  {pipelineStatus.groupAssignment.completedAt}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Assessment */}
-                          <div className="flex flex-col items-center">
-                            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 border-4 ${pipelineStatus.assessment.status === 'completed'
-                              ? 'bg-emerald-500 border-emerald-200'
-                              : pipelineStatus.assessment.status === 'in-progress'
-                                ? 'bg-indigo-500 border-indigo-200'
-                                : 'bg-gray-300 border-gray-200'
-                              }`}>
-                              {pipelineStatus.assessment.status === 'completed' ? (
-                                <CheckCircle size={24} className="text-white" />
-                              ) : pipelineStatus.assessment.status === 'in-progress' ? (
-                                <Activity size={24} className="text-white animate-pulse" />
-                              ) : (
-                                <BarChart3 size={24} className="text-gray-500" />
-                              )}
-                            </div>
-                            <div className="text-center">
-                              <div className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#111827] mb-1">
-                                Assessment
-                              </div>
-                              {pipelineStatus.assessment.completedAt && (
-                                <div className="font-['Arimo',sans-serif] text-[10px] text-[#6b7280]">
-                                  {pipelineStatus.assessment.completedAt}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* AI Interview */}
-                          <div className="flex flex-col items-center">
-                            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 border-4 ${pipelineStatus.aiInterview.status === 'completed'
-                              ? 'bg-emerald-500 border-emerald-200'
-                              : pipelineStatus.aiInterview.status === 'in-progress'
-                                ? 'bg-indigo-500 border-indigo-200'
-                                : 'bg-gray-300 border-gray-200'
-                              }`}>
-                              {pipelineStatus.aiInterview.status === 'completed' ? (
-                                <CheckCircle size={24} className="text-white" />
-                              ) : pipelineStatus.aiInterview.status === 'in-progress' ? (
-                                <Activity size={24} className="text-white animate-pulse" />
-                              ) : (
-                                <Video size={24} className="text-gray-500" />
-                              )}
-                            </div>
-                            <div className="text-center">
-                              <div className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#111827] mb-1">
-                                AI Video Interview
-                              </div>
-                              {pipelineStatus.aiInterview.completedAt && (
-                                <div className="font-['Arimo',sans-serif] text-[10px] text-[#6b7280]">
-                                  {pipelineStatus.aiInterview.completedAt}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Live Interview */}
-                          <div className="flex flex-col items-center">
-                            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 border-4 ${pipelineStatus.liveInterview.status === 'completed'
-                              ? 'bg-emerald-500 border-emerald-200'
-                              : pipelineStatus.liveInterview.status === 'in-progress'
-                                ? 'bg-indigo-500 border-indigo-200'
-                                : 'bg-gray-300 border-gray-200'
-                              }`}>
-                              {pipelineStatus.liveInterview.status === 'completed' ? (
-                                <CheckCircle size={24} className="text-white" />
-                              ) : pipelineStatus.liveInterview.status === 'in-progress' ? (
-                                <Activity size={24} className="text-white animate-pulse" />
-                              ) : (
-                                <Play size={24} className="text-gray-500" />
-                              )}
-                            </div>
-                            <div className="text-center">
-                              <div className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#111827] mb-1">
-                                Live Interview
-                              </div>
-                              {pipelineStatus.liveInterview.completedAt && (
-                                <div className="font-['Arimo',sans-serif] text-[10px] text-[#6b7280]">
-                                  {pipelineStatus.liveInterview.completedAt}
-                                </div>
-                              )}
-                              {pipelineStatus.liveInterview.status === 'in-progress' && (
-                                <div className="font-['Arimo',sans-serif] text-[10px] text-indigo-600 font-semibold">
-                                  In Progress
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Final Decision */}
-                          <div className="flex flex-col items-center">
-                            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 border-4 ${pipelineStatus.finalDecision.status === 'completed'
-                              ? 'bg-emerald-500 border-emerald-200'
-                              : pipelineStatus.finalDecision.status === 'in-progress'
-                                ? 'bg-indigo-500 border-indigo-200'
-                                : 'bg-gray-300 border-gray-200'
-                              }`}>
-                              {pipelineStatus.finalDecision.status === 'completed' ? (
-                                <CheckCircle size={24} className="text-white" />
-                              ) : pipelineStatus.finalDecision.status === 'in-progress' ? (
-                                <Activity size={24} className="text-white animate-pulse" />
-                              ) : (
-                                <FileCheck size={24} className="text-gray-500" />
-                              )}
-                            </div>
-                            <div className="text-center">
-                              <div className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#111827] mb-1">
-                                Final Decision
-                              </div>
-                              {pipelineStatus.finalDecision.completedAt && (
-                                <div className="font-['Arimo',sans-serif] text-[10px] text-[#6b7280]">
-                                  {pipelineStatus.finalDecision.completedAt}
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>

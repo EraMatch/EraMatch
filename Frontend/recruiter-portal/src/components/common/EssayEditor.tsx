@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { ChevronLeft, Plus, Trash2 } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Sparkles } from 'lucide-react';
 import { Button } from '../ui/button';
+import { TextRefiner } from '../recruiter/shared/TextRefiner';
 
 interface QuestionVariant {
   id: string;
@@ -31,6 +32,9 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
 
   const [newKeyword, setNewKeyword] = useState('');
   const [newTag, setNewTag] = useState('');
+
+  const [showQuestionRefiner, setShowQuestionRefiner] = useState(false);
+  const [showRubricRefiner, setShowRubricRefiner] = useState(false);
 
   const handleAddKeyword = () => {
     if (newKeyword.trim() && !questionData.expectedKeywords?.includes(newKeyword.trim())) {
@@ -71,12 +75,12 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
       alert('Please enter a question');
       return;
     }
-    
+
     if (!questionData.rubric?.trim()) {
       alert('Please enter a grading rubric');
       return;
     }
-    
+
     onSave(questionData);
   };
 
@@ -111,6 +115,26 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
                 rows={4}
                 className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
               />
+              <button
+                onClick={() => setShowQuestionRefiner(true)}
+                className="mt-2 flex items-center gap-2 h-[30px] px-[16px] rounded-[8px] border border-dashed border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-colors"
+              >
+                <Sparkles size={16} className="text-[#6366f1]" />
+                <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
+                  Refine
+                </span>
+              </button>
+              {showQuestionRefiner && (
+                <TextRefiner
+                  originalText={questionData.questionText}
+                  onApply={(refinedText) => {
+                    setQuestionData({ ...questionData, questionText: refinedText });
+                    setShowQuestionRefiner(false);
+                  }}
+                  onClose={() => setShowQuestionRefiner(false)}
+                  context="question"
+                />
+              )}
             </div>
 
             {/* Max Words */}
@@ -140,6 +164,26 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
                 rows={6}
                 className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
               />
+              <button
+                onClick={() => setShowRubricRefiner(true)}
+                className="mt-2 flex items-center gap-2 h-[30px] px-[16px] rounded-[8px] border border-dashed border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-colors"
+              >
+                <Sparkles size={16} className="text-[#6366f1]" />
+                <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
+                  Refine
+                </span>
+              </button>
+              {showRubricRefiner && (
+                <TextRefiner
+                  originalText={questionData.rubric || ''}
+                  onApply={(refinedText) => {
+                    setQuestionData({ ...questionData, rubric: refinedText });
+                    setShowRubricRefiner(false);
+                  }}
+                  onClose={() => setShowRubricRefiner(false)}
+                  context="rubric"
+                />
+              )}
             </div>
 
             {/* Expected Keywords */}
@@ -197,15 +241,14 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
                   <button
                     key={difficulty}
                     onClick={() => setQuestionData({ ...questionData, difficulty })}
-                    className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${
-                      questionData.difficulty === difficulty
+                    className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${questionData.difficulty === difficulty
                         ? difficulty === 'Easy'
                           ? 'border-green-500 bg-green-50 text-green-700'
                           : difficulty === 'Medium'
-                          ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
-                          : 'border-red-500 bg-red-50 text-red-700'
+                            ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
+                            : 'border-red-500 bg-red-50 text-red-700'
                         : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]'
-                    }`}
+                      }`}
                   >
                     {difficulty}
                   </button>

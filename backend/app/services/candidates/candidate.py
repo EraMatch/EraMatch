@@ -45,7 +45,7 @@ class CandidateService:
         return result.scalars().all()
 
     async def get_profile(self, candidate_id: UUID) -> CandidateResponse:
-        from app.models import CVAnalysis, CandidateStageProgress, Position, Project, Assessment, AIInterviewConfig
+        from app.models import CVAnalysis, CandidateStageProgress, Position, Project, Assessment, AIInterviewConfig, CandidateGroup
         from sqlalchemy import func
 
         # 1. Fetch base profile
@@ -133,6 +133,15 @@ class CandidateService:
                             year=str(edu.get("year") or edu.get("dates") or "N/A")
                         ))
 
+            # Fetch Group Filtration Flow
+            filtration_flow = None
+            if app.group_id:
+                group_query = select(CandidateGroup).where(CandidateGroup.id == app.group_id)
+                group_res = await self.session.execute(group_query)
+                group = group_res.scalar_one_or_none()
+                if group and group.filtration_flow:
+                    filtration_flow = group.filtration_flow
+
             # Fetch Progress
             progress_query = select(CandidateStageProgress).where(CandidateStageProgress.application_id == app.id)
             progress_res = await self.session.execute(progress_query)
@@ -180,6 +189,8 @@ class CandidateService:
         response.scores = CandidateScores(**scores)
         response.workHistory = work_history
         response.education = education_history
+        if 'filtration_flow' in locals() and filtration_flow is not None:
+             response.filtrationFlow = filtration_flow
         
         if cv_data:
             response.skills = cv_data.skills or []
