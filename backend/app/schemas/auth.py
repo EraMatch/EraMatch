@@ -92,3 +92,9 @@ class CandidateAuthResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class LogoutResponse(BaseModel):
+    """Logout response."""
+    success: bool
+    message: str = "Logged out successfully"

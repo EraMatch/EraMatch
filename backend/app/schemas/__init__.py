@@ -17,6 +17,7 @@ from app.schemas.auth import (
     ResetPasswordRequest,
     CandidateLoginRequest,
     CandidateAuthResponse,
+    LogoutResponse,
 )
 from app.schemas.candidate import (
     CandidateCreate,
@@ -98,6 +99,7 @@ __all__ = [
     "ResetPasswordRequest",
     "CandidateLoginRequest",
     "CandidateAuthResponse",
+    "LogoutResponse",
     # Candidate
     "CandidateCreate",
     "CandidateUpdate",

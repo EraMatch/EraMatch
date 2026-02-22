@@ -1,4 +1,4 @@
-import { createBrowserRouter, useNavigate, useSearchParams, useParams } from 'react-router-dom';
+import { createBrowserRouter, useNavigate, useSearchParams, useParams, Navigate } from 'react-router-dom';
 import React from 'react';
 import { Toaster } from 'sonner';
 import { AdminLoginPage } from './components/admin/AdminLoginPage';
@@ -64,6 +64,25 @@ const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
             </div>
         </div>
     );
+};
+
+// Protected Route Guards
+const AdminProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+    const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+    if (!token || !user) {
+        return <Navigate to="/admin/login" replace />;
+    }
+    return <>{children}</>;
+};
+
+const RecruiterProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+    const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+    if (!token || !user) {
+        return <Navigate to="/recruiter/login" replace />;
+    }
+    return <>{children}</>;
 };
 
 // Landing Page Wrapper - Simplified with 2 buttons
@@ -276,59 +295,73 @@ export const router = createBrowserRouter([
     {
         path: "/admin/dashboard",
         element: (
-            <AdminLayout>
-                <AdminDashboard onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminDashboard onSignOut={() => window.location.href = '/'} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
         errorElement: <ErrorPage />,
     },
     {
         path: "/admin/requests",
         element: (
-            <AdminLayout>
-                <AdminRequests />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminRequests />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
         errorElement: <ErrorPage />,
     },
     {
         path: "/admin/members",
         element: (
-            <AdminLayout>
-                <AdminOrganizationMembers onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminOrganizationMembers onSignOut={() => window.location.href = '/'} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
     },
     {
         path: "/admin/notifications",
         element: (
-            <AdminLayout>
-                <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
     },
     {
         path: "/admin/settings",
         element: (
-            <AdminLayout>
-                <AdminSettings onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminSettings onSignOut={() => window.location.href = '/'} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
     },
     {
         path: "/admin/delegation",
         element: (
-            <AdminLayout>
-                <AdminRecruiterDelegation onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminRecruiterDelegation onSignOut={() => window.location.href = '/'} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
     },
     {
         path: "/admin/closed-positions",
         element: (
-            <AdminLayout>
-                <AdminClosedPositions onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminClosedPositions onSignOut={() => window.location.href = '/'} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
     },
 
@@ -357,90 +390,112 @@ export const router = createBrowserRouter([
     {
         path: "/recruiter/dashboard",
         element: (
-            <RecruiterLayout>
-                <DashboardWrapper />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <DashboardWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         ),
         errorElement: <ErrorPage />,
     },
     {
         path: "/recruiter/projects",
         element: (
-            <RecruiterLayout>
-                <ProjectsPageWrapper />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <ProjectsPageWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         ),
     },
     {
         path: "/recruiter/group/:groupId",
         element: (
-            <RecruiterLayout>
-                <GroupOverviewWrapper />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <GroupOverviewWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         ),
     },
     {
         path: "/recruiter/alerts",
         element: (
-            <RecruiterLayout>
-                <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/suspect-review",
         element: (
-            <RecruiterLayout>
-                <SuspectReviewWrapper />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <SuspectReviewWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/reviews",
         element: (
-            <RecruiterLayout>
-                <ReviewRequests />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <ReviewRequests />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/candidates",
         element: (
-            <RecruiterLayout>
-                <CandidatesPage onBack={() => { }} />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <CandidatesPage onBack={() => { }} />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         ),
     },
     {
         path: "/recruiter/question-bank",
         element: (
-            <RecruiterLayout>
-                <QuestionBankPage onBack={() => window.history.back()} />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <QuestionBankPage onBack={() => window.history.back()} />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/settings",
         element: (
-            <RecruiterLayout>
-                <RecruiterSettings />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <RecruiterSettings />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/suspicious-activity",
         element: (
-            <RecruiterLayout>
-                <SuspiciousActivityLog onBack={() => window.history.back()} />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <SuspiciousActivityLog onBack={() => window.history.back()} />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/candidates/:candidateId",
         element: (
-            <RecruiterLayout>
-                <CandidateProfileWrapper />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <CandidateProfileWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         ),
     },
 ]);

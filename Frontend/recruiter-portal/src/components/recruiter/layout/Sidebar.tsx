@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck } from 'lucide-react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../../../services/api';
+import { authService } from '../../../services/auth.service';
 
 export function Sidebar() {
   const navigate = useNavigate();
@@ -97,7 +98,10 @@ export function Sidebar() {
 
       {/* Sign Out */}
       <button
-        onClick={() => navigate('/recruiter/login')}
+        onClick={async () => {
+          await authService.logout();
+          window.location.href = '/recruiter/login';
+        }}
         className="w-12 h-12 rounded-xl flex items-center justify-center text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
         title="Sign Out"
       >
