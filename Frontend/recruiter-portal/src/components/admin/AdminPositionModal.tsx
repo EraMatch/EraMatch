@@ -45,17 +45,24 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
 
     useEffect(() => {
         const userStr = localStorage.getItem('user');
+        let role = '';
         if (userStr) {
             const user = JSON.parse(userStr);
-            setUserRole(user.role?.toLowerCase());
+            role = user.role?.toLowerCase() || '';
+            setUserRole(role);
         }
 
-        // Fetch recruiters and settings
+        // Fetch recruiters and (admin-only) settings
         const fetchData = async () => {
             try {
+                const isAdminRole = role === 'admin';
+
                 const [recruitersRes, settingsRes] = await Promise.all([
                     api.admin.getRecruiterDelegation(),
-                    api.admin.getSettings().catch(() => ({})) // Fail gracefully
+                    // Only fetch admin settings when the current user is an admin
+                    isAdminRole
+                        ? api.admin.getSettings().catch(() => ({}))
+                        : Promise.resolve({})
                 ]);
 
                 setTechRecruiters(recruitersRes.technicalRecruiters || []);
