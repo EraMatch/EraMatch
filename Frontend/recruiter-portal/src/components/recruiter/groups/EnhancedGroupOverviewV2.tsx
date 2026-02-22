@@ -275,16 +275,16 @@ export function EnhancedGroupOverviewV2({
           avatar: c.name.split(' ').map((n: string) => n[0]).join(''),
           assessment: (c.assessment?.status as any) || 'not-started',
           aiInterview: (c.ai_interview?.status as any) || 'not-started',
-          liveInterview: 'not-started', // Backend doesn't send this yet
+          liveInterview: (c.live_interview?.status as any) || 'pending',
           review: 'not-started',
           offer: 'not-started',
           assessmentScore: c.assessment?.score || 0,
           aiInterviewScore: c.ai_interview?.score || 0,
           flags: c.flags ? c.flags.map((f: any) => f.description) : [],
-          currentStage: c.currentStage || 'assessment', // fallback
+          currentStage: c.currentStage || 'assessment',
           technicalVerdict: c.verdict === 'pass' || c.verdict === 'fail' || c.verdict === 'conditional' ? c.verdict : undefined,
           meetsCriteria: c.meets_criteria,
-          progressionState: 'active', // default
+          progressionState: 'active',
           overrideApplied: false
         }));
 
@@ -783,8 +783,8 @@ export function EnhancedGroupOverviewV2({
   // If creating an AI Interview
   if (showCreateAIInterview) {
     const aiInterviewTypesAllowed: ('live' | 'recorded')[] = [];
-    if (filtrationFlow.includes('live-interview')) aiInterviewTypesAllowed.push('live');
-    if (filtrationFlow.includes('ai-interview')) aiInterviewTypesAllowed.push('recorded');
+    if (activeFlow.includes('live-interview') || activeFlow.includes('live_interview') || activeFlow.includes('liveInterview')) aiInterviewTypesAllowed.push('live');
+    if (activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview') || activeFlow.includes('aiInterview')) aiInterviewTypesAllowed.push('recorded');
 
     return (
       <CreateAIInterview
@@ -1314,20 +1314,19 @@ export function EnhancedGroupOverviewV2({
                   <th className="p-4 text-left">
                     <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Candidate</span>
                   </th>
-                  <th className="p-4 text-center">
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Assessment</span>
-                  </th>
-                  <th className="p-4 text-center">
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">AI Interview</span>
-                  </th>
-                  <th className="p-4 text-center">
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Meets Criteria</span>
-                  </th>
-                  {userRole === 'technical' && (
-                    <th className="p-4 text-center">
-                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Verdict</span>
-                    </th>
-                  )}
+                  {activeFlow.map(stageType => {
+                    const moduleNames: Record<string, string> = {
+                      'assessment': 'Assessment',
+                      'ai-interview': 'AI Interview',
+                      'live-interview': 'Live Interview'
+                    };
+                    return (
+                      <th key={stageType} className="p-4 text-center">
+                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">{moduleNames[stageType] || stageType}</span>
+                      </th>
+                    );
+                  })}
+
                   <th className="p-4 text-center">
                     <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Comments</span>
                   </th>
@@ -1342,7 +1341,7 @@ export function EnhancedGroupOverviewV2({
               <tbody>
                 {candidateStatuses.length === 0 ? (
                   <tr>
-                    <td colSpan={userRole === 'recruiter' && stageState === 'review-mode' ? 9 : 8} className="p-8 text-center">
+                    <td colSpan={userRole === 'recruiter' && stageState === 'review-mode' ? 5 + activeFlow.length : 4 + activeFlow.length} className="p-8 text-center">
                       <div className="flex flex-col items-center justify-center text-[#6b7280]">
                         <Users size={40} className="mb-3 opacity-20" />
                         <p className="font-['Arimo',sans-serif] text-[15px]">No candidates in this group yet.</p>
@@ -1370,7 +1369,7 @@ export function EnhancedGroupOverviewV2({
                   return true;
                 }).length === 0 ? (
                   <tr>
-                    <td colSpan={userRole === 'recruiter' && stageState === 'review-mode' ? 9 : 8} className="p-8 text-center text-[#6b7280]">
+                    <td colSpan={userRole === 'recruiter' && stageState === 'review-mode' ? 5 + activeFlow.length : 4 + activeFlow.length} className="p-8 text-center text-[#6b7280]">
                       <p className="font-['Arimo',sans-serif] text-[15px]">No candidates match your current filters.</p>
                     </td>
                   </tr>
@@ -1449,85 +1448,73 @@ export function EnhancedGroupOverviewV2({
                               </div>
                             </div>
                           </td>
-                          <td className="p-4 text-center">
-                            <button
-                              onClick={() => {
-                                if (candidate.assessmentScore > 0 && onViewModuleDetail) {
-                                  onViewModuleDetail({
-                                    type: 'assessment',
-                                    candidateId: candidate.id,
-                                    candidateName: candidate.name,
-                                    score: candidate.assessmentScore,
-                                    completedDate: new Date().toLocaleDateString()
-                                  });
-                                }
-                              }}
-                              className={`flex flex-col items-center gap-1 mx-auto ${candidate.assessmentScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
-                            >
-                              {getStatusIcon(candidate.assessment)}
-                              {candidate.assessmentScore > 0 && (
-                                <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
-                                  {candidate.assessmentScore}%
-                                </span>
-                              )}
-                            </button>
-                          </td>
-                          <td className="p-4 text-center">
-                            <button
-                              onClick={() => {
-                                if (candidate.aiInterviewScore > 0 && onViewModuleDetail) {
-                                  onViewModuleDetail({
-                                    type: 'ai-interview',
-                                    candidateId: candidate.id,
-                                    candidateName: candidate.name,
-                                    score: candidate.aiInterviewScore,
-                                    completedDate: new Date().toLocaleDateString()
-                                  });
-                                }
-                              }}
-                              className={`flex flex-col items-center gap-1 mx-auto ${candidate.aiInterviewScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
-                            >
-                              {getStatusIcon(candidate.aiInterview)}
-                              {candidate.aiInterviewScore > 0 && (
-                                <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
-                                  {candidate.aiInterviewScore}%
-                                </span>
-                              )}
-                            </button>
-                          </td>
-                          <td className="p-4 text-center">
-                            {candidate.meetsCriteria !== undefined ? (
-                              <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-[12px] font-medium ${candidate.meetsCriteria
-                                ? 'bg-emerald-100 text-emerald-700'
-                                : 'bg-red-100 text-red-700'
-                                }`}>
-                                {candidate.meetsCriteria ? (
-                                  <><CheckCircle size={12} /> Yes</>
-                                ) : (
-                                  <><XCircle size={12} /> No</>
-                                )}
-                              </span>
-                            ) : (
-                              <span className="text-[#9ca3af] text-[12px]">Pending</span>
-                            )}
-                          </td>
-                          {userRole === 'technical' && (
-                            <td className="p-4 text-center">
-                              <button
-                                onClick={() => setShowVerdictModal(candidate.id)}
-                                className={`px-3 py-1 rounded-full text-[12px] font-medium ${candidate.technicalVerdict === 'pass'
-                                  ? 'bg-emerald-100 text-emerald-700'
-                                  : candidate.technicalVerdict === 'fail'
-                                    ? 'bg-red-100 text-red-700'
-                                    : candidate.technicalVerdict === 'conditional'
-                                      ? 'bg-amber-100 text-amber-700'
-                                      : 'bg-gray-100 text-gray-600 border border-dashed'
-                                  }`}
-                              >
-                                {candidate.technicalVerdict ? candidate.technicalVerdict : 'Set Verdict'}
-                              </button>
-                            </td>
-                          )}
+                          {activeFlow.map(stageType => {
+                            if (stageType === 'assessment') {
+                              return (
+                                <td key={stageType} className="p-4 text-center">
+                                  <button
+                                    onClick={() => {
+                                      if (candidate.assessmentScore > 0 && onViewModuleDetail) {
+                                        onViewModuleDetail({
+                                          type: 'assessment',
+                                          candidateId: candidate.id,
+                                          candidateName: candidate.name,
+                                          score: candidate.assessmentScore,
+                                          completedDate: new Date().toLocaleDateString()
+                                        });
+                                      }
+                                    }}
+                                    className={`flex flex-col items-center gap-1 mx-auto ${candidate.assessmentScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
+                                  >
+                                    {getStatusIcon(candidate.assessment)}
+                                    {candidate.assessmentScore > 0 && (
+                                      <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
+                                        {candidate.assessmentScore}%
+                                      </span>
+                                    )}
+                                  </button>
+                                </td>
+                              );
+                            }
+                            if (stageType === 'ai-interview') {
+                              return (
+                                <td key={stageType} className="p-4 text-center">
+                                  <button
+                                    onClick={() => {
+                                      if (candidate.aiInterviewScore > 0 && onViewModuleDetail) {
+                                        onViewModuleDetail({
+                                          type: 'ai-interview',
+                                          candidateId: candidate.id,
+                                          candidateName: candidate.name,
+                                          score: candidate.aiInterviewScore,
+                                          completedDate: new Date().toLocaleDateString()
+                                        });
+                                      }
+                                    }}
+                                    className={`flex flex-col items-center gap-1 mx-auto ${candidate.aiInterviewScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
+                                  >
+                                    {getStatusIcon(candidate.aiInterview)}
+                                    {candidate.aiInterviewScore > 0 && (
+                                      <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
+                                        {candidate.aiInterviewScore}%
+                                      </span>
+                                    )}
+                                  </button>
+                                </td>
+                              );
+                            }
+                            if (stageType === 'live-interview') {
+                              return (
+                                <td key={stageType} className="p-4 text-center">
+                                  <button className="flex flex-col items-center gap-1 mx-auto">
+                                    {getStatusIcon(candidate.liveInterview)}
+                                  </button>
+                                </td>
+                              );
+                            }
+                            return null;
+                          })}
+
                           <td className="p-4 text-center">
                             <button
                               onClick={() => setShowCommentModal(candidate.id)}
