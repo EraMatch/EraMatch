@@ -140,7 +140,14 @@ class CandidateService:
                 group_res = await self.session.execute(group_query)
                 group = group_res.scalar_one_or_none()
                 if group and group.filtration_flow:
-                    filtration_flow = group.filtration_flow
+                    flow = group.filtration_flow
+                    if isinstance(flow, list) and flow and isinstance(flow[0], dict):
+                        filtration_flow = [str(s.get("type", s.get("stage", ""))) for s in flow]
+                    elif isinstance(flow, dict):
+                        stages = flow.get("stages", [])
+                        filtration_flow = [str(s.get("type", s.get("stage", ""))) for s in stages if isinstance(s, dict)]
+                    else:
+                        filtration_flow = flow
 
             # Fetch Progress
             progress_query = select(CandidateStageProgress).where(CandidateStageProgress.application_id == app.id)
@@ -175,6 +182,8 @@ class CandidateService:
                             "duration": "30 mins",
                             "overallFeedback": "Good communication skills and technical knowledge."
                         }
+                elif p.session_type == "live_interview":
+                    pipeline_status["liveInterview"]["status"] = p.status
 
         # Calculate Overall
         active_scores = [v for k, v in scores.items() if v > 0]
@@ -191,6 +200,8 @@ class CandidateService:
         response.education = education_history
         if 'filtration_flow' in locals() and filtration_flow is not None:
              response.filtrationFlow = filtration_flow
+        
+        response.groupAssigned = bool(app_row and app_row[0].group_id)
         
         if cv_data:
             response.skills = cv_data.skills or []

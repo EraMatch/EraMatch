@@ -94,7 +94,16 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     return status === 'completed' || status === 'in-progress';
   };
 
-  const activeFlow = candidate.filtrationFlow || ['assessment', 'ai-interview', 'live-interview'];
+  const activeFlow = candidate.filtrationFlow || ['assessment', 'ai_interview', 'live_interview'];
+
+  const areAllStagesCompleted = (): boolean => {
+    if (!candidate.groupAssigned || activeFlow.length === 0) return false;
+    let allCompleted = true;
+    if (activeFlow.includes('assessment') && pipelineStatus.assessment?.status !== 'completed') allCompleted = false;
+    if ((activeFlow.includes('ai_interview') || activeFlow.includes('ai-interview') || activeFlow.includes('aiInterview')) && pipelineStatus.aiInterview?.status !== 'completed') allCompleted = false;
+    if ((activeFlow.includes('live_interview') || activeFlow.includes('live-interview') || activeFlow.includes('liveInterview')) && pipelineStatus.liveInterview?.status !== 'completed') allCompleted = false;
+    return allCompleted;
+  };
 
   const baseTabs = [
     { id: 'overview', label: 'Overview', icon: FileText, locked: false },
@@ -106,18 +115,18 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     baseTabs.push({ id: 'assessment', label: 'Assessment', icon: BarChart3, locked: !isStageAccessible('assessment') });
   }
 
-  if (activeFlow.includes('ai-interview') || activeFlow.includes('aiInterview')) {
+  if (activeFlow.includes('ai_interview') || activeFlow.includes('ai-interview') || activeFlow.includes('aiInterview')) {
     baseTabs.push({ id: 'interview', label: 'AI Interview', icon: Video, locked: !isStageAccessible('aiInterview') });
   }
 
-  if (activeFlow.includes('live-interview') || activeFlow.includes('liveInterview')) {
+  if (activeFlow.includes('live_interview') || activeFlow.includes('live-interview') || activeFlow.includes('liveInterview')) {
     baseTabs.push({ id: 'live-interview', label: 'Live Interview', icon: Play, locked: !isStageAccessible('liveInterview') });
   }
 
   baseTabs.push(
     { id: 'notes', label: 'Notes', icon: MessageSquare, locked: false },
     { id: 'knowledge-graph', label: 'Knowledge Graph', icon: Network, locked: false },
-    { id: 'final-report', label: 'Final Report', icon: CheckCircle, locked: pipelineStatus.finalDecision?.status !== 'completed' }
+    { id: 'final-report', label: 'Final Report', icon: CheckCircle, locked: !areAllStagesCompleted() }
   );
 
   const tabs = baseTabs;
@@ -145,25 +154,25 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
         status: pipelineStatus.assessment.status,
         completedAt: pipelineStatus.assessment.completedAt,
       });
-    } else if (stage === 'ai-interview' || stage === 'aiInterview') {
+    } else if (stage === 'ai_interview' || stage === 'ai-interview' || stage === 'aiInterview') {
       timelineStages.push({
         id: 'aiInterview',
         label: 'AI Video Interview',
         icon: Video,
         completedIcon: CheckCircle,
         inProgressIcon: Activity,
-        status: pipelineStatus.aiInterview.status,
-        completedAt: pipelineStatus.aiInterview.completedAt,
+        status: pipelineStatus.aiInterview?.status || 'not-started',
+        completedAt: pipelineStatus.aiInterview?.completedAt,
       });
-    } else if (stage === 'live-interview' || stage === 'liveInterview') {
+    } else if (stage === 'live_interview' || stage === 'live-interview' || stage === 'liveInterview') {
       timelineStages.push({
         id: 'liveInterview',
         label: 'Live Interview',
         icon: Play,
         completedIcon: CheckCircle,
         inProgressIcon: Activity,
-        status: pipelineStatus.liveInterview.status,
-        completedAt: pipelineStatus.liveInterview.completedAt,
+        status: pipelineStatus.liveInterview?.status || 'not-started',
+        completedAt: pipelineStatus.liveInterview?.completedAt,
       });
     }
   });
@@ -174,8 +183,8 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     icon: FileCheck,
     completedIcon: CheckCircle,
     inProgressIcon: Activity,
-    status: pipelineStatus.finalDecision.status,
-    completedAt: pipelineStatus.finalDecision.completedAt,
+    status: areAllStagesCompleted() ? pipelineStatus.finalDecision?.status || 'not-started' : 'not-started',
+    completedAt: pipelineStatus.finalDecision?.completedAt,
   });
 
   let lastActiveIndex = -1;

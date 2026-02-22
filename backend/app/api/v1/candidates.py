@@ -48,6 +48,12 @@ async def get_candidate(
     candidate = await service.get_profile(candidate_id)
     if candidate is None:
         raise HTTPException(status_code=404, detail="Candidate not found")
+        
+    print("--- RAW BACKEND PAYLOAD ---")
+    print(f"filtrationFlow: {candidate.filtrationFlow}")
+    print(f"groupAssigned: {candidate.groupAssigned}")
+    print(f"pipelineStatus: {candidate.pipelineStatus}")
+    
     return candidate
 
 

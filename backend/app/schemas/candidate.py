@@ -80,6 +80,7 @@ class CandidateResponse(BaseModel):
     offerStatus: str | None = "not_sent"
     offerAcceptedDate: str | None = None
     filtrationFlow: list[str] | None = None
+    groupAssigned: bool = False
     
     class Config:
         from_attributes = True
