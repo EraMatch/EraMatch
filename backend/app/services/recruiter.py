@@ -1243,14 +1243,17 @@ class RecruiterService:
                 count = res_count.scalar() or 0
                 flags = res_flags.scalar() or 0
                 
-                # Derive stage flags
-                flow = g.filtration_flow
-                if isinstance(flow, dict):
-                    flow = flow.get("stages", []) if isinstance(flow.get("stages"), list) else []
-                flow_list = flow if isinstance(flow, list) else []
-                has_assessment = any(str(s.get("type")).lower() == "assessment" for s in flow_list if isinstance(s, dict))
-                has_ai = any(str(s.get("type")).lower() == "ai_interview" for s in flow_list if isinstance(s, dict))
-                has_live = any(str(s.get("type")).lower() == "live_interview" for s in flow_list if isinstance(s, dict))
+                # Derive stage flags from GroupStageConfig (authoritative pipeline source)
+                stage_types_res = await self.session.execute(
+                    select(GroupStageConfig.stage_type).where(
+                        GroupStageConfig.group_id == gid,
+                        GroupStageConfig.state != "inactive"
+                    )
+                )
+                stage_types = {st.lower() for st in stage_types_res.scalars().all()}
+                has_assessment = "assessment" in stage_types
+                has_ai = "ai_interview" in stage_types
+                has_live = "live_interview" in stage_types
 
                 result.append(PositionGroupResponse(
                     id=gid,
@@ -1272,15 +1275,17 @@ class RecruiterService:
     async def get_group_analysis(self, group_id: UUID) -> GroupAnalysisResponse:
         """Get high-level analysis for a candidate group with real data."""
         try:
-            # 1. Match Accuracy (Average of assessment and AI scores if they exist)
-            q_scores = select(CandidateStageProgress.score).where(
-                CandidateStageProgress.group_id == group_id,
+            # 1. Match Accuracy — scope by group via CandidateApplication, stage_type not needed here
+            q_scores = select(CandidateStageProgress.score).join(
+                CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+            ).where(
+                CandidateApplication.group_id == group_id,
                 CandidateStageProgress.score.isnot(None)
             )
             res_scores = await self.session.execute(q_scores)
             scores = [float(s) for s in res_scores.scalars().all()]
             match_acc = sum(scores) / len(scores) if scores else 0.0
-            
+
             # 2. Total Candidates
             res_count = await self.session.execute(
                 select(func.count(CandidateApplication.id)).where(
@@ -1289,11 +1294,15 @@ class RecruiterService:
                 )
             )
             total = res_count.scalar() or 0
-            
-            # 3. Active Phases: Count distinct stage types for this group
+
+            # 3. Active Phases — distinct stage_type values via GroupStageConfig join
             res_phases = await self.session.execute(
-                select(func.count(func.distinct(CandidateStageProgress.stage_type))).where(
-                    CandidateStageProgress.group_id == group_id
+                select(func.count(func.distinct(GroupStageConfig.stage_type))).join(
+                    CandidateStageProgress, GroupStageConfig.stage_id == CandidateStageProgress.stage_id
+                ).join(
+                    CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                ).where(
+                    CandidateApplication.group_id == group_id
                 )
             )
             active_phases = res_phases.scalar() or 0
@@ -1323,11 +1332,15 @@ class RecruiterService:
     async def get_group_technical_ai(self, group_id: UUID) -> TechnicalAIResponse:
         """Get combined technical and AI stats with expanded metrics."""
         try:
-            # Tech: Assessment scores
+            # Tech: Assessment scores — join GroupStageConfig for stage_type, CandidateApplication for group
             res_tech = await self.session.execute(
-                select(CandidateStageProgress.score).where(
-                    CandidateStageProgress.group_id == group_id,
-                    CandidateStageProgress.stage_type == "assessment",
+                select(CandidateStageProgress.score).join(
+                    GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
+                ).join(
+                    CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                ).where(
+                    CandidateApplication.group_id == group_id,
+                    GroupStageConfig.stage_type == "assessment",
                     CandidateStageProgress.score.isnot(None)
                 )
             )
@@ -1335,12 +1348,16 @@ class RecruiterService:
             avg_tech = sum(tech_scores) / len(tech_scores) if tech_scores else 0.0
             pass_rate_tech = (sum(1 for s in tech_scores if s >= 70) / len(tech_scores) * 100) if tech_scores else 0.0
             completed_tech = len(tech_scores)
-            
-            # AI: AI Interview scores
+
+            # AI: AI Interview scores — same join pattern
             res_ai = await self.session.execute(
-                select(CandidateStageProgress.score).where(
-                    CandidateStageProgress.group_id == group_id,
-                    CandidateStageProgress.stage_type == "ai_interview",
+                select(CandidateStageProgress.score).join(
+                    GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
+                ).join(
+                    CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                ).where(
+                    CandidateApplication.group_id == group_id,
+                    GroupStageConfig.stage_type == "ai_interview",
                     CandidateStageProgress.score.isnot(None)
                 )
             )

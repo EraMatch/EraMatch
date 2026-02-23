@@ -1136,10 +1136,18 @@ CandidateStageProgress.completed_at.isnot(None),
             live_interviews_passed = 0
             
             if app_ids:
-                q_prog = select(CandidateStageProgress.stage_type, func.count()).where(
-                    CandidateStageProgress.application_id.in_(app_ids),
-                    CandidateStageProgress.status == "completed"
-                ).group_by(CandidateStageProgress.stage_type)
+                q_prog = (
+                    select(GroupStageConfig.stage_type, func.count())
+                    .join(
+                        CandidateStageProgress,
+                        GroupStageConfig.stage_id == CandidateStageProgress.stage_id
+                    )
+                    .where(
+                        CandidateStageProgress.application_id.in_(app_ids),
+                        CandidateStageProgress.status == "completed"
+                    )
+                    .group_by(GroupStageConfig.stage_type)
+                )
                 
                 res_prog = await self.session.execute(q_prog)
                 prog_rows = res_prog.all()
@@ -1706,22 +1714,24 @@ CandidateStageProgress.completed_at.isnot(None),
                 count = res_count.scalar() or 0
                 flags = res_flags.scalar() or 0
                 
-                # Derive stage flags from filtration_flow
-                flow = group.filtration_flow
-                if isinstance(flow, dict): # Handle if it's a dict instead of list
-                    flow = flow.get("stages", []) if isinstance(flow.get("stages"), list) else []
-                
-                flow_list = flow if isinstance(flow, list) else []
-                has_assessment = any(str(s.get("type")).lower() == "assessment" for s in flow_list if isinstance(s, dict))
-                has_ai = any(str(s.get("type")).lower() == "ai_interview" for s in flow_list if isinstance(s, dict))
-                has_live = any(str(s.get("type")).lower() == "live_interview" for s in flow_list if isinstance(s, dict))
+                # Derive stage flags from GroupStageConfig (sole authoritative source)
+                stage_types_res = await self.session.execute(
+                    select(GroupStageConfig.stage_type).where(
+                        GroupStageConfig.group_id == gid,
+                        GroupStageConfig.state != "inactive"
+                    )
+                )
+                stage_types = {st.lower() for st in stage_types_res.scalars().all()}
+                has_assessment = "assessment" in stage_types
+                has_ai = "ai_interview" in stage_types
+                has_live = "live_interview" in stage_types
 
                 result.append({
                     "groupID": str(gid),
                     "id": str(gid),
-                    "groupName": group.group_name,
+                    "name": group.group_name,
                     "positionTitle": job_title,
-                    "candidatesCount": count,
+                    "candidateCount": count,
                     "integrityIssues": flags,
                     "hasAssessment": has_assessment,
                     "hasAIInterview": has_ai,

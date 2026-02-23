@@ -133,21 +133,21 @@ class CandidateService:
                             year=str(edu.get("year") or edu.get("dates") or "N/A")
                         ))
 
-            # Fetch Group Filtration Flow
+            # Fetch pipeline stage names from GroupStageConfig (filtration_flow removed from model)
             filtration_flow = None
             if app.group_id:
-                group_query = select(CandidateGroup).where(CandidateGroup.id == app.group_id)
-                group_res = await self.session.execute(group_query)
-                group = group_res.scalar_one_or_none()
-                if group and group.filtration_flow:
-                    flow = group.filtration_flow
-                    if isinstance(flow, list) and flow and isinstance(flow[0], dict):
-                        filtration_flow = [str(s.get("type", s.get("stage", ""))) for s in flow]
-                    elif isinstance(flow, dict):
-                        stages = flow.get("stages", [])
-                        filtration_flow = [str(s.get("type", s.get("stage", ""))) for s in stages if isinstance(s, dict)]
-                    else:
-                        filtration_flow = flow
+                from app.models import GroupStageConfig
+                sc_res = await self.session.execute(
+                    select(GroupStageConfig.stage_type)
+                    .where(
+                        GroupStageConfig.group_id == app.group_id,
+                        GroupStageConfig.state != "inactive"
+                    )
+                    .order_by(GroupStageConfig.stage_order)
+                )
+                stage_types = sc_res.scalars().all()
+                if stage_types:
+                    filtration_flow = list(stage_types)
 
             # Fetch Progress
             progress_query = select(CandidateStageProgress).where(CandidateStageProgress.application_id == app.id)

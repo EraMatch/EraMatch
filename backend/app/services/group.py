@@ -97,29 +97,6 @@ class GroupService:
             raise NotFoundException("Position not found for group")
         return pos
 
-    @staticmethod
-    def _parse_flow(raw: list | dict | None) -> list[FiltrationFlowStage]:
-        """Normalise the JSON filtration_flow stored on the group."""
-        if raw is None:
-            return []
-        stages: list = raw if isinstance(raw, list) else raw.get("stages", [])
-        result: list[FiltrationFlowStage] = []
-        for idx, s in enumerate(stages):
-            if isinstance(s, str):
-                # Plain string format: e.g. 'assessment'
-                result.append(FiltrationFlowStage(
-                    order=idx + 1,
-                    stage=s,
-                    status="pending",
-                ))
-            elif isinstance(s, dict):
-                stage_name = s.get("type") or s.get("stage") or "unknown"
-                result.append(FiltrationFlowStage(
-                    order=s.get("order", idx + 1),
-                    stage=stage_name,
-                    status=s.get("status", s.get("state", "pending")),
-                ))
-        return result
 
     async def _get_candidates_progress_data(
         self, group_id: UUID, filter_str: str | None = None, sort_str: str | None = None
@@ -275,7 +252,7 @@ class GroupService:
             if hr:
                 assigned_hr = AssignedHRResponse(id=hr.id, name=f"{hr.first_name} {hr.last_name}")
 
-        # Filtration flow from GroupStageConfig rows (authoritative) or group JSON
+        # Build flow from GroupStageConfig rows (sole authoritative source)
         stage_configs_res = await self.session.execute(
             select(GroupStageConfig)
             .where(
@@ -286,45 +263,10 @@ class GroupService:
         )
         stage_configs = stage_configs_res.scalars().all()
 
-        if stage_configs:
-            flow = [
-                FiltrationFlowStage(order=sc.stage_order, stage=sc.stage_type, status=sc.state)
-                for sc in stage_configs
-            ]
-        else:
-            flow = self._parse_flow(group.filtration_flow)
-
-        # Lazy Repair: If we have mismatch between active GroupStageConfig rows and JSON flow, sync them.
-        # This fixes the issue where existing groups show only 'Assessment' despite having more in JSON.
-        json_flow = self._parse_flow(group.filtration_flow)
-        json_stage_names = [f.stage for f in json_flow]
-        
-        # Check if we need repair
-        # valid sync if: active stage configs match the json flow names (ignoring order for now, just existence)
-        active_config_names = {sc.stage_type for sc in stage_configs}
-        json_names_set = {n.lower().replace("-", "_") for n in json_stage_names}
-        
-        if json_names_set and json_names_set != active_config_names:
-            # Mismatch detected! Sync DB to match JSON.
-            # We use the JSON flow as the source of truth for the repair.
-            await self._sync_stage_configs(group, json_stage_names)
-            
-            # Re-fetch authoritative configs
-            stage_configs_res = await self.session.execute(
-                select(GroupStageConfig)
-                .where(
-                    GroupStageConfig.group_id == group_id,
-                    GroupStageConfig.state != 'inactive'
-                )
-                .order_by(GroupStageConfig.stage_order)
-            )
-            stage_configs = stage_configs_res.scalars().all()
-            
-            # Re-build flow from synced configs
-            flow = [
-                FiltrationFlowStage(order=sc.stage_order, stage=sc.stage_type, status=sc.state)
-                for sc in stage_configs
-            ]
+        flow = [
+            FiltrationFlowStage(order=sc.stage_order, stage=sc.stage_type, status=sc.state)
+            for sc in stage_configs
+        ]
 
         # Assessment / interview config ids from stage configs
         assessment_config_id: UUID | None = None
@@ -747,15 +689,23 @@ class GroupService:
         if sc and sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
             pass_threshold = sc.acceptance_criteria.get("min_technical_score", 70.0)
 
-        # Candidates + their assessment progress
+        # Pre-fetch the assessment stage_id for this group (authoritative source)
+        assess_stage_res = await self.session.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.stage_type == "assessment",
+            )
+        )
+        assess_stage = assess_stage_res.scalars().first()
+
+        # Candidates + their assessment progress (join via stage_id, not legacy fields)
         q = (
             select(CandidateApplication, CandidateProfile, CandidateStageProgress)
             .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
             .outerjoin(
                 CandidateStageProgress,
                 (CandidateStageProgress.application_id == CandidateApplication.id)
-                & (CandidateStageProgress.group_id == group_id)
-                & (CandidateStageProgress.stage_type == "assessment"),
+                & (CandidateStageProgress.stage_id == assess_stage.stage_id if assess_stage else False),
             )
             .where(
                 CandidateApplication.group_id == group_id,
@@ -1020,16 +970,18 @@ class GroupService:
 
         if app_row:
             app_obj = app_row[0]
+            # Join GroupStageConfig to resolve stage_type (CandidateStageProgress has no stage_type column)
             prog_res = await self.session.execute(
-                select(CandidateStageProgress).where(
+                select(CandidateStageProgress, GroupStageConfig.stage_type)
+                .join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id)
+                .where(
                     CandidateStageProgress.application_id == app_obj.id,
                 )
             )
-            progs = prog_res.scalars().all()
-            for p in progs:
-                if p.stage_type == "assessment" and p.score is not None:
+            for p, s_type in prog_res.all():
+                if s_type == "assessment" and p.score is not None:
                     assess_score = int(p.score)
-                elif p.stage_type in ("ai_interview", "interview") and p.score is not None:
+                elif s_type in ("ai_interview", "interview") and p.score is not None:
                     interview_score = int(p.score)
 
         # GitHub score from GitHubAnalysis
@@ -1127,27 +1079,14 @@ class GroupService:
             group_name=data.name,
             assigned_hr_id=position.assigned_hr_id,
             assigned_tech_id=position.assigned_tech_id,
-            # filtration_flow=... logic for default flow or custom query
-            filtration_flow=[], # Empty flow pending Technical HR configuration
             status="On Hold",
             created_by_user_id=self.user.id
         )
         self.session.add(group)
         await self.session.flush()
 
-        # 3. Create Group Stages
-        # Should create GroupStageConfig for each stage in flow
-        stage_configs = []
-        for stage in group.filtration_flow:
-            stage_config = GroupStageConfig(
-                group_id=group.id,
-                organization_id=self.org_id,
-                stage_type=stage["stage"],
-                stage_order=stage["order"],
-                state="active" if stage["order"] == 1 else "not_started"
-            )
-            self.session.add(stage_config)
-            stage_configs.append(stage_config)
+        # 3. GroupStageConfig rows are created when HR sets the pipeline via update_group.
+        #    No stages to create at group-creation time — pipeline starts empty.
         await self.session.flush()
         
         # 4. Associate Candidates
@@ -1165,9 +1104,18 @@ class GroupService:
             if app:
                 app.group_id = group.id
                 self.session.add(app)
-                
-                # Create Stage Progress for the first stage
-                first_stage = next((s for s in stage_configs if s.stage_order == 1), None)
+
+                # Create Stage Progress for the first active stage (if any exist)
+                first_stage_res = await self.session.execute(
+                    select(GroupStageConfig)
+                    .where(
+                        GroupStageConfig.group_id == group.id,
+                        GroupStageConfig.state != "inactive",
+                    )
+                    .order_by(GroupStageConfig.stage_order)
+                    .limit(1)
+                )
+                first_stage = first_stage_res.scalars().first()
                 if first_stage:
                      q_prog = select(CandidateStageProgress).where(
                          CandidateStageProgress.application_id == app.id,
@@ -1233,14 +1181,7 @@ class GroupService:
         if data.status:
             group.status = data.status
         if data.filtration_flow is not None:
-            # Convert list of stage names to the expected JSONB format
-            # 1. Update JSON field for backward compatibility
-            group.filtration_flow = [
-                {"order": idx + 1, "type": stage, "status": "pending"}
-                for idx, stage in enumerate(data.filtration_flow)
-            ]
-
-            # 2. Synchronise GroupStageConfig rows (authoritative source)
+            # GroupStageConfig is the sole source of truth — sync rows directly
             await self._sync_stage_configs(group, data.filtration_flow)
 
         self.session.add(group)
@@ -1300,5 +1241,4 @@ class GroupService:
         await self.session.commit()
         self.session.add(group)
         await self.session.commit()
-        return await self.get_group_details(group_id)
 
