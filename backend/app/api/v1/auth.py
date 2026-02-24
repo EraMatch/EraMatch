@@ -6,7 +6,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.api.deps import DbSession, CurrentUser
 from app.services.auth import AuthService
-from app.schemas import LoginRequest, TokenResponse, RefreshRequest, UserResponse, AdminLoginResponse, ForgotPasswordRequest, ResetPasswordRequest, ChangePasswordRequest
+from app.schemas import LoginRequest, TokenResponse, RefreshRequest, UserResponse, AdminLoginResponse, ForgotPasswordRequest, ResetPasswordRequest, ChangePasswordRequest, LogoutResponse
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -113,3 +113,13 @@ async def get_me(current_user: CurrentUser):
     Get current authenticated user info.
     """
     return current_user
+
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(session: DbSession, current_user: CurrentUser):
+    """
+    Logout current user — records logout timestamp server-side.
+    """
+    service = AuthService(session)
+    await service.logout(current_user.id, current_user.role)
+    return LogoutResponse(success=True)

@@ -296,12 +296,14 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
             {/* Toolbar */}
             <div className="h-[42px] flex items-center gap-[16px] relative">
               {/* Add Button */}
-              <button
-                onClick={handleAddProject}
-                className="w-[36px] h-[36px] rounded-[10px] flex items-center justify-center hover:bg-[#ede9ff] transition-colors"
-              >
-                <Plus size={20} className="text-black" strokeWidth={1.67} />
-              </button>
+              {userRole !== 'technical' && (
+                <button
+                  onClick={handleAddProject}
+                  className="w-[36px] h-[36px] rounded-[10px] flex items-center justify-center hover:bg-[#ede9ff] transition-colors"
+                >
+                  <Plus size={20} className="text-black" strokeWidth={1.67} />
+                </button>
+              )}
 
               {/* Search Input */}
               <div className="relative w-[241.5px] h-[42px]">

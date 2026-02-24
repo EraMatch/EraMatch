@@ -8,7 +8,7 @@ import {
 import { api } from '../../../services/api';
 
 interface KnowledgeGraphProps {
-  candidateId: number;
+  candidateId: string;
   candidateName: string;
   onBack: () => void;
 }
@@ -88,7 +88,7 @@ export function KnowledgeGraph({ candidateId, candidateName, onBack }: Knowledge
   useEffect(() => {
     const fetchGraphData = async () => {
       try {
-        const data = await api.recruiter.getKnowledgeGraphData(candidateId);
+        const data = await api.recruiter.getKnowledgeGraphData(candidateId) as { nodes: GraphNode[]; edges: GraphEdge[] };
         setGraphData(data);
       } catch (error) {
         console.error('Failed to fetch knowledge graph data:', error);
@@ -231,7 +231,8 @@ export function KnowledgeGraph({ candidateId, candidateName, onBack }: Knowledge
       github: { bg: '#f1f5f9', border: '#64748b', text: '#64748b' },
       integrity: { bg: '#fee2e2', border: '#ef4444', text: '#ef4444' },
       'jd-requirement': { bg: '#fef9c3', border: '#eab308', text: '#eab308' },
-      evidence: { bg: '#ddd6fe', border: '#7c3aed', text: '#7c3aed' }
+      evidence: { bg: '#ddd6fe', border: '#7c3aed', text: '#7c3aed' },
+      experience: { bg: '#d1fae5', border: '#059669', text: '#059669' }
     };
 
     return colors[type];
@@ -251,7 +252,8 @@ export function KnowledgeGraph({ candidateId, candidateName, onBack }: Knowledge
       github: GitBranch,
       integrity: AlertTriangle,
       'jd-requirement': Filter,
-      evidence: Shield
+      evidence: Shield,
+      experience: Briefcase
     };
     return icons[type];
   };
@@ -303,7 +305,7 @@ export function KnowledgeGraph({ candidateId, candidateName, onBack }: Knowledge
 
   // Pan and zoom handlers
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 0 && !e.target.closest('.node')) {
+    if (e.button === 0 && !(e.target as HTMLElement).closest('.node')) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
     }

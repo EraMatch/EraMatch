@@ -41,7 +41,7 @@ export function CreateAssessmentPage({
       const fetchTemplates = async () => {
         try {
           setIsLoading(true);
-          const templates = await api.recruiter.getAssessmentTemplates();
+          const templates = (await api.recruiter.getAssessmentTemplates()) as any[];
           // Map API templates to Question format
           const mappedQuestions: Question[] = templates.map((template: any) => ({
             id: template.id,

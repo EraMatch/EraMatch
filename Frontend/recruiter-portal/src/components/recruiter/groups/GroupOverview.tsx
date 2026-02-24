@@ -51,7 +51,7 @@ export function GroupOverview({
     const fetchGroupDetails = async () => {
       try {
         setLoading(true);
-        const data = await api.recruiter.getGroupDetails(groupId);
+        const data: any = await api.recruiter.getGroupDetails(groupId);
         setCandidates(data.candidates as GroupCandidate[]);
         setPipelineStages(data.pipelineStages);
       } catch (error) {
@@ -282,7 +282,7 @@ export function GroupOverview({
                 </tr>
               </thead>
               <tbody>
-                {candidates.map((candidate, index) => (
+                {candidates.map((candidate: any, index: number) => (
                   <tr
                     key={candidate.id}
                     className={`border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors ${index === candidates.length - 1 ? 'border-b-0' : ''

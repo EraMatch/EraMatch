@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 from uuid import UUID
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select, func, col, desc
+from sqlmodel import select, func, col, desc, or_, exists
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from app.core.exceptions import NotFoundException, UnauthorizedException
@@ -38,6 +38,10 @@ class RecruiterService:
     # Project operations
     async def create_project(self, data: ProjectCreate) -> Project:
         """Create a new project."""
+        if self.current_user.role == "technical":
+            from app.core.exceptions import UnauthorizedException
+            raise UnauthorizedException("Technical recruiters cannot create projects")
+            
         # 1. Determine creator ID (Admins are not in organization_users table)
         creator_id = self.current_user.id
         if self.current_user.role == "admin":
@@ -118,11 +122,38 @@ class RecruiterService:
             
         # 2. Check recruiter access if not admin
         if self.current_user.role != "admin":
-            access_query = select(ProjectAccess).where(
-                ProjectAccess.project_id == project_id,
-                ProjectAccess.user_id == self.current_user.id
+            # Access granted if:
+            # 1. Explicit ProjectAccess record exists
+            # 2. OR user is assigned to a position within the project
+            
+            # Use exists to check for position assignment
+            pos_assignment_exists = exists(
+                select(1).where(
+                    Position.project_id == project_id,
+                    or_(
+                        Position.assigned_hr_id == self.current_user.id,
+                        Position.assigned_tech_id == self.current_user.id
+                    ),
+                    Position.is_deleted == False
+                )
             )
-            access_res = await self.session.execute(access_query)
+            
+            explicit_access_exists = exists(
+                select(1).where(
+                    ProjectAccess.project_id == project_id,
+                    ProjectAccess.user_id == self.current_user.id
+                )
+            )
+            
+            # Combine both checks
+            final_access_query = select(1).where(
+                or_(
+                    explicit_access_exists,
+                    pos_assignment_exists
+                )
+            )
+            
+            access_res = await self.session.execute(final_access_query)
             if not access_res.scalar():
                 raise UnauthorizedException("You do not have access to this project")
                 
@@ -193,6 +224,12 @@ class RecruiterService:
             )
             .group_by(Position.id)
         )
+
+        # Restrict positions to explicitly assigned ones for non-admin users
+        if self.current_user.role == "technical":
+            query = query.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            query = query.where(Position.assigned_hr_id == self.current_user.id)
         
         result = await self.session.execute(query)
         rows = result.all()
@@ -233,10 +270,31 @@ class RecruiterService:
             
             # If not admin, restrict to projects the user has access to
             if self.current_user.role != "admin":
-                query = query.join(
-                    ProjectAccess, Project.id == ProjectAccess.project_id
-                ).where(
-                    ProjectAccess.user_id == self.current_user.id
+                # Subquery to check for position assignments in a project
+                pos_assignment_exists = exists(
+                    select(1).where(
+                        Position.project_id == Project.id,
+                        or_(
+                            Position.assigned_hr_id == self.current_user.id,
+                            Position.assigned_tech_id == self.current_user.id
+                        ),
+                        Position.is_deleted == False
+                    )
+                )
+                
+                # Check for explicit project access
+                explicit_access_exists = exists(
+                    select(1).where(
+                        ProjectAccess.project_id == Project.id,
+                        ProjectAccess.user_id == self.current_user.id
+                    )
+                )
+                
+                query = query.where(
+                    or_(
+                        explicit_access_exists,
+                        pos_assignment_exists
+                    )
                 )
             
             if status:
@@ -260,14 +318,23 @@ class RecruiterService:
                     Position.project_id == pid,
                     Position.is_deleted == False
                 )
-                res_pos = await self.session.execute(q_pos)
-                pos_count = res_pos.scalar() or 0
                 
                 # Fetch position IDs for this project to query applicants and groups
                 q_pos_ids = select(Position.id).where(
                     Position.project_id == pid,
                     Position.is_deleted == False
                 )
+
+                if self.current_user.role == "technical":
+                    q_pos = q_pos.where(Position.assigned_tech_id == self.current_user.id)
+                    q_pos_ids = q_pos_ids.where(Position.assigned_tech_id == self.current_user.id)
+                elif self.current_user.role == "hr":
+                    q_pos = q_pos.where(Position.assigned_hr_id == self.current_user.id)
+                    q_pos_ids = q_pos_ids.where(Position.assigned_hr_id == self.current_user.id)
+                    
+                res_pos = await self.session.execute(q_pos)
+                pos_count = res_pos.scalar() or 0
+                
                 res_pos_ids = await self.session.execute(q_pos_ids)
                 pos_ids = res_pos_ids.scalars().all()
                 
@@ -300,23 +367,27 @@ class RecruiterService:
                     # 5. Quality Score: Avg of assessment & interview scores
                     q_scores = select(CandidateStageProgress.score).join(
                         CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                    ).join(
+                        GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
                     ).where(
                         CandidateApplication.position_id.in_(pos_ids),
-                        CandidateStageProgress.stage_type.in_(["assessment", "interview"]),
+                        GroupStageConfig.stage_type.in_(["assessment", "interview"]),
                         CandidateStageProgress.score.isnot(None)
                     )
 
                     # 6. Stage Timing
                     q_stages = select(
-                        CandidateStageProgress.stage_type,
+                        GroupStageConfig.stage_type,
                         func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
                     ).join(
                         CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                    ).join(
+                        GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
                     ).where(
                         CandidateApplication.position_id.in_(pos_ids),
                         CandidateStageProgress.completed_at.isnot(None),
                         CandidateStageProgress.started_at.isnot(None)
-                    ).group_by(CandidateStageProgress.stage_type)
+                    ).group_by(GroupStageConfig.stage_type)
 
 
                     res_apps, res_groups, res_hires, res_hire_count, res_scores, res_stages = await asyncio.gather(
@@ -396,20 +467,25 @@ class RecruiterService:
     # Position operations
     async def create_position(self, data: PositionCreate) -> Position:
         """Create a new position with validation for unique title in organization."""
+        if self.current_user.role == "technical":
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail="Technical recruiters cannot create positions")
+
         org_id = self.organization_id
 
-        # DEBUG LOGS
-        print(f"DEBUG: create_position role={self.current_user.role}")
-        print(f"DEBUG: assigned_hr_id={data.assigned_hr_id} type={type(data.assigned_hr_id)}")
-        print(f"DEBUG: assigned_tech_id={data.assigned_tech_id} type={type(data.assigned_tech_id)}")
 
-        # Validation for Admins: Must assign HR and Tech Recruiter
-        if self.current_user.role == "admin":
-             if not data.assigned_hr_id or not data.assigned_tech_id:
-                  print("DEBUG: Validation FAILED")
-                  from fastapi import HTTPException
-                  raise HTTPException(status_code=400, detail="Admins must assign both HR and Technical Recruiter to create a position.")
+        # Validation: Every position must have an assigned HR and Tech recruiter
+        if not data.assigned_hr_id:
+            if self.current_user.role == "hr":
+                data.assigned_hr_id = self.current_user.id
+            else:
+                 from fastapi import HTTPException
+                 raise HTTPException(status_code=400, detail="HR Recruiter must be assigned to create a position.")
         
+        if not data.assigned_tech_id:
+             from fastapi import HTTPException
+             raise HTTPException(status_code=400, detail="Technical Recruiter must be assigned to create a position.")
+
         # 0. Check Project Status
         # Get project to check status
         project = await self.get_project(data.project_id)
@@ -512,6 +588,103 @@ class RecruiterService:
         
         return position
 
+    async def list_all_candidates(self) -> list[PositionCandidateResponse]:
+        """List all candidates in the organization (for manual adding)."""
+        from app.models import CVAnalysis # Import here to avoid circular
+        # CandidateApplication should be available from top-level imports
+        
+        # Join Profile -> Application -> CVAnalysis
+        # Start from CandidateProfile to get all profiles, then left join apps and cvs
+        stmt = (
+            select(CandidateProfile, CVAnalysis)
+            .outerjoin(CandidateApplication, CandidateProfile.id == CandidateApplication.candidate_id)
+            .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
+            .where(
+                CandidateProfile.organization_id == self.organization_id,
+                CandidateProfile.is_deleted == False
+            )
+        )
+        res = await self.session.execute(stmt)
+        rows = res.all()
+        
+        # Deduplicate profiles, keeping the one with best match score or latest
+        candidates_map = {}
+        
+        for p, cv in rows:
+            if p.id in candidates_map:
+                # Logic: If current CV has higher match score than stored one, replace
+                current_best_cv = candidates_map[p.id]['cv']
+                new_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
+                old_score = float(current_best_cv.match_score) if current_best_cv and current_best_cv.match_score is not None else 0.0
+                
+                if new_score > old_score:
+                    candidates_map[p.id] = {'profile': p, 'cv': cv}
+                # Else keep existing
+            else:
+                candidates_map[p.id] = {'profile': p, 'cv': cv}
+        
+        candidates = []
+        for item in candidates_map.values():
+            p = item['profile']
+            cv = item['cv']
+            
+            # Extract skills and experience if available
+            skills = cv.skills if cv and cv.skills else []
+            experience = float(cv.experience_years) if cv and cv.experience_years is not None else 0.0
+            location = p.location if p.location else "Unknown"
+            match_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
+
+            # Extract detailed fields from parsed_data
+            parsed = cv.parsed_data if cv and cv.parsed_data else {}
+            
+            companies = []
+            job_titles = []
+            # Check for work_experience being a list
+            work_exp = parsed.get("work_experience", [])
+            if isinstance(work_exp, list):
+                for job in work_exp:
+                    if isinstance(job, dict):
+                        # Try common keys
+                        comp = job.get("company") or job.get("organization")
+                        if comp: companies.append(str(comp))
+                        
+                        title = job.get("job_title") or job.get("title") or job.get("position")
+                        if title: job_titles.append(str(title))
+            
+            universities = []
+            degrees = []
+            # Check for education being a list
+            education = parsed.get("education", [])
+            if isinstance(education, list):
+                for edu in education:
+                    if isinstance(edu, dict):
+                        # Try common keys
+                        uni = edu.get("institution") or edu.get("university") or edu.get("school")
+                        if uni: universities.append(str(uni))
+                        
+                        deg = edu.get("degree") or edu.get("qualification")
+                        if deg: degrees.append(str(deg))
+
+            candidates.append(PositionCandidateResponse(
+                id=p.id, # Profile ID
+                name=p.full_name,
+                email=p.email,
+                score=match_score, 
+                match=match_score,
+                color="#9ca3af" if match_score < 50 else ("#10b981" if match_score >= 80 else "#f59e0b"),
+                starred=False,
+                selected=False,
+                experience=experience,
+                location=location,
+                skills=skills,
+                companies=companies,
+                job_titles=job_titles,
+                universities=universities,
+                degrees=degrees
+            ))
+            
+        return candidates
+
     async def get_position(self, position_id: UUID) -> Position:
         """Get a position by ID with organization check."""
         query = select(Position).where(
@@ -530,10 +703,12 @@ class RecruiterService:
         # 1. Verify existence
         await self.get_position(position_id)
 
-        # 2. Fetch candidates (applications + optional profiles)
+        # 2. Fetch candidates (applications + optional profiles + optional CV analysis)
+        from app.models import CVAnalysis
         q_cands = (
-            select(CandidateApplication, CandidateProfile)
+            select(CandidateApplication, CandidateProfile, CVAnalysis)
             .outerjoin(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
             .where(
                 CandidateApplication.position_id == position_id,
                 CandidateApplication.is_deleted == False
@@ -542,8 +717,16 @@ class RecruiterService:
         res_cands = await self.session.execute(q_cands)
         rows_cands = res_cands.all()
 
+        # Fetch group names for mapping
+        group_ids = {app.group_id for app, _, _ in rows_cands if app.group_id}
+        group_map = {}
+        if group_ids:
+            q_groups = select(CandidateGroup.id, CandidateGroup.group_name).where(CandidateGroup.id.in_(group_ids))
+            res_groups = await self.session.execute(q_groups)
+            group_map = {gid: gname for gid, gname in res_groups.all()}
+
         candidates = []
-        for app, profile in rows_cands:
+        for app, profile, cv in rows_cands:
             # Get latest score from stage progress if any
             q_score = select(func.avg(CandidateStageProgress.score)).where(
                 CandidateStageProgress.application_id == app.id,
@@ -555,17 +738,54 @@ class RecruiterService:
             # Map to response
             name = profile.full_name if profile else f"Candidate {str(app.candidate_id)[:8]}"
             email = profile.email if profile else "No Email"
+            match_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
+
+            # Extract detailed fields from parsed_data
+            parsed = cv.parsed_data if cv and cv.parsed_data else {}
+            
+            companies = []
+            job_titles = []
+            work_exp = parsed.get("work_experience", [])
+            if isinstance(work_exp, list):
+                for job in work_exp:
+                    if isinstance(job, dict):
+                        comp = job.get("company") or job.get("organization")
+                        if comp: companies.append(str(comp))
+                        title = job.get("job_title") or job.get("title") or job.get("position")
+                        if title: job_titles.append(str(title))
+            
+            universities = []
+            degrees = []
+            education = parsed.get("education", [])
+            if isinstance(education, list):
+                for edu in education:
+                    if isinstance(edu, dict):
+                        uni = edu.get("institution") or edu.get("university") or edu.get("school")
+                        if uni: universities.append(str(uni))
+                        deg = edu.get("degree") or edu.get("qualification")
+                        if deg: degrees.append(str(deg))
 
             # Map to response (simulating match score for now)
+            # Map to response (simulating match score for now)
             candidates.append(PositionCandidateResponse(
-                id=app.id,
+                id=profile.id if profile else app.candidate_id,
+                applicationId=app.id,
                 name=name,
                 email=email,
                 score=round(float(avg_score), 1),
-                match=round(float(avg_score) * 1.1, 1) if avg_score > 0 else 0.0, # Mock match score logic
-                color="#6366f1",
+                match=match_score, # Use real match score
+                color="#9ca3af" if match_score < 50 else ("#10b981" if match_score >= 80 else "#f59e0b"),
                 starred=False,
-                selected=False
+                selected=False,
+                experience=float(cv.experience_years) if cv and cv.experience_years is not None else 0.0,
+                location=profile.location if profile and profile.location else "Unknown",
+                skills=cv.skills if cv and cv.skills else [],
+                companies=companies,
+                job_titles=job_titles,
+                universities=universities,
+                degrees=degrees,
+                groupId=app.group_id,
+                groupName=group_map.get(app.group_id) if app.group_id else None
             ))
 
         # 3. Fetch groups
@@ -690,6 +910,10 @@ class RecruiterService:
             
             if status:
                 query = query.where(Position.status == status)
+
+            # Technical HR users only see positions assigned to them
+            if self.current_user.role == "technical":
+                query = query.where(Position.assigned_tech_id == self.current_user.id)
             
             query = query.order_by(Position.created_at.desc()).offset(skip).limit(limit)
             result = await self.session.execute(query)
@@ -766,6 +990,13 @@ class RecruiterService:
                 Position.project_id == project_id,
                 Position.is_deleted == False
             )
+
+            if self.current_user.role == "technical":
+                q_ops = q_ops.where(Position.assigned_tech_id == self.current_user.id)
+                q_pos_ids = q_pos_ids.where(Position.assigned_tech_id == self.current_user.id)
+            elif self.current_user.role == "hr":
+                q_ops = q_ops.where(Position.assigned_hr_id == self.current_user.id)
+                q_pos_ids = q_pos_ids.where(Position.assigned_hr_id == self.current_user.id)
             
             res_ops, res_pos_ids = await asyncio.gather(
                 self.session.execute(q_ops),
@@ -866,21 +1097,29 @@ class RecruiterService:
             integrity = 0
             
             if app_ids:
-                # Fetch progress and integrity flags
-                q_prog = select(CandidateStageProgress.stage_type, CandidateStageProgress.score).where(
-                    CandidateStageProgress.application_id.in_(app_ids)
-                )
-                q_integrity = select(func.count()).where(
-                    ProctoringFlag.application_id.in_(app_ids)
+                # Fetch progress and integrity flags, joining with GroupStageConfig for stage_type
+                from app.models import GroupStageConfig
+                # ProctoringFlag not found in models.py, disabling integrity check for now
+                # from app.models import ProctoringFlag 
+
+                q_prog = (
+                    select(GroupStageConfig.stage_type, CandidateStageProgress.score)
+                    .join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id)
+                    .where(
+                        CandidateStageProgress.application_id.in_(app_ids)
+                    )
                 )
                 
-                res_prog, res_integ = await asyncio.gather(
-                    self.session.execute(q_prog),
-                    self.session.execute(q_integrity)
-                )
+                # Integrity check disabled due to missing model
+                # q_integrity = select(func.count()).where(
+                #    ProctoringFlag.application_id.in_(app_ids)
+                # )
+                
+                res_prog = await self.session.execute(q_prog)
+                # res_integ = await self.session.execute(q_integrity)
                 
                 progs = res_prog.all()
-                integrity = res_integ.scalar() or 0
+                integrity = 0 # (res_integ.scalar() or 0)
                 
                 assess_scores = [float(score) for stage, score in progs if stage == "assessment" and score is not None]
                 inter_scores = [float(score) for stage, score in progs if stage in ["interview", "ai_interview"] and score is not None]
@@ -975,7 +1214,9 @@ class RecruiterService:
         try:
             res_groups = await self.session.execute(
                 select(CandidateGroup).where(
-                    CandidateGroup.position_id == position_id
+                    CandidateGroup.position_id == position_id,
+                    CandidateGroup.status != "archived",
+                    CandidateGroup.status != "deleted" # Just in case data exists
                 )
             )
             groups = res_groups.scalars().all()
@@ -1002,19 +1243,22 @@ class RecruiterService:
                 count = res_count.scalar() or 0
                 flags = res_flags.scalar() or 0
                 
-                # Derive stage flags
-                flow = g.filtration_flow
-                if isinstance(flow, dict):
-                    flow = flow.get("stages", []) if isinstance(flow.get("stages"), list) else []
-                flow_list = flow if isinstance(flow, list) else []
-                has_assessment = any(str(s.get("type")).lower() == "assessment" for s in flow_list if isinstance(s, dict))
-                has_ai = any(str(s.get("type")).lower() == "ai_interview" for s in flow_list if isinstance(s, dict))
-                has_live = any(str(s.get("type")).lower() == "live_interview" for s in flow_list if isinstance(s, dict))
+                # Derive stage flags from GroupStageConfig (authoritative pipeline source)
+                stage_types_res = await self.session.execute(
+                    select(GroupStageConfig.stage_type).where(
+                        GroupStageConfig.group_id == gid,
+                        GroupStageConfig.state != "inactive"
+                    )
+                )
+                stage_types = {st.lower() for st in stage_types_res.scalars().all()}
+                has_assessment = "assessment" in stage_types
+                has_ai = "ai_interview" in stage_types
+                has_live = "live_interview" in stage_types
 
                 result.append(PositionGroupResponse(
-                    groupID=gid,
-                    groupName=g.group_name,
-                    candidatesCount=count,
+                    id=gid,
+                    name=g.group_name,
+                    candidateCount=count,
                     status=g.status,
                     createdDate=g.created_at,
                     integrityIssues=flags,
@@ -1031,15 +1275,17 @@ class RecruiterService:
     async def get_group_analysis(self, group_id: UUID) -> GroupAnalysisResponse:
         """Get high-level analysis for a candidate group with real data."""
         try:
-            # 1. Match Accuracy (Average of assessment and AI scores if they exist)
-            q_scores = select(CandidateStageProgress.score).where(
-                CandidateStageProgress.group_id == group_id,
+            # 1. Match Accuracy — scope by group via CandidateApplication, stage_type not needed here
+            q_scores = select(CandidateStageProgress.score).join(
+                CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+            ).where(
+                CandidateApplication.group_id == group_id,
                 CandidateStageProgress.score.isnot(None)
             )
             res_scores = await self.session.execute(q_scores)
             scores = [float(s) for s in res_scores.scalars().all()]
             match_acc = sum(scores) / len(scores) if scores else 0.0
-            
+
             # 2. Total Candidates
             res_count = await self.session.execute(
                 select(func.count(CandidateApplication.id)).where(
@@ -1048,11 +1294,15 @@ class RecruiterService:
                 )
             )
             total = res_count.scalar() or 0
-            
-            # 3. Active Phases: Count distinct stage types for this group
+
+            # 3. Active Phases — distinct stage_type values via GroupStageConfig join
             res_phases = await self.session.execute(
-                select(func.count(func.distinct(CandidateStageProgress.stage_type))).where(
-                    CandidateStageProgress.group_id == group_id
+                select(func.count(func.distinct(GroupStageConfig.stage_type))).join(
+                    CandidateStageProgress, GroupStageConfig.stage_id == CandidateStageProgress.stage_id
+                ).join(
+                    CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                ).where(
+                    CandidateApplication.group_id == group_id
                 )
             )
             active_phases = res_phases.scalar() or 0
@@ -1082,11 +1332,15 @@ class RecruiterService:
     async def get_group_technical_ai(self, group_id: UUID) -> TechnicalAIResponse:
         """Get combined technical and AI stats with expanded metrics."""
         try:
-            # Tech: Assessment scores
+            # Tech: Assessment scores — join GroupStageConfig for stage_type, CandidateApplication for group
             res_tech = await self.session.execute(
-                select(CandidateStageProgress.score).where(
-                    CandidateStageProgress.group_id == group_id,
-                    CandidateStageProgress.stage_type == "assessment",
+                select(CandidateStageProgress.score).join(
+                    GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
+                ).join(
+                    CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                ).where(
+                    CandidateApplication.group_id == group_id,
+                    GroupStageConfig.stage_type == "assessment",
                     CandidateStageProgress.score.isnot(None)
                 )
             )
@@ -1094,12 +1348,16 @@ class RecruiterService:
             avg_tech = sum(tech_scores) / len(tech_scores) if tech_scores else 0.0
             pass_rate_tech = (sum(1 for s in tech_scores if s >= 70) / len(tech_scores) * 100) if tech_scores else 0.0
             completed_tech = len(tech_scores)
-            
-            # AI: AI Interview scores
+
+            # AI: AI Interview scores — same join pattern
             res_ai = await self.session.execute(
-                select(CandidateStageProgress.score).where(
-                    CandidateStageProgress.group_id == group_id,
-                    CandidateStageProgress.stage_type == "ai_interview",
+                select(CandidateStageProgress.score).join(
+                    GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
+                ).join(
+                    CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
+                ).where(
+                    CandidateApplication.group_id == group_id,
+                    GroupStageConfig.stage_type == "ai_interview",
                     CandidateStageProgress.score.isnot(None)
                 )
             )
@@ -1202,6 +1460,15 @@ class RecruiterService:
             CandidateApplication, Position.id == CandidateApplication.position_id
         ).where(ProjectAccess.user_id == user_id)
         
+        if self.current_user.role == "technical":
+            q_positions = q_positions.where(Position.assigned_tech_id == self.current_user.id)
+            q_groups = q_groups.where(Position.assigned_tech_id == self.current_user.id)
+            q_candidates = q_candidates.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_positions = q_positions.where(Position.assigned_hr_id == self.current_user.id)
+            q_groups = q_groups.where(Position.assigned_hr_id == self.current_user.id)
+            q_candidates = q_candidates.where(Position.assigned_hr_id == self.current_user.id)
+
         res_overview = await asyncio.gather(
             self.session.execute(q_projects),
             self.session.execute(q_positions),
@@ -1225,7 +1492,14 @@ class RecruiterService:
             CandidateGroup, Position.id == CandidateGroup.position_id
         ).where(
             ProjectAccess.user_id == user_id
-        ).group_by(CandidateGroup.status)
+        )
+        
+        if self.current_user.role == "technical":
+            q_group_status = q_group_status.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_group_status = q_group_status.where(Position.assigned_hr_id == self.current_user.id)
+            
+        q_group_status = q_group_status.group_by(CandidateGroup.status)
         
         res_group_status = await self.session.execute(q_group_status)
         group_status_rows = res_group_status.all()
@@ -1267,7 +1541,14 @@ class RecruiterService:
         ).where(
             ProjectAccess.user_id == user_id,
             GroupStageConfig.started_at.isnot(None)
-        ).order_by(GroupStageConfig.group_id, GroupStageConfig.started_at.desc())
+        )
+        
+        if self.current_user.role == "technical":
+            q_stages = q_stages.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_stages = q_stages.where(Position.assigned_hr_id == self.current_user.id)
+            
+        q_stages = q_stages.order_by(GroupStageConfig.group_id, GroupStageConfig.started_at.desc())
         
         res_stages = await self.session.execute(q_stages)
         all_stage_configs = res_stages.scalars().all()
@@ -1314,7 +1595,14 @@ class RecruiterService:
             CandidateApplication, Position.id == CandidateApplication.position_id
         ).where(
             ProjectAccess.user_id == user_id
-        ).group_by(Project.id, Project.name)
+        )
+        
+        if self.current_user.role == "technical":
+            q_perf = q_perf.where(or_(Position.id.is_(None), Position.assigned_tech_id == self.current_user.id))
+        elif self.current_user.role == "hr":
+            q_perf = q_perf.where(or_(Position.id.is_(None), Position.assigned_hr_id == self.current_user.id))
+            
+        q_perf = q_perf.group_by(Project.id, Project.name)
         
         res_perf = await self.session.execute(q_perf)
         project_performance = [
@@ -1337,7 +1625,14 @@ class RecruiterService:
         ).where(
             ProjectAccess.user_id == user_id,
             GroupStageConfig.started_at.isnot(None)
-        ).order_by(GroupStageConfig.started_at.desc()).limit(5)
+        )
+        
+        if self.current_user.role == "technical":
+            q_activity = q_activity.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_activity = q_activity.where(Position.assigned_hr_id == self.current_user.id)
+            
+        q_activity = q_activity.order_by(GroupStageConfig.started_at.desc()).limit(5)
         
         res_activity = await self.session.execute(q_activity)
         activity_rows = res_activity.all()
@@ -1386,7 +1681,14 @@ class RecruiterService:
         ).where(
             ProjectAccess.user_id == user_id,
             CandidateApplication.applied_at >= date_7_days_ago
-        ).group_by(truncated_date)
+        )
+        
+        if self.current_user.role == "technical":
+            q_trend = q_trend.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_trend = q_trend.where(Position.assigned_hr_id == self.current_user.id)
+            
+        q_trend = q_trend.group_by(truncated_date)
         
         res_trend = await self.session.execute(q_trend)
         trend_rows = res_trend.all()

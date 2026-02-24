@@ -24,8 +24,13 @@ from app.schemas import (
     GroupAnalysisResponse,
     TechnicalAIResponse,
     RiskBreakdownResponse,
+    RiskBreakdownResponse,
     RecruiterAnalyticsResponse,
+    GroupCreateRequest,
+    CandidateUploadResponse,
+    GroupDetailResponse,
 )
+from app.services import CandidateService, GroupService
 
 router = APIRouter(prefix="/recruiter", tags=["Recruiters"])
 
@@ -51,6 +56,16 @@ async def get_notifications(
 # =============================================================================
 # PROJECTS
 # =============================================================================
+from app.schemas import PositionCandidateResponse
+
+@router.get("/candidates", response_model=list[PositionCandidateResponse])
+async def list_all_candidates(
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """List all candidate profiles in the organization."""
+    service = RecruiterService(session, current_user)
+    return await service.list_all_candidates()
 
 
 @router.post("/projects", response_model=ProjectResponse, status_code=201)
@@ -318,4 +333,72 @@ async def get_analytics(
 ):
     """Get recruiter analytics."""
     service = RecruiterService(session, current_user)
+    service = RecruiterService(session, current_user)
     return await service.get_analytics(current_user.id)
+
+
+# =============================================================================
+# CANDIDATE IMPORT & GROUPS
+# =============================================================================
+
+from fastapi import UploadFile, File
+
+@router.post("/positions/{position_id}/candidates/upload", response_model=CandidateUploadResponse)
+async def upload_candidates_zip(
+    position_id: UUID,
+    file: UploadFile = File(...),
+    session: DbSession = ...,
+    current_user: RecruiterUser = ...,
+):
+    """
+    Upload a zip file of CVs/Resumes.
+    Only HR can perform this action.
+    """
+    # RBAC Check
+    if current_user.role != "hr" and current_user.role != "admin": # Allow Admin too? Plan said HR only/Tech view. Admin usually has all access.
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Only HR users can import candidates.")
+
+    if not file.filename.endswith('.zip'):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Only .zip files are supported.")
+    
+    content = await file.read()
+    
+    # Use CandidateService
+    service = CandidateService(session, current_user.organization_id)
+    return await service.process_zip_upload(content, position_id)
+
+
+@router.post("/positions/{position_id}/groups", response_model=GroupDetailResponse)
+async def create_position_group(
+    position_id: UUID,
+    data: GroupCreateRequest,
+    session: DbSession = ...,
+    current_user: RecruiterUser = ...,
+):
+    """
+    Create a candidate group for a position.
+    Only HR can perform this action.
+    """
+    # RBAC Check
+    if current_user.role != "hr" and current_user.role != "admin":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Only HR users can create groups.")
+        
+    if data.position_id != position_id:
+         from fastapi import HTTPException
+         raise HTTPException(status_code=400, detail="Position ID mismatch.")
+
+    # Use GroupService
+    service = GroupService(session, current_user)
+    # create_group returns CandidateGroup model, response_model is GroupDetailResponse
+    # We might need to fetch details to match response model or just return basic info.
+    # GroupDetailResponse has many fields.
+    # GroupService.create_group returns a CandidateGroup ORM object.
+    # We should probably return the full detail.
+    
+    group = await service.create_group(data)
+    
+    # Fetch full details to return consistent response
+    return await service.get_group_details(group.id)

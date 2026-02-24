@@ -16,6 +16,7 @@ interface AIInterviewConfig {
   showFeedback: boolean;
   recordingRequired: boolean;
   aiModel: 'GPT-4' | 'GPT-4-Turbo' | 'Claude-3';
+  systemPrompt?: string;
 }
 
 interface InterviewSection {
@@ -43,23 +44,29 @@ interface InterviewQuestion {
 interface CreateAIInterviewProps {
   onBack: () => void;
   onSave: (interview: any) => void;
+  allowedTypes?: ('live' | 'recorded')[];
 }
 
 type CreationStep = 'settings' | 'sections';
 
-export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
+export function CreateAIInterview({ onBack, onSave, allowedTypes = ['live', 'recorded'] }: CreateAIInterviewProps) {
   const [currentStep, setCurrentStep] = useState<CreationStep>('settings');
+
+  // Default to the first allowed type, or 'recorded' if none specified
+  const defaultType = allowedTypes.length > 0 ? allowedTypes[0] : 'recorded';
+
   const [interviewConfig, setInterviewConfig] = useState<AIInterviewConfig>({
     title: '',
     description: '',
-    interviewType: 'recorded',
+    interviewType: defaultType,
     duration: 30,
     difficulty: 'Mid Level',
     evaluationCriteria: ['Communication Skills', 'Technical Knowledge', 'Problem-Solving'],
     allowRetakes: false,
     showFeedback: true,
     recordingRequired: true,
-    aiModel: 'GPT-4-Turbo'
+    aiModel: 'GPT-4-Turbo',
+    systemPrompt: ''
   });
   const [sections, setSections] = useState<InterviewSection[]>([]);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
@@ -134,7 +141,7 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
       timeLimit: interviewConfig.interviewType === 'recorded' ? 120 : undefined,
       tags: []
     };
-    
+
     setSections(sections.map(s => {
       if (s.id === sectionId) {
         return { ...s, questions: [...s.questions, newQuestion] };
@@ -248,6 +255,19 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
 
               <div>
                 <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                  System Prompt (Optional LLM Judge Instructions)
+                </label>
+                <textarea
+                  value={interviewConfig.systemPrompt || ''}
+                  onChange={(e) => setInterviewConfig({ ...interviewConfig, systemPrompt: e.target.value })}
+                  placeholder="e.g., You are an expert engineering manager. Focus strictly on system design performance answers..."
+                  rows={2}
+                  className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
                   Description
                 </label>
                 <textarea
@@ -267,40 +287,40 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
                   Interview Type
                 </label>
                 <div className="flex gap-3">
-                  <button
-                    onClick={() => setInterviewConfig({ ...interviewConfig, interviewType: 'live' })}
-                    className={`flex-1 h-[80px] rounded-[10px] border-2 transition-all ${
-                      interviewConfig.interviewType === 'live'
+                  {allowedTypes.includes('live') && (
+                    <button
+                      onClick={() => setInterviewConfig({ ...interviewConfig, interviewType: 'live' })}
+                      className={`flex-1 h-[80px] rounded-[10px] border-2 transition-all ${interviewConfig.interviewType === 'live'
                         ? 'border-[#6366f1] bg-[#f5f3ff]'
                         : 'border-[#e5e7eb] bg-white hover:border-[#d1d5db]'
-                    }`}
-                  >
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Video size={20} className={interviewConfig.interviewType === 'live' ? 'text-[#6366f1]' : 'text-[#6b7280]'} />
-                      <span className={`font-['Arimo',sans-serif] text-[14px] ${
-                        interviewConfig.interviewType === 'live' ? 'text-[#6366f1] font-medium' : 'text-[#6b7280]'
-                      }`}>
-                        Live AI Interview
-                      </span>
-                    </div>
-                  </button>
-                  <button
-                    onClick={() => setInterviewConfig({ ...interviewConfig, interviewType: 'recorded' })}
-                    className={`flex-1 h-[80px] rounded-[10px] border-2 transition-all ${
-                      interviewConfig.interviewType === 'recorded'
+                        }`}
+                    >
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <Video size={20} className={interviewConfig.interviewType === 'live' ? 'text-[#6366f1]' : 'text-[#6b7280]'} />
+                        <span className={`font-['Arimo',sans-serif] text-[14px] ${interviewConfig.interviewType === 'live' ? 'text-[#6366f1] font-medium' : 'text-[#6b7280]'
+                          }`}>
+                          Live AI Interview
+                        </span>
+                      </div>
+                    </button>
+                  )}
+                  {allowedTypes.includes('recorded') && (
+                    <button
+                      onClick={() => setInterviewConfig({ ...interviewConfig, interviewType: 'recorded' })}
+                      className={`flex-1 h-[80px] rounded-[10px] border-2 transition-all ${interviewConfig.interviewType === 'recorded'
                         ? 'border-[#6366f1] bg-[#f5f3ff]'
                         : 'border-[#e5e7eb] bg-white hover:border-[#d1d5db]'
-                    }`}
-                  >
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Mic size={20} className={interviewConfig.interviewType === 'recorded' ? 'text-[#6366f1]' : 'text-[#6b7280]'} />
-                      <span className={`font-['Arimo',sans-serif] text-[14px] ${
-                        interviewConfig.interviewType === 'recorded' ? 'text-[#6366f1] font-medium' : 'text-[#6b7280]'
-                      }`}>
-                        Recorded Responses
-                      </span>
-                    </div>
-                  </button>
+                        }`}
+                    >
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <Mic size={20} className={interviewConfig.interviewType === 'recorded' ? 'text-[#6366f1]' : 'text-[#6b7280]'} />
+                        <span className={`font-['Arimo',sans-serif] text-[14px] ${interviewConfig.interviewType === 'recorded' ? 'text-[#6366f1] font-medium' : 'text-[#6b7280]'
+                          }`}>
+                          Recorded Responses
+                        </span>
+                      </div>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -350,49 +370,51 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
               </div>
             </div>
 
-            {/* Evaluation Criteria */}
-            <div className="mb-8">
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Evaluation Criteria
-              </label>
-              <div className="space-y-2">
-                {interviewConfig.evaluationCriteria.map((criterion, idx) => (
-                  <div key={idx} className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={criterion}
-                      onChange={(e) => {
-                        const newCriteria = [...interviewConfig.evaluationCriteria];
-                        newCriteria[idx] = e.target.value;
-                        setInterviewConfig({ ...interviewConfig, evaluationCriteria: newCriteria });
-                      }}
-                      className="flex-1 h-[40px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                    />
-                    <button
-                      onClick={() => {
-                        const newCriteria = interviewConfig.evaluationCriteria.filter((_, i) => i !== idx);
-                        setInterviewConfig({ ...interviewConfig, evaluationCriteria: newCriteria });
-                      }}
-                      className="w-[40px] h-[40px] rounded-[8px] border border-[#e5e7eb] flex items-center justify-center hover:bg-[#fee2e2] hover:border-[#ef4444] transition-colors"
-                    >
-                      <Trash2 size={16} className="text-[#ef4444]" />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  onClick={() => setInterviewConfig({
-                    ...interviewConfig,
-                    evaluationCriteria: [...interviewConfig.evaluationCriteria, '']
-                  })}
-                  className="flex items-center gap-2 h-[40px] px-4 rounded-[8px] border border-dashed border-[#d1d5db] hover:border-[#6366f1] hover:bg-[#f5f3ff] transition-colors w-full"
-                >
-                  <Plus size={16} className="text-[#6366f1]" />
-                  <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
-                    Add Criterion
-                  </span>
-                </button>
+            {/* Evaluation Criteria - Only for Live Interviews */}
+            {interviewConfig.interviewType === 'live' && (
+              <div className="mb-8">
+                <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                  Evaluation Criteria
+                </label>
+                <div className="space-y-2">
+                  {interviewConfig.evaluationCriteria.map((criterion, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={criterion}
+                        onChange={(e) => {
+                          const newCriteria = [...interviewConfig.evaluationCriteria];
+                          newCriteria[idx] = e.target.value;
+                          setInterviewConfig({ ...interviewConfig, evaluationCriteria: newCriteria });
+                        }}
+                        className="flex-1 h-[40px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                      />
+                      <button
+                        onClick={() => {
+                          const newCriteria = interviewConfig.evaluationCriteria.filter((_, i) => i !== idx);
+                          setInterviewConfig({ ...interviewConfig, evaluationCriteria: newCriteria });
+                        }}
+                        className="w-[40px] h-[40px] rounded-[8px] border border-[#e5e7eb] flex items-center justify-center hover:bg-[#fee2e2] hover:border-[#ef4444] transition-colors"
+                      >
+                        <Trash2 size={16} className="text-[#ef4444]" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => setInterviewConfig({
+                      ...interviewConfig,
+                      evaluationCriteria: [...interviewConfig.evaluationCriteria, '']
+                    })}
+                    className="flex items-center gap-2 h-[40px] px-4 rounded-[8px] border border-dashed border-[#d1d5db] hover:border-[#6366f1] hover:bg-[#f5f3ff] transition-colors w-full"
+                  >
+                    <Plus size={16} className="text-[#6366f1]" />
+                    <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
+                      Add Criterion
+                    </span>
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Additional Options */}
             <div className="space-y-4 mb-8 p-4 bg-[#f9fafb] rounded-[10px]">
@@ -483,11 +505,10 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-2">
                 <h1 className="text-[#111827]">{interviewConfig.title}</h1>
-                <span className={`px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${
-                  interviewConfig.interviewType === 'live'
-                    ? 'bg-[#dbeafe] text-[#2563eb]'
-                    : 'bg-[#fef3c7] text-[#f59e0b]'
-                }`}>
+                <span className={`px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${interviewConfig.interviewType === 'live'
+                  ? 'bg-[#dbeafe] text-[#2563eb]'
+                  : 'bg-[#fef3c7] text-[#f59e0b]'
+                  }`}>
                   {interviewConfig.interviewType === 'live' ? 'Live AI' : 'Recorded'}
                 </span>
               </div>
@@ -551,94 +572,110 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
                         {idx + 1}
                       </span>
                     </div>
-                    {editingSection === section.id ? (
-                      <input
-                        type="text"
-                        value={section.title}
-                        onChange={(e) => handleUpdateSection(section.id, { title: e.target.value })}
-                        onBlur={() => setEditingSection(null)}
-                        autoFocus
-                        placeholder="Section title..."
-                        className="flex-1 h-[40px] px-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[16px] font-medium focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                      />
+                    {interviewConfig.interviewType === 'live' ? (
+                      editingSection === section.id ? (
+                        <input
+                          type="text"
+                          value={section.title}
+                          onChange={(e) => handleUpdateSection(section.id, { title: e.target.value })}
+                          onBlur={() => setEditingSection(null)}
+                          autoFocus
+                          placeholder="Section title..."
+                          className="flex-1 h-[40px] px-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[16px] font-medium focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                        />
+                      ) : (
+                        <h3 className="font-['Arimo',sans-serif] text-[18px] text-[#111827] font-semibold">
+                          {section.title || 'Untitled Section'}
+                        </h3>
+                      )
                     ) : (
-                      <h3 className="font-['Arimo',sans-serif] text-[18px] text-[#111827] font-semibold">
-                        {section.title || 'Untitled Section'}
+                      <h3 className="font-['Arimo',sans-serif] text-[16px] text-[#111827] font-semibold">
+                        Questions List
                       </h3>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setEditingSection(section.id)}
-                      className="w-[36px] h-[36px] rounded-[8px] border border-[#e5e7eb] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
-                    >
-                      <Edit size={16} className="text-[#6b7280]" />
-                    </button>
-                    <button
-                      onClick={() => handleDuplicateSection(section.id)}
-                      className="w-[36px] h-[36px] rounded-[8px] border border-[#e5e7eb] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
-                    >
-                      <Copy size={16} className="text-[#6b7280]" />
-                    </button>
+                    {interviewConfig.interviewType === 'live' && (
+                      <>
+                        <button
+                          onClick={() => setEditingSection(section.id)}
+                          className="w-[36px] h-[36px] rounded-[8px] border border-[#e5e7eb] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+                        >
+                          <Edit size={16} className="text-[#6b7280]" />
+                        </button>
+                        <button
+                          onClick={() => handleDuplicateSection(section.id)}
+                          className="w-[36px] h-[36px] rounded-[8px] border border-[#e5e7eb] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+                        >
+                          <Copy size={16} className="text-[#6b7280]" />
+                        </button>
+                      </>
+                    )}
                     <button
                       onClick={() => handleDeleteSection(section.id)}
                       className="w-[36px] h-[36px] rounded-[8px] border border-[#e5e7eb] flex items-center justify-center hover:bg-[#fee2e2] hover:border-[#ef4444] transition-colors"
                     >
                       <Trash2 size={16} className="text-[#ef4444]" />
                     </button>
-                    <button
-                      onClick={() => toggleSectionExpansion(section.id)}
-                      className="w-[36px] h-[36px] rounded-[8px] border border-[#e5e7eb] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
-                    >
-                      {expandedSections.has(section.id) ? (
-                        <ChevronUp size={16} className="text-[#6b7280]" />
-                      ) : (
-                        <ChevronDown size={16} className="text-[#6b7280]" />
-                      )}
-                    </button>
+                    {interviewConfig.interviewType === 'live' && (
+                      <button
+                        onClick={() => toggleSectionExpansion(section.id)}
+                        className="w-[36px] h-[36px] rounded-[8px] border border-[#e5e7eb] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+                      >
+                        {expandedSections.has(section.id) ? (
+                          <ChevronUp size={16} className="text-[#6b7280]" />
+                        ) : (
+                          <ChevronDown size={16} className="text-[#6b7280]" />
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                <textarea
-                  value={section.description}
-                  onChange={(e) => handleUpdateSection(section.id, { description: e.target.value })}
-                  placeholder="Section description..."
-                  rows={2}
-                  className="w-full px-3 py-2 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent mb-3"
-                />
+                {interviewConfig.interviewType === 'live' && (
+                  <>
+                    <textarea
+                      value={section.description}
+                      onChange={(e) => handleUpdateSection(section.id, { description: e.target.value })}
+                      placeholder="Section description..."
+                      rows={2}
+                      className="w-full px-3 py-2 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent mb-3"
+                    />
 
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <Clock size={16} className="text-[#6b7280]" />
-                    <input
-                      type="number"
-                      value={section.timeAllocation}
-                      onChange={(e) => handleUpdateSection(section.id, { timeAllocation: parseInt(e.target.value) || 0 })}
-                      min="1"
-                      className="w-[80px] h-[32px] px-2 rounded-[6px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                    />
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">min</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Target size={16} className="text-[#6b7280]" />
-                    <input
-                      type="number"
-                      value={section.evaluationWeight}
-                      onChange={(e) => handleUpdateSection(section.id, { evaluationWeight: parseInt(e.target.value) || 0 })}
-                      min="0"
-                      max="100"
-                      className="w-[80px] h-[32px] px-2 rounded-[6px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                    />
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">% weight</span>
-                  </div>
-                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                    {section.questions.length} question{section.questions.length !== 1 ? 's' : ''}
-                  </span>
-                </div>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <Clock size={16} className="text-[#6b7280]" />
+                        <input
+                          type="number"
+                          value={section.timeAllocation}
+                          onChange={(e) => handleUpdateSection(section.id, { timeAllocation: parseInt(e.target.value) || 0 })}
+                          min="1"
+                          className="w-[80px] h-[32px] px-2 rounded-[6px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                        />
+                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">min</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Target size={16} className="text-[#6b7280]" />
+                        <input
+                          type="number"
+                          value={section.evaluationWeight}
+                          onChange={(e) => handleUpdateSection(section.id, { evaluationWeight: parseInt(e.target.value) || 0 })}
+                          min="0"
+                          max="100"
+                          className="w-[80px] h-[32px] px-2 rounded-[6px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                        />
+                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">% weight</span>
+                      </div>
+                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                        {section.questions.length} question{section.questions.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Section Content */}
-              {expandedSections.has(section.id) && (
+              {(expandedSections.has(section.id) || interviewConfig.interviewType === 'recorded') && (
                 <div className="p-6">
                   {/* Questions */}
                   {section.questions.length > 0 && (
@@ -680,16 +717,18 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
             </div>
           ))}
 
-          {/* Add Section Button */}
-          <button
-            onClick={handleAddSection}
-            className="w-full h-[80px] rounded-[16px] border-2 border-dashed border-[#d1d5db] hover:border-[#6366f1] hover:bg-[#f5f3ff] transition-all flex items-center justify-center gap-2"
-          >
-            <Plus size={20} className="text-[#6366f1]" />
-            <span className="font-['Arimo',sans-serif] text-[16px] text-[#6366f1] font-medium">
-              Add Interview Section
-            </span>
-          </button>
+          {/* Add Section Button (Live Only) */}
+          {interviewConfig.interviewType === 'live' && (
+            <button
+              onClick={handleAddSection}
+              className="w-full h-[80px] rounded-[16px] border-2 border-dashed border-[#d1d5db] hover:border-[#6366f1] hover:bg-[#f5f3ff] transition-all flex items-center justify-center gap-2"
+            >
+              <Plus size={20} className="text-[#6366f1]" />
+              <span className="font-['Arimo',sans-serif] text-[16px] text-[#6366f1] font-medium">
+                Add Interview Section
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Footer Actions */}
@@ -732,7 +771,7 @@ export function CreateAIInterview({ onBack, onSave }: CreateAIInterviewProps) {
             setShowAIGenerator(false);
             setCurrentGeneratingSection(null);
           }}
-          onGenerate={handleAIGenerated}
+          onGenerate={(questions: any[]) => handleAIGenerated(questions)}
           context={{
             title: interviewConfig.title,
             difficulty: interviewConfig.difficulty,
@@ -853,7 +892,8 @@ function QuestionCard({ question, index, interviewType, onUpdate, onDelete }: Qu
         </div>
       </div>
 
-      {isExpanded && (
+      {/* Expanded Details - Only for Live Interviews */}
+      {isExpanded && interviewType === 'live' && (
         <div className="p-4 space-y-4 bg-white">
           {/* Follow-up Questions */}
           <div>
@@ -920,11 +960,15 @@ function QuestionCard({ question, index, interviewType, onUpdate, onDelete }: Qu
               </button>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Ideal Answer */}
+      {/* Ideal Answer - For Both Types */}
+      {isExpanded && (
+        <div className="p-4 bg-white border-t border-[#e5e7eb]">
           <div>
             <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] font-medium mb-2">
-              Ideal Answer (Optional - for AI evaluation reference)
+              Reference Answer for Evaluation (Optional)
             </label>
             <textarea
               value={question.idealAnswer || ''}
@@ -940,8 +984,8 @@ function QuestionCard({ question, index, interviewType, onUpdate, onDelete }: Qu
       {/* Text Refiner Modal */}
       {showRefiner && (
         <TextRefiner
-          initialText={question.questionText}
-          onSave={(refined) => {
+          originalText={question.questionText}
+          onApply={(refined: string) => {
             onUpdate({ questionText: refined });
             setShowRefiner(false);
           }}

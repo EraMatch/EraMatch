@@ -39,7 +39,7 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
     const fetchQuestions = async () => {
       try {
         setLoading(true);
-        const data = await api.recruiter.getQuestionBankVariants(questionType);
+        const data = (await api.recruiter.getQuestionBankVariants(questionType)) as QuestionVariant[];
         setQuestions(data);
       } catch (error) {
         console.error('Failed to fetch questions:', error);

@@ -245,7 +245,6 @@ class CandidateGroup(SQLModel, table=True):
     group_name: str = Field(max_length=100)
     assigned_hr_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     assigned_tech_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
-    filtration_flow: dict = Field(default_factory=list, sa_column=Column(JSONB))
     status: str = Field(default="active", max_length=20)
     created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -266,7 +265,7 @@ class GroupStageConfig(SQLModel, table=True):
     state: str = Field(default="not_started", max_length=20)
     started_at: datetime | None = Field(default=None)
     closed_at: datetime | None = Field(default=None)
-    started_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.id")
+    started_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -327,7 +326,6 @@ class CandidateApplication(SQLModel, table=True):
     source: str | None = Field(default=None, max_length=50)
     status: str = Field(default="applied", max_length=30)
     applied_at: datetime = Field(default_factory=datetime.utcnow)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
 
 
