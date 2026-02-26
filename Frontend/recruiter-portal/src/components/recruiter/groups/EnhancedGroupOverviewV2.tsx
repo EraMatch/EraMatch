@@ -3,7 +3,9 @@ import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calenda
 import { motion, AnimatePresence } from 'motion/react';
 import { SuspectReviewPage } from '../candidates/SuspectReviewPage';
 import { CreateAdvancedAssessment } from '../assessments/CreateAdvancedAssessment';
-import { CreateAIInterview } from '../interviews/CreateAIInterview';
+import { AIInterviewSetupLive } from '../interviews/AIInterviewSetupLive';
+import { AIInterviewSetupRecorded } from '../interviews/AIInterviewSetupRecorded';
+import { RecordedInterviewQuestionSetup } from '../interviews/RecordedInterviewQuestionSetup';
 import { StageResultsDashboard } from './StageResultsDashboard';
 import { ModuleMonitoringDashboard } from './ModuleMonitoringDashboard';
 import { StartStageModal } from './StartStageModal';
@@ -155,10 +157,11 @@ export function EnhancedGroupOverviewV2({
   // Use recruiterType prop directly instead of state
   const userRole = recruiterType;
 
-  // Assessment creation state
   const [showAssessmentCreation, setShowAssessmentCreation] = useState(false);
   const [editingAssessmentData, setEditingAssessmentData] = useState<any>(null);
-  const [showCreateAIInterview, setShowCreateAIInterview] = useState(false);
+  const [showAIInterviewSetupLive, setShowAIInterviewSetupLive] = useState(false);
+  const [showAIInterviewSetupRecorded, setShowAIInterviewSetupRecorded] = useState(false);
+  const [showRecordedQuestionSetup, setShowRecordedQuestionSetup] = useState(false);
   const [groupAssessments, setGroupAssessments] = useState<any[]>([]);
 
   // NEW: Stage-gated state
@@ -1403,14 +1406,34 @@ export function EnhancedGroupOverviewV2({
                           >
                             <Trash2 size={14} />
                           </button>
-                          <button
-                            onClick={() => {
-                              showToast('Assessment ready to be sent to candidates');
-                            }}
-                            className="h-[28px] px-[12px] rounded-[6px] bg-[#10b981] hover:bg-[#059669] text-white transition-colors text-[12px]"
-                          >
-                            Send
-                          </button>
+                          {isAIInterviewStage ? (() => {
+                            const isLiveAIInterview = pipelineSteps.find(s => s.id === currentStage)?.name.toLowerCase().includes('live');
+                            return (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isLiveAIInterview) {
+                                    setShowAIInterviewSetupLive(true);
+                                  } else {
+                                    setShowAIInterviewSetupRecorded(true);
+                                  }
+                                }}
+                                className="flex items-center justify-center gap-2 h-[44px] px-6 rounded-[8px] border-2 border-[#6366f1] text-[#6366f1] font-['Arimo',sans-serif] text-[14px] font-medium hover:bg-[#ede9fe] transition-colors shadow-sm"
+                              >
+                                <Video size={18} />
+                                Configure AI Interview
+                              </button>
+                            );
+                          })() : (
+                            <button
+                              onClick={() => {
+                                showToast('Assessment ready to be sent to candidates');
+                              }}
+                              className="h-[28px] px-[12px] rounded-[6px] bg-[#10b981] hover:bg-[#059669] text-white transition-colors text-[12px]"
+                            >
+                              Send
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2115,6 +2138,51 @@ export function EnhancedGroupOverviewV2({
           />
         )
       }
+
+      {/* Assessment/Interview Creation Full Screens */}
+      {showAssessmentCreation && (
+        <CreateAdvancedAssessment
+          groupId={groupId}
+          assessmentId={editingAssessmentData?.id || 'new'}
+          positionTitle={groupName}
+          onSave={handleSaveAssessment}
+          onCancel={() => {
+            setShowAssessmentCreation(false);
+            setEditingAssessmentData(null);
+          }}
+          initialData={editingAssessmentData}
+        />
+      )}
+
+      {showAIInterviewSetupLive && (
+        <div className="fixed inset-0 bg-white z-[60] overflow-y-auto">
+          <AIInterviewSetupLive
+            groupName={groupName}
+            onBack={() => setShowAIInterviewSetupLive(false)}
+          />
+        </div>
+      )}
+
+      {showAIInterviewSetupRecorded && (
+        <div className="fixed inset-0 bg-white z-[60] overflow-y-auto">
+          {showRecordedQuestionSetup ? (
+            <RecordedInterviewQuestionSetup
+              groupName={groupName}
+              onBack={() => setShowRecordedQuestionSetup(false)}
+              onSave={() => {
+                setShowRecordedQuestionSetup(false);
+                setShowAIInterviewSetupRecorded(false);
+              }}
+            />
+          ) : (
+            <AIInterviewSetupRecorded
+              groupName={groupName}
+              onBack={() => setShowAIInterviewSetupRecorded(false)}
+              onSetupQuestions={() => setShowRecordedQuestionSetup(true)}
+            />
+          )}
+        </div>
+      )}
 
       {/* Bulk Progression Modal */}
       {
