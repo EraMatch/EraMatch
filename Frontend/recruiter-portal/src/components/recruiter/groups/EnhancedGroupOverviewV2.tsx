@@ -201,6 +201,7 @@ export function EnhancedGroupOverviewV2({
   const [candidateStatuses, setCandidateStatuses] = useState<CandidateStatus[]>([]);
   const [activeFlow, setActiveFlow] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [positionId, setPositionId] = useState<string>('');
 
   // Fetch data on mount
   useEffect(() => {
@@ -208,6 +209,9 @@ export function EnhancedGroupOverviewV2({
       try {
         setIsLoading(true);
         const data = await api.recruiter.getGroupDetails(groupId) as any;
+        if (data.position_id) {
+          setPositionId(data.position_id);
+        }
 
         let activeFlowRaw = filtrationFlow; // Default to prop
         if (data.group && data.group.filtration_flow) {
@@ -229,6 +233,10 @@ export function EnhancedGroupOverviewV2({
         }
 
         setActiveFlow(activeFlowRaw);
+
+        if (data.assessments && Array.isArray(data.assessments)) {
+          setGroupAssessments(data.assessments);
+        }
 
         const moduleMetaMap: Record<string, { name: string; icon: any }> = {
           'assessment': { name: 'Technical Assessment', icon: FileText },
@@ -618,19 +626,43 @@ export function EnhancedGroupOverviewV2({
     });
   };
 
-  const handleSaveAssessment = (assessment: any) => {
-    const newAssessment = {
-      ...assessment,
-      id: `assessment-${Date.now()}`,
-      groupId,
-      createdAt: new Date().toISOString(),
-      createdBy: assignedRecruiter,
-      status: 'draft'
-    };
+  const handleSaveAssessment = async (assessment: any) => {
+    try {
+      showToast('Saving assessment...');
 
-    setGroupAssessments([...groupAssessments, newAssessment]);
-    setShowAssessmentCreation(false);
-    showToast(`Assessment "${assessment.config.title}" created successfully!`);
+      const payload = {
+        position_id: positionId, // From component state fetched on mount
+        group_id: groupId,
+        title: assessment.config.title,
+        description: assessment.config.description,
+        duration_minutes: assessment.config.duration,
+        passing_score: assessment.config.passingScore,
+        difficulty_level: assessment.config.difficulty,
+        randomizeQuestions: assessment.config.randomizeQuestions,
+        proctoring: assessment.config.proctoring,
+        showResults: assessment.config.showResults,
+        allowReview: assessment.config.allowReview,
+        sections: assessment.sections
+      };
+
+      const response = await api.recruiter.saveAssessment(payload);
+
+      const newAssessment = {
+        ...assessment,
+        id: response.assessment_id || `assessment-${Date.now()}`,
+        groupId,
+        createdAt: new Date().toISOString(),
+        createdBy: assignedRecruiter,
+        status: 'draft'
+      };
+
+      setGroupAssessments([...groupAssessments, newAssessment]);
+      setShowAssessmentCreation(false);
+      showToast(`Assessment "${assessment.config.title}" created successfully!`);
+    } catch (error) {
+      console.error('Error saving assessment:', error);
+      showToast('Failed to save assessment. Please try again.');
+    }
   };
 
   const handleToggleCandidateSelection = (candidateId: number) => {

@@ -149,6 +149,14 @@ export const recruiterService = {
 
     getAssessmentSession: async (sessionId: string) => fetchAPI(`/assessments/sessions/${sessionId}`),
 
+    saveAssessment: async (data: any) => {
+        return fetchAPI<any>('/assessments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
     // Question Bank
     getQuestionBank: async () => fetchAPI('/questions/bank'),
 

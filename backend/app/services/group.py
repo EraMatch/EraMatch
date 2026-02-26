@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import NotFoundException
 from app.models import (
+    AssessmentSection,
     CandidateApplication,
     CandidateGroup,
     CandidateProfile,
@@ -43,6 +44,7 @@ from app.schemas.group import (
     ActivityItem,
     ActivityLogResponse,
     ActivityUser,
+    AssessmentConfig,
     AssessmentMonitoringCandidate,
     AssessmentMonitoringResponse,
     AssignedHRResponse,
@@ -56,6 +58,7 @@ from app.schemas.group import (
     CandidateScores,
     CandidateStageStatus,
     FiltrationFlowStage,
+    GroupAssessmentItem, 
     GroupDetailResponse,
     GroupStatsResponse,
     IntegrityFlag,
@@ -331,6 +334,35 @@ class GroupService:
                 state=stage_conf.status or "not-started"
             ))
 
+        # Fetch created assessments for this group
+        assessments_res = await self.session.execute(
+            select(Assessment).where(
+                Assessment.group_id == group_id,
+                Assessment.is_deleted == False
+            ).order_by(Assessment.created_at.desc())
+        )
+        assessments_db = assessments_res.scalars().all()
+        
+        assessments_data = []
+        if assessments_db:
+            for a in assessments_db:
+                sections_res = await self.session.execute(
+                    select(func.count(AssessmentSection.id)).where(AssessmentSection.assessment_id == a.id)
+                )
+                sec_count = sections_res.scalar() or 0
+                assessments_data.append(
+                    GroupAssessmentItem(
+                        id=a.id,
+                        status=a.status,
+                        config=AssessmentConfig(
+                            title=a.title,
+                            duration=a.duration_minutes,
+                            difficulty="Medium" # Hardcoded since it is not saved on Assessment model
+                        ),
+                        sections=[{}] * sec_count # dummy list for frontend .length
+                    )
+                )
+
         return GroupDetailResponse(
             id=group.id,
             name=group.group_name,
@@ -345,7 +377,8 @@ class GroupService:
             interview_config_id=interview_config_id,
             acceptance_criteria=criteria,
             candidates=candidates,
-            pipeline_stages=pipeline_stages
+            pipeline_stages=pipeline_stages,
+            assessments=assessments_data
         )
 
     # ── 2. GET /recruiter/groups/{groupId}/stats ──────────────────────────────

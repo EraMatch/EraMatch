@@ -21,6 +21,7 @@ interface QuestionVariant {
   timeLimit?: number;
   memoryLimit?: number;
   explanation?: string;
+  category?: string;
   difficulty?: 'Easy' | 'Medium' | 'Hard';
   tags?: string[];
 }
@@ -52,6 +53,7 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
     timeLimit: variant.timeLimit || 5,
     memoryLimit: variant.memoryLimit || 256,
     difficulty: variant.difficulty || 'Medium',
+    category: variant.category || '',
     tags: variant.tags || []
   });
 
@@ -273,8 +275,8 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
                         <button
                           onClick={() => handleUpdateTestCase(index, 'isHidden', !testCase.isHidden)}
                           className={`flex items-center gap-1 px-2 py-1 rounded-[6px] text-[11px] font-medium transition-colors ${testCase.isHidden
-                              ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
-                              : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                            ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
                             }`}
                         >
                           {testCase.isHidden ? <EyeOff size={12} /> : <Eye size={12} />}
@@ -343,6 +345,20 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
               </div>
             </div>
 
+            {/* Category */}
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Category (Optional)
+              </label>
+              <input
+                type="text"
+                value={questionData.category || ''}
+                onChange={(e) => setQuestionData({ ...questionData, category: e.target.value })}
+                placeholder="e.g., Data Structures, Backend, Frontend..."
+                className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+              />
+            </div>
+
             {/* Difficulty */}
             <div>
               <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-3">
@@ -354,12 +370,12 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
                     key={difficulty}
                     onClick={() => setQuestionData({ ...questionData, difficulty })}
                     className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${questionData.difficulty === difficulty
-                        ? difficulty === 'Easy'
-                          ? 'border-green-500 bg-green-50 text-green-700'
-                          : difficulty === 'Medium'
-                            ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
-                            : 'border-red-500 bg-red-50 text-red-700'
-                        : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]'
+                      ? difficulty === 'Easy'
+                        ? 'border-green-500 bg-green-50 text-green-700'
+                        : difficulty === 'Medium'
+                          ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
+                          : 'border-red-500 bg-red-50 text-red-700'
+                      : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]'
                       }`}
                   >
                     {difficulty}

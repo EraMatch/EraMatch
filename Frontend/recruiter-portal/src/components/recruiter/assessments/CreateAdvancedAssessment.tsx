@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, Plus, Settings, Save, Wand2, Database, Pencil, Copy, Trash2, Eye, ChevronDown, ChevronUp, CheckCircle } from 'lucide-react';
+import { ChevronLeft, Plus, Settings, Save, Wand2, Database, Pencil, Copy, Trash2, Eye, ChevronDown, ChevronUp, CheckCircle, Loader2 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { AssessmentSettings } from './AssessmentSettings';
 import { SectionEditor } from '../interviews/SectionEditor';
@@ -22,6 +22,7 @@ interface Section {
   type: 'mcq' | 'essay' | 'code';
   variants: QuestionVariant[];
   points: number;
+  selectionStrategy?: 'random' | 'sequential';
 }
 
 interface QuestionVariant {
@@ -44,6 +45,7 @@ interface QuestionVariant {
   memoryLimit?: number;
   // Common
   explanation?: string;
+  category?: string;
   difficulty?: 'Easy' | 'Medium' | 'Hard';
   tags?: string[];
 }
@@ -58,7 +60,7 @@ interface TestCase {
 
 interface CreateAdvancedAssessmentProps {
   onBack: () => void;
-  onSave: (assessment: any) => void;
+  onSave: (assessment: any) => void | Promise<void>;
 }
 
 type CreationStep = 'settings' | 'sections';
@@ -80,6 +82,7 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
   const [currentSectionIndex, setCurrentSectionIndex] = useState<number | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [expandedVariants, setExpandedVariants] = useState<Set<string>>(new Set());
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSettingsSave = (settings: AssessmentConfig) => {
     setAssessmentConfig(settings);
@@ -92,7 +95,8 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
       order: sections.length + 1,
       type: 'mcq',
       variants: [],
-      points: 10
+      points: 10,
+      selectionStrategy: 'random'
     };
     setSections([...sections, newSection]);
     setCurrentSectionIndex(sections.length);
@@ -127,12 +131,17 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
     setExpandedVariants(newExpanded);
   };
 
-  const handleSaveAssessment = () => {
-    const assessment = {
-      config: assessmentConfig,
-      sections: sections
-    };
-    onSave(assessment);
+  const handleSaveAssessment = async () => {
+    setIsSubmitting(true);
+    try {
+      const assessment = {
+        config: assessmentConfig,
+        sections: sections
+      };
+      await onSave(assessment);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const getQuestionTypeColor = (type: 'mcq' | 'essay' | 'code') => {
@@ -291,6 +300,9 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
                                   <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${getQuestionTypeColor(section.type)}`}>
                                     {getQuestionTypeLabel(section.type)}
                                   </span>
+                                  <span className="px-2 py-1 rounded-full text-[11px] font-medium bg-gray-100 text-gray-700">
+                                    {(section.selectionStrategy || 'random').charAt(0).toUpperCase() + (section.selectionStrategy || 'random').slice(1)}
+                                  </span>
                                 </div>
                                 <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
                                   {section.variants.length} {section.variants.length === 1 ? 'variant' : 'variants'} • {section.points} points
@@ -334,8 +346,8 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
                               {section.variants.map((variant, vIndex) => {
                                 const isVariantExpanded = expandedVariants.has(variant.id);
                                 return (
-                                  <div 
-                                    key={variant.id} 
+                                  <div
+                                    key={variant.id}
                                     className="border border-[#e5e7eb] rounded-[8px] overflow-hidden hover:border-[#6366f1] transition-colors cursor-pointer"
                                     onClick={() => toggleVariantExpansion(variant.id)}
                                   >
@@ -346,13 +358,19 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
                                           Variant {vIndex + 1}
                                         </span>
                                         {variant.difficulty && (
-                                          <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${
-                                            variant.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
-                                            variant.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
-                                            'bg-red-100 text-red-700'
-                                          }`}>
-                                            {variant.difficulty}
-                                          </span>
+                                          <div className="flex items-center gap-2">
+                                            {variant.category && (
+                                              <span className="px-2 py-1 rounded-full text-[11px] font-medium bg-indigo-100 text-indigo-700">
+                                                {variant.category}
+                                              </span>
+                                            )}
+                                            <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${variant.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
+                                              variant.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                                'bg-red-100 text-red-700'
+                                              }`}>
+                                              {variant.difficulty}
+                                            </span>
+                                          </div>
                                         )}
                                       </div>
                                       <p className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
@@ -395,17 +413,15 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
                                               return (
                                                 <div
                                                   key={oIndex}
-                                                  className={`flex items-start gap-2 p-2 rounded-[6px] ${
-                                                    isCorrect
-                                                      ? 'bg-emerald-50 border border-emerald-200'
-                                                      : 'bg-[#f9fafb] border border-[#e5e7eb]'
-                                                  }`}
+                                                  className={`flex items-start gap-2 p-2 rounded-[6px] ${isCorrect
+                                                    ? 'bg-emerald-50 border border-emerald-200'
+                                                    : 'bg-[#f9fafb] border border-[#e5e7eb]'
+                                                    }`}
                                                 >
-                                                  <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${
-                                                    isCorrect
-                                                      ? 'border-emerald-600 bg-emerald-600'
-                                                      : 'border-gray-300'
-                                                  }`}>
+                                                  <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${isCorrect
+                                                    ? 'border-emerald-600 bg-emerald-600'
+                                                    : 'border-gray-300'
+                                                    }`}>
                                                     {isCorrect && <CheckCircle size={10} className="text-white" />}
                                                   </div>
                                                   <div className="flex-1">
@@ -581,9 +597,14 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
                 <Button
                   className="rounded-[8px] px-6 bg-[#6366f1] hover:bg-[#4f46e5] text-white"
                   onClick={handleSaveAssessment}
+                  disabled={isSubmitting}
                 >
-                  <Save size={16} className="mr-2" />
-                  Save Assessment
+                  {isSubmitting ? (
+                    <Loader2 size={16} className="mr-2 animate-spin" />
+                  ) : (
+                    <Save size={16} className="mr-2" />
+                  )}
+                  {isSubmitting ? 'Saving...' : 'Save Assessment'}
                 </Button>
               </div>
             )}

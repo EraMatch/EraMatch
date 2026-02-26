@@ -14,6 +14,7 @@ interface Section {
   type: 'mcq' | 'essay' | 'code';
   variants: QuestionVariant[];
   points: number;
+  selectionStrategy?: 'random' | 'sequential';
 }
 
 interface QuestionVariant {
@@ -32,6 +33,7 @@ interface QuestionVariant {
   timeLimit?: number;
   memoryLimit?: number;
   explanation?: string;
+  category?: string;
   difficulty?: 'Easy' | 'Medium' | 'Hard';
   tags?: string[];
 }
@@ -54,7 +56,9 @@ type CreationMethod = null | 'manual' | 'ai' | 'bank';
 type EditingVariant = { index: number; variant: QuestionVariant } | null;
 
 export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps) {
-  const [currentSection, setCurrentSection] = useState<Section>(section);
+  // Ensure selectionStrategy has a default value if missing
+  const initialSection = { ...section, selectionStrategy: section.selectionStrategy || 'random' };
+  const [currentSection, setCurrentSection] = useState<Section>(initialSection as Section);
   const [creationMethod, setCreationMethod] = useState<CreationMethod>(null);
   const [showQuestionBank, setShowQuestionBank] = useState(false);
   const [showAIGenerator, setShowAIGenerator] = useState(false);
@@ -207,21 +211,18 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
             <div className="grid grid-cols-3 gap-4">
               <button
                 onClick={() => handleQuestionTypeSelect('mcq')}
-                className={`p-6 rounded-[12px] border-2 transition-all ${
-                  currentSection.type === 'mcq'
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-[#e5e7eb] bg-white hover:border-blue-300'
-                }`}
+                className={`p-6 rounded-[12px] border-2 transition-all ${currentSection.type === 'mcq'
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-[#e5e7eb] bg-white hover:border-blue-300'
+                  }`}
               >
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 mx-auto ${
-                  currentSection.type === 'mcq' ? 'bg-blue-500' : 'bg-[#f9fafb]'
-                }`}>
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 mx-auto ${currentSection.type === 'mcq' ? 'bg-blue-500' : 'bg-[#f9fafb]'
+                  }`}>
                   <CheckCircle size={24} className={currentSection.type === 'mcq' ? 'text-white' : 'text-[#6b7280]'} />
                 </div>
                 <div className="text-center">
-                  <div className={`font-['Arimo',sans-serif] text-[14px] mb-1 ${
-                    currentSection.type === 'mcq' ? 'text-blue-700' : 'text-[#111827]'
-                  }`}>
+                  <div className={`font-['Arimo',sans-serif] text-[14px] mb-1 ${currentSection.type === 'mcq' ? 'text-blue-700' : 'text-[#111827]'
+                    }`}>
                     Multiple Choice
                   </div>
                   <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
@@ -232,21 +233,18 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
 
               <button
                 onClick={() => handleQuestionTypeSelect('essay')}
-                className={`p-6 rounded-[12px] border-2 transition-all ${
-                  currentSection.type === 'essay'
-                    ? 'border-purple-500 bg-purple-50'
-                    : 'border-[#e5e7eb] bg-white hover:border-purple-300'
-                }`}
+                className={`p-6 rounded-[12px] border-2 transition-all ${currentSection.type === 'essay'
+                  ? 'border-purple-500 bg-purple-50'
+                  : 'border-[#e5e7eb] bg-white hover:border-purple-300'
+                  }`}
               >
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 mx-auto ${
-                  currentSection.type === 'essay' ? 'bg-purple-500' : 'bg-[#f9fafb]'
-                }`}>
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 mx-auto ${currentSection.type === 'essay' ? 'bg-purple-500' : 'bg-[#f9fafb]'
+                  }`}>
                   <Edit2 size={24} className={currentSection.type === 'essay' ? 'text-white' : 'text-[#6b7280]'} />
                 </div>
                 <div className="text-center">
-                  <div className={`font-['Arimo',sans-serif] text-[14px] mb-1 ${
-                    currentSection.type === 'essay' ? 'text-purple-700' : 'text-[#111827]'
-                  }`}>
+                  <div className={`font-['Arimo',sans-serif] text-[14px] mb-1 ${currentSection.type === 'essay' ? 'text-purple-700' : 'text-[#111827]'
+                    }`}>
                     Essay
                   </div>
                   <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
@@ -257,21 +255,18 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
 
               <button
                 onClick={() => handleQuestionTypeSelect('code')}
-                className={`p-6 rounded-[12px] border-2 transition-all ${
-                  currentSection.type === 'code'
-                    ? 'border-emerald-500 bg-emerald-50'
-                    : 'border-[#e5e7eb] bg-white hover:border-emerald-300'
-                }`}
+                className={`p-6 rounded-[12px] border-2 transition-all ${currentSection.type === 'code'
+                  ? 'border-emerald-500 bg-emerald-50'
+                  : 'border-[#e5e7eb] bg-white hover:border-emerald-300'
+                  }`}
               >
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 mx-auto ${
-                  currentSection.type === 'code' ? 'bg-emerald-500' : 'bg-[#f9fafb]'
-                }`}>
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 mx-auto ${currentSection.type === 'code' ? 'bg-emerald-500' : 'bg-[#f9fafb]'
+                  }`}>
                   <XCircle size={24} className={currentSection.type === 'code' ? 'text-white' : 'text-[#6b7280]'} />
                 </div>
                 <div className="text-center">
-                  <div className={`font-['Arimo',sans-serif] text-[14px] mb-1 ${
-                    currentSection.type === 'code' ? 'text-emerald-700' : 'text-[#111827]'
-                  }`}>
+                  <div className={`font-['Arimo',sans-serif] text-[14px] mb-1 ${currentSection.type === 'code' ? 'text-emerald-700' : 'text-[#111827]'
+                    }`}>
                     Coding
                   </div>
                   <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
@@ -282,19 +277,49 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
             </div>
           </div>
 
-          {/* Points */}
-          <div>
-            <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-              Points for this Section
-            </label>
-            <input
-              type="number"
-              value={currentSection.points}
-              onChange={(e) => setCurrentSection({ ...currentSection, points: parseInt(e.target.value) || 0 })}
-              min="1"
-              max="100"
-              className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-            />
+          {/* Points & Strategy */}
+          <div className="grid grid-cols-2 gap-6 mb-6">
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Points for this Section
+              </label>
+              <input
+                type="number"
+                value={currentSection.points}
+                onChange={(e) => setCurrentSection({ ...currentSection, points: parseInt(e.target.value) || 0 })}
+                min="1"
+                max="100"
+                className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Variant Selection Strategy
+              </label>
+              <div className="flex bg-[#f9fafb] p-1 rounded-[8px] border border-[#e5e7eb]">
+                <button
+                  type="button"
+                  onClick={() => setCurrentSection({ ...currentSection, selectionStrategy: 'random' })}
+                  className={`flex-1 h-[34px] rounded-[6px] font-['Arimo',sans-serif] text-[13px] font-medium transition-all ${currentSection.selectionStrategy === 'random' || !currentSection.selectionStrategy
+                    ? 'bg-[#6366f1] text-white shadow-sm'
+                    : 'text-[#6b7280] hover:text-[#374151]'
+                    }`}
+                >
+                  Random
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrentSection({ ...currentSection, selectionStrategy: 'sequential' })}
+                  className={`flex-1 h-[34px] rounded-[6px] font-['Arimo',sans-serif] text-[13px] font-medium transition-all ${currentSection.selectionStrategy === 'sequential'
+                    ? 'bg-[#6366f1] text-white shadow-sm'
+                    : 'text-[#6b7280] hover:text-[#374151]'
+                    }`}
+                >
+                  Sequential
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -376,7 +401,7 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                     className="border border-[#e5e7eb] rounded-[12px] overflow-hidden hover:border-[#6366f1] transition-colors"
                   >
                     {/* Variant Header - Clickable to expand */}
-                    <div 
+                    <div
                       className="p-6 cursor-pointer"
                       onClick={() => toggleVariantExpansion(variant.id)}
                     >
@@ -387,13 +412,19 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                               Variant {index + 1}
                             </span>
                             {variant.difficulty && (
-                              <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${
-                                variant.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
-                                variant.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
-                                'bg-red-100 text-red-700'
-                              }`}>
-                                {variant.difficulty}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                {variant.category && (
+                                  <span className="px-2 py-1 rounded-full text-[11px] font-medium bg-indigo-100 text-indigo-700">
+                                    {variant.category}
+                                  </span>
+                                )}
+                                <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${variant.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
+                                    variant.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                      'bg-red-100 text-red-700'
+                                  }`}>
+                                  {variant.difficulty}
+                                </span>
+                              </div>
                             )}
                           </div>
                           <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
@@ -476,23 +507,21 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                           <div className="space-y-3">
                             <div className="text-[13px] font-medium text-[#374151] mb-2">Answer Options:</div>
                             {variant.options.map((option, oIndex) => {
-                              const isCorrect = Array.isArray(variant.correctAnswer) 
+                              const isCorrect = Array.isArray(variant.correctAnswer)
                                 ? variant.correctAnswer.includes(oIndex)
                                 : variant.correctAnswer === oIndex;
                               return (
                                 <div
                                   key={oIndex}
-                                  className={`flex items-start gap-3 p-3 rounded-[8px] ${
-                                    isCorrect
-                                      ? 'bg-emerald-50 border border-emerald-200'
-                                      : 'bg-white border border-[#e5e7eb]'
-                                  }`}
+                                  className={`flex items-start gap-3 p-3 rounded-[8px] ${isCorrect
+                                    ? 'bg-emerald-50 border border-emerald-200'
+                                    : 'bg-white border border-[#e5e7eb]'
+                                    }`}
                                 >
-                                  <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${
-                                    isCorrect
-                                      ? 'border-emerald-600 bg-emerald-600'
-                                      : 'border-gray-300'
-                                  }`}>
+                                  <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${isCorrect
+                                    ? 'border-emerald-600 bg-emerald-600'
+                                    : 'border-gray-300'
+                                    }`}>
                                     {isCorrect && (
                                       <CheckCircle size={12} className="text-white" />
                                     )}
@@ -594,7 +623,7 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                                 <span className="text-[13px] text-[#111827] ml-2 font-medium">{variant.maxWords}</span>
                               </div>
                             )}
-                            
+
                             {variant.expectedKeywords && variant.expectedKeywords.length > 0 && (
                               <div>
                                 <div className="text-[13px] font-medium text-[#374151] mb-2">Expected Keywords:</div>

@@ -67,6 +67,19 @@ class CandidateProgressResponse(BaseModel):
     candidates: list[CandidateProgressItem] = []
 
 
+class AssessmentConfig(BaseModel):
+    title: str
+    duration: int = 60
+    difficulty: str | None = "Medium"
+
+
+class GroupAssessmentItem(BaseModel):
+    id: UUID
+    status: str
+    config: AssessmentConfig
+    sections: list = []
+
+
 class GroupDetailResponse(BaseModel):
     id: UUID
     name: str
@@ -82,6 +95,7 @@ class GroupDetailResponse(BaseModel):
     acceptance_criteria: AcceptanceCriteriaResponse = Field(default_factory=AcceptanceCriteriaResponse)
     candidates: list[CandidateProgressItem] = []
     pipeline_stages: list[PipelineStage] = Field(default_factory=list, alias="pipelineStages")
+    assessments: list[GroupAssessmentItem] = []
 
     class Config:
         populate_by_name = True
