@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { ChevronLeft, Plus, Trash2, GripVertical, Eye, Loader2 } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, GripVertical, Eye, Loader2, Sparkles } from 'lucide-react';
 import { api } from '../../../services/api';
 
 interface RecordedInterviewQuestionSetupProps {
   groupName: string;
   onBack: () => void;
-  onContinue: () => void;
+  onSave: (questions: any[]) => void;
 }
 
 interface Question {
@@ -17,7 +17,7 @@ interface Question {
 export function RecordedInterviewQuestionSetup({
   groupName,
   onBack,
-  onContinue
+  onSave
 }: RecordedInterviewQuestionSetupProps) {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [showPreview, setShowPreview] = useState(false);
@@ -135,13 +135,28 @@ export function RecordedInterviewQuestionSetup({
                           Question {index + 1}
                         </span>
                       </div>
-                      <textarea
-                        value={question.text}
-                        onChange={(e) => handleQuestionChange(question.id, 'text', e.target.value)}
-                        rows={2}
-                        placeholder="Enter your question..."
-                        className="w-full px-3 py-2 rounded-[6px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                      />
+                      <div className="relative">
+                        <textarea
+                          value={question.text}
+                          onChange={(e) => handleQuestionChange(question.id, 'text', e.target.value)}
+                          rows={2}
+                          placeholder="Enter your question..."
+                          className="w-full px-3 py-2 pr-10 rounded-[6px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                        />
+                        <button
+                          title="Refine with AI"
+                          onClick={() => {
+                            // Simple placeholder logic for an AI refinement mock
+                            const refined = question.text.trim() === ''
+                              ? 'Tell us about a time you solved a complex problem?'
+                              : `Could you elaborate on: ${question.text}?`;
+                            handleQuestionChange(question.id, 'text', refined);
+                          }}
+                          className="absolute right-2 top-2 p-1.5 text-[#8b5cf6] hover:bg-[#8b5cf6]/10 rounded-md transition-colors"
+                        >
+                          <Sparkles size={16} />
+                        </button>
+                      </div>
                       <div className="flex items-center gap-3 mt-3">
                         <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                           Duration:
@@ -278,11 +293,11 @@ export function RecordedInterviewQuestionSetup({
               Preview
             </button>
             <button
-              onClick={onContinue}
+              onClick={() => onSave(questions)}
               disabled={questions.some(q => !q.text.trim())}
               className="flex-1 h-[48px] rounded-[8px] bg-[#8b5cf6] hover:bg-[#7c3aed] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
             >
-              Continue to Settings
+              Save AI Interview
             </button>
           </div>
         </div>

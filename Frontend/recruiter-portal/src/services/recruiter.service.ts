@@ -300,11 +300,36 @@ export const recruiterService = {
         interview_type: 'live' | 'recorded';
         config: any;
         sections: any[];
+        id?: string;
     }) => {
+        // Transform the frontend data structure into the exact shape expected by the backend
+        // schema `AssignInterviewRequest`
+        const payload = {
+            create_new: !data.id,
+            interview_config_id: data.id,
+            interview_config: {
+                title: data.config.title || 'AI Interview',
+                interview_type: data.interview_type === 'live' ? 'live_ai' : data.interview_type,
+                instructions: data.config.systemPrompt || '',
+                max_retakes: data.config.maxRetakes || 0,
+                // AIInterviewConfig 'questions' is a JSONB column; we nest the rest.
+                questions: {
+                    items: data.sections,
+                    extended_config: data.config
+                }
+            }
+        };
+
         return fetchAPI<any>(`/recruiter/groups/${groupId}/interviews/assign`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            body: JSON.stringify(payload)
+        });
+    },
+
+    deleteInterview: async (groupId: string, interviewId: string) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/interviews/${interviewId}`, {
+            method: 'DELETE'
         });
     },
 

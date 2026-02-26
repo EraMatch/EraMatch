@@ -3,9 +3,9 @@ import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calenda
 import { motion, AnimatePresence } from 'motion/react';
 import { SuspectReviewPage } from '../candidates/SuspectReviewPage';
 import { CreateAdvancedAssessment } from '../assessments/CreateAdvancedAssessment';
-import { AIInterviewSetupLive } from '../interviews/AIInterviewSetupLive';
-import { AIInterviewSetupRecorded } from '../interviews/AIInterviewSetupRecorded';
+import { UnifiedAIInterviewSetup } from '../interviews/UnifiedAIInterviewSetup';
 import { RecordedInterviewQuestionSetup } from '../interviews/RecordedInterviewQuestionSetup';
+import { LiveInterviewFlowSetup } from '../interviews/LiveInterviewFlowSetup';
 import { StageResultsDashboard } from './StageResultsDashboard';
 import { ModuleMonitoringDashboard } from './ModuleMonitoringDashboard';
 import { StartStageModal } from './StartStageModal';
@@ -159,10 +159,14 @@ export function EnhancedGroupOverviewV2({
 
   const [showAssessmentCreation, setShowAssessmentCreation] = useState(false);
   const [editingAssessmentData, setEditingAssessmentData] = useState<any>(null);
-  const [showAIInterviewSetupLive, setShowAIInterviewSetupLive] = useState(false);
-  const [showAIInterviewSetupRecorded, setShowAIInterviewSetupRecorded] = useState(false);
+  const [showCreateAIInterview, setShowCreateAIInterview] = useState(false);
+  const [showUnifiedAIInterviewSetup, setShowUnifiedAIInterviewSetup] = useState(false);
   const [showRecordedQuestionSetup, setShowRecordedQuestionSetup] = useState(false);
+  const [showLiveFlowSetup, setShowLiveFlowSetup] = useState(false);
+  const [pendingAISettings, setPendingAISettings] = useState<any>(null);
   const [groupAssessments, setGroupAssessments] = useState<any[]>([]);
+  const [groupInterviews, setGroupInterviews] = useState<any[]>([]);
+  const [editingInterviewData, setEditingInterviewData] = useState<any>(null);
 
   // NEW: Stage-gated state
   const [currentStage, setCurrentStage] = useState<string>(filtrationFlow[0] || 'assessment');
@@ -214,6 +218,7 @@ export function EnhancedGroupOverviewV2({
   const [activeFlow, setActiveFlow] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [positionId, setPositionId] = useState<string>('');
+  const [interviewConfigId, setInterviewConfigId] = useState<string | null>(null);
 
   // Fetch data on mount
   useEffect(() => {
@@ -223,6 +228,9 @@ export function EnhancedGroupOverviewV2({
         const data = await api.recruiter.getGroupDetails(groupId) as any;
         if (data.position_id) {
           setPositionId(data.position_id);
+        }
+        if (data.interview_config_id) {
+          setInterviewConfigId(data.interview_config_id);
         }
 
         let activeFlowRaw = filtrationFlow; // Default to prop
@@ -248,6 +256,10 @@ export function EnhancedGroupOverviewV2({
 
         if (data.assessments && Array.isArray(data.assessments)) {
           setGroupAssessments(data.assessments);
+        }
+
+        if (data.interviews && Array.isArray(data.interviews)) {
+          setGroupInterviews(data.interviews);
         }
 
         const moduleMetaMap: Record<string, { name: string; icon: any }> = {
@@ -778,6 +790,19 @@ export function EnhancedGroupOverviewV2({
     }
   };
 
+  const handleDeleteAIInterview = async (interviewId: string) => {
+    if (confirm('Are you sure you want to delete this AI interview?')) {
+      try {
+        await api.recruiter.deleteInterview(groupId, interviewId);
+        setGroupInterviews(groupInterviews.filter(i => i.id !== interviewId));
+        showToast('AI Interview deleted successfully');
+      } catch (error) {
+        console.error('Error deleting AI interview:', error);
+        showToast('Failed to delete AI interview');
+      }
+    }
+  };
+
   const handleToggleCandidateSelection = (candidateId: number) => {
     if (stageState !== 'review-mode') return;
 
@@ -940,33 +965,7 @@ export function EnhancedGroupOverviewV2({
     );
   }
 
-  // If creating an AI Interview
-  if (showCreateAIInterview) {
-    const aiInterviewTypesAllowed: ('live' | 'recorded')[] = [];
-    if (activeFlow.includes('live-interview') || activeFlow.includes('live_interview') || activeFlow.includes('liveInterview')) aiInterviewTypesAllowed.push('live');
-    if (activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview') || activeFlow.includes('aiInterview')) aiInterviewTypesAllowed.push('recorded');
 
-    return (
-      <CreateAIInterview
-        allowedTypes={aiInterviewTypesAllowed.length > 0 ? aiInterviewTypesAllowed : ['recorded', 'live']}
-        onBack={() => setShowCreateAIInterview(false)}
-        onSave={async (data) => {
-          try {
-            await api.recruiter.assignInterview(groupId, {
-              interview_type: data.config.interviewType as 'live' | 'recorded',
-              config: data.config,
-              sections: data.sections
-            });
-            showToast('AI Interview configuration saved successfully');
-          } catch (error) {
-            console.error('Failed to assign interview:', error);
-            showToast('Failed to save AI Interview — please try again');
-          }
-          setShowCreateAIInterview(false);
-        }}
-      />
-    );
-  }
 
   // If showing suspect review for a candidate
   if (showSuspectReview !== null) {
@@ -1329,15 +1328,20 @@ export function EnhancedGroupOverviewV2({
                           showToast('Cannot modify configuration - stage is active');
                           return;
                         }
-                        setShowCreateAIInterview(true);
+                        const hasLive = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');
+                        const hasRecorded = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');
+                        if (hasRecorded || hasLive) {
+                          setShowUnifiedAIInterviewSetup(true);
+                        }
                       }}
                       disabled={stageConfigLocked}
                       className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Activity size={16} />
                       <span className="font-['Arimo',sans-serif] text-[14px]">
-                        AI Interview Settings
+                        {interviewConfigId ? 'Edit AI Interview Settings' : 'AI Interview Settings'}
                       </span>
+                      {interviewConfigId && <CheckCircle size={16} className="text-white ml-1" />}
                     </button>
                   )}
                 </div>
@@ -1406,34 +1410,14 @@ export function EnhancedGroupOverviewV2({
                           >
                             <Trash2 size={14} />
                           </button>
-                          {isAIInterviewStage ? (() => {
-                            const isLiveAIInterview = pipelineSteps.find(s => s.id === currentStage)?.name.toLowerCase().includes('live');
-                            return (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (isLiveAIInterview) {
-                                    setShowAIInterviewSetupLive(true);
-                                  } else {
-                                    setShowAIInterviewSetupRecorded(true);
-                                  }
-                                }}
-                                className="flex items-center justify-center gap-2 h-[44px] px-6 rounded-[8px] border-2 border-[#6366f1] text-[#6366f1] font-['Arimo',sans-serif] text-[14px] font-medium hover:bg-[#ede9fe] transition-colors shadow-sm"
-                              >
-                                <Video size={18} />
-                                Configure AI Interview
-                              </button>
-                            );
-                          })() : (
-                            <button
-                              onClick={() => {
-                                showToast('Assessment ready to be sent to candidates');
-                              }}
-                              className="h-[28px] px-[12px] rounded-[6px] bg-[#10b981] hover:bg-[#059669] text-white transition-colors text-[12px]"
-                            >
-                              Send
-                            </button>
-                          )}
+                          <button
+                            onClick={() => {
+                              showToast('Assessment ready to be sent to candidates');
+                            }}
+                            className="h-[28px] px-[12px] rounded-[6px] bg-[#10b981] hover:bg-[#059669] text-white transition-colors text-[12px]"
+                          >
+                            Send
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1449,6 +1433,72 @@ export function EnhancedGroupOverviewV2({
             </div>
           )}
 
+          {/* Display Created AI Interviews (Technical Recruiter Only) */}
+          {userRole === 'technical' && groupInterviews && groupInterviews.length > 0 && (
+            <div className="mt-4">
+              <div className="space-y-2">
+                <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] mb-2">
+                  Created AI Interviews ({groupInterviews.length})
+                </h4>
+                {groupInterviews.map((interview) => (
+                  <div
+                    key={interview.id}
+                    className="p-3 bg-[#f9fafb] rounded-[8px] border border-[#e5e7eb] hover:border-[#6366f1] transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
+                            {interview.title}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700">
+                            {interview.interview_type === 'live_ai' || interview.interview_type === 'live' ? 'Live AI' : 'Recorded'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 text-[12px] text-[#6b7280]">
+                          <span>{interview.questions_count} questions</span>
+                          <span>•</span>
+                          <span>{interview.max_retakes} max retakes</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            if (stageConfigLocked) {
+                              showToast('Cannot modify configuration - stage is active');
+                              return;
+                            }
+                            setEditingInterviewData(interview);
+                            setShowUnifiedAIInterviewSetup(true);
+                          }}
+                          disabled={stageConfigLocked}
+                          className="h-[28px] px-[12px] rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors text-[12px] text-[#374151] disabled:opacity-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAIInterview(interview.id)}
+                          disabled={stageConfigLocked}
+                          className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280] disabled:opacity-50"
+                          title="Delete Interview"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            showToast('AI Interview ready to be sent to candidates');
+                          }}
+                          className="h-[28px] px-[12px] rounded-[6px] bg-[#1b2559] hover:bg-[#2c3a7c] text-white transition-colors text-[12px]"
+                        >
+                          Send
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
         </div>
       </div>
@@ -2142,45 +2192,104 @@ export function EnhancedGroupOverviewV2({
       {/* Assessment/Interview Creation Full Screens */}
       {showAssessmentCreation && (
         <CreateAdvancedAssessment
-          groupId={groupId}
-          assessmentId={editingAssessmentData?.id || 'new'}
-          positionTitle={groupName}
-          onSave={handleSaveAssessment}
-          onCancel={() => {
+          onBack={() => {
             setShowAssessmentCreation(false);
             setEditingAssessmentData(null);
           }}
+          onSave={handleSaveAssessment}
           initialData={editingAssessmentData}
         />
       )}
 
-      {showAIInterviewSetupLive && (
+      {showUnifiedAIInterviewSetup && (
         <div className="fixed inset-0 bg-white z-[60] overflow-y-auto">
-          <AIInterviewSetupLive
+          <UnifiedAIInterviewSetup
             groupName={groupName}
-            onBack={() => setShowAIInterviewSetupLive(false)}
+            activeFlow={activeFlow}
+            initialData={editingInterviewData}
+            onBack={() => {
+              setShowUnifiedAIInterviewSetup(false);
+              setEditingInterviewData(null);
+            }}
+            onSetupQuestions={(settings) => {
+              setPendingAISettings(settings);
+              setShowUnifiedAIInterviewSetup(false);
+              setShowRecordedQuestionSetup(true);
+            }}
+            onSetupLiveFlow={(settings) => {
+              setPendingAISettings(settings);
+              setShowUnifiedAIInterviewSetup(false);
+              setShowLiveFlowSetup(true);
+            }}
           />
         </div>
       )}
 
-      {showAIInterviewSetupRecorded && (
+      {showLiveFlowSetup && (
         <div className="fixed inset-0 bg-white z-[60] overflow-y-auto">
-          {showRecordedQuestionSetup ? (
-            <RecordedInterviewQuestionSetup
-              groupName={groupName}
-              onBack={() => setShowRecordedQuestionSetup(false)}
-              onSave={() => {
+          <LiveInterviewFlowSetup
+            groupName={groupName}
+            onBack={() => {
+              setShowLiveFlowSetup(false);
+              setShowUnifiedAIInterviewSetup(true);
+            }}
+            onSave={async (flowSettings) => {
+              try {
+                // Combine the base settings configured in the unified setup with the selected flow settings.
+                // Because AIInterviewConfig questions fields is generic JSONB, we'll pack the flow config
+                // inside a special 'live_flow_config' property of the interview config dictionary.
+                const mergedConfig = {
+                  ...pendingAISettings,
+                  live_flow_config: flowSettings
+                };
+
+                await api.recruiter.assignInterview(groupId, {
+                  interview_type: 'live',
+                  config: mergedConfig,
+                  id: editingInterviewData?.id,
+                  sections: [] // Empty for live interview questions unless assigned later
+                });
+                showToast('Live AI Interview configured successfully');
+                setShowLiveFlowSetup(false);
+                setPendingAISettings(null);
+                setEditingInterviewData(null);
+                setRefreshKey(prev => prev + 1);
+              } catch (error) {
+                console.error('Failed to assign live interview:', error);
+                showToast('Failed to save AI Interview');
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {showRecordedQuestionSetup && (
+        <div className="fixed inset-0 bg-white z-[60] overflow-y-auto">
+          <RecordedInterviewQuestionSetup
+            groupName={groupName}
+            onBack={() => {
+              setShowRecordedQuestionSetup(false);
+              setShowUnifiedAIInterviewSetup(true);
+            }}
+            onSave={async (questions) => {
+              try {
+                await api.recruiter.assignInterview(groupId, {
+                  interview_type: 'recorded',
+                  config: pendingAISettings,
+                  id: editingInterviewData?.id,
+                  sections: questions
+                });
+                showToast('Recorded AI Interview configured successfully');
                 setShowRecordedQuestionSetup(false);
-                setShowAIInterviewSetupRecorded(false);
-              }}
-            />
-          ) : (
-            <AIInterviewSetupRecorded
-              groupName={groupName}
-              onBack={() => setShowAIInterviewSetupRecorded(false)}
-              onSetupQuestions={() => setShowRecordedQuestionSetup(true)}
-            />
-          )}
+                setPendingAISettings(null);
+                setEditingInterviewData(null);
+                setRefreshKey(prev => prev + 1);
+              } catch (error) {
+                console.error('Failed to assign recorded interview:', error);
+                showToast('Failed to save AI Interview');
+              }
+            }}
+          />
         </div>
       )}
 
