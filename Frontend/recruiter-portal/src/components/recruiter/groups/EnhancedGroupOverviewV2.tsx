@@ -14,6 +14,7 @@ import { FinalDecisionModal } from './FinalDecisionModal';
 import { FiltrationFlowConfigModal } from './FiltrationFlowConfigModal';
 import { StageReviewPage } from './StageReviewPage';
 import { FinalDecisionPage } from './FinalDecisionPage';
+import { ActivityLogPanel } from './ActivityLogPanel';
 import { api } from '../../../services/api';
 import { useEffect } from 'react';
 
@@ -2070,73 +2071,14 @@ export function EnhancedGroupOverviewV2({
         )
       }
 
-      {/* Activity Log Modal */}
-      {
-        showActivityLog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-            <div className="bg-white rounded-[16px] shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
-              <div className="px-8 py-6 border-b border-[#e5e7eb]">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-[#111827]">Activity & Decision Log</h3>
-                  <button
-                    onClick={() => setShowActivityLog(false)}
-                    className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
-                  >
-                    <X size={20} className="text-[#6b7280]" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-8">
-                <div className="space-y-4">
-                  {activityLog.map((entry) => (
-                    <div key={entry.id} className="flex gap-4">
-                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-[#f3f4f6] flex items-center justify-center">
-                        {entry.actorRole === 'technical' ? (
-                          <Shield size={16} className="text-[#10b981]" />
-                        ) : (
-                          <Users size={16} className="text-[#6366f1]" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-[14px] text-[#111827] font-medium">
-                            {entry.actor}
-                          </span>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${entry.actorRole === 'technical'
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-blue-100 text-blue-700'
-                            }`}>
-                            {entry.actorRole === 'technical' ? 'Technical' : 'HR'}
-                          </span>
-                          <span className="text-[12px] text-[#9ca3af]">
-                            {entry.timestamp.toLocaleString()}
-                          </span>
-                        </div>
-                        <p className="text-[14px] text-[#6b7280]">{entry.description}</p>
-                        {entry.metadata && (
-                          <div className="mt-2 p-2 bg-gray-50 rounded-[6px] text-[12px] text-gray-600">
-                            <code>{JSON.stringify(entry.metadata, null, 2)}</code>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="px-8 py-4 border-t border-[#e5e7eb] flex justify-end">
-                <button
-                  onClick={() => setShowActivityLog(false)}
-                  className="px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      }
+      {/* Activity Log Panel */}
+      {showActivityLog && (
+        <ActivityLogPanel
+          groupId={groupId}
+          groupName={groupName}
+          onClose={() => setShowActivityLog(false)}
+        />
+      )}
 
 
 
@@ -2172,6 +2114,7 @@ export function EnhancedGroupOverviewV2({
           <ModuleMonitoringDashboard
             moduleType={showModuleMonitoring}
             candidates={candidateStatuses}
+            activeFlow={activeFlow}
             onClose={() => setShowModuleMonitoring(null)}
             onViewCandidate={(candidateId) => {
               setShowModuleMonitoring(null);
@@ -2229,15 +2172,15 @@ export function EnhancedGroupOverviewV2({
         <div className="fixed inset-0 bg-white z-[60] overflow-y-auto">
           <LiveInterviewFlowSetup
             groupName={groupName}
+            initialSettings={editingInterviewData?.questions?.extended_config?.live_flow_config
+              ?? editingInterviewData?.questions?.live_flow_config
+              ?? undefined}
             onBack={() => {
               setShowLiveFlowSetup(false);
               setShowUnifiedAIInterviewSetup(true);
             }}
             onSave={async (flowSettings) => {
               try {
-                // Combine the base settings configured in the unified setup with the selected flow settings.
-                // Because AIInterviewConfig questions fields is generic JSONB, we'll pack the flow config
-                // inside a special 'live_flow_config' property of the interview config dictionary.
                 const mergedConfig = {
                   ...pendingAISettings,
                   live_flow_config: flowSettings
@@ -2247,7 +2190,7 @@ export function EnhancedGroupOverviewV2({
                   interview_type: 'live',
                   config: mergedConfig,
                   id: editingInterviewData?.id,
-                  sections: [] // Empty for live interview questions unless assigned later
+                  sections: []
                 });
                 showToast('Live AI Interview configured successfully');
                 setShowLiveFlowSetup(false);
@@ -2267,6 +2210,18 @@ export function EnhancedGroupOverviewV2({
         <div className="fixed inset-0 bg-white z-[60] overflow-y-auto">
           <RecordedInterviewQuestionSetup
             groupName={groupName}
+            initialQuestions={(() => {
+              // Extract saved questions from the interview being edited
+              const items = editingInterviewData?.questions?.items;
+              if (Array.isArray(items) && items.length > 0) {
+                return items.map((q: any, i: number) => ({
+                  id: q.id || String(i + 1),
+                  text: q.text || q.question || '',
+                  duration: q.duration || q.recordingTime || 120
+                }));
+              }
+              return undefined;
+            })()}
             onBack={() => {
               setShowRecordedQuestionSetup(false);
               setShowUnifiedAIInterviewSetup(true);

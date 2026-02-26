@@ -1436,3 +1436,148 @@ class GroupService:
         self.session.add(group)
         await self.session.commit()
 
+    # ── Activity Log ──────────────────────────────────────────────────────────
+
+    async def get_activity_log(
+        self, group_id: UUID, limit: int = 50, offset: int = 0
+    ) -> ActivityLogResponse:
+        """Return chronological activity log for the group by merging system_logs,
+        recruiter_assignment_logs and pipeline_transitions."""
+
+        gid_str = str(group_id)
+
+        # Collect all raw entries as dicts with a unified shape
+        entries: list[dict] = []
+
+        # 1. system_logs  — entity_id = group_id
+        sl_res = await self.session.execute(
+            select(SystemLog).where(
+                SystemLog.entity_id == group_id,
+                SystemLog.organization_id == self.org_id,
+            ).order_by(SystemLog.created_at.desc()).limit(100)
+        )
+        for log in sl_res.scalars().all():
+            details_txt = None
+            if log.details:
+                details_txt = ", ".join(
+                    f"{k}: {v}" for k, v in log.details.items()
+                    if k not in ("group_id", "organization_id")
+                )
+            entries.append({
+                "id": log.id,
+                "timestamp": log.created_at,
+                "action_type": _map_action_type(log.action),
+                "action": _prettify_action(log.action),
+                "user_id": log.user_id,
+                "details": details_txt,
+                "entity_type": log.entity_type,
+                "entity_id": log.entity_id,
+            })
+
+        # 2. recruiter_assignment_logs — group_id filter
+        ral_res = await self.session.execute(
+            select(RecruiterAssignmentLog).where(
+                RecruiterAssignmentLog.group_id == group_id,
+                RecruiterAssignmentLog.organization_id == self.org_id,
+            ).order_by(RecruiterAssignmentLog.created_at.desc()).limit(50)
+        )
+        for log in ral_res.scalars().all():
+            entries.append({
+                "id": log.id,
+                "timestamp": log.created_at,
+                "action_type": "assignment",
+                "action": f"Recruiter {log.action}",
+                "user_id": log.user_id,
+                "details": None,
+                "entity_type": "group",
+                "entity_id": log.group_id,
+            })
+
+        # 3. pipeline_transitions — via candidate applications in this group
+        app_res = await self.session.execute(
+            select(CandidateApplication.id).where(
+                CandidateApplication.group_id == group_id,
+                CandidateApplication.is_deleted == False,
+            )
+        )
+        app_ids = [row[0] for row in app_res.all()]
+
+        if app_ids:
+            pt_res = await self.session.execute(
+                select(PipelineTransition).where(
+                    PipelineTransition.application_id.in_(app_ids),
+                    PipelineTransition.organization_id == self.org_id,
+                ).order_by(PipelineTransition.created_at.desc()).limit(100)
+            )
+            for pt in pt_res.scalars().all():
+                reason_txt = pt.reason or f"{pt.from_status or '?'} → {pt.to_status}"
+                entries.append({
+                    "id": pt.id,
+                    "timestamp": pt.created_at,
+                    "action_type": "candidate_decision",
+                    "action": f"Candidate status changed to {pt.to_status.replace('_', ' ').title()}",
+                    "user_id": pt.triggered_by_user_id,
+                    "details": reason_txt,
+                    "entity_type": "candidate_application",
+                    "entity_id": pt.application_id,
+                })
+
+        # Sort combined entries by timestamp desc, apply offset/limit
+        entries.sort(key=lambda e: e["timestamp"], reverse=True)
+        total = len(entries)
+        entries = entries[offset: offset + limit]
+
+        # Resolve user names in bulk
+        user_ids = {e["user_id"] for e in entries if e["user_id"]}
+        user_map: dict[UUID, str] = {}
+        if user_ids:
+            u_res = await self.session.execute(
+                select(OrganizationUser).where(OrganizationUser.id.in_(user_ids))
+            )
+            for u in u_res.scalars().all():
+                user_map[u.id] = f"{u.first_name} {u.last_name}".strip()
+
+        activities = []
+        for e in entries:
+            activity_user = None
+            if e["user_id"] and e["user_id"] in user_map:
+                activity_user = ActivityUser(id=e["user_id"], name=user_map[e["user_id"]])
+            activities.append(ActivityItem(
+                id=e["id"],
+                timestamp=e["timestamp"],
+                action_type=e["action_type"],
+                action=e["action"],
+                user=activity_user,
+                details=e["details"],
+                entity_type=e["entity_type"],
+                entity_id=e["entity_id"],
+            ))
+
+        return ActivityLogResponse(activities=activities, total_count=total)
+
+
+def _map_action_type(action: str) -> str:
+    """Map a raw action string to a frontend-friendly category."""
+    action_lower = action.lower()
+    if "stage" in action_lower:
+        return "stage_event"
+    if "interview" in action_lower:
+        return "interview_config"
+    if "assessment" in action_lower:
+        return "assessment_config"
+    if "candidate" in action_lower:
+        return "candidate_decision"
+    if "offer" in action_lower:
+        return "offer"
+    return "system"
+
+
+def _prettify_action(action: str) -> str:
+    """Convert snake_case action names into readable sentences."""
+    parts = action.split(":", 1)
+    base = parts[0].replace("_", " ").strip().title()
+    if len(parts) > 1:
+        stage = parts[1].replace("_", " ").title()
+        return f"{base}: {stage}"
+    return base
+

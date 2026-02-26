@@ -295,6 +295,11 @@ export const recruiterService = {
         });
     },
 
+    // Activity Log
+    getGroupActivityLog: async (groupId: string) => {
+        return fetchAPI(`/recruiter/groups/${groupId}/activity`);
+    },
+
     // Interview Assignment
     assignInterview: async (groupId: string, data: {
         interview_type: 'live' | 'recorded';

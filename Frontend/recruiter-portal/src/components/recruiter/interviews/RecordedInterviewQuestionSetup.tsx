@@ -6,6 +6,7 @@ interface RecordedInterviewQuestionSetupProps {
   groupName: string;
   onBack: () => void;
   onSave: (questions: any[]) => void;
+  initialQuestions?: { id: string; text: string; duration: number }[];
 }
 
 interface Question {
@@ -17,19 +18,42 @@ interface Question {
 export function RecordedInterviewQuestionSetup({
   groupName,
   onBack,
-  onSave
+  onSave,
+  initialQuestions
 }: RecordedInterviewQuestionSetupProps) {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [showPreview, setShowPreview] = useState(false);
+  const [showSuggestModal, setShowSuggestModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Fetch recorded interview questions from API
+  const aiSuggestedQuestions = [
+    { text: 'Tell me about yourself and your professional journey so far.', duration: 120 },
+    { text: 'Describe a situation where you had to meet a tight deadline. How did you handle it?', duration: 150 },
+    { text: 'What is your greatest professional achievement and why?', duration: 180 },
+    { text: 'How do you prioritize tasks when managing multiple projects simultaneously?', duration: 120 },
+    { text: 'Describe a time you disagreed with a manager or colleague. How did you resolve it?', duration: 150 },
+    { text: 'Where do you see yourself professionally in the next 3 to 5 years?', duration: 120 },
+    { text: 'What technical skills do you bring to this role, and how have you applied them?', duration: 180 },
+    { text: 'Tell me about a project where you had to learn a new technology or skill quickly.', duration: 150 },
+  ];
+
+  // Load questions: use initialQuestions (edit mode) or fetch from API (create mode)
   useEffect(() => {
+    if (initialQuestions && initialQuestions.length > 0) {
+      // Edit mode — use saved questions directly, no API call needed
+      setQuestions(initialQuestions.map((q, i) => ({
+        id: q.id || String(i + 1),
+        text: q.text,
+        duration: q.duration || 120
+      })));
+      setIsLoading(false);
+      return;
+    }
+
     const fetchQuestions = async () => {
       try {
         setIsLoading(true);
         const data = (await api.recruiter.getRecordedInterviewQuestions('new')) as any[];
-        // Map API data to component format
         const mappedQuestions: Question[] = data.map((q: any) => ({
           id: String(q.id),
           text: q.question || q.text,
@@ -38,7 +62,6 @@ export function RecordedInterviewQuestionSetup({
         setQuestions(mappedQuestions);
       } catch (error) {
         console.error('Failed to fetch recorded interview questions:', error);
-        // Fallback to default questions
         setQuestions([
           { id: '1', text: 'Tell me about your professional background and key accomplishments.', duration: 120 },
           { id: '2', text: 'Describe a challenging technical problem you solved recently.', duration: 180 },
@@ -112,13 +135,22 @@ export function RecordedInterviewQuestionSetup({
           <div className="bg-white rounded-[12px] border border-[#e5e7eb] p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-[#111827]">Interview Questions</h3>
-              <button
-                onClick={handleAddQuestion}
-                className="flex items-center gap-2 h-[36px] px-[16px] rounded-[8px] border border-[#6366f1] text-[#6366f1] hover:bg-[#ede9fe] transition-colors"
-              >
-                <Plus size={16} />
-                <span className="font-['Arimo',sans-serif] text-[13px]">Add Question</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowSuggestModal(true)}
+                  className="flex items-center gap-2 h-[36px] px-[16px] rounded-[8px] border border-[#8b5cf6] text-[#8b5cf6] hover:bg-[#faf5ff] transition-colors"
+                >
+                  <Sparkles size={16} />
+                  <span className="font-['Arimo',sans-serif] text-[13px]">Suggest Questions</span>
+                </button>
+                <button
+                  onClick={handleAddQuestion}
+                  className="flex items-center gap-2 h-[36px] px-[16px] rounded-[8px] border border-[#6366f1] text-[#6366f1] hover:bg-[#ede9fe] transition-colors"
+                >
+                  <Plus size={16} />
+                  <span className="font-['Arimo',sans-serif] text-[13px]">Add Question</span>
+                </button>
+              </div>
             </div>
 
             <div className="space-y-4">
@@ -302,6 +334,61 @@ export function RecordedInterviewQuestionSetup({
           </div>
         </div>
       </div>
+
+      {/* AI Suggest Questions Modal */}
+      {showSuggestModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[16px] w-full max-w-[640px] max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="px-8 py-6 border-b border-[#e5e7eb]">
+              <div className="flex items-center gap-3 mb-1">
+                <div className="w-8 h-8 rounded-lg bg-[#faf5ff] flex items-center justify-center">
+                  <Sparkles size={18} className="text-[#8b5cf6]" />
+                </div>
+                <h3 className="text-[#111827] text-[20px]">AI Question Suggestions</h3>
+              </div>
+              <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280] mt-1">
+                Click any question to add it to your interview
+              </p>
+            </div>
+            <div className="flex-1 overflow-auto px-8 py-6 space-y-3">
+              {aiSuggestedQuestions.map((suggestion, index) => (
+                <button
+                  key={index}
+                  onClick={() => {
+                    const newQ: Question = {
+                      id: Date.now().toString() + index,
+                      text: suggestion.text,
+                      duration: suggestion.duration
+                    };
+                    setQuestions(prev => [...prev, newQ]);
+                    setShowSuggestModal(false);
+                  }}
+                  className="w-full p-4 rounded-[10px] border border-[#e5e7eb] hover:border-[#8b5cf6] hover:bg-[#faf5ff] text-left transition-all group"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] flex-1">{suggestion.text}</p>
+                    <span className="font-['Arimo',sans-serif] text-[12px] text-[#8b5cf6] group-hover:text-[#7c3aed] whitespace-nowrap flex-shrink-0 bg-[#ede9fe] px-2 py-1 rounded-md">
+                      {Math.floor(suggestion.duration / 60)}:{(suggestion.duration % 60).toString().padStart(2, '0')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 mt-2">
+                    <Plus size={12} className="text-[#8b5cf6] opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <span className="font-['Arimo',sans-serif] text-[12px] text-[#8b5cf6] opacity-0 group-hover:opacity-100 transition-opacity">Add to interview</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="px-8 py-6 border-t border-[#e5e7eb]">
+              <button
+                onClick={() => setShowSuggestModal(false)}
+                className="w-full h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Preview Modal */}
       {showPreview && (
