@@ -470,13 +470,18 @@ export const router = createBrowserRouter([
     },
     {
         path: "/recruiter/settings",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <RecruiterSettings />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        )
+        element: (() => {
+            const userStr = localStorage.getItem('user');
+            const userObj = userStr ? JSON.parse(userStr) : null;
+            const userRole: string = (userObj?.role || '').toLowerCase();
+            return (
+                <RecruiterProtectedRoute>
+                    <RecruiterLayout>
+                        <RecruiterSettings userRole={userRole} />
+                    </RecruiterLayout>
+                </RecruiterProtectedRoute>
+            );
+        })()
     },
     {
         path: "/recruiter/suspicious-activity",

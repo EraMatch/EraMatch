@@ -505,6 +505,10 @@ class GroupService:
     async def start_stage(self, group_id: UUID, stage: str) -> dict:
         group = await self._get_group(group_id)
 
+        # Normalize stage type: the DB CHECK constraint uses underscores (ai_interview, live_interview)
+        # but the frontend may send hyphenated values (ai-interview, live-interview).
+        stage = stage.replace("-", "_")
+
         # Get stage config
         sc_res = await self.session.execute(
             select(GroupStageConfig).where(
@@ -514,11 +518,35 @@ class GroupService:
         )
         stage_config = sc_res.scalars().first()
 
-        # Update stage state
-        if stage_config:
-            stage_config.state = "active"
-            stage_config.started_at = datetime.now(timezone.utc)
+        # Auto-create stage config if it doesn't exist yet
+        if stage_config is None:
+            # Determine current max stage_order for this group so we don't conflict
+            order_res = await self.session.execute(
+                select(func.coalesce(func.max(GroupStageConfig.stage_order), 0)).where(
+                    GroupStageConfig.group_id == group_id
+                )
+            )
+            max_order = order_res.scalars().first() or 0
+            stage_config = GroupStageConfig(
+                group_id=group_id,
+                organization_id=self.org_id,
+                stage_type=stage,
+                stage_order=max_order + 1,
+                stage_name=stage.replace("_", " ").title(),
+                state="active",
+                started_at=datetime.utcnow(),
+                started_by_user_id=self.user.id,
+            )
             self.session.add(stage_config)
+            # Flush so stage_config.stage_id is populated before we use it below
+            await self.session.flush()
+        else:
+            # Update existing stage state
+            stage_config.state = "active"
+            stage_config.started_at = datetime.utcnow()
+            stage_config.started_by_user_id = self.user.id
+            self.session.add(stage_config)
+            await self.session.flush()
 
         # Fetch eligible candidates (applications in this group)
         apps_res = await self.session.execute(
@@ -550,7 +578,7 @@ class GroupService:
                     application_id=app.id,
                     stage_id=stage_config.stage_id,
                     status="unlocked",
-                    started_at=datetime.now(timezone.utc),
+                    started_at=datetime.utcnow(),
                 )
                 self.session.add(new_prog)
                 invitations_sent += 1
@@ -559,6 +587,7 @@ class GroupService:
             if app.status in ("applied", "screening"):
                 app.status = "in_pipeline"
                 self.session.add(app)
+
 
         # Log the action in system_logs
         log = SystemLog(
@@ -589,6 +618,57 @@ class GroupService:
             "invitations_sent": invitations_sent,
             "stage": stage,
             "next_stage": next_stage,
+        }
+
+    # ── 4b. POST /recruiter/groups/{groupId}/stages/close ─────────────────────
+
+    async def close_stage(self, group_id: UUID, stage: str) -> dict:
+        await self._get_group(group_id)
+
+        # Normalize hyphenated frontend stage names to underscore DB format
+        stage = stage.replace("-", "_")
+
+        # Find the active stage config
+        sc_res = await self.session.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.stage_type == stage,
+            )
+        )
+        stage_config = sc_res.scalars().first()
+
+        if stage_config:
+            stage_config.state = "closed"
+            stage_config.closed_at = datetime.utcnow()
+            self.session.add(stage_config)
+
+        # Count candidates that have a progress entry for this stage (evaluated count)
+        candidates_evaluated = 0
+        if stage_config:
+            count_res = await self.session.execute(
+                select(func.count(CandidateStageProgress.progress_id)).where(
+                    CandidateStageProgress.stage_id == stage_config.stage_id,
+                    CandidateStageProgress.status.in_(["completed", "passed", "failed"]),
+                )
+            )
+            candidates_evaluated = count_res.scalars().first() or 0
+
+        # Log the close action
+        log = SystemLog(
+            organization_id=self.org_id,
+            user_id=self.user.id,
+            action=f"stage_closed:{stage}",
+            entity_type="group",
+            entity_id=group_id,
+            details={"stage": stage, "candidates_evaluated": candidates_evaluated},
+        )
+        self.session.add(log)
+        await self.session.commit()
+
+        return {
+            "status": 1,
+            "stage": stage,
+            "candidates_evaluated": candidates_evaluated,
         }
 
     # ── 5. GET /recruiter/groups/{groupId}/activity ──────────────────────────

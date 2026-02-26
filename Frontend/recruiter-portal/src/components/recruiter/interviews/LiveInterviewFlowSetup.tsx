@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import { Settings, Mic, Brain, Volume2, Save, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { FileText, Save, ArrowLeft, Target, MessageSquare, Cpu, Users, Layers } from 'lucide-react';
 
 export interface LiveInterviewFlowSettings {
-    sttEngine: string;
-    llmEngine: string;
-    ttsEngine: string;
-    voiceId: string;
-    language: string;
     instructions: string;
+    interviewTheme: 'technical' | 'interpersonal' | 'mixed';
+    focusAreas: string[];
+    questionCount: number;
+    hintPolicy: string;
 }
 
 interface LiveInterviewFlowSetupProps {
@@ -17,6 +16,68 @@ interface LiveInterviewFlowSetupProps {
     initialSettings?: Partial<LiveInterviewFlowSettings>;
 }
 
+const HINT_POLICIES = [
+    { id: 'none', label: 'No hints', desc: 'Strict mode — no assistance given.' },
+    { id: 'on_request', label: 'Only if asked', desc: 'Candidate must ask for a hint.' },
+    { id: 'on_struggle', label: 'On struggle', desc: 'AI offers a hint after a 30s pause.' },
+    { id: 'always', label: 'Always guide', desc: 'Continuously steer candidate toward the answer.' },
+];
+
+const TECHNICAL_FOCUS_AREAS = [
+    { key: 'system_design', label: 'System Design' },
+    { key: 'algorithms', label: 'Algorithms & DSA' },
+    { key: 'database', label: 'Database & SQL' },
+    { key: 'devops', label: 'DevOps / Cloud' },
+    { key: 'security', label: 'Security' },
+    { key: 'architecture', label: 'Architecture Patterns' },
+    { key: 'api_design', label: 'API Design' },
+    { key: 'performance', label: 'Performance & Scalability' },
+];
+
+const INTERPERSONAL_FOCUS_AREAS = [
+    { key: 'communication', label: 'Communication' },
+    { key: 'leadership', label: 'Leadership' },
+    { key: 'teamwork', label: 'Teamwork & Collaboration' },
+    { key: 'culture_fit', label: 'Culture Fit' },
+    { key: 'conflict_resolution', label: 'Conflict Resolution' },
+    { key: 'adaptability', label: 'Adaptability' },
+    { key: 'motivation', label: 'Motivation & Drive' },
+    { key: 'problem_ownership', label: 'Problem Ownership' },
+];
+
+const INTERVIEW_THEMES = [
+    {
+        id: 'technical' as const,
+        label: 'Technical',
+        desc: 'Focus entirely on hard skills, system design, and coding ability.',
+        icon: Cpu,
+        color: 'text-blue-600',
+        bg: 'bg-blue-50',
+        border: 'border-blue-500',
+        activeBg: 'bg-blue-50',
+    },
+    {
+        id: 'interpersonal' as const,
+        label: 'Interpersonal',
+        desc: 'Focus on soft skills, communication, culture fit, and leadership.',
+        icon: Users,
+        color: 'text-emerald-600',
+        bg: 'bg-emerald-50',
+        border: 'border-emerald-500',
+        activeBg: 'bg-emerald-50',
+    },
+    {
+        id: 'mixed' as const,
+        label: 'Mixed',
+        desc: 'Blend technical questions with interpersonal topics organically.',
+        icon: Layers,
+        color: 'text-[#8b5cf6]',
+        bg: 'bg-purple-50',
+        border: 'border-[#8b5cf6]',
+        activeBg: 'bg-purple-50',
+    },
+];
+
 export function LiveInterviewFlowSetup({
     groupName,
     onBack,
@@ -24,89 +85,34 @@ export function LiveInterviewFlowSetup({
     initialSettings
 }: LiveInterviewFlowSetupProps) {
     const [settings, setSettings] = useState<LiveInterviewFlowSettings>({
-        sttEngine: initialSettings?.sttEngine || 'whisper',
-        llmEngine: initialSettings?.llmEngine || 'gpt-4o',
-        ttsEngine: initialSettings?.ttsEngine || 'elevenlabs',
-        voiceId: initialSettings?.voiceId || 'rachel',
-        language: initialSettings?.language || 'en-US',
-        instructions: initialSettings?.instructions || ''
+        instructions: initialSettings?.instructions || '',
+        interviewTheme: initialSettings?.interviewTheme || 'technical',
+        focusAreas: initialSettings?.focusAreas || ['algorithms', 'system_design'],
+        questionCount: initialSettings?.questionCount || 5,
+        hintPolicy: initialSettings?.hintPolicy || 'on_struggle',
     });
 
-    const providers = {
-        stt: [
-            { id: 'whisper', name: 'OpenAI Whisper', desc: 'Highest accuracy, multiple languages' },
-            { id: 'deepgram', name: 'Deepgram Nova', desc: 'Fastest real-time transcription' },
-            { id: 'google', name: 'Google Cloud STT', desc: 'Enterprise-grade recognition' }
-        ],
-        llm: [
-            { id: 'gpt-4o', name: 'GPT-4o (OpenAI)', desc: 'Fastest and most capable for reasoning' },
-            { id: 'claude-3.5', name: 'Claude 3.5 Sonnet', desc: 'Excellent conversational nuances' },
-            { id: 'llama-3', name: 'Llama 3 (Meta)', desc: 'Fast, open-source performance' }
-        ],
-        tts: [
-            { id: 'elevenlabs', name: 'ElevenLabs', desc: 'Ultra-realistic, low latency voices' },
-            { id: 'openai-tts', name: 'OpenAI TTS', desc: 'Natural sounding standard voices' },
-            { id: 'azure-tts', name: 'Azure Neural TTS', desc: 'Highly customizable pronunciation' }
-        ]
+    const handleThemeChange = (theme: 'technical' | 'interpersonal' | 'mixed') => {
+        // Reset focus areas to sensible defaults when switching theme
+        const defaults: Record<string, string[]> = {
+            technical: ['algorithms', 'system_design'],
+            interpersonal: ['communication', 'teamwork'],
+            mixed: ['algorithms', 'system_design', 'communication', 'culture_fit'],
+        };
+        setSettings(prev => ({ ...prev, interviewTheme: theme, focusAreas: defaults[theme] }));
     };
 
-    const voices = {
-        elevenlabs: [
-            { id: 'rachel', name: 'Rachel (Professional Female)' },
-            { id: 'drew', name: 'Drew (Calm Male)' },
-            { id: 'emily', name: 'Emily (Friendly Female)' }
-        ],
-        'openai-tts': [
-            { id: 'alloy', name: 'Alloy (Neutral)' },
-            { id: 'nova', name: 'Nova (Energetic Female)' },
-            { id: 'onyx', name: 'Onyx (Deep Male)' }
-        ],
-        'azure-tts': [
-            { id: 'jenny', name: 'Jenny (Clear Female)' },
-            { id: 'guy', name: 'Guy (Authoritative Male)' }
-        ]
+    const toggleFocusArea = (key: string) => {
+        setSettings(prev => ({
+            ...prev,
+            focusAreas: prev.focusAreas.includes(key)
+                ? prev.focusAreas.filter(k => k !== key)
+                : [...prev.focusAreas, key]
+        }));
     };
 
-    const handleProviderSelect = (type: 'stt' | 'llm' | 'tts', id: string) => {
-        setSettings(prev => {
-            const next = { ...prev, [`${type}Engine`]: id };
-            // Reset voice if TTS engine changes
-            if (type === 'tts') {
-                const availableVoices = voices[id as keyof typeof voices];
-                next.voiceId = availableVoices ? availableVoices[0].id : '';
-            }
-            return next;
-        });
-    };
-
-    const ProviderCard = ({ type, id, name, desc, icon: Icon }: any) => {
-        const isSelected = settings[`${type}Engine` as keyof LiveInterviewFlowSettings] === id;
-
-        return (
-            <div
-                onClick={() => handleProviderSelect(type, id)}
-                className={`relative p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 ${isSelected
-                    ? 'border-[#8b5cf6] bg-[#8b5cf6]/5 shadow-sm'
-                    : 'border-white hover:border-[#8b5cf6]/30 hover:bg-gray-50 bg-white'
-                    }`}
-            >
-                {isSelected && (
-                    <div className="absolute top-3 right-3 text-[#8b5cf6]">
-                        <CheckCircle2 className="w-5 h-5" />
-                    </div>
-                )}
-                <div className="flex items-start gap-3">
-                    <div className={`p-2 rounded-lg ${isSelected ? 'bg-[#8b5cf6]/10 text-[#8b5cf6]' : 'bg-gray-100 text-gray-500'}`}>
-                        <Icon className="w-5 h-5" />
-                    </div>
-                    <div>
-                        <h4 className="font-medium text-[#111827]">{name}</h4>
-                        <p className="text-[13px] text-gray-500 mt-1">{desc}</p>
-                    </div>
-                </div>
-            </div>
-        );
-    };
+    const visibleTechnicalAreas = settings.interviewTheme === 'technical' || settings.interviewTheme === 'mixed';
+    const visibleInterpersonalAreas = settings.interviewTheme === 'interpersonal' || settings.interviewTheme === 'mixed';
 
     return (
         <div className="min-h-screen bg-[#f3f4f6] pb-20">
@@ -120,8 +126,8 @@ export function LiveInterviewFlowSetup({
                         <ArrowLeft className="w-5 h-5" />
                     </button>
                     <div>
-                        <h1 className="text-[20px] font-semibold text-[#111827]">Live Interview Pipeline</h1>
-                        <p className="text-[13px] text-gray-500">Configure the realtime STT → LLM → TTS flow for {groupName}</p>
+                        <h1 className="text-[20px] font-semibold text-[#111827]">Live Interview Setup</h1>
+                        <p className="text-[13px] text-gray-500">Configure interview behavior for <strong>{groupName}</strong></p>
                     </div>
                 </div>
                 <button
@@ -129,128 +135,138 @@ export function LiveInterviewFlowSetup({
                     className="flex items-center gap-2 px-6 py-2.5 bg-[#8b5cf6] text-white text-[14px] font-medium rounded-lg hover:bg-[#7c3aed] transition-colors shadow-sm"
                 >
                     <Save className="w-4 h-4" />
-                    Save Pipeline
+                    Save Interview
                 </button>
             </div>
 
-            <div className="max-w-[1000px] mx-auto mt-8 px-8">
+            <div className="max-w-[800px] mx-auto mt-8 px-8 space-y-6">
 
-                {/* Connection Pipeline Visual */}
-                <div className="bg-white rounded-2xl p-8 mb-8 shadow-sm border border-[#e5e7eb]">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-6 flex items-center gap-2">
-                        <Settings className="w-5 h-5 text-[#8b5cf6]" />
-                        Pipeline Configuration
+                {/* Interview Theme */}
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#e5e7eb]">
+                    <h2 className="text-[16px] font-semibold text-gray-900 mb-2">Interview Theme</h2>
+                    <p className="text-[13px] text-gray-500 mb-4">Choose the overall character of this interview. This controls the type of questions the AI will ask.</p>
+                    <div className="grid grid-cols-3 gap-3">
+                        {INTERVIEW_THEMES.map(theme => {
+                            const Icon = theme.icon;
+                            const isSelected = settings.interviewTheme === theme.id;
+                            return (
+                                <div
+                                    key={theme.id}
+                                    onClick={() => handleThemeChange(theme.id)}
+                                    className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${isSelected ? `${theme.border} ${theme.activeBg}` : 'border-gray-200 hover:border-gray-300 bg-white'}`}
+                                >
+                                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${isSelected ? theme.bg : 'bg-gray-100'}`}>
+                                        <Icon className={`w-5 h-5 ${isSelected ? theme.color : 'text-gray-400'}`} />
+                                    </div>
+                                    <p className={`text-[14px] font-semibold mb-1 ${isSelected ? 'text-gray-900' : 'text-gray-700'}`}>{theme.label}</p>
+                                    <p className="text-[12px] text-gray-500 leading-snug">{theme.desc}</p>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Focus Areas */}
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#e5e7eb]">
+                    <h2 className="text-[16px] font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                        <Target className="w-5 h-5 text-[#8b5cf6]" />
+                        Focus Areas
                     </h2>
+                    <p className="text-[13px] text-gray-500 mb-4">Select the specific domains the AI should prioritize during this interview.</p>
 
-                    <div className="grid grid-cols-[1fr_2fr] gap-x-12 gap-y-10">
-                        {/* 1. Speech to Text */}
-                        <div className="flex flex-col items-center justify-center border-r-2 border-dashed border-[#e5e7eb] relative pr-12">
-                            <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-500 flex items-center justify-center mb-4 relative z-10">
-                                <Mic className="w-8 h-8" />
-                            </div>
-                            <h3 className="font-semibold text-gray-900">Speech to Text</h3>
-                            <p className="text-sm text-gray-500 text-center mt-1">Candidate's voice</p>
-
-                            {/* Arrow Line */}
-                            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-12 h-0.5 bg-gradient-to-r from-blue-200 to-purple-200"></div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            {providers.stt.map(p => (
-                                <ProviderCard key={p.id} type="stt" id={p.id} name={p.name} desc={p.desc} icon={Mic} />
-                            ))}
-                        </div>
-
-                        {/* 2. LLM Engine */}
-                        <div className="flex flex-col items-center justify-center border-r-2 border-dashed border-[#e5e7eb] relative pr-12">
-                            <div className="w-16 h-16 rounded-2xl bg-purple-50 text-purple-500 flex items-center justify-center mb-4 relative z-10">
-                                <Brain className="w-8 h-8" />
-                            </div>
-                            <h3 className="font-semibold text-gray-900">AI Reasoning</h3>
-                            <p className="text-sm text-gray-500 text-center mt-1">Interview logic & decisions</p>
-
-                            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-12 h-0.5 bg-gradient-to-r from-purple-200 to-emerald-200"></div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            {providers.llm.map(p => (
-                                <ProviderCard key={p.id} type="llm" id={p.id} name={p.name} desc={p.desc} icon={Brain} />
-                            ))}
-                        </div>
-
-                        {/* 3. Text to Speech */}
-                        <div className="flex flex-col items-center justify-center border-r-2 border-dashed border-[#e5e7eb] relative pr-12">
-                            <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-500 flex items-center justify-center mb-4 relative z-10">
-                                <Volume2 className="w-8 h-8" />
-                            </div>
-                            <h3 className="font-semibold text-gray-900">Text to Speech</h3>
-                            <p className="text-sm text-gray-500 text-center mt-1">Interviewer's voice</p>
-                        </div>
-
-                        <div className="flex flex-col gap-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                {providers.tts.map(p => (
-                                    <ProviderCard key={p.id} type="tts" id={p.id} name={p.name} desc={p.desc} icon={Volume2} />
+                    {visibleTechnicalAreas && (
+                        <div className="mb-4">
+                            {settings.interviewTheme === 'mixed' && (
+                                <p className="text-[12px] font-medium text-blue-600 uppercase tracking-wide mb-2">Technical</p>
+                            )}
+                            <div className="flex flex-wrap gap-2">
+                                {TECHNICAL_FOCUS_AREAS.map(f => (
+                                    <button
+                                        key={f.key}
+                                        onClick={() => toggleFocusArea(f.key)}
+                                        className={`px-3 py-1.5 rounded-full text-[13px] border font-medium transition-colors ${settings.focusAreas.includes(f.key) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 text-gray-600 hover:border-blue-500'}`}
+                                    >
+                                        {f.label}
+                                    </button>
                                 ))}
                             </div>
+                        </div>
+                    )}
 
-                            {/* Character Voice Selection */}
-                            <div className="mt-4 p-5 bg-gray-50 rounded-xl border border-[#e5e7eb]">
-                                <label className="block text-[13px] font-medium text-gray-700 mb-3">
-                                    Interviewer Voice Profile ({(providers.tts.find(t => t.id === settings.ttsEngine)?.name)})
-                                </label>
-                                <select
-                                    value={settings.voiceId}
-                                    onChange={(e) => setSettings({ ...settings, voiceId: e.target.value })}
-                                    className="w-full h-[40px] px-3 border border-[#d1d5db] rounded-[6px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]/20 focus:border-[#8b5cf6] text-[14px]"
-                                >
-                                    {voices[settings.ttsEngine as keyof typeof voices]?.map((voice) => (
-                                        <option key={voice.id} value={voice.id}>
-                                            {voice.name}
-                                        </option>
-                                    ))}
-                                </select>
+                    {visibleInterpersonalAreas && (
+                        <div>
+                            {settings.interviewTheme === 'mixed' && (
+                                <p className="text-[12px] font-medium text-emerald-600 uppercase tracking-wide mb-2 mt-3">Interpersonal</p>
+                            )}
+                            <div className="flex flex-wrap gap-2">
+                                {INTERPERSONAL_FOCUS_AREAS.map(f => (
+                                    <button
+                                        key={f.key}
+                                        onClick={() => toggleFocusArea(f.key)}
+                                        className={`px-3 py-1.5 rounded-full text-[13px] border font-medium transition-colors ${settings.focusAreas.includes(f.key) ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-gray-300 text-gray-600 hover:border-emerald-500'}`}
+                                    >
+                                        {f.label}
+                                    </button>
+                                ))}
                             </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Question Count */}
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#e5e7eb]">
+                    <h2 className="text-[16px] font-semibold text-gray-900 mb-5">Target Questions</h2>
+                    <div className="max-w-xs">
+                        <label className="block text-[13px] font-medium text-gray-700 mb-2">
+                            Number of questions: <strong className="text-[#8b5cf6]">{settings.questionCount}</strong>
+                        </label>
+                        <input
+                            type="range" min={2} max={15} step={1}
+                            value={settings.questionCount}
+                            onChange={(e) => setSettings({ ...settings, questionCount: parseInt(e.target.value) })}
+                            className="w-full accent-[#8b5cf6]"
+                        />
+                        <div className="flex justify-between text-[11px] text-gray-400 mt-1">
+                            <span>2</span><span>15</span>
                         </div>
                     </div>
                 </div>
 
-                {/* Global Settings */}
-                <div className="bg-white rounded-2xl p-8 shadow-sm border border-[#e5e7eb]">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-6">Language Settings</h2>
-                    <div className="max-w-md">
-                        <label className="block text-[14px] font-medium text-gray-700 mb-2">Spoken Language</label>
-                        <select
-                            value={settings.language}
-                            onChange={(e) => setSettings({ ...settings, language: e.target.value })}
-                            className="w-full h-[40px] px-3 border border-[#d1d5db] rounded-[6px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]/20 focus:border-[#8b5cf6] text-[14px]"
-                        >
-                            <option value="en-US">English (United States)</option>
-                            <option value="en-GB">English (United Kingdom)</option>
-                            <option value="es-ES">Spanish (Spain)</option>
-                            <option value="fr-FR">French (France)</option>
-                            <option value="de-DE">German (Germany)</option>
-                        </select>
-                        <p className="text-[13px] text-gray-500 mt-2">
-                            This configures the base language for the Speech-to-Text and Text-to-Speech models.
-                        </p>
+                {/* Hint Policy */}
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#e5e7eb]">
+                    <h2 className="text-[16px] font-semibold text-gray-900 mb-5 flex items-center gap-2">
+                        <MessageSquare className="w-5 h-5 text-[#8b5cf6]" />
+                        Hint Policy
+                    </h2>
+                    <div className="grid grid-cols-2 gap-3">
+                        {HINT_POLICIES.map(h => (
+                            <div
+                                key={h.id}
+                                onClick={() => setSettings({ ...settings, hintPolicy: h.id })}
+                                className={`p-3 rounded-xl border-2 cursor-pointer transition-all ${settings.hintPolicy === h.id ? 'border-[#8b5cf6] bg-purple-50' : 'border-gray-200 hover:border-[#8b5cf6]/30'}`}
+                            >
+                                <p className="text-[13px] font-semibold text-gray-800">{h.label}</p>
+                                <p className="text-[12px] text-gray-500 mt-0.5">{h.desc}</p>
+                            </div>
+                        ))}
                     </div>
+                </div>
 
-                    {/* Interview Guidelines */}
-                    <div className="mt-8 border-t border-[#e5e7eb] pt-6">
-                        <label className="block text-[14px] font-medium text-gray-700 mb-2">
-                            Interview Guidelines (System Prompt Supplement)
-                        </label>
-                        <p className="text-[13px] text-gray-500 mb-3">
-                            Provide specific instructions for the AI on how to conduct this interview. This text will be appended to the AI's core systemic instructions.
-                        </p>
-                        <textarea
-                            value={settings.instructions}
-                            onChange={(e) => setSettings({ ...settings, instructions: e.target.value })}
-                            placeholder="e.g. Focus on technical problem solving over syntax. If the candidate struggles, provide a small hint before moving on. Keep a friendly and encouraging tone."
-                            className="w-full h-[120px] p-3 text-[14px] text-gray-700 border border-[#d1d5db] rounded-[8px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]/20 focus:border-[#8b5cf6] resize-y"
-                        />
-                    </div>
+                {/* Interview Guidelines */}
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#e5e7eb]">
+                    <h2 className="text-[16px] font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-[#8b5cf6]" />
+                        Interview-Specific Instructions
+                    </h2>
+                    <p className="text-[13px] text-gray-500 mb-4">
+                        Add context specific to this role or candidate group. These instructions are appended to the AI's system prompt.
+                    </p>
+                    <textarea
+                        value={settings.instructions}
+                        onChange={(e) => setSettings({ ...settings, instructions: e.target.value })}
+                        placeholder="e.g. This interview is for a Senior Backend Engineering role. Focus on distributed systems and API design. If the candidate mentions React, redirect them to backend topics."
+                        className="w-full h-[140px] p-3 text-[14px] text-gray-700 border border-[#d1d5db] rounded-[8px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]/20 focus:border-[#8b5cf6] resize-y"
+                    />
                 </div>
 
             </div>

@@ -29,6 +29,8 @@ from app.schemas.group import (
     GroupUpdateRequest,
     StartStageRequest,
     StartStageResponse,
+    CloseStageRequest,
+    CloseStageResponse,
     ActivityLogResponse,
     AssessmentMonitoringResponse,
     AssignInterviewRequest,
@@ -168,6 +170,21 @@ async def start_stage(
     stage."""
     svc = GroupService(session, current_user)
     return await svc.start_stage(group_id, body.stage)
+
+
+@router.post(
+    "/recruiter/groups/{group_id}/stages/close",
+    response_model=CloseStageResponse,
+)
+async def close_stage(
+    group_id: UUID,
+    body: CloseStageRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Close the current active filtration stage for the group."""
+    svc = GroupService(session, current_user)
+    return await svc.close_stage(group_id, body.stage)
 
 
 # ─── Activity Log ────────────────────────────────────────────────────────────

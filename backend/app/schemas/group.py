@@ -166,6 +166,18 @@ class StartStageResponse(BaseModel):
     next_stage: str | None = None
 
 
+# ─── Close Stage ──────────────────────────────────────────────────────────────
+
+class CloseStageRequest(BaseModel):
+    stage: str  # "assessment", "ai_interview", "live_interview", "review"
+
+
+class CloseStageResponse(BaseModel):
+    status: int
+    stage: str
+    candidates_evaluated: int
+
+
 # ─── Activity Log ────────────────────────────────────────────────────────────
 
 class ActivityUser(BaseModel):
