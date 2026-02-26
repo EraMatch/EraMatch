@@ -484,7 +484,7 @@ class GroupService:
         # Update stage state
         if stage_config:
             stage_config.state = "active"
-            stage_config.started_at = datetime.now(timezone.utc)
+            stage_config.started_at = datetime.utcnow()
             self.session.add(stage_config)
 
         # Fetch eligible candidates (applications in this group)
@@ -509,7 +509,7 @@ class GroupService:
             if prog:
                 if prog.status in ("locked", "not_started"):
                     prog.status = "unlocked"
-                    prog.started_at = datetime.now(timezone.utc)
+                    prog.started_at = datetime.utcnow()
                     self.session.add(prog)
                     invitations_sent += 1
             else:
@@ -517,7 +517,7 @@ class GroupService:
                     application_id=app.id,
                     stage_id=stage_config.stage_id,
                     status="unlocked",
-                    started_at=datetime.now(timezone.utc),
+                    started_at=datetime.utcnow(),
                 )
                 self.session.add(new_prog)
                 invitations_sent += 1
@@ -826,14 +826,14 @@ class GroupService:
             # Validate existence
             res = await self.session.execute(
                 select(AIInterviewConfig).where(
-                    AIInterviewConfig.id == data.interview_config_id,
+                    AIInterviewConfig.config_id == data.interview_config_id,
                     AIInterviewConfig.organization_id == self.org_id,
                 )
             )
             cfg = res.scalars().first()
             if not cfg:
                 return AssignInterviewResponse(status=-1, message="Interview configuration not found")
-            config_id = cfg.id
+            config_id = cfg.config_id  # AIInterviewConfig uses config_id as PK, not id
 
         elif data.create_new and data.interview_config:
             # Create new AI interview config
@@ -850,7 +850,7 @@ class GroupService:
             )
             self.session.add(new_cfg)
             await self.session.flush()
-            config_id = new_cfg.id
+            config_id = new_cfg.config_id  # AIInterviewConfig uses config_id as PK
         else:
             return AssignInterviewResponse(status=-1, message="Provide interview_config_id or create_new with config")
 
@@ -1275,3 +1275,166 @@ class GroupService:
         self.session.add(group)
         await self.session.commit()
 
+    # ── Close Stage ───────────────────────────────────────────────────────────
+
+    async def close_stage(self, group_id: UUID, stage: str) -> dict:
+        """Mark the given stage as closed and record a system log."""
+        group = await self._get_group(group_id)
+
+        sc_res = await self.session.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.stage_type == stage,
+            )
+        )
+        stage_config = sc_res.scalars().first()
+
+        closed_at = datetime.utcnow()
+
+        if stage_config:
+            stage_config.state = "closed"
+            stage_config.closed_at = closed_at
+            self.session.add(stage_config)
+
+        log = SystemLog(
+            organization_id=self.org_id,
+            user_id=self.user.id,
+            action=f"stage_closed:{stage}",
+            entity_type="group",
+            entity_id=group_id,
+            details={"stage": stage},
+        )
+        self.session.add(log)
+        await self.session.commit()
+
+        return {
+            "status": 1,
+            "stage": stage,
+            "closed_at": closed_at,
+        }
+
+    # ── Bulk Candidate Progression ────────────────────────────────────────────
+
+    async def bulk_progress_candidates(
+        self, group_id: UUID, application_ids: list[UUID], action: str, reason: str | None = None
+    ) -> dict:
+        """Update the status of multiple candidate applications at once."""
+        await self._get_group(group_id)
+
+        status_map = {
+            "progress": "shortlisted",
+            "reject": "rejected",
+            "hold": "on_hold",
+        }
+        new_status = status_map.get(action, "shortlisted")
+
+        updated = 0
+        for app_id in application_ids:
+            res = await self.session.execute(
+                select(CandidateApplication).where(
+                    CandidateApplication.id == app_id,
+                    CandidateApplication.group_id == group_id,
+                    CandidateApplication.is_deleted == False,
+                )
+            )
+            app = res.scalars().first()
+            if app:
+                from_status = app.status
+                app.status = new_status
+                self.session.add(app)
+
+                # Record pipeline transition
+                transition = PipelineTransition(
+                    application_id=app_id,
+                    organization_id=self.org_id,
+                    from_status=from_status,
+                    to_status=new_status,
+                    triggered_by_user_id=self.user.id,
+                    reason=reason,
+                )
+                self.session.add(transition)
+                updated += 1
+
+        log = SystemLog(
+            organization_id=self.org_id,
+            user_id=self.user.id,
+            action=f"bulk_progression:{action}",
+            entity_type="group",
+            entity_id=group_id,
+            details={"action": action, "count": updated, "application_ids": [str(a) for a in application_ids]},
+        )
+        self.session.add(log)
+        await self.session.commit()
+
+        return {
+            "status": 1,
+            "updated_count": updated,
+            "action": action,
+        }
+
+    # ── Send Offers ───────────────────────────────────────────────────────────
+
+    async def send_offers(
+        self, group_id: UUID, application_ids: list[UUID], email_subject: str, email_body: str
+    ) -> dict:
+        """Create Offer records for selected candidates and log the action."""
+        await self._get_group(group_id)
+
+        created = 0
+
+        for app_id in application_ids:
+            # Verify application belongs to this group
+            res = await self.session.execute(
+                select(CandidateApplication).where(
+                    CandidateApplication.id == app_id,
+                    CandidateApplication.group_id == group_id,
+                    CandidateApplication.is_deleted == False,
+                )
+            )
+            app = res.scalars().first()
+            if not app:
+                continue
+
+            # Check for existing offer to avoid duplicates
+            offer_res = await self.session.execute(
+                select(Offer).where(Offer.application_id == app_id)
+            )
+            existing_offer = offer_res.scalars().first()
+
+            if not existing_offer:
+                offer = Offer(
+                    application_id=app_id,
+                    organization_id=self.org_id,
+                    position_id=app.position_id,
+                    status="pending",
+                    offer_details={
+                        "email_subject": email_subject,
+                        "email_body": email_body,
+                        "sent_by_user_id": str(self.user.id),
+                    },
+                    offered_at=datetime.utcnow(),
+                )
+                self.session.add(offer)
+                created += 1
+
+            # Update application status to offered
+            if app:
+                app.status = "offered"
+                self.session.add(app)
+
+        log = SystemLog(
+            organization_id=self.org_id,
+            user_id=self.user.id,
+            action="offers_sent",
+            entity_type="group",
+            entity_id=group_id,
+            details={"offers_created": created, "application_ids": [str(a) for a in application_ids]},
+        )
+        self.session.add(log)
+        await self.session.commit()
+
+        return {
+            "status": 1,
+            "offers_created": created,
+            "message": f"Successfully sent {created} offer(s)",
+        }

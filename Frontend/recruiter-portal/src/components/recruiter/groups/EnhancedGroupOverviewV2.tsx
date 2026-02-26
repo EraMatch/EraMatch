@@ -10,6 +10,8 @@ import { StartStageModal } from './StartStageModal';
 import { BulkProgressionModal } from './BulkProgressionModal';
 import { FinalDecisionModal } from './FinalDecisionModal';
 import { FiltrationFlowConfigModal } from './FiltrationFlowConfigModal';
+import { StageReviewPage } from './StageReviewPage';
+import { FinalDecisionPage } from './FinalDecisionPage';
 import { api } from '../../../services/api';
 import { useEffect } from 'react';
 
@@ -101,6 +103,8 @@ interface CandidateStatus {
   overrideApplied?: boolean;
   email?: string;
   phone?: string;
+  /** Backend UUID for the CandidateApplication record. Populated from API. */
+  applicationId?: string;
 }
 
 export function EnhancedGroupOverviewV2({
@@ -197,6 +201,10 @@ export function EnhancedGroupOverviewV2({
   const [showStageResults, setShowStageResults] = useState(false);
   const [showModuleMonitoring, setShowModuleMonitoring] = useState<'assessment' | 'ai-interview' | null>(null);
 
+  // NEW: Full-page views
+  const [showStageReviewPage, setShowStageReviewPage] = useState(false);
+  const [showFinalDecisionPage, setShowFinalDecisionPage] = useState(false);
+
   // NEW: Pipeline steps state
   const [pipelineSteps, setPipelineSteps] = useState<PipelineStep[]>([]);
   const [candidateStatuses, setCandidateStatuses] = useState<CandidateStatus[]>([]);
@@ -249,10 +257,14 @@ export function EnhancedGroupOverviewV2({
 
         // Build a lookup from backend stages by a normalised key
         const backendStageMap: Record<string, any> = {};
-        if (Array.isArray(data.pipelineStages)) {
-          data.pipelineStages.forEach((s: any) => {
+        // Backend returns pipeline_stages (snake_case), map by both id (ai-interview) and name
+        const rawPipelineStages = data.pipeline_stages || data.pipelineStages || [];
+        if (Array.isArray(rawPipelineStages)) {
+          rawPipelineStages.forEach((s: any) => {
             const key = (s.id || s.name || '').toLowerCase().replace(/\s+/g, '-');
             backendStageMap[key] = s;
+            // Also index by stage_type key (e.g. 'ai_interview' → 'ai-interview')
+            if (s.id) backendStageMap[s.id] = s;
           });
         }
 
@@ -270,9 +282,36 @@ export function EnhancedGroupOverviewV2({
         });
 
         setPipelineSteps(steps);
-        // Also set currentStage to first step if not already set
+
+        // Restore stage state from backend data
         if (steps.length > 0) {
-          setCurrentStage(steps[0].id);
+          // Find the most advanced stage that has been started
+          const activeStep = steps.find(s => s.state === 'active');
+          const closedSteps = steps.filter(s => s.state === 'closed');
+          const lastClosedStep = closedSteps[closedSteps.length - 1];
+
+          if (activeStep) {
+            // There's an active stage right now
+            setCurrentStage(activeStep.id);
+            setStageState('active');
+            setStageConfigLocked(true);
+          } else if (lastClosedStep) {
+            // All stages so far are closed — find the next not-started one
+            const lastClosedIdx = steps.findIndex(s => s.id === lastClosedStep.id);
+            const nextStep = steps[lastClosedIdx + 1];
+            if (nextStep) {
+              setCurrentStage(nextStep.id);
+              setStageState('not-started');
+            } else {
+              // All stages complete — stay on last closed
+              setCurrentStage(lastClosedStep.id);
+              setStageState('closed');
+            }
+          } else {
+            // Nothing started yet
+            setCurrentStage(steps[0].id);
+            setStageState('not-started');
+          }
         }
 
         // Map candidates
@@ -351,10 +390,17 @@ export function EnhancedGroupOverviewV2({
     setShowStartStageModal(true);
   };
 
-  const handleConfirmStartStage = (startDate: Date, expectedEndDate: Date) => {
+  const handleConfirmStartStage = async (startDate: Date, expectedEndDate: Date) => {
     const steps = [...pipelineSteps];
     const currentStepIndex = steps.findIndex(s => s.id === currentStage);
     if (currentStepIndex !== -1) {
+      try {
+        await api.recruiter.startStage(groupId, currentStage);
+      } catch (error) {
+        console.error('Failed to start stage on backend:', error);
+        showToast('Failed to start stage — please try again');
+        return;
+      }
       steps[currentStepIndex].state = 'active';
       steps[currentStepIndex].startDate = startDate;
       steps[currentStepIndex].expectedEndDate = expectedEndDate;
@@ -372,28 +418,52 @@ export function EnhancedGroupOverviewV2({
     }
   };
 
-  const handleCloseStage = () => {
+  const handleCloseStage = async () => {
     const steps = [...pipelineSteps];
     const currentStepIndex = steps.findIndex(s => s.id === currentStage);
     if (currentStepIndex !== -1) {
+      try {
+        await api.recruiter.closeStage(groupId, currentStage);
+      } catch (error) {
+        console.error('Failed to close stage on backend:', error);
+        showToast('Failed to close stage — please try again');
+        return;
+      }
       steps[currentStepIndex].state = 'closed';
       steps[currentStepIndex].actualEndDate = new Date();
       setPipelineSteps(steps);
       setStageState('closed');
-      showToast(`${steps[currentStepIndex].name} stage closed - Review results`);
+      showToast(`${steps[currentStepIndex].name} stage closed — Click "View Stage Results" to review and filter`);
       addActivityLog({
         type: 'stage-close',
         actor: assignedRecruiter,
         actorRole: userRole === 'technical' ? 'technical' : 'hr',
         description: `Closed ${steps[currentStepIndex].name} stage`
       });
-      // Open bulk progression modal after closing
-      setShowBulkProgressionModal(true);
     }
   };
 
-  const handleSendOffers = (selectedCandidateIds: number[], emailContent: string) => {
-    // Update candidate statuses to reflect offer sent
+  const handleSendOffers = async (selectedCandidateIds: number[], emailContent: string) => {
+    try {
+      // Map local numeric IDs to application IDs via candidateStatuses
+      const appIds = selectedCandidateIds
+        .map(id => {
+          const c = candidateStatuses.find(c => c.id === id);
+          return c?.applicationId ?? String(id);
+        });
+
+      if (appIds.length > 0) {
+        await api.recruiter.sendOffers(groupId, {
+          application_ids: appIds,
+          email_subject: `Offer for ${description || 'position'}`,
+          email_body: emailContent,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to send offers via backend:', error);
+      // Continue to update local state even if backend fails — offers UI should still reflect
+    }
+
     const updatedCandidates = candidateStatuses.map(candidate => {
       if (selectedCandidateIds.includes(candidate.id)) {
         return { ...candidate, offer: 'completed' as const };
@@ -402,7 +472,6 @@ export function EnhancedGroupOverviewV2({
     });
     setCandidateStatuses(updatedCandidates);
 
-    // Log activity
     addActivityLog({
       type: 'candidate-progressed',
       actor: assignedRecruiter,
@@ -439,7 +508,26 @@ export function EnhancedGroupOverviewV2({
     showToast(`✓ Exported ${selectedCandidateIds.length} candidate contact(s)`);
   };
 
-  const handleBulkProgression = (selectedIds: number[], action: 'progress' | 'reject' | 'hold') => {
+  const handleBulkProgression = async (selectedIds: number[], action: 'progress' | 'reject' | 'hold') => {
+    try {
+      const appIds = selectedIds
+        .map(id => {
+          const c = candidateStatuses.find(c => c.id === id);
+          return c?.applicationId ?? String(id);
+        });
+
+      if (appIds.length > 0) {
+        await api.recruiter.bulkProgressCandidates(groupId, {
+          application_ids: appIds,
+          action,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to bulk progress candidates on backend:', error);
+      showToast('Failed to update candidates — please try again');
+      return;
+    }
+
     const updatedCandidates = candidateStatuses.map(candidate => {
       if (selectedIds.includes(candidate.id)) {
         if (action === 'progress') {
@@ -456,7 +544,6 @@ export function EnhancedGroupOverviewV2({
     setCandidateStatuses(updatedCandidates);
 
     if (action === 'progress') {
-      // Move to next stage
       const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
       if (currentStepIndex < pipelineSteps.length - 1) {
         const nextStage = pipelineSteps[currentStepIndex + 1];
@@ -737,15 +824,26 @@ export function EnhancedGroupOverviewV2({
 
     if (isLastStage && stageState === 'closed') {
       return (
-        <button
-          onClick={() => setShowFinalDecisionModal(true)}
-          className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white transition-colors shadow-lg"
-        >
-          <CheckCircle size={18} />
-          <span className="font-['Arimo',sans-serif] text-[14px] font-semibold">
-            Final Decision - Send Offers
-          </span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowStageReviewPage(true)}
+            className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] text-white transition-colors"
+          >
+            <BarChart3 size={16} />
+            <span className="font-['Arimo',sans-serif] text-[14px]">
+              View Stage Results
+            </span>
+          </button>
+          <button
+            onClick={() => setShowFinalDecisionPage(true)}
+            className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white transition-colors shadow-lg"
+          >
+            <CheckCircle size={18} />
+            <span className="font-['Arimo',sans-serif] text-[14px] font-semibold">
+              Final Decision - Send Offers
+            </span>
+          </button>
+        </div>
       );
     }
 
@@ -780,7 +878,7 @@ export function EnhancedGroupOverviewV2({
     if (stageState === 'closed') {
       return (
         <button
-          onClick={() => setShowStageResults(true)}
+          onClick={() => setShowStageReviewPage(true)}
           className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] text-white transition-colors"
         >
           <BarChart3 size={16} />
@@ -847,11 +945,21 @@ export function EnhancedGroupOverviewV2({
 
     return (
       <CreateAIInterview
-        allowedTypes={aiInterviewTypesAllowed.length > 0 ? aiInterviewTypesAllowed : ['recorded']}
+        allowedTypes={aiInterviewTypesAllowed.length > 0 ? aiInterviewTypesAllowed : ['recorded', 'live']}
         onBack={() => setShowCreateAIInterview(false)}
-        onSave={(data) => {
+        onSave={async (data) => {
+          try {
+            await api.recruiter.assignInterview(groupId, {
+              interview_type: data.config.interviewType as 'live' | 'recorded',
+              config: data.config,
+              sections: data.sections
+            });
+            showToast('AI Interview configuration saved successfully');
+          } catch (error) {
+            console.error('Failed to assign interview:', error);
+            showToast('Failed to save AI Interview — please try again');
+          }
           setShowCreateAIInterview(false);
-          showToast("AI Interview Settings Saved");
         }}
       />
     );
@@ -874,6 +982,70 @@ export function EnhancedGroupOverviewV2({
       );
     }
   }
+
+  // Full-page: Stage Review Page
+  if (showStageReviewPage) {
+    const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
+    const isLastStageCheck = currentStepIndex === pipelineSteps.length - 1;
+    return (
+      <StageReviewPage
+        stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
+        stageId={currentStage}
+        candidates={candidateStatuses}
+        pipelineSteps={pipelineSteps.map(s => ({ id: s.id, name: s.name }))}
+        currentStageIndex={currentStepIndex}
+        isLastStage={isLastStageCheck}
+        startDate={pipelineSteps.find(s => s.id === currentStage)?.startDate || new Date()}
+        endDate={pipelineSteps.find(s => s.id === currentStage)?.actualEndDate || new Date()}
+        acceptanceCriteria={acceptanceCriteria}
+        onBack={() => setShowStageReviewPage(false)}
+        onProgressCandidates={(selectedIds, action) => {
+          handleBulkProgression(selectedIds, action);
+          setShowStageReviewPage(false);
+        }}
+        onFinalDecision={() => {
+          setShowStageReviewPage(false);
+          setShowFinalDecisionPage(true);
+        }}
+        onViewCandidate={onViewCandidate}
+      />
+    );
+  }
+
+  // Full-page: Final Decision Page
+  if (showFinalDecisionPage) {
+    return (
+      <FinalDecisionPage
+        groupName={groupName}
+        positionTitle={description}
+        candidates={candidateStatuses
+          .filter(c => c.progressionState === 'selected' || c.progressionState === 'active' || !c.progressionState)
+          .map(c => ({
+            id: c.id,
+            name: c.name,
+            avatar: c.avatar,
+            email: c.email || `candidate${c.id}@example.com`,
+            phone: c.phone || `+1-555-${String(c.id).padStart(4, '0')}`,
+            assessmentScore: c.assessmentScore,
+            aiInterviewScore: c.aiInterviewScore,
+            flags: c.flags,
+            meetsCriteria: c.meetsCriteria,
+            technicalVerdict: c.technicalVerdict,
+            progressionState: c.progressionState
+          }))}
+        stages={pipelineSteps.map(s => ({ id: s.id, name: s.name }))}
+        onBack={() => setShowFinalDecisionPage(false)}
+        onSendOffers={(ids, content) => {
+          handleSendOffers(ids, content);
+          setShowFinalDecisionPage(false);
+        }}
+        onExportContacts={(ids) => {
+          handleExportContacts(ids);
+        }}
+      />
+    );
+  }
+
 
   if (isLoading) {
     return (
@@ -1127,43 +1299,46 @@ export function EnhancedGroupOverviewV2({
 
             {/* Configuration Buttons - Technical Recruiter Only */}
             {userRole === 'technical' && (
-              <div className="flex gap-3">
-                {activeFlow.includes('assessment') && (
-                  <button
-                    onClick={() => {
-                      if (stageConfigLocked) {
-                        showToast('Cannot modify configuration - stage is active');
-                        return;
-                      }
-                      setShowAssessmentCreation(true);
-                    }}
-                    disabled={stageConfigLocked}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Plus size={16} />
-                    <span className="font-['Arimo',sans-serif] text-[14px]">
-                      Add Tech Assessment
-                    </span>
-                  </button>
-                )}
-                {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
-                  <button
-                    onClick={() => {
-                      if (stageConfigLocked) {
-                        showToast('Cannot modify configuration - stage is active');
-                        return;
-                      }
-                      setShowCreateAIInterview(true);
-                    }}
-                    disabled={stageConfigLocked}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Activity size={16} />
-                    <span className="font-['Arimo',sans-serif] text-[14px]">
-                      AI Interview Settings
-                    </span>
-                  </button>
-                )}
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  {activeFlow.includes('assessment') && (
+                    <button
+                      onClick={() => {
+                        if (stageConfigLocked) {
+                          showToast('Cannot modify configuration - stage is active');
+                          return;
+                        }
+                        setShowAssessmentCreation(true);
+                      }}
+                      disabled={stageConfigLocked}
+                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Plus size={16} />
+                      <span className="font-['Arimo',sans-serif] text-[14px]">
+                        Add Tech Assessment
+                      </span>
+                    </button>
+                  )}
+                  {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
+                    <button
+                      onClick={() => {
+                        if (stageConfigLocked) {
+                          showToast('Cannot modify configuration - stage is active');
+                          return;
+                        }
+                        setShowCreateAIInterview(true);
+                      }}
+                      disabled={stageConfigLocked}
+                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Activity size={16} />
+                      <span className="font-['Arimo',sans-serif] text-[14px]">
+                        AI Interview Settings
+                      </span>
+                    </button>
+                  )}
+                </div>
+
               </div>
             )}
           </div>

@@ -263,3 +263,43 @@ class IntegrityFlagsResponse(BaseModel):
 # ─── Export (CSV is handled at the route level, this schema is for request) ─
 class ExportGroupRequest(BaseModel):
     id: UUID
+
+
+# ─── Close Stage ─────────────────────────────────────────────────────────────
+
+class CloseStageRequest(BaseModel):
+    stage: str  # "assessment", "ai_interview", etc.
+
+
+class CloseStageResponse(BaseModel):
+    status: int
+    stage: str
+    closed_at: datetime
+
+
+# ─── Bulk Candidate Progression ──────────────────────────────────────────────
+
+class BulkProgressionRequest(BaseModel):
+    application_ids: list[UUID]
+    action: str  # "progress" | "reject" | "hold"
+    reason: str | None = None
+
+
+class BulkProgressionResponse(BaseModel):
+    status: int
+    updated_count: int
+    action: str
+
+
+# ─── Send Offers ──────────────────────────────────────────────────────────────
+
+class SendOffersRequest(BaseModel):
+    application_ids: list[UUID]
+    email_subject: str
+    email_body: str
+
+
+class SendOffersResponse(BaseModel):
+    status: int
+    offers_created: int
+    message: str

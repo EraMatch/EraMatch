@@ -284,5 +284,62 @@ export const recruiterService = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-    }
+    },
+
+    // Stage Management
+    startStage: async (groupId: string, stage: string) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/stages/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage })
+        });
+    },
+
+    // Interview Assignment
+    assignInterview: async (groupId: string, data: {
+        interview_type: 'live' | 'recorded';
+        config: any;
+        sections: any[];
+    }) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/interviews/assign`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    // Close Stage
+    closeStage: async (groupId: string, stage: string) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/stages/close`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage })
+        });
+    },
+
+    // Bulk Candidate Progression
+    bulkProgressCandidates: async (groupId: string, data: {
+        application_ids: string[];
+        action: 'progress' | 'reject' | 'hold';
+        reason?: string;
+    }) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/candidates/bulk-progress`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    // Send Offers
+    sendOffers: async (groupId: string, data: {
+        application_ids: string[];
+        email_subject: string;
+        email_body: string;
+    }) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/offers/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
 };
