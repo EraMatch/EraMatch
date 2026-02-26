@@ -384,6 +384,20 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
               </div>
             </div>
 
+            {/* Category */}
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Category (Optional)
+              </label>
+              <input
+                type="text"
+                value={questionData.category || ''}
+                onChange={(e) => setQuestionData({ ...questionData, category: e.target.value })}
+                placeholder="e.g., Algorithms, Data Structures..."
+                className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+              />
+            </div>
+
             {/* Tags */}
             <div>
               <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">

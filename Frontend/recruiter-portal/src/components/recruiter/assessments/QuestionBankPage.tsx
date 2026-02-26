@@ -42,6 +42,7 @@ interface QuestionVariant {
   multipleCorrect?: boolean;
   explanation?: string;
   difficulty?: 'Easy' | 'Medium' | 'Hard';
+  category?: string;
   tags?: string[];
   // Essay
   expectedKeywords?: string[];
@@ -75,6 +76,8 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const [showCreateMenu, setShowCreateMenu] = useState(false);
 
   const [loading, setLoading] = useState(true);
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  const [togglingFavorites, setTogglingFavorites] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Effects ---
@@ -92,7 +95,8 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
           usageCount: q.usageCount || 0,
           avgScore: q.avgScore || 0,
           createdAt: q.createdAt || new Date().toISOString().split('T')[0],
-          createdBy: q.createdBy || 'System'
+          createdBy: q.createdBy || 'System',
+          isFavorite: q.isFavorite || false
         }));
         setQuestions(mappedData);
       } catch (error) {
@@ -119,6 +123,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       questionText: q.text,
       type: vType,
       difficulty: q.difficulty,
+      category: q.category,
       tags: q.tags,
       explanation: q.explanation,
       // MCQ
@@ -146,7 +151,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     return {
       id: originalId || Date.now().toString(),
       text: v.questionText,
-      category: 'Uncategorized', // Editor doesn't have category field yet, default
+      category: v.category || '',
       difficulty: v.difficulty || 'Medium',
       type: qType,
       tags: v.tags || [],
@@ -178,6 +183,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       id: `new-${Date.now()}`,
       questionText: '',
       type: type,
+      category: '',
       difficulty: 'Medium',
       options: type === 'mcq' ? ['', '', '', ''] : undefined,
       correctAnswer: type === 'mcq' ? 0 : undefined
@@ -194,29 +200,59 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     setViewMode('editor');
   };
 
-  const handleEditorSave = (variant: QuestionVariant) => {
-    if (editingQuestionId) {
-      // Update existing
-      setQuestions(questions.map(q => {
-        if (q.id === editingQuestionId) {
-          const updated = fromVariant(variant, editingQuestionId);
-          // Preserve fields not in editor (like usageCount, createdBy, category)
-          return { ...q, ...updated, category: q.category };
-        }
-        return q;
-      }));
-    } else {
-      // Create new
-      const newQuestion = fromVariant(variant);
-      setQuestions([newQuestion, ...questions]);
+  const handleEditorSave = async (variant: QuestionVariant) => {
+    try {
+      setIsActionLoading(true);
+      const isUpdate = !!editingQuestionId;
+      const questionPayload = fromVariant(variant, editingQuestionId || undefined);
+
+      // Call API for create (Update not implemented yet but can be added later)
+      const res = await api.recruiter.createQuestionBank(questionPayload);
+      const newQuestion = res as unknown as Question;
+
+      if (isUpdate) {
+        setQuestions(questions.map(q => (q.id === editingQuestionId ? { ...q, ...newQuestion } : q)));
+      } else {
+        setQuestions([newQuestion, ...questions]);
+      }
+
+      setViewMode('list');
+      setEditingQuestionId(null);
+    } catch (err) {
+      console.error("Failed to save question:", err);
+      alert("Failed to save question. See console.");
+    } finally {
+      setIsActionLoading(false);
     }
-    setViewMode('list');
-    setEditingQuestionId(null);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('Are you sure you want to delete this question?')) {
-      setQuestions(questions.filter(q => q.id !== id));
+      try {
+        setIsActionLoading(true);
+        await api.recruiter.deleteQuestionBank(id);
+        setQuestions(questions.filter(q => q.id !== id));
+      } catch (err) {
+        console.error("Failed to delete question:", err);
+        alert("Failed to delete question.");
+      } finally {
+        setIsActionLoading(false);
+      }
+    }
+  };
+
+  const handleToggleFavorite = async (id: string) => {
+    try {
+      setTogglingFavorites(prev => ({ ...prev, [id]: true }));
+      const res = await api.recruiter.toggleQuestionFavorite(id);
+
+      setQuestions(questions.map(q =>
+        q.id === id ? { ...q, isFavorite: (res as any).isFavorite } : q
+      ));
+    } catch (err) {
+      console.error("Failed to toggle favorite:", err);
+    } finally {
+      setTogglingFavorites(prev => ({ ...prev, [id]: false }));
     }
   };
 
@@ -277,13 +313,19 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
 
   // --- Render Helpers ---
 
+  // Dynamically extract unique categories from questions
+  const uniqueCategories = Array.from(new Set(questions.map(q => q.category).filter(Boolean)));
+
+  const categoryIcons = [BookOpen, Code, Globe, Cpu, Database];
+
   const categories = [
     { id: 'all', label: 'All Categories', icon: BookOpen, count: questions.length },
-    { id: 'React', label: 'React', icon: Code, count: questions.filter(q => q.category === 'React').length },
-    { id: 'JavaScript', label: 'JavaScript', icon: Globe, count: questions.filter(q => q.category === 'JavaScript').length },
-    { id: 'Algorithms', label: 'Algorithms', icon: Cpu, count: questions.filter(q => q.category === 'Algorithms').length },
-    { id: 'Database', label: 'Database', icon: Database, count: questions.filter(q => q.category === 'Database').length },
-    { id: 'System Design', label: 'System Design', icon: Code, count: questions.filter(q => q.category === 'System Design').length }
+    ...uniqueCategories.map((cat, index) => ({
+      id: cat,
+      label: cat,
+      icon: categoryIcons[index % categoryIcons.length],
+      count: questions.filter(q => q.category === cat).length
+    }))
   ];
 
   const filteredQuestions = questions.filter(q => {
@@ -307,19 +349,37 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
 
   // --- Main Render ---
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-[#f9fafb]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
   if (viewMode === 'editor' && currentVariant) {
     // Render the specific editor
-    if (editorType === 'mcq') {
-      return <MCQEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />;
-    } else if (editorType === 'essay') {
-      return <EssayEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />;
-    } else if (editorType === 'code') {
-      return <CodeEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />;
-    }
+    return (
+      <div className="relative">
+        {isActionLoading && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/50 backdrop-blur-sm">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+          </div>
+        )}
+        {editorType === 'mcq' && <MCQEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />}
+        {editorType === 'essay' && <EssayEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />}
+        {editorType === 'code' && <CodeEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />}
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen p-8" onClick={() => setShowCreateMenu(false)}>
+    <div className="min-h-screen p-8 relative" onClick={() => setShowCreateMenu(false)}>
+      {isActionLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/50 backdrop-blur-sm">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+        </div>
+      )}
       <div className="max-w-[1600px] mx-auto">
         {/* Header */}
         <div className="mb-8">
@@ -570,9 +630,17 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
                         <h3 className="text-[16px] font-medium font-['Arimo',sans-serif] text-[#111827]">{question.text}</h3>
-                        {question.isFavorite && (
-                          <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
-                        )}
+                        <button
+                          onClick={() => handleToggleFavorite(question.id)}
+                          disabled={togglingFavorites[question.id]}
+                          className="focus:outline-none disabled:opacity-50"
+                        >
+                          {togglingFavorites[question.id] ? (
+                            <div className="w-4 h-4 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+                          ) : (
+                            <Star className={`w-4 h-4 ${question.isFavorite ? 'text-amber-500 fill-amber-500' : 'text-gray-300 hover:text-amber-500 hover:fill-amber-500 transition-colors'}`} />
+                          )}
+                        </button>
                       </div>
                       <div className="flex items-center gap-2 flex-wrap font-['Arimo',sans-serif]">
                         <span className={`px-2.5 py-1 text-[12px] rounded-full border ${getDifficultyColor(question.difficulty)}`}>

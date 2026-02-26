@@ -160,6 +160,18 @@ export const recruiterService = {
     // Question Bank
     getQuestionBank: async () => fetchAPI('/questions/bank'),
 
+    createQuestionBank: async (data: any) => {
+        return fetchAPI('/questions/bank', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    toggleQuestionFavorite: async (questionId: string) => fetchAPI(`/questions/bank/${questionId}/favorite`, { method: 'POST' }),
+
+    deleteQuestionBank: async (questionId: string) => fetchAPI(`/questions/bank/${questionId}`, { method: 'DELETE' }),
+
     getQuestionBankVariants: async (type: string) => fetchAPI(`/questions/variants?type=${type}`),
 
     generateQuestionVariants: async (baseVariant: any, numVariants: number = 3) => {
