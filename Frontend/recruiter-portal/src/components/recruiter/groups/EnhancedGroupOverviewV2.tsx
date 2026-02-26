@@ -153,6 +153,7 @@ export function EnhancedGroupOverviewV2({
 
   // Assessment creation state
   const [showAssessmentCreation, setShowAssessmentCreation] = useState(false);
+  const [editingAssessmentData, setEditingAssessmentData] = useState<any>(null);
   const [showCreateAIInterview, setShowCreateAIInterview] = useState(false);
   const [groupAssessments, setGroupAssessments] = useState<any[]>([]);
 
@@ -628,7 +629,7 @@ export function EnhancedGroupOverviewV2({
 
   const handleSaveAssessment = async (assessment: any) => {
     try {
-      showToast('Saving assessment...');
+      showToast(assessment.id && !assessment.id.toString().startsWith('assessment-') ? 'Updating assessment...' : 'Saving assessment...');
 
       const payload = {
         position_id: positionId, // From component state fetched on mount
@@ -645,23 +646,45 @@ export function EnhancedGroupOverviewV2({
         sections: assessment.sections
       };
 
-      const response = await api.recruiter.saveAssessment(payload);
+      if (assessment.id && !assessment.id.toString().startsWith('assessment-')) {
+        await api.recruiter.updateAssessment(assessment.id, payload);
+        const updatedAssessments = groupAssessments.map(a =>
+          a.id === assessment.id ? { ...assessment, status: a.status || 'draft' } : a
+        );
+        setGroupAssessments(updatedAssessments);
+        showToast(`Assessment "${assessment.config.title}" updated successfully!`);
+      } else {
+        const response = await api.recruiter.saveAssessment(payload);
+        const newAssessment = {
+          ...assessment,
+          id: response.assessment_id || `assessment-${Date.now()}`,
+          groupId,
+          createdAt: new Date().toISOString(),
+          createdBy: assignedRecruiter,
+          status: 'draft'
+        };
+        setGroupAssessments([...groupAssessments, newAssessment]);
+        showToast(`Assessment "${assessment.config.title}" created successfully!`);
+      }
 
-      const newAssessment = {
-        ...assessment,
-        id: response.assessment_id || `assessment-${Date.now()}`,
-        groupId,
-        createdAt: new Date().toISOString(),
-        createdBy: assignedRecruiter,
-        status: 'draft'
-      };
-
-      setGroupAssessments([...groupAssessments, newAssessment]);
       setShowAssessmentCreation(false);
-      showToast(`Assessment "${assessment.config.title}" created successfully!`);
+      setEditingAssessmentData(null);
     } catch (error) {
       console.error('Error saving assessment:', error);
       showToast('Failed to save assessment. Please try again.');
+    }
+  };
+
+  const handleDeleteAssessment = async (assessmentId: string) => {
+    if (confirm('Are you sure you want to delete this assessment?')) {
+      try {
+        await api.recruiter.deleteAssessment(assessmentId);
+        setGroupAssessments(groupAssessments.filter(a => a.id !== assessmentId));
+        showToast('Assessment deleted successfully');
+      } catch (error) {
+        console.error('Error deleting assessment:', error);
+        showToast('Failed to delete assessment');
+      }
     }
   };
 
@@ -806,7 +829,11 @@ export function EnhancedGroupOverviewV2({
   if (showAssessmentCreation) {
     return (
       <CreateAdvancedAssessment
-        onBack={() => setShowAssessmentCreation(false)}
+        initialData={editingAssessmentData}
+        onBack={() => {
+          setShowAssessmentCreation(false);
+          setEditingAssessmentData(null);
+        }}
         onSave={handleSaveAssessment}
       />
     );
@@ -1177,13 +1204,29 @@ export function EnhancedGroupOverviewV2({
                         </div>
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => {
-                              showToast('Edit assessment feature coming soon');
+                            onClick={async () => {
+                              try {
+                                showToast('Loading assessment details...');
+                                const data = await api.recruiter.getAssessment(assessment.id);
+                                setEditingAssessmentData(data);
+                                setShowAssessmentCreation(true);
+                              } catch (error) {
+                                console.error('Failed to load assessment details:', error);
+                                showToast('Failed to load assessment details for editing');
+                              }
                             }}
                             disabled={stageConfigLocked}
                             className="h-[28px] px-[12px] rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors text-[12px] text-[#374151] disabled:opacity-50"
                           >
                             Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAssessment(assessment.id)}
+                            disabled={stageConfigLocked}
+                            className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280] disabled:opacity-50"
+                            title="Delete Assessment"
+                          >
+                            <Trash2 size={14} />
                           </button>
                           <button
                             onClick={() => {

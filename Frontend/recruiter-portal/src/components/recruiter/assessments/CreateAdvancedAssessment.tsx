@@ -61,25 +61,30 @@ interface TestCase {
 interface CreateAdvancedAssessmentProps {
   onBack: () => void;
   onSave: (assessment: any) => void | Promise<void>;
+  initialData?: any;
 }
 
 type CreationStep = 'settings' | 'sections';
 
-export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAssessmentProps) {
+export function CreateAdvancedAssessment({ onBack, onSave, initialData }: CreateAdvancedAssessmentProps) {
   const [currentStep, setCurrentStep] = useState<CreationStep>('settings');
-  const [assessmentConfig, setAssessmentConfig] = useState<AssessmentConfig>({
-    title: '',
-    description: '',
-    duration: 60,
-    passingScore: 70,
-    difficulty: 'Medium',
-    randomizeQuestions: true,
-    showResults: true,
-    allowReview: true,
-    proctoring: false
+  const [assessmentConfig, setAssessmentConfig] = useState<AssessmentConfig>(() => {
+    if (initialData?.config) return initialData.config;
+    return {
+      title: '',
+      description: '',
+      duration: 60,
+      passingScore: 70,
+      difficulty: 'Medium',
+      randomizeQuestions: true,
+      showResults: true,
+      allowReview: true,
+      proctoring: false
+    };
   });
-  const [sections, setSections] = useState<Section[]>([]);
+  const [sections, setSections] = useState<Section[]>(initialData?.sections || []);
   const [currentSectionIndex, setCurrentSectionIndex] = useState<number | null>(null);
+  const [addingSectionId, setAddingSectionId] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [expandedVariants, setExpandedVariants] = useState<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -100,6 +105,7 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
     };
     setSections([...sections, newSection]);
     setCurrentSectionIndex(sections.length);
+    setAddingSectionId(newSection.id);
   };
 
   const handleSectionUpdate = (sectionId: string, updatedSection: Section) => {
@@ -135,6 +141,7 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
     setIsSubmitting(true);
     try {
       const assessment = {
+        id: initialData?.id,
         config: assessmentConfig,
         sections: sections
       };
@@ -165,8 +172,17 @@ export function CreateAdvancedAssessment({ onBack, onSave }: CreateAdvancedAsses
     return (
       <SectionEditor
         section={sections[currentSectionIndex]}
-        onSave={(updatedSection) => handleSectionUpdate(sections[currentSectionIndex].id, updatedSection)}
-        onCancel={() => setCurrentSectionIndex(null)}
+        onSave={(updatedSection) => {
+          handleSectionUpdate(sections[currentSectionIndex].id, updatedSection);
+          setAddingSectionId(null);
+        }}
+        onCancel={() => {
+          if (addingSectionId === sections[currentSectionIndex].id) {
+            handleDeleteSection(sections[currentSectionIndex].id);
+          }
+          setCurrentSectionIndex(null);
+          setAddingSectionId(null);
+        }}
       />
     );
   }

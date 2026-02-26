@@ -78,13 +78,23 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
   };
 
   const handleQuestionTypeSelect = (type: 'mcq' | 'essay' | 'code') => {
+    if (currentSection.variants.length > 0) {
+      alert('You cannot change the section type while it has existing variants. Please delete all variants first.');
+      return;
+    }
     setCurrentSection({ ...currentSection, type });
   };
 
   const handleAddVariant = (variant: QuestionVariant) => {
+    let newId = variant.id || `variant-${Date.now()}`;
+    // Prevent duplicate keys if the same bank question is added twice
+    if (currentSection.variants.some(v => v.id === newId)) {
+      newId = `${newId}-${Date.now()}`;
+    }
+
     setCurrentSection({
       ...currentSection,
-      variants: [...currentSection.variants, { ...variant, id: `variant-${Date.now()}` }]
+      variants: [...currentSection.variants, { ...variant, id: newId }]
     });
     setCreationMethod(null);
     setEditingVariant(null);
@@ -92,6 +102,16 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
 
   const handleUpdateVariant = (index: number, variant: QuestionVariant) => {
     const newVariants = [...currentSection.variants];
+    const oldVariant = newVariants[index];
+
+    // If the variant was edited and its ID is a UUID (meaning it came from DB),
+    // we fork it by assigning a new frontend ID. This signals the backend to create 
+    // a new QuestionBank entry instead of linking to the unchanged one.
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(oldVariant.id);
+    if (isUUID && JSON.stringify(oldVariant) !== JSON.stringify(variant)) {
+      variant.id = `variant-${Date.now()}`;
+    }
+
     newVariants[index] = variant;
     setCurrentSection({ ...currentSection, variants: newVariants });
     setEditingVariant(null);
@@ -211,10 +231,11 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
             <div className="grid grid-cols-3 gap-4">
               <button
                 onClick={() => handleQuestionTypeSelect('mcq')}
+                disabled={currentSection.variants.length > 0 && currentSection.type !== 'mcq'}
                 className={`p-6 rounded-[12px] border-2 transition-all ${currentSection.type === 'mcq'
                   ? 'border-blue-500 bg-blue-50'
                   : 'border-[#e5e7eb] bg-white hover:border-blue-300'
-                  }`}
+                  } ${(currentSection.variants.length > 0 && currentSection.type !== 'mcq') ? 'opacity-50 cursor-not-allowed hover:border-[#e5e7eb]' : ''}`}
               >
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 mx-auto ${currentSection.type === 'mcq' ? 'bg-blue-500' : 'bg-[#f9fafb]'
                   }`}>
@@ -233,10 +254,11 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
 
               <button
                 onClick={() => handleQuestionTypeSelect('essay')}
+                disabled={currentSection.variants.length > 0 && currentSection.type !== 'essay'}
                 className={`p-6 rounded-[12px] border-2 transition-all ${currentSection.type === 'essay'
                   ? 'border-purple-500 bg-purple-50'
                   : 'border-[#e5e7eb] bg-white hover:border-purple-300'
-                  }`}
+                  } ${(currentSection.variants.length > 0 && currentSection.type !== 'essay') ? 'opacity-50 cursor-not-allowed hover:border-[#e5e7eb]' : ''}`}
               >
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 mx-auto ${currentSection.type === 'essay' ? 'bg-purple-500' : 'bg-[#f9fafb]'
                   }`}>
@@ -255,10 +277,11 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
 
               <button
                 onClick={() => handleQuestionTypeSelect('code')}
+                disabled={currentSection.variants.length > 0 && currentSection.type !== 'code'}
                 className={`p-6 rounded-[12px] border-2 transition-all ${currentSection.type === 'code'
                   ? 'border-emerald-500 bg-emerald-50'
                   : 'border-[#e5e7eb] bg-white hover:border-emerald-300'
-                  }`}
+                  } ${(currentSection.variants.length > 0 && currentSection.type !== 'code') ? 'opacity-50 cursor-not-allowed hover:border-[#e5e7eb]' : ''}`}
               >
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 mx-auto ${currentSection.type === 'code' ? 'bg-emerald-500' : 'bg-[#f9fafb]'
                   }`}>
@@ -419,8 +442,8 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                                   </span>
                                 )}
                                 <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${variant.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
-                                    variant.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
-                                      'bg-red-100 text-red-700'
+                                  variant.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                    'bg-red-100 text-red-700'
                                   }`}>
                                   {variant.difficulty}
                                 </span>

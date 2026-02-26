@@ -12,7 +12,7 @@ interface Question {
   text: string;
   category: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
-  type: 'Multiple Choice' | 'Code' | 'Essay' | 'True/False';
+  type: 'Multiple Choice' | 'Code' | 'Essay';
   tags: string[];
   usageCount: number;
   avgScore: number;
@@ -114,7 +114,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const toVariant = (q: Question): QuestionVariant => {
     // Map Question -> QuestionVariant
     let vType: 'mcq' | 'essay' | 'code' = 'mcq';
-    if (q.type === 'Multiple Choice' || q.type === 'True/False') vType = 'mcq';
+    if (q.type === 'Multiple Choice') vType = 'mcq';
     else if (q.type === 'Code') vType = 'code';
     else if (q.type === 'Essay') vType = 'essay';
 
@@ -603,7 +603,6 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                         <option value="Multiple Choice">Multiple Choice</option>
                         <option value="Code">Code</option>
                         <option value="Essay">Essay</option>
-                        <option value="True/False">True/False</option>
                       </select>
                       <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af] pointer-events-none" />
                     </div>

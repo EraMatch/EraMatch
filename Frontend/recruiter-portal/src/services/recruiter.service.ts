@@ -143,6 +143,24 @@ export const recruiterService = {
     getPipelineModules: async () => fetchAPI<any[]>('/recruiter/pipeline-modules'),
 
     // Assessment Management
+    getAssessment: async (assessmentId: string) => {
+        return fetchAPI(`/assessments/${assessmentId}`);
+    },
+
+    updateAssessment: async (assessmentId: string, data: any) => {
+        return fetchAPI(`/assessments/${assessmentId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    deleteAssessment: async (assessmentId: string) => {
+        return fetchAPI(`/assessments/${assessmentId}`, {
+            method: 'DELETE'
+        });
+    },
+
     getAssessmentDetails: async (candidateId: number) => fetchAPI(`/candidates/${candidateId}/assessment-details`),
 
     getAssessmentTemplates: async () => fetchAPI('/assessments/templates'),
