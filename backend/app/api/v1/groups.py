@@ -222,6 +222,21 @@ async def assign_interview(
     return await svc.assign_interview(group_id, body)
 
 
+@router.delete(
+    "/recruiter/groups/{group_id}/interviews/{interview_id}",
+)
+async def delete_group_interview(
+    group_id: UUID,
+    interview_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Soft-delete an AI interview config and remove its association from 
+    the group pipeline."""
+    svc = GroupService(session, current_user)
+    return await svc.delete_interview(group_id, interview_id)
+
+
 # ─── Update Acceptance Criteria ──────────────────────────────────────────────
 
 @router.put(

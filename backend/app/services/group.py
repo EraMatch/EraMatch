@@ -58,7 +58,8 @@ from app.schemas.group import (
     CandidateScores,
     CandidateStageStatus,
     FiltrationFlowStage,
-    GroupAssessmentItem, 
+    GroupAssessmentItem,
+    GroupInterviewItem,
     GroupDetailResponse,
     GroupStatsResponse,
     IntegrityFlag,
@@ -277,8 +278,10 @@ class GroupService:
         for sc in stage_configs:
             if sc.stage_type == "assessment" and sc.acceptance_criteria:
                 assessment_config_id = sc.acceptance_criteria.get("assessment_id") if isinstance(sc.acceptance_criteria, dict) else None
-            if sc.stage_type == "ai_interview" and sc.acceptance_criteria:
-                interview_config_id = sc.acceptance_criteria.get("interview_config_id") if isinstance(sc.acceptance_criteria, dict) else None
+            if sc.stage_type in ["ai_interview", "live_interview"] and sc.acceptance_criteria:
+                found_id = sc.acceptance_criteria.get("interview_config_id") if isinstance(sc.acceptance_criteria, dict) else None
+                if found_id:
+                    interview_config_id = found_id
 
         # Acceptance criteria — merge from all stage configs
         criteria = AcceptanceCriteriaResponse()
@@ -363,6 +366,35 @@ class GroupService:
                     )
                 )
 
+        interviews_res = await self.session.execute(
+            select(AIInterviewConfig).where(
+                AIInterviewConfig.position_id == group.position_id,
+                AIInterviewConfig.is_deleted == False
+            ).order_by(AIInterviewConfig.created_at.desc())
+        )
+        interviews_db = interviews_res.scalars().all()
+
+        interviews_data = []
+        if interviews_db:
+            if not interview_config_id:
+                interview_config_id = interviews_db[0].config_id
+
+            for ic_db in interviews_db:
+                q_count = len(ic_db.questions.get("items", [])) if isinstance(ic_db.questions, dict) else 0
+                interviews_data.append(
+                    GroupInterviewItem(
+                        id=ic_db.config_id,
+                        title=ic_db.title,
+                        interview_type=ic_db.interview_type,
+                        max_retakes=ic_db.max_retakes,
+                        questions_count=q_count,
+                        instructions=ic_db.instructions,
+                        questions=ic_db.questions,
+                        think_time_seconds=ic_db.think_time_seconds,
+                        answer_time_seconds=ic_db.answer_time_seconds,
+                        live_interview_context=ic_db.live_interview_context
+                    )
+                )
         return GroupDetailResponse(
             id=group.id,
             name=group.group_name,
@@ -378,7 +410,8 @@ class GroupService:
             acceptance_criteria=criteria,
             candidates=candidates,
             pipeline_stages=pipeline_stages,
-            assessments=assessments_data
+            assessments=assessments_data,
+            interviews=interviews_data
         )
 
     # ── 2. GET /recruiter/groups/{groupId}/stats ──────────────────────────────
@@ -826,23 +859,37 @@ class GroupService:
             # Validate existence
             res = await self.session.execute(
                 select(AIInterviewConfig).where(
-                    AIInterviewConfig.id == data.interview_config_id,
+                    AIInterviewConfig.config_id == data.interview_config_id,
                     AIInterviewConfig.organization_id == self.org_id,
                 )
             )
             cfg = res.scalars().first()
             if not cfg:
                 return AssignInterviewResponse(status=-1, message="Interview configuration not found")
-            config_id = cfg.id
+            
+            # If config data is provided, update existing
+            if data.interview_config:
+                ic = data.interview_config
+                cfg.title = ic.get("title", cfg.title)
+                cfg.instructions = ic.get("instructions", cfg.instructions)
+                cfg.max_retakes = ic.get("max_retakes", cfg.max_retakes)
+                cfg.questions = ic.get("questions", cfg.questions)
+                cfg.live_interview_context = ic.get("live_interview_context", cfg.live_interview_context)
+                cfg.updated_at = datetime.utcnow()
+                self.session.add(cfg)
+            
+            config_id = cfg.config_id
+            ic_type = cfg.interview_type
 
         elif data.create_new and data.interview_config:
             # Create new AI interview config
             ic = data.interview_config
+            ic_type = ic.get("interview_type", "recorded")
             new_cfg = AIInterviewConfig(
                 organization_id=self.org_id,
                 position_id=group.position_id,
                 title=ic.get("title", "Untitled Interview"),
-                interview_type=ic.get("interview_type", "recorded"),
+                interview_type=ic_type,
                 instructions=ic.get("instructions"),
                 max_retakes=ic.get("max_retakes", 1),
                 questions=ic.get("questions", []),
@@ -850,15 +897,17 @@ class GroupService:
             )
             self.session.add(new_cfg)
             await self.session.flush()
-            config_id = new_cfg.id
+            config_id = new_cfg.config_id
         else:
             return AssignInterviewResponse(status=-1, message="Provide interview_config_id or create_new with config")
+
+        stage_type_to_update = "live_interview" if ic_type == "live" else "ai_interview"
 
         # Update the group's AI interview stage config
         sc_res = await self.session.execute(
             select(GroupStageConfig).where(
                 GroupStageConfig.group_id == group_id,
-                GroupStageConfig.stage_type == "ai_interview",
+                GroupStageConfig.stage_type == stage_type_to_update,
             )
         )
         sc = sc_res.scalars().first()
@@ -883,6 +932,38 @@ class GroupService:
             interview_config_id=config_id,
             message="Interview configuration successfully assigned to group",
         )
+
+    async def delete_interview(self, group_id: UUID, interview_id: UUID) -> dict:
+        """Removes interview ID from stage config and soft-deletes the config itself."""
+        # 1. Soft delete the config itself
+        res = await self.session.execute(
+            select(AIInterviewConfig).where(
+                AIInterviewConfig.config_id == interview_id,
+                AIInterviewConfig.organization_id == self.org_id
+            )
+        )
+        cfg = res.scalars().first()
+        if cfg:
+            cfg.is_deleted = True
+            self.session.add(cfg)
+
+        # 2. Cleanup GroupStageConfig referencing this interview
+        sc_res = await self.session.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == group_id
+            )
+        )
+        stage_configs = sc_res.scalars().all()
+        for sc in stage_configs:
+            if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
+                if str(sc.acceptance_criteria.get("interview_config_id")) == str(interview_id):
+                    criteria = sc.acceptance_criteria.copy()
+                    del criteria["interview_config_id"]
+                    sc.acceptance_criteria = criteria
+                    self.session.add(sc)
+
+        await self.session.commit()
+        return {"status": 1, "message": "Interview deleted successfully"}
 
     # ── 9. PUT /recruiter/groups/{groupId}/acceptance-criteria ────────────────
 

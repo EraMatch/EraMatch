@@ -483,8 +483,8 @@ class AIInterviewConfig(SQLModel, table=True):
     __tablename__ = "ai_interview_configs"
     
     config_id: UUID = Field(default_factory=uuid4, primary_key=True)
-    organization_id: UUID = Field(foreign_key="organizations.id")
-    position_id: UUID | None = Field(default=None, foreign_key="positions.id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    position_id: UUID | None = Field(default=None, foreign_key="positions.position_id")
     title: str = Field(max_length=255)
     interview_type: str = Field(max_length=20)  # recorded, live_ai
     instructions: str | None = Field(default=None, sa_column=Column(Text))
@@ -493,7 +493,7 @@ class AIInterviewConfig(SQLModel, table=True):
     answer_time_seconds: int | None = Field(default=120)
     questions: dict = Field(sa_column=Column(JSONB))
     live_interview_context: str | None = Field(default=None, sa_column=Column(Text))
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.id")
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
@@ -506,7 +506,7 @@ class OngoingInterview(SQLModel, table=True):
     session_id: UUID = Field(default_factory=uuid4, primary_key=True)
     config_id: UUID = Field(foreign_key="ai_interview_configs.config_id")
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
-    organization_id: UUID = Field(foreign_key="organizations.id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
     interview_type: str = Field(max_length=20)
     status: str = Field(default="not_started", max_length=20)
     started_at: datetime | None = Field(default=None)

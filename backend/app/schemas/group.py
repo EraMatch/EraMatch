@@ -80,6 +80,19 @@ class GroupAssessmentItem(BaseModel):
     sections: list = []
 
 
+class GroupInterviewItem(BaseModel):
+    id: UUID
+    title: str
+    interview_type: str
+    max_retakes: int
+    questions_count: int
+    instructions: str | None = None
+    questions: dict = {}
+    think_time_seconds: int | None = None
+    answer_time_seconds: int | None = None
+    live_interview_context: str | None = None
+
+
 class GroupDetailResponse(BaseModel):
     id: UUID
     name: str
@@ -96,6 +109,7 @@ class GroupDetailResponse(BaseModel):
     candidates: list[CandidateProgressItem] = []
     pipeline_stages: list[PipelineStage] = Field(default_factory=list, alias="pipelineStages")
     assessments: list[GroupAssessmentItem] = []
+    interviews: list[GroupInterviewItem] = []
 
     class Config:
         populate_by_name = True
