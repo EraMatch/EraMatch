@@ -1,4 +1,4 @@
-import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders } from 'lucide-react';
+import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -79,6 +79,11 @@ export function PositionDetailView({
   const [seniorityDistribution, setSeniorityDistribution] = useState<any[]>([]);
   const [universityDistribution, setUniversityDistribution] = useState<any[]>([]);
   const [availabilityDistribution, setAvailabilityDistribution] = useState<any[]>([]);
+  const [conversion, setConversion] = useState<number>(0);
+  const [qualityScore, setQualityScore] = useState<number>(0);
+  const [integrityIssues, setIntegrityIssues] = useState<number>(0);
+  const [sourceQuality, setSourceQuality] = useState<any[]>([]);
+  const [topCompanies, setTopCompanies] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editPositionTitle, setEditPositionTitle] = useState(positionTitle);
@@ -196,9 +201,11 @@ export function PositionDetailView({
         setSeniorityDistribution(insights.seniorityDistribution || []);
         setUniversityDistribution(insights.universityDistribution || []);
         setAvailabilityDistribution(insights.availabilityDistribution || []);
-        setSeniorityDistribution(insights.seniorityDistribution);
-        setUniversityDistribution(insights.universityDistribution);
-        setAvailabilityDistribution(insights.availabilityDistribution);
+        setConversion(insights.conversion || 0);
+        setQualityScore(insights.qualityScore || 0);
+        setIntegrityIssues(insights.integrityIssues || 0);
+        setSourceQuality(insights.sourceQuality || []);
+        setTopCompanies(insights.topCompanies || []);
       } catch (error) {
         console.error('Failed to fetch position details:', error);
       } finally {
@@ -841,139 +848,219 @@ export function PositionDetailView({
 
         {/* Insights Tab Content */}
         {activeTab === 'insights' && (
-          <div className="w-full">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
-                Role Insights
-              </h2>
-              <button className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors">
-                <Download size={18} className="text-[#6b7280]" />
-                <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                  Export Insights
+          <div className="w-full animate-in fade-in duration-500">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 className="font-['Arimo',sans-serif] text-[24px] font-semibold text-slate-900 tracking-tight">
+                  Role Insights
+                </h2>
+                <p className="text-[14px] text-slate-500 mt-1 font-['Arimo',sans-serif]">
+                  AI-powered analytics and candidate distribution metrics
+                </p>
+              </div>
+              <button className="flex items-center gap-2 h-[40px] px-[20px] rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:shadow-sm transition-all focus:ring-2 focus:ring-indigo-500/20 active:scale-95">
+                <Download size={18} className="text-slate-500" />
+                <span className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-700">
+                  Export Report
                 </span>
               </button>
             </div>
 
-            {/* Candidate Analytics Charts */}
-            <div className="grid grid-cols-2 gap-6 mb-6">
-              {/* Candidate Fitting Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm flex flex-col">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-8">
-                  Candidate Fitting Distribution
-                </h3>
-                <div className="flex-1 flex items-center justify-center">
-                  <div className="relative flex items-center justify-center pt-6 pb-4" style={{ minHeight: '340px' }}>
-                    {/* Pie Chart Container */}
-                    <div className="relative" style={{ width: '280px', height: '280px', minWidth: '280px', minHeight: '280px' }}>
-                      <ResponsiveContainer width={280} height={280}>
-                        <PieChart>
-                          <Pie
-                            data={fittingData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={0}
-                            outerRadius={120}
-                            paddingAngle={1}
-                            dataKey="value"
-                            startAngle={90}
-                            endAngle={450}
-                          >
-                            {fittingData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.color} stroke="white" strokeWidth={2} />
-                            ))}
-                          </Pie>
-                        </PieChart>
-                      </ResponsiveContainer>
-
-                      {/* Labels positioned around the pie */}
-                      {fittingData.map((item, index) => {
-                        // Position labels based on index for simplicity in this specific layout
-                        // 0: Excellent (Top Right), 1: Good (Left), 2: Fair (Bottom), 3: Poor (Right)
-                        // This matches the order in the mock data
-                        const positions = [
-                          { top: '40px', right: '-120px' }, // Excellent
-                          { top: '120px', left: '-80px' },   // Good
-                          { bottom: '-8px', left: '50%', transform: 'translateX(-50%)' }, // Fair
-                          { top: '120px', right: '-70px' }  // Poor
-                        ];
-                        const pos = positions[index] || {};
-
-                        return (
-                          <div key={index} className="absolute" style={pos}>
-                            <span className="font-['Arimo',sans-serif] text-[14px] whitespace-nowrap" style={{ color: item.color }}>
-                              {item.name} ({index === 3 ? '<40%' : index === 2 ? '40-59%' : index === 1 ? '60-79%' : '80-100%'}): {item.value}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
+            {/* Top KPI Cards */}
+            <div className="grid grid-cols-3 gap-6 mb-8">
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-md transition-all">
+                <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:opacity-40 transition-opacity">
+                  <Target size={48} className="text-indigo-600" />
+                </div>
+                <div className="relative z-10">
+                  <p className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-500 mb-2 mt-1">Conversion Rate</p>
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="font-['Arimo',sans-serif] text-[36px] font-bold text-slate-900">{conversion}%</h3>
+                  </div>
+                  <div className="mt-4 flex items-center gap-1.5 text-emerald-600 bg-emerald-50 w-fit px-2 py-1 rounded-md">
+                    <TrendingUp size={14} />
+                    <span className="text-[12px] font-semibold text-emerald-700">+2.4% vs avg</span>
                   </div>
                 </div>
               </div>
 
-              {/* Score Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm flex flex-col">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-8">
-                  Score Distribution
-                </h3>
-                <div className="flex-1 flex items-center justify-center">
-                  <div style={{ width: '100%', height: '340px', minHeight: '340px' }}>
-                    <ResponsiveContainer width="100%" height={340}>
-                      <BarChart data={scoreData} margin={{ top: 10, right: 20, left: -10, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#d1d5db" vertical={true} horizontal={true} />
-                        <XAxis
-                          dataKey="range"
-                          axisLine={{ stroke: '#6b7280' }}
-                          tickLine={false}
-                          tick={{ fill: '#6b7280', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
-                        />
-                        <YAxis
-                          axisLine={{ stroke: '#6b7280' }}
-                          tickLine={false}
-                          tick={{ fill: '#6b7280', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
-                          domain={[0, 4]}
-                          ticks={[0, 1, 2, 3, 4]}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: '#374151',
-                            border: 'none',
-                            borderRadius: '6px',
-                            color: 'white',
-                            fontSize: '12px',
-                            fontFamily: 'Arimo, sans-serif'
-                          }}
-                          cursor={{ fill: 'rgba(99, 102, 241, 0.1)' }}
-                        />
-                        <Bar dataKey="count" fill="#5b21b6" radius={[4, 4, 0, 0]} maxBarSize={80} />
-                      </BarChart>
-                    </ResponsiveContainer>
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-md transition-all">
+                <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:opacity-40 transition-opacity">
+                  <Award size={48} className="text-violet-600" />
+                </div>
+                <div className="relative z-10">
+                  <p className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-500 mb-2 mt-1">Quality Score</p>
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="font-['Arimo',sans-serif] text-[36px] font-bold text-slate-900">{qualityScore}<span className="text-[20px] text-slate-400">/10</span></h3>
+                  </div>
+                  <div className="mt-4 flex items-center gap-1.5 text-indigo-600 bg-indigo-50 w-fit px-2 py-1 rounded-md">
+                    <Sparkles size={14} />
+                    <span className="text-[12px] font-semibold text-indigo-700">High potential</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-md transition-all">
+                <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:opacity-40 transition-opacity">
+                  <ShieldCheck size={48} className={integrityIssues > 0 ? "text-amber-500" : "text-emerald-500"} />
+                </div>
+                <div className="relative z-10">
+                  <p className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-500 mb-2 mt-1">Integrity Flags</p>
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="font-['Arimo',sans-serif] text-[36px] font-bold text-slate-900">{integrityIssues}</h3>
+                  </div>
+                  <div className={`mt-4 flex items-center gap-1.5 w-fit px-2 py-1 rounded-md ${integrityIssues > 0 ? 'text-amber-700 bg-amber-50' : 'text-emerald-700 bg-emerald-50'}`}>
+                    <CheckCircle size={14} />
+                    <span className={`text-[12px] font-semibold ${integrityIssues > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>{integrityIssues > 0 ? 'Review needed' : 'All clear'}</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Insights Grid */}
-            <div className="grid grid-cols-2 gap-6 mb-6">
-              {/* Skill Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
-                  Skill Distribution
+            {/* Main Charts */}
+            <div className="grid grid-cols-2 gap-6 mb-8">
+              {/* Candidate Fitting Donut */}
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100 flex flex-col">
+                <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900 mb-2">
+                  Matching Accuracy
                 </h3>
-                <div className="space-y-3">
-                  {skillDistribution.map((item, index) => (
-                    <div key={index}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-                          {item.skill}
-                        </span>
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                          {item.count} candidates ({item.percentage}%)
+                <p className="text-[13px] text-slate-500 mb-6 font-['Arimo',sans-serif]">Distribution of candidate fit relative to job requirements.</p>
+                <div className="flex-1 flex items-center justify-between gap-4">
+                  <div className="relative flex items-center justify-center w-[220px] h-[220px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-3 rounded-xl shadow-lg">
+                                  <p className="font-['Arimo',sans-serif] text-[14px] font-semibold text-slate-800">{data.name}</p>
+                                  <p className="font-['Arimo',sans-serif] text-[13px] text-slate-600">{data.value} Candidates</p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Pie
+                          data={fittingData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={65}
+                          outerRadius={90}
+                          paddingAngle={5}
+                          dataKey="value"
+                          stroke="none"
+                          cornerRadius={8}
+                        >
+                          {fittingData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} style={{ filter: `drop-shadow(0px 4px 12px ${entry.color}40)` }} />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <span className="text-[28px] font-bold text-slate-900 tracking-tight font-['Arimo',sans-serif]">
+                        {fittingData.reduce((acc, curr) => acc + curr.value, 0)}
+                      </span>
+                      <span className="text-[11px] text-slate-500 font-medium font-['Arimo',sans-serif] uppercase tracking-wider">
+                        Total Pool
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex-1 space-y-3 pr-4">
+                    {fittingData.map((item, index) => (
+                      <div key={index} className="flex items-center justify-between group">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                          <span className="text-[14px] font-medium text-slate-700 font-['Arimo',sans-serif]">{item.name}</span>
+                        </div>
+                        <span className="text-[14px] font-bold text-slate-900 font-['Arimo',sans-serif]">
+                          {item.value}
                         </span>
                       </div>
-                      <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Match Score Spectrum Bar Chart */}
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100 flex flex-col">
+                <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900 mb-2">
+                  Match Score Spectrum
+                </h3>
+                <p className="text-[13px] text-slate-500 mb-6 font-['Arimo',sans-serif]">Granular distribution of AI matching scores across the applicant pool.</p>
+                <div className="flex-1 w-full h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={scoreData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.9} />
+                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.6} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis
+                        dataKey="range"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#64748b', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
+                        dy={10}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#64748b', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
+                        dx={-10}
+                      />
+                      <Tooltip
+                        cursor={{ fill: '#f8fafc' }}
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            return (
+                              <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-3 rounded-xl shadow-lg">
+                                <p className="font-['Arimo',sans-serif] text-[13px] text-slate-500 mb-1">Range: <span className="font-semibold text-slate-800">{payload[0].payload.range}</span></p>
+                                <p className="font-['Arimo',sans-serif] text-[14px] font-bold text-indigo-600">{payload[0].value} Candidates</p>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Bar dataKey="count" fill="url(#colorCount)" radius={[6, 6, 0, 0]} maxBarSize={60} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Metrics Grids */}
+            <div className="grid grid-cols-2 gap-6 mb-8">
+              {/* Skill Distribution */}
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                    <Sparkles size={16} className="text-indigo-600" />
+                  </div>
+                  <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900">
+                    Skill Frequency
+                  </h3>
+                </div>
+                <div className="space-y-4">
+                  {skillDistribution.map((item, index) => (
+                    <div key={index} className="group cursor-default">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-700 group-hover:text-indigo-600 transition-colors">
+                          {item.skill}
+                        </span>
+                        <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-slate-500">
+                          {item.percentage}%
+                        </span>
+                      </div>
+                      <div className="w-full h-[8px] bg-slate-100 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-[#10b981]"
+                          className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 rounded-full transition-all duration-700 ease-out group-hover:shadow-[0_0_8px_rgba(99,102,241,0.5)]"
                           style={{ width: `${item.percentage}%` }}
                         />
                       </div>
@@ -983,24 +1070,29 @@ export function PositionDetailView({
               </div>
 
               {/* Seniority Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
-                  Seniority Distribution
-                </h3>
-                <div className="space-y-3">
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                    <Target size={16} className="text-emerald-600" />
+                  </div>
+                  <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900">
+                    Experience Levels
+                  </h3>
+                </div>
+                <div className="space-y-4">
                   {seniorityDistribution.map((item, index) => (
-                    <div key={index}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
+                    <div key={index} className="group cursor-default">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-700 group-hover:text-emerald-600 transition-colors">
                           {item.level}
                         </span>
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                          {item.count} candidates ({item.percentage}%)
+                        <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-slate-500">
+                          {item.percentage}%
                         </span>
                       </div>
-                      <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                      <div className="w-full h-[8px] bg-slate-100 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-[#6366f1]"
+                          className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-full transition-all duration-700 ease-out group-hover:shadow-[0_0_8px_rgba(16,185,129,0.5)]"
                           style={{ width: `${item.percentage}%` }}
                         />
                       </div>
@@ -1010,43 +1102,61 @@ export function PositionDetailView({
               </div>
 
               {/* University Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
-                  University Distribution
-                </h3>
-                <div className="space-y-3">
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
+                    <Award size={16} className="text-blue-600" />
+                  </div>
+                  <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900">
+                    Alumni Networks
+                  </h3>
+                </div>
+                <div className="space-y-4">
                   {universityDistribution.map((item, index) => (
-                    <div key={index} className="flex items-center justify-between">
-                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-                        {item.university}
-                      </span>
-                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                        {item.count} candidates
-                      </span>
+                    <div key={index} className="group cursor-default">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-700 group-hover:text-blue-600 transition-colors truncate pr-4">
+                          {item.university}
+                        </span>
+                        <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-slate-500 whitespace-nowrap">
+                          {item.percentage}%
+                        </span>
+                      </div>
+                      <div className="w-full h-[8px] bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full transition-all duration-700 ease-out group-hover:shadow-[0_0_8px_rgba(59,130,246,0.5)]"
+                          style={{ width: `${item.percentage}%` }}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
 
               {/* Availability Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
-                  Availability Distribution
-                </h3>
-                <div className="space-y-3">
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center">
+                    <Calendar size={16} className="text-orange-600" />
+                  </div>
+                  <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900">
+                    Hiring Outlook
+                  </h3>
+                </div>
+                <div className="space-y-4">
                   {availabilityDistribution.map((item, index) => (
-                    <div key={index}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-                          {(item as any).availability}
+                    <div key={index} className="group cursor-default">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-700 group-hover:text-orange-600 transition-colors">
+                          {item.availability}
                         </span>
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                          {item.count} candidates ({item.percentage}%)
+                        <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-slate-500">
+                          {item.percentage}%
                         </span>
                       </div>
-                      <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                      <div className="w-full h-[8px] bg-slate-100 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-[#f59e0b]"
+                          className="h-full bg-gradient-to-r from-orange-400 to-orange-600 rounded-full transition-all duration-700 ease-out group-hover:shadow-[0_0_8px_rgba(249,115,22,0.5)]"
                           style={{ width: `${item.percentage}%` }}
                         />
                       </div>
@@ -1056,30 +1166,112 @@ export function PositionDetailView({
               </div>
             </div>
 
-            {/* Assessment Performance */}
-            <div className="bg-white rounded-[12px] p-6 shadow-sm">
-              <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
-                Assessment Performance Distribution
-              </h3>
-              <div style={{ width: '100%', height: '300px', minHeight: '300px' }}>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={scoreData} margin={{ top: 10, right: 20, left: -10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#d1d5db" />
-                    <XAxis
-                      dataKey="range"
-                      axisLine={{ stroke: '#6b7280' }}
-                      tick={{ fill: '#6b7280', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
-                    />
-                    <YAxis
-                      axisLine={{ stroke: '#6b7280' }}
-                      tick={{ fill: '#6b7280', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
-                    />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+            {/* Sourcing Intelligence Section - The Surprise Surprise! */}
+            <div className="mb-8 overflow-hidden rounded-[24px] border border-indigo-100 bg-gradient-to-br from-indigo-50/10 to-white p-1">
+              <div className="bg-white rounded-[22px] p-6">
+                <div className="flex items-center justify-between mb-8">
+                  <div>
+                    <h3 className="font-['Arimo',sans-serif] text-[18px] font-bold text-slate-900 border-l-4 border-indigo-500 pl-4 mb-1">
+                      Talent Intelligence & Sourcing ROI
+                    </h3>
+                    <p className="text-[13px] text-slate-500 font-['Arimo',sans-serif] pl-5">Identifying high-performing talent channels and originating pipelines through AI matching.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-8">
+                  {/* Source ROI */}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2 mb-6">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                        <Globe size={16} className="text-indigo-600" />
+                      </div>
+                      <h4 className="font-['Arimo',sans-serif] text-[15px] font-semibold text-slate-800">Channel Performance ROI</h4>
+                    </div>
+
+                    <div className="h-[220px] w-full">
+                      {sourceQuality.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart layout="vertical" data={sourceQuality} margin={{ left: 20, right: 30, top: 0, bottom: 0 }}>
+                            <XAxis type="number" hide domain={[0, 100]} />
+                            <YAxis
+                              dataKey="source"
+                              type="category"
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{ fill: '#64748b', fontSize: 13, fontWeight: 500 }}
+                              width={90}
+                            />
+                            <Tooltip
+                              cursor={{ fill: 'transparent' }}
+                              content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                  return (
+                                    <div className="bg-slate-900 text-white p-2 rounded-lg text-[12px] shadow-xl border border-slate-800">
+                                      <p className="font-bold">{payload[0].payload.source}</p>
+                                      <p className="text-indigo-300">Avg Quality: {payload[0].value}%</p>
+                                      <p className="text-slate-400">Total: {payload[0].payload.count} apps</p>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              }}
+                            />
+                            <Bar
+                              dataKey="avgScore"
+                              radius={[0, 4, 4, 0]}
+                              barSize={18}
+                            >
+                              {sourceQuality.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={index === 0 ? '#6366f1' : '#818cf8'} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center h-full text-slate-400 border border-dashed border-slate-100 rounded-xl">
+                          <p className="text-[12px]">Collecting source metrics...</p>
+                        </div>
+                      )}
+                    </div>
+                    <p className="mt-2 text-[12px] text-slate-400 italic text-center">ROI based on average AI match accuracy per source.</p>
+                  </div>
+
+                  {/* Company Pedigree */}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2 mb-6">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                        <Building2 size={16} className="text-emerald-600" />
+                      </div>
+                      <h4 className="font-['Arimo',sans-serif] text-[15px] font-semibold text-slate-800">Originating Talent Pipelines</h4>
+                    </div>
+
+                    <div className="space-y-4">
+                      {topCompanies.length > 0 ? (
+                        topCompanies.map((item, index) => (
+                          <div key={index} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100 group hover:bg-white hover:shadow-sm hover:border-emerald-200 transition-all cursor-default">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-[12px] font-bold text-slate-400 group-hover:text-emerald-500 group-hover:border-emerald-100 group-hover:bg-emerald-50 transition-colors">
+                                {index + 1}
+                              </div>
+                              <span className="font-['Arimo',sans-serif] text-[14px] font-semibold text-slate-700 group-hover:text-slate-900 line-clamp-1">{item.company}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[12px] font-bold text-slate-500 bg-slate-200/50 px-2.5 py-1 rounded-full">{item.count} Candidates</span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex flex-col items-center justify-center h-[200px] text-slate-400 border border-dashed border-slate-100 rounded-xl">
+                          <Building2 size={32} className="mb-2 opacity-20" />
+                          <p className="text-[13px]">Insufficient data for pedigree analysis</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
+
           </div>
         )}
       </div>

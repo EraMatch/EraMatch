@@ -19,7 +19,7 @@ from app.schemas.project import (
     GroupAnalysisResponse, TechnicalAIResponse, RiskBreakdownResponse, TechStats, AIStats,
     PositionResponse, PositionDetailsResponse, PositionCandidateResponse, DistributionItem,
     ScoreBucket, SkillDistributionItem, SeniorityDistributionItem, UniversityDistributionItem,
-    AvailabilityDistributionItem
+    AvailabilityDistributionItem, SourceQualityItem, CompanyPipelineItem
 )
 from app.schemas.analytics import (
     RecruiterAnalyticsResponse, OverviewStats, GroupStatusCount, StageCount,
@@ -1062,6 +1062,9 @@ class RecruiterService:
 
     async def get_position_insights(self, position_id: UUID) -> PositionInsightsResponse:
         """Get detailed metrics for a position."""
+        from app.models import CandidateApplication, GroupStageConfig, CVAnalysis, CandidateStageProgress
+        from collections import Counter, defaultdict
+        import re
         try:
             # 1. Conversion: Offered / Total Apps
             # Get total apps
@@ -1083,7 +1086,20 @@ class RecruiterService:
             
             conversion = (offered / total * 100) if total > 0 else 0.0
             
-            # 2. Scores: Assessment & Interview
+            # 2. Screening Funnel Conversion (Qualified / Total)
+            res_qualified = await self.session.execute(
+                select(func.count(CandidateApplication.id))
+                .where(
+                    CandidateApplication.position_id == position_id,
+                    CandidateApplication.group_id.is_not(None)
+                )
+            )
+            qualified_count = res_qualified.scalar() or 0
+            
+            # Using Screening Funnel Conversion for top KPI as requested
+            conversion = (qualified_count / total * 100) if total > 0 else 0.0
+            
+            # 3. Scores: Assessment & Interview
             # We need application IDs for this position
             res_app_ids = await self.session.execute(
                 select(CandidateApplication.id).where(
@@ -1099,7 +1115,6 @@ class RecruiterService:
             
             if app_ids:
                 # Fetch progress and integrity flags, joining with GroupStageConfig for stage_type
-                from app.models import GroupStageConfig
                 # ProctoringFlag not found in models.py, disabling integrity check for now
                 # from app.models import ProctoringFlag 
 
@@ -1132,60 +1147,92 @@ class RecruiterService:
                     
                 all_scores = assess_scores + inter_scores
                 if all_scores:
-                    quality_score = sum(all_scores) / len(all_scores)
+                    # quality_score = sum(all_scores) / len(all_scores)
+                    pass
             
-            # Generate Distribution Data
-            total_candidates = len(app_ids)
-
-            # 1. Fitting Data
-            if assess_scores:
-                fitting_data = [
-                    DistributionItem(name="Excellent", value=sum(1 for s in assess_scores if s >= 80), color="#6366f1"),
-                    DistributionItem(name="Good", value=sum(1 for s in assess_scores if 60 <= s < 80), color="#10b981"),
-                    DistributionItem(name="Fair", value=sum(1 for s in assess_scores if 40 <= s < 60), color="#f59e0b"),
-                    DistributionItem(name="Poor", value=sum(1 for s in assess_scores if s < 40), color="#ef4444")
-                ]
-            else:
-                fitting_data = [
-                    DistributionItem(name="Excellent", value=int(total_candidates * 0.15), color="#6366f1"),
-                    DistributionItem(name="Good", value=int(total_candidates * 0.45), color="#10b981"),
-                    DistributionItem(name="Fair", value=int(total_candidates * 0.30), color="#f59e0b"),
-                    DistributionItem(name="Poor", value=total_candidates - int(total_candidates * 0.15) - int(total_candidates * 0.45) - int(total_candidates * 0.30), color="#ef4444")
-                ]
-
-            # 2. Score Data (Buckets)
-            if assess_scores:
-                score_buckets = [
-                    ScoreBucket(range="0-20", count=sum(1 for s in assess_scores if 0 <= s < 20)),
-                    ScoreBucket(range="21-40", count=sum(1 for s in assess_scores if 20 <= s < 40)),
-                    ScoreBucket(range="41-60", count=sum(1 for s in assess_scores if 40 <= s < 60)),
-                    ScoreBucket(range="61-80", count=sum(1 for s in assess_scores if 60 <= s < 80)),
-                    ScoreBucket(range="81-100", count=sum(1 for s in assess_scores if 80 <= s <= 100))
-                ]
-            else:
-                score_buckets = [
-                    ScoreBucket(range="0-20", count=int(total_candidates * 0.05)),
-                    ScoreBucket(range="21-40", count=int(total_candidates * 0.15)),
-                    ScoreBucket(range="41-60", count=int(total_candidates * 0.25)),
-                    ScoreBucket(range="61-80", count=int(total_candidates * 0.40)),
-                    ScoreBucket(range="81-100", count=total_candidates - int(total_candidates * 0.05) - int(total_candidates * 0.15) - int(total_candidates * 0.25) - int(total_candidates * 0.40))
-                ]
-
-            # Fetch CVAnalysis data for the applications
-            from app.models import CVAnalysis
-            from collections import Counter
-            import re
+            # 4. Source & Pedigree Analysis
 
             cv_analyses = []
+            source_quality = []
+            top_companies = []
+            
             if app_ids:
+                # Fetch CVAnalysis
                 res_cvs = await self.session.execute(
                     select(CVAnalysis).where(
                         CVAnalysis.application_id.in_(app_ids)
                     )
                 )
                 cv_analyses = res_cvs.scalars().all()
+                
+                # Fetch Sources
+                res_sources = await self.session.execute(
+                    select(CandidateApplication.id, CandidateApplication.source).where(
+                        CandidateApplication.id.in_(app_ids)
+                    )
+                )
+                source_map = {row.id: (row.source or "Unknown") for row in res_sources.all()}
+                
+                # Source Quality ROI
+                source_stats = defaultdict(lambda: {"total_score": 0.0, "count": 0})
+                for cv in cv_analyses:
+                    source = source_map.get(cv.application_id, "Unknown")
+                    if cv.match_score is not None:
+                        source_stats[source]["total_score"] += float(cv.match_score)
+                        source_stats[source]["count"] += 1
+                
+                for source, stats in source_stats.items():
+                    avg = stats["total_score"] / stats["count"] if stats["count"] > 0 else 0.0
+                    source_quality.append(SourceQualityItem(source=source, avgScore=round(avg, 1), count=stats["count"]))
+                
+                # Company Pipeline (Pedigree)
+                company_counter = Counter()
+                for cv in cv_analyses:
+                    if cv.parsed_data and isinstance(cv.parsed_data, dict):
+                        # Common keys in parsed CV data
+                        exp_list = cv.parsed_data.get('experience', []) or cv.parsed_data.get('work_history', [])
+                        if isinstance(exp_list, list):
+                            for job in exp_list:
+                                if isinstance(job, dict):
+                                    comp = job.get('company') or job.get('employer') or job.get('organization')
+                                    if comp:
+                                        company_counter[comp.strip()] += 1
+                
+                for comp, count in company_counter.most_common(5):
+                    top_companies.append(CompanyPipelineItem(company=comp, count=count))
 
-            # 3. Skill Distribution (Derive from CVAnalysis)
+            if cv_analyses:
+                valid_match_scores = [float(c.match_score) for c in cv_analyses if c.match_score is not None]
+                if valid_match_scores:
+                    quality_score = sum(valid_match_scores) / len(valid_match_scores)
+            
+            # Generate Distribution Data
+            total_candidates = len(app_ids)
+
+            # 5. Fitting Data (Derive from real match_score)
+            if cv_analyses:
+                fitting_data = [
+                    DistributionItem(name="Excellent", value=sum(1 for c in cv_analyses if (c.match_score or 0) >= 80), color="#6366f1"),
+                    DistributionItem(name="Good", value=sum(1 for c in cv_analyses if 60 <= (c.match_score or 0) < 80), color="#10b981"),
+                    DistributionItem(name="Fair", value=sum(1 for c in cv_analyses if 40 <= (c.match_score or 0) < 60), color="#f59e0b"),
+                    DistributionItem(name="Poor", value=sum(1 for c in cv_analyses if (c.match_score or 0) < 40), color="#ef4444")
+                ]
+            else:
+                fitting_data = []
+
+            # 2. Score Data (Buckets) - Now based on Match Score Spectrum
+            score_buckets = []
+            if cv_analyses:
+                valid_match_scores = [float(c.match_score) for c in cv_analyses if c.match_score is not None]
+                score_buckets = [
+                    ScoreBucket(range="0-20", count=sum(1 for s in valid_match_scores if 0 <= s < 20)),
+                    ScoreBucket(range="21-40", count=sum(1 for s in valid_match_scores if 20 <= s < 40)),
+                    ScoreBucket(range="41-60", count=sum(1 for s in valid_match_scores if 40 <= s < 60)),
+                    ScoreBucket(range="61-80", count=sum(1 for s in valid_match_scores if 60 <= s < 80)),
+                    ScoreBucket(range="81-100", count=sum(1 for s in valid_match_scores if 80 <= s <= 100))
+                ]
+            
+            # 6. Skill Distribution (Derive from CVAnalysis)
             skill_counter = Counter()
             for cv in cv_analyses:
                 if cv.skills:
@@ -1200,11 +1247,7 @@ class RecruiterService:
                 skill_dist.append(SkillDistributionItem(skill=skill, count=count, percentage=round(percentage, 1)))
                 
             if not skill_dist and total_candidates > 0:
-                mock_skills = ["Python", "JavaScript", "React", "PostgreSQL", "AWS"]
-                for i, skill in enumerate(mock_skills):
-                    count = int(total_candidates * (0.8 - i * 0.1))
-                    if count > 0:
-                        skill_dist.append(SkillDistributionItem(skill=skill, count=count, percentage=round(count/max(1, total_candidates)*100, 1)))
+                skill_dist = []
 
             # 4. Seniority Distribution
             seniority_counts = {"Junior": 0, "Mid-Level": 0, "Senior": 0}
@@ -1218,11 +1261,7 @@ class RecruiterService:
                     else:
                         seniority_counts["Senior"] += 1
             else:
-                seniority_counts = {
-                    "Junior": int(total_candidates * 0.2), 
-                    "Mid-Level": int(total_candidates * 0.6), 
-                    "Senior": total_candidates - int(total_candidates * 0.2) - int(total_candidates * 0.6)
-                }
+                seniority_counts = {"Junior": 0, "Mid-Level": 0, "Senior": 0}
                     
             seniority_dist = []
             total_sen = max(1, sum(seniority_counts.values()))
@@ -1250,11 +1289,12 @@ class RecruiterService:
             
             # If no universities found, provide a fallback or empty list
             if not uni_dist and total_candidates > 0:
-                uni_dist = [
-                    UniversityDistributionItem(university="State University", count=int(total_candidates * 0.4)),
-                    UniversityDistributionItem(university="Tech Institute", count=int(total_candidates * 0.3)),
-                    UniversityDistributionItem(university="Global College", count=total_candidates - int(total_candidates * 0.4) - int(total_candidates * 0.3))
-                ]
+                uni_dist = []
+            else:
+                # Add percentages to uni_dist as requested
+                total_uni_mentions = sum(uni_counter.values()) if uni_counter else 1
+                for item in uni_dist:
+                    item.percentage = round((item.count / total_uni_mentions) * 100, 1)
 
             # 6. Availability Distribution
             # Availability is rarely parsed reliably from CVs in standard fields, 
@@ -1285,7 +1325,9 @@ class RecruiterService:
                 skillDistribution=skill_dist,
                 seniorityDistribution=seniority_dist,
                 universityDistribution=uni_dist,
-                availabilityDistribution=avail_dist
+                availabilityDistribution=avail_dist,
+                sourceQuality=source_quality,
+                topCompanies=top_companies
             )
         except Exception as e:
             print(f"Error fetching position insights: {e}")

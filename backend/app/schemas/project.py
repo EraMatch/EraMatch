@@ -185,6 +185,15 @@ class InsightScores(BaseModel):
     assessment: float
     interview: float
 
+class SourceQualityItem(BaseModel):
+    source: str
+    avgScore: float
+    count: int
+
+class CompanyPipelineItem(BaseModel):
+    company: str
+    count: int
+
 class DistributionItem(BaseModel):
     name: str
     value: int
@@ -207,10 +216,12 @@ class SeniorityDistributionItem(BaseModel):
 class UniversityDistributionItem(BaseModel):
     university: str
     count: int
+    percentage: float = 0.0
 
 class AvailabilityDistributionItem(BaseModel):
     availability: str
     count: int
+    percentage: float = 0.0
 
 class PositionInsightsResponse(BaseModel):
     conversion: float
@@ -223,6 +234,8 @@ class PositionInsightsResponse(BaseModel):
     seniorityDistribution: list[SeniorityDistributionItem] = []
     universityDistribution: list[UniversityDistributionItem] = []
     availabilityDistribution: list[AvailabilityDistributionItem] = []
+    sourceQuality: list[SourceQualityItem] = []
+    topCompanies: list[CompanyPipelineItem] = []
 
 
 class GroupAnalysisResponse(BaseModel):
