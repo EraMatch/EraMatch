@@ -15,6 +15,7 @@ import { FiltrationFlowConfigModal } from './FiltrationFlowConfigModal';
 import { StageReviewPage } from './StageReviewPage';
 import { FinalDecisionPage } from './FinalDecisionPage';
 import { ActivityLogPanel } from './ActivityLogPanel';
+import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
 import { useEffect } from 'react';
 
@@ -108,6 +109,8 @@ interface CandidateStatus {
   phone?: string;
   /** Backend UUID for the CandidateApplication record. Populated from API. */
   applicationId?: string;
+  liveInterviewScheduledAt?: string;
+  liveInterviewMeetingLink?: string;
 }
 
 export function EnhancedGroupOverviewV2({
@@ -212,6 +215,10 @@ export function EnhancedGroupOverviewV2({
   // NEW: Full-page views
   const [showStageReviewPage, setShowStageReviewPage] = useState(false);
   const [showFinalDecisionPage, setShowFinalDecisionPage] = useState(false);
+
+  // NEW: Schedule Interview modal
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [selectedCandidateForSchedule, setSelectedCandidateForSchedule] = useState<{ id: string, name: string } | null>(null);
 
   // NEW: Pipeline steps state
   const [pipelineSteps, setPipelineSteps] = useState<PipelineStep[]>([]);
@@ -349,7 +356,9 @@ export function EnhancedGroupOverviewV2({
           technicalVerdict: c.verdict === 'pass' || c.verdict === 'fail' || c.verdict === 'conditional' ? c.verdict : undefined,
           meetsCriteria: c.meets_criteria,
           progressionState: 'active',
-          overrideApplied: false
+          overrideApplied: false,
+          liveInterviewScheduledAt: c.live_interview?.scheduled_at,
+          liveInterviewMeetingLink: c.live_interview?.meeting_link
         }));
 
         setCandidateStatuses(candidates);
@@ -801,6 +810,26 @@ export function EnhancedGroupOverviewV2({
         console.error('Error deleting AI interview:', error);
         showToast('Failed to delete AI interview');
       }
+    }
+  };
+
+  const handleScheduleInterview = async (data: {
+    application_id: string;
+    scheduled_at: string;
+    duration_minutes: number;
+    meeting_link?: string;
+  }) => {
+    try {
+      await api.recruiter.scheduleInterview(groupId, data);
+      setIsLoading(true); // Trigger refresh
+      const details = await api.recruiter.getGroupDetails(groupId) as any;
+      // Re-map candidates or just trigger refreshKey
+      setRefreshKey(prev => prev + 1);
+      showToast('Interview scheduled successfully');
+    } catch (error) {
+      console.error('Failed to schedule interview:', error);
+      showToast('Failed to schedule interview');
+      throw error;
     }
   };
 
@@ -1278,7 +1307,9 @@ export function EnhancedGroupOverviewV2({
                 {activeFlow.includes('assessment') && (
                   <button
                     onClick={() => setShowModuleMonitoring('assessment')}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm"
+                    disabled={stageState !== 'closed'}
+                    title={stageState !== 'closed' ? "Stage must be completed and closed to monitor advanced results" : ""}
+                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-[#6366f1] disabled:hover:to-[#8b5cf6]"
                   >
                     <BarChart3 size={16} />
                     <span className="font-['Arimo',sans-serif] text-[14px]">
@@ -1289,7 +1320,9 @@ export function EnhancedGroupOverviewV2({
                 {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
                   <button
                     onClick={() => setShowModuleMonitoring('ai-interview')}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm"
+                    disabled={stageState !== 'closed'}
+                    title={stageState !== 'closed' ? "Stage must be completed and closed to monitor advanced results" : ""}
+                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-[#6366f1] disabled:hover:to-[#8b5cf6]"
                   >
                     <BarChart3 size={16} />
                     <span className="font-['Arimo',sans-serif] text-[14px]">
@@ -1830,9 +1863,40 @@ export function EnhancedGroupOverviewV2({
                             if (stageType === 'live-interview') {
                               return (
                                 <td key={stageType} className="p-4 text-center">
-                                  <button className="flex flex-col items-center gap-1 mx-auto">
+                                  <div className="flex flex-col items-center gap-1 mx-auto">
                                     {getStatusIcon(candidate.liveInterview)}
-                                  </button>
+
+                                    {candidate.liveInterviewScheduledAt ? (
+                                      <div className="flex flex-col items-center mt-1">
+                                        <span className="text-[11px] text-gray-600 font-medium">
+                                          {new Date(candidate.liveInterviewScheduledAt).toLocaleString(undefined, {
+                                            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                                          })}
+                                        </span>
+                                        {candidate.liveInterviewMeetingLink && (
+                                          <a
+                                            href={candidate.liveInterviewMeetingLink}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-[10px] text-blue-600 hover:underline mt-0.5"
+                                          >
+                                            Join Link
+                                          </a>
+                                        )}
+                                      </div>
+                                    ) : candidate.liveInterview !== 'completed' && (
+                                      <button
+                                        onClick={() => {
+                                          setSelectedCandidateForSchedule({ id: String(candidate.id), name: candidate.name });
+                                          setShowScheduleModal(true);
+                                        }}
+                                        className="text-[11px] text-[#6366f1] hover:underline flex items-center gap-1"
+                                      >
+                                        <Calendar size={12} />
+                                        Schedule
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
                               );
                             }
@@ -2145,7 +2209,7 @@ export function EnhancedGroupOverviewV2({
       )}
 
       {showUnifiedAIInterviewSetup && (
-        <div className="fixed inset-0 bg-white z-[60] overflow-y-auto">
+        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
           <UnifiedAIInterviewSetup
             groupName={groupName}
             activeFlow={activeFlow}
@@ -2169,7 +2233,7 @@ export function EnhancedGroupOverviewV2({
       )}
 
       {showLiveFlowSetup && (
-        <div className="fixed inset-0 bg-white z-[60] overflow-y-auto">
+        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
           <LiveInterviewFlowSetup
             groupName={groupName}
             initialSettings={editingInterviewData?.questions?.extended_config?.live_flow_config
@@ -2207,7 +2271,7 @@ export function EnhancedGroupOverviewV2({
       )}
 
       {showRecordedQuestionSetup && (
-        <div className="fixed inset-0 bg-white z-[60] overflow-y-auto">
+        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
           <RecordedInterviewQuestionSetup
             groupName={groupName}
             initialQuestions={(() => {
@@ -2329,6 +2393,20 @@ export function EnhancedGroupOverviewV2({
           />
         )
       }
+
+      {/* Schedule Interview Modal */}
+      {showScheduleModal && selectedCandidateForSchedule && (
+        <ScheduleInterviewModal
+          isOpen={showScheduleModal}
+          onClose={() => {
+            setShowScheduleModal(false);
+            setSelectedCandidateForSchedule(null);
+          }}
+          onSchedule={handleScheduleInterview}
+          candidateName={selectedCandidateForSchedule.name}
+          applicationId={selectedCandidateForSchedule.id}
+        />
+      )}
     </div>
   );
 }

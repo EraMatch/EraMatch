@@ -43,6 +43,7 @@ from app.schemas.group import (
     IntegrityFlagsResponse,
     SendOffersRequest,
     BulkProgressRequest,
+    ScheduleInterviewRequest,
 )
 
 router = APIRouter(tags=["Groups"])
@@ -85,7 +86,6 @@ async def get_group_details(
 ):
     """Retrieve complete group configuration including metadata, assigned HR,
     filtration flow, and acceptance criteria."""
-    svc = GroupService(session, current_user)
     svc = GroupService(session, current_user)
     return await svc.get_group_details(group_id)
 
@@ -351,3 +351,17 @@ async def bulk_progress_candidates(
     svc = GroupService(session, current_user)
     await svc.bulk_progress(group_id, request.application_ids, request.action, request.reason)
     return {"message": f"Successfully processed {len(request.application_ids)} candidates"}
+
+
+# ─── Schedule Live Interview ──────────────────────────────────────────────────
+
+@router.post("/recruiter/groups/{group_id}/interviews/schedule")
+async def schedule_live_interview(
+    group_id: UUID,
+    request: ScheduleInterviewRequest,
+    session: DbSession = ...,
+    current_user: RecruiterUser = ...,
+):
+    """Schedule a live interview for a candidate."""
+    svc = GroupService(session, current_user)
+    return await svc.schedule_live_interview(group_id, request)

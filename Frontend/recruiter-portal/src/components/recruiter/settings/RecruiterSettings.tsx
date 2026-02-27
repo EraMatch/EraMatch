@@ -113,6 +113,7 @@ export function RecruiterSettings({ userRole }: RecruiterSettingsProps) {
     const [forbiddenTopics, setForbiddenTopics] = useState('');
     const [personalityNote, setPersonalityNote] = useState('');
     const [scoringFocus, setScoringFocus] = useState<string[]>(['technical_depth', 'communication']);
+    const [bypassAdminApproval, setBypassAdminApproval] = useState(false);
 
     // Fetch settings on mount
     useEffect(() => {
@@ -132,6 +133,7 @@ export function RecruiterSettings({ userRole }: RecruiterSettingsProps) {
                 if (data.weekly_summary !== undefined) setWeeklySummary(data.weekly_summary);
                 if (data.two_factor_auth !== undefined) setTwoFactorAuth(data.two_factor_auth);
                 if (data.session_timeout !== undefined) setSessionTimeout(data.session_timeout);
+                if (data.bypass_admin_approval !== undefined) setBypassAdminApproval(data.bypass_admin_approval);
 
                 // AI Pipeline Config
                 if (data.ai_pipeline_config) {
@@ -390,10 +392,21 @@ export function RecruiterSettings({ userRole }: RecruiterSettingsProps) {
                                     </div>
                                     <Switch checked={sessionTimeout} onCheckedChange={setSessionTimeout} />
                                 </div>
-                                <div className="pt-2">
-                                    <Button variant="outline" className="rounded-full px-6 border-indigo-200 text-indigo-600 hover:bg-indigo-50" onClick={() => setIsPasswordModalOpen(true)}>
-                                        Change Password
-                                    </Button>
+                                <Button variant="outline" className="rounded-full px-6 border-indigo-200 text-indigo-600 hover:bg-indigo-50" onClick={() => setIsPasswordModalOpen(true)}>
+                                    Change Password
+                                </Button>
+                            </div>
+                            <div className="mt-8 pt-6 border-t border-gray-100">
+                                <h4 className="text-gray-700 font-medium mb-4">Workflow Automation</h4>
+                                <div className="flex items-center justify-between py-3">
+                                    <div>
+                                        <p className="text-gray-700 font-medium">Bypass Admin Approval</p>
+                                        <p className="text-gray-500 text-sm">Send candidates directly to Technical Review after HR screening</p>
+                                    </div>
+                                    <Switch checked={bypassAdminApproval} onCheckedChange={(val) => {
+                                        setBypassAdminApproval(val);
+                                        handleSavePreferences({ bypass_admin_approval: val });
+                                    }} />
                                 </div>
                             </div>
                         </Card>
@@ -630,6 +643,6 @@ export function RecruiterSettings({ userRole }: RecruiterSettingsProps) {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </div>
+        </div >
     );
 }

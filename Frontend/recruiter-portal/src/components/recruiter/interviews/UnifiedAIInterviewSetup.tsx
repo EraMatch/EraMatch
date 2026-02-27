@@ -212,8 +212,8 @@ export function UnifiedAIInterviewSetup({ groupName, activeFlow, onBack, onSetup
                                 onClick={() => {
                                     const settings = {
                                         title,
-                                        systemPrompt,
-                                        description,
+                                        instructions: systemPrompt,
+                                        live_interview_context: description,
                                         interviewType,
                                         difficulty,
                                         duration,

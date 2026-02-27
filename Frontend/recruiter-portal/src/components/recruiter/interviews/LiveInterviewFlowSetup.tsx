@@ -213,21 +213,20 @@ export function LiveInterviewFlowSetup({
                     )}
                 </div>
 
-                {/* Question Count */}
                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-[#e5e7eb]">
                     <h2 className="text-[16px] font-semibold text-gray-900 mb-5">Target Questions</h2>
-                    <div className="max-w-xs">
-                        <label className="block text-[13px] font-medium text-gray-700 mb-2">
-                            Number of questions: <strong className="text-[#8b5cf6]">{settings.questionCount}</strong>
+                    <div className="w-full">
+                        <label className="block text-[13px] font-medium text-gray-700 mb-4">
+                            How many questions should the AI target during the live session? <strong className="text-[#8b5cf6] text-[15px] ml-1">{settings.questionCount}</strong>
                         </label>
                         <input
                             type="range" min={2} max={15} step={1}
                             value={settings.questionCount}
                             onChange={(e) => setSettings({ ...settings, questionCount: parseInt(e.target.value) })}
-                            className="w-full accent-[#8b5cf6]"
+                            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#8b5cf6] mb-2"
                         />
-                        <div className="flex justify-between text-[11px] text-gray-400 mt-1">
-                            <span>2</span><span>15</span>
+                        <div className="flex justify-between text-[12px] font-medium text-gray-400 px-1">
+                            <span>2 questions</span><span>15 questions</span>
                         </div>
                     </div>
                 </div>

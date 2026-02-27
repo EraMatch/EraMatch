@@ -168,6 +168,8 @@ class PositionGroupResponse(BaseModel):
     position_id: UUID | None = None
     progress: int = 0
     recruiter: str = "Unassigned"
+    assigned_hr_name: str | None = None
+    assigned_tech_name: str | None = None
     stage: str = "Initial"
     lastUpdated: str = "Just now"
 

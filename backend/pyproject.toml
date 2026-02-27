@@ -17,6 +17,13 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "pydantic[email]>=2.12",
     "email-validator>=2.3.0",
+    "langchain-core>=0.2.0",
+    "langchain>=0.2.0",
+    "langchain-community>=0.2.0",
+    "langchain-openai>=0.1.0",
+    "langchain-anthropic>=0.1.0",
+    "langchain-ollama>=0.1.0",
+    "langchain-google-genai>=1.0.0",
 ]
 
 [project.optional-dependencies]

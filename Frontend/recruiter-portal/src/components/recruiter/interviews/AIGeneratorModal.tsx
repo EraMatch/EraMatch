@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Wand2, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { AIQuestionPreview } from './AIQuestionPreview';
+import { recruiterService } from '../../../services/recruiter.service';
 
 interface QuestionVariant {
   id: string;
@@ -31,101 +32,22 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
       return;
     }
 
-    setIsGenerating(true);
+    try {
+      const question = await recruiterService.generateAIQuestion({
+        question_type: effectiveType,
+        topic,
+        difficulty,
+        context
+      });
 
-    // Simulate AI generation
-    setTimeout(() => {
-      let question: QuestionVariant;
-
-      if (questionType === 'mcq') {
-        question = {
-          id: `ai-mcq-${Date.now()}`,
-          type: 'mcq',
-          questionText: `${topic}: Which of the following best describes ${topic.toLowerCase()}?`,
-          options: [
-            `A key concept in ${topic}`,
-            `An alternative approach to ${topic}`,
-            `A common misconception about ${topic}`,
-            `A deprecated method in ${topic}`
-          ],
-          correctAnswer: 0,
-          difficulty,
-          explanation: `This question tests understanding of core concepts in ${topic}. The correct answer highlights the fundamental principles that define ${topic}.`,
-          tags: [topic, 'AI-Generated']
-        };
-      } else if (questionType === 'essay') {
-        question = {
-          id: `ai-essay-${Date.now()}`,
-          type: 'essay',
-          questionText: `Discuss the key principles of ${topic} and provide examples of how they apply in real-world scenarios.`,
-          maxWords: 400,
-          rubric: `Answer should demonstrate understanding of ${topic}, provide relevant examples, and show critical thinking. Look for: clear explanation of concepts, practical examples, and analytical depth.`,
-          expectedKeywords: [topic, 'principles', 'examples', 'application', 'best practices'],
-          difficulty,
-          tags: [topic, 'AI-Generated']
-        };
-      } else if (questionType === 'interview' || externalContext?.type === 'interview') {
-        const generatedQuestions = [
-          {
-            question: `${topic}: What is your experience with ${topic}?`,
-            criteria: [`Experience with ${topic}`, `Understanding of core concepts`],
-            keyPoints: [`Hands-on experience`, `Theoretical knowledge`],
-            difficulty: difficulty,
-            tags: [topic, 'AI-Generated']
-          },
-          {
-            question: `Describe a challenging situation involving ${topic} and how you handled it.`,
-            criteria: [`Problem-solving skills`, `Practical application`],
-            keyPoints: [`Specific challenge`, `Action taken`, `Result`],
-            difficulty: difficulty,
-            tags: [topic, 'Behavioral']
-          }
-        ];
-
-        setIsGenerating(false);
-        onGenerate(generatedQuestions);
-        return;
-      } else { // code
-        question = {
-          id: `ai-code-${Date.now()}`,
-          type: 'code',
-          questionText: `Implement a solution for ${topic}. ${context || 'Your solution should be efficient and well-documented.'}`,
-          language: 'JavaScript',
-          codeTemplate: `function solution(input) {\n  // Implement ${topic} here\n  // TODO: Add your implementation\n  return output;\n}`,
-          testCases: [
-            {
-              id: 'tc1',
-              input: 'input1',
-              expectedOutput: 'output1',
-              isHidden: false,
-              points: 10
-            },
-            {
-              id: 'tc2',
-              input: 'input2',
-              expectedOutput: 'output2',
-              isHidden: true,
-              points: 15
-            },
-            {
-              id: 'tc3',
-              input: 'edge_case',
-              expectedOutput: 'edge_output',
-              isHidden: true,
-              points: 10
-            }
-          ],
-          difficulty,
-          timeLimit: 5,
-          memoryLimit: 256,
-          tags: [topic, 'AI-Generated']
-        };
-      }
-
-      setIsGenerating(false);
       setGeneratedQuestion(question);
       setShowPreview(true);
-    }, 1500);
+    } catch (error) {
+      console.error('Failed to generate AI question:', error);
+      alert('Failed to generate AI question. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleAcceptQuestion = (question: QuestionVariant) => {

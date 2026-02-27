@@ -90,6 +90,13 @@ from app.schemas.group import (
     GroupCreateRequest,
 )
 
+from app.schemas.recruiter_extra import (
+    FilterTemplateResponse,
+    FilterTemplateCreate,
+    AIGenerateQuestionRequest,
+    AIRefineQuestionRequest,
+)
+
 __all__ = [
     # Auth
     "LoginRequest",
@@ -183,4 +190,9 @@ __all__ = [
     "IntegrityFlagsResponse",
     "ExportGroupRequest",
     "GroupCreateRequest",
+    # Recruiter Extra
+    "FilterTemplateResponse",
+    "FilterTemplateCreate",
+    "AIGenerateQuestionRequest",
+    "AIRefineQuestionRequest",
 ]

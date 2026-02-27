@@ -37,6 +37,8 @@ from app.models import (
     Assessment,
     User,
     EmailLog,
+    LiveInterviewConfig,
+    LiveInterviewSession,
 )
 from app.schemas.group import (
     AcceptanceCriteriaResponse,
@@ -68,6 +70,7 @@ from app.schemas.group import (
     IntegrityFlagsResponse,
     MonitoringFlag,
     StageStatsResponse,
+    ScheduleInterviewRequest,
 )
 
 
@@ -151,6 +154,13 @@ class GroupService:
         for p, s_type in all_progress:
             prog_map[(p.application_id, s_type)] = p
 
+        # Fetch live interview sessions
+        live_res = await self.session.execute(
+            select(LiveInterviewSession).where(LiveInterviewSession.application_id.in_(app_ids))
+        )
+        all_live_sessions = live_res.scalars().all()
+        live_map = {ls.application_id: ls for ls in all_live_sessions}
+
         # Fetch flags
         flag_res = await self.session.execute(
             select(ProctoringFlag).where(ProctoringFlag.application_id.in_(app_ids))
@@ -175,12 +185,19 @@ class GroupService:
         for app, cand in rows:
             assess_prog = prog_map.get((app.id, "assessment"))
             ai_prog = prog_map.get((app.id, "ai_interview"))
+            live_prog = prog_map.get((app.id, "live_interview"))
 
             assess_score = float(assess_prog.score) if assess_prog and assess_prog.score is not None else None
             ai_score = float(ai_prog.score) if ai_prog and ai_prog.score is not None else None
+            live_score = float(live_prog.score) if live_prog and live_prog.score is not None else None
 
-            assess_status = assess_prog.status if assess_prog else "pending"
-            ai_status = ai_prog.status if ai_prog else "pending"
+            assess_status = assess_prog.status if assess_prog else "locked"
+            ai_status = ai_prog.status if ai_prog else "locked"
+            live_status = live_prog.status if live_prog else "locked"
+
+            ls_data = live_map.get(app.id)
+            scheduled_at = ls_data.scheduled_at if ls_data else None
+            meeting_link = ls_data.meeting_link if ls_data else None
 
             app_flags = flag_map.get(app.id, [])
             integrity_flags = [
@@ -218,6 +235,7 @@ class GroupService:
                 email=cand.email,
                 assessment=CandidateStageStatus(score=assess_score, status=assess_status),
                 ai_interview=CandidateStageStatus(score=ai_score, status=ai_status),
+                live_interview=CandidateStageStatus(score=live_score, status=live_status, scheduled_at=scheduled_at, meeting_link=meeting_link),
                 meets_criteria=meets,
                 verdict=verdict,
                 flags=integrity_flags,
@@ -320,17 +338,23 @@ class GroupService:
             st_name = stage_names.get(st_type, stage_conf.stage.title())
             
             # Calculate stats
-            total_c = len(candidates)
-            completed_c = 0
-            pending_c = 0
-            
+            active_candidates = []
             if st_type == "assessment":
-                completed_c = sum(1 for c in candidates if c.assessment.status in ("completed", "passed", "failed"))
-                pending_c = sum(1 for c in candidates if c.assessment.status not in ("completed", "passed", "failed"))
+                active_candidates = [c for c in candidates if c.assessment.status != "locked"]
+                completed_c = sum(1 for c in active_candidates if c.assessment.status in ("completed", "passed", "failed"))
+                pending_c = sum(1 for c in active_candidates if c.assessment.status not in ("completed", "passed", "failed"))
             elif st_type == "ai_interview":
-                completed_c = sum(1 for c in candidates if c.ai_interview.status in ("completed", "passed", "failed"))
-                pending_c = sum(1 for c in candidates if c.ai_interview.status not in ("completed", "passed", "failed"))
-            # TODO: Add logic for other stages if present in candidates model
+                active_candidates = [c for c in candidates if c.ai_interview.status != "locked"]
+                completed_c = sum(1 for c in active_candidates if c.ai_interview.status in ("completed", "passed", "failed"))
+                pending_c = sum(1 for c in active_candidates if c.ai_interview.status not in ("completed", "passed", "failed"))
+            elif st_type == "live_interview":
+                active_candidates = [c for c in candidates if c.live_interview.status != "locked"]
+                completed_c = sum(1 for c in active_candidates if c.live_interview.status in ("completed", "passed", "failed"))
+                pending_c = sum(1 for c in active_candidates if c.live_interview.status not in ("completed", "passed", "failed"))
+            else:
+                active_candidates = candidates
+            
+            total_c = len(active_candidates)
             
             pipeline_stages.append(PipelineStage(
                 id=stage_conf.stage.replace("_", "-"), # Normalize to frontend format (ai-interview)
@@ -396,7 +420,12 @@ class GroupService:
                         questions=ic_db.questions,
                         think_time_seconds=ic_db.think_time_seconds,
                         answer_time_seconds=ic_db.answer_time_seconds,
-                        live_interview_context=ic_db.live_interview_context
+                        live_interview_context=ic_db.live_interview_context,
+                        difficulty=ic_db.difficulty,
+                        show_ai_feedback=ic_db.show_ai_feedback,
+                        recording_required=ic_db.recording_required,
+                        total_duration_minutes=ic_db.total_duration_minutes,
+                        live_flow_config=ic_db.live_flow_config
                     )
                 )
         return GroupDetailResponse(
@@ -456,6 +485,16 @@ class GroupService:
             CandidateStageProgress.status.in_(["completed", "passed", "failed"]),
         )
 
+        # Live interview stats
+        q_live = select(
+            func.count().label("completed"),
+            func.avg(CandidateStageProgress.score).label("avg"),
+        ).join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id).where(
+            GroupStageConfig.group_id == group_id,
+            GroupStageConfig.stage_type == "live_interview",
+            CandidateStageProgress.status.in_(["completed", "passed", "failed"]),
+        )
+
         # Offers
         q_offers = select(func.count()).where(Offer.application_id.in_(app_ids))
 
@@ -468,9 +507,10 @@ class GroupService:
             CandidateApplication.status.in_(["in_pipeline", "screening"]),
         )
 
-        res_assess, res_ai, res_offers, res_flags, res_review = await asyncio.gather(
+        res_assess, res_ai, res_live, res_offers, res_flags, res_review = await asyncio.gather(
             self.session.execute(q_assess),
             self.session.execute(q_ai),
+            self.session.execute(q_live),
             self.session.execute(q_offers),
             self.session.execute(q_flags),
             self.session.execute(q_review),
@@ -478,6 +518,7 @@ class GroupService:
 
         assess_row = res_assess.first()
         ai_row = res_ai.first()
+        live_row = res_live.first()
 
         return GroupStatsResponse(
             technical_assessment=StageStatsResponse(
@@ -489,6 +530,11 @@ class GroupService:
                 completed=ai_row.completed if ai_row else 0,
                 total=total,
                 avg_score=round(float(ai_row.avg or 0), 1) if ai_row else 0.0,
+            ),
+            live_interview=StageStatsResponse(
+                completed=live_row.completed if live_row else 0,
+                total=total,
+                avg_score=round(float(live_row.avg or 0), 1) if live_row else 0.0,
             ),
             review={"count": res_review.scalar() or 0},
             offer={"count": res_offers.scalar() or 0},
@@ -657,7 +703,7 @@ class GroupService:
                         from app.services.email import EmailService
                         await EmailService.send_stage_invitation_email(
                             email=profile.email,
-                            name=f"{profile.first_name} {profile.last_name}",
+                            name=profile.full_name,
                             stage_title=stage_name_title
                         )
                     except Exception as e:
@@ -1169,6 +1215,11 @@ class GroupService:
                 cfg.max_retakes = ic.get("max_retakes", cfg.max_retakes)
                 cfg.questions = ic.get("questions", cfg.questions)
                 cfg.live_interview_context = ic.get("live_interview_context", cfg.live_interview_context)
+                cfg.difficulty = ic.get("difficulty", cfg.difficulty)
+                cfg.total_duration_minutes = ic.get("duration", cfg.total_duration_minutes)
+                cfg.show_ai_feedback = ic.get("showAIFeedback", cfg.show_ai_feedback)
+                cfg.recording_required = ic.get("recordingRequired", cfg.recording_required)
+                cfg.live_flow_config = ic.get("live_flow_config", cfg.live_flow_config)
                 cfg.updated_at = datetime.utcnow()
                 self.session.add(cfg)
             
@@ -1187,6 +1238,12 @@ class GroupService:
                 instructions=ic.get("instructions"),
                 max_retakes=ic.get("max_retakes", 1),
                 questions=ic.get("questions", []),
+                live_interview_context=ic.get("live_interview_context"),
+                difficulty=ic.get("difficulty", "Mid Level"),
+                total_duration_minutes=ic.get("duration", 30),
+                show_ai_feedback=ic.get("showAIFeedback", True),
+                recording_required=ic.get("recordingRequired", True),
+                live_flow_config=ic.get("live_flow_config"),
                 created_by_user_id=self.user.id,
             )
             self.session.add(new_cfg)
@@ -1649,6 +1706,144 @@ class GroupService:
         await self.session.commit()
         self.session.add(group)
         await self.session.commit()
+
+    async def bulk_progress(self, group_id: UUID, application_ids: list[UUID], action: str, reason: str | None = None) -> None:
+        """Progress, reject, or hold candidates in bulk."""
+        if not application_ids:
+            return
+
+        status_map = {
+            "progress": "In Pipeline",
+            "reject": "Rejected",
+            "hold": "On Hold"
+        }
+        new_status = status_map.get(action, "In Pipeline")
+        
+        # Determine current stage of the group to update progress properly
+        active_stage_res = await self.session.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.state == "active"
+            )
+        )
+        active_stage = active_stage_res.scalars().first()
+
+        for app_id in application_ids:
+            app = await self.session.get(CandidateApplication, app_id)
+            if app and app.group_id == group_id:
+                app.status = new_status
+                self.session.add(app)
+
+                # Update stage progress if an active stage exists
+                if active_stage:
+                    prog_res = await self.session.execute(
+                        select(CandidateStageProgress).where(
+                            CandidateStageProgress.application_id == app.id,
+                            CandidateStageProgress.stage_id == active_stage.stage_id
+                        )
+                    )
+                    prog = prog_res.scalars().first()
+                    if prog:
+                        prog.status = "passed" if action == "progress" else ("failed" if action == "reject" else prog.status)
+                        self.session.add(prog)
+
+                # Log transition
+                transition = PipelineTransition(
+                    application_id=app.id,
+                    organization_id=self.org_id,
+                    from_status=app.status,
+                    to_status=new_status,
+                    triggered_by_user_id=self.user.id,
+                    reason=reason
+                )
+                self.session.add(transition)
+
+                # System log
+                log = SystemLog(
+                    action=f"bulk_{action}",
+                    user_id=self.user.id,
+                    organization_id=self.org_id,
+                    entity_type="candidate_application",
+                    entity_id=app.id,
+                    details={"reason": reason}
+                )
+                self.session.add(log)
+
+        await self.session.commit()
+
+    async def schedule_live_interview(self, group_id: UUID, data: ScheduleInterviewRequest) -> dict:
+        """Schedules a live interview session for a candidate."""
+        group = await self._get_group(group_id)
+        
+        # Get live interview config for this group
+        sc_res = await self.session.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.stage_type == "live_interview"
+            )
+        )
+        sc = sc_res.scalars().first()
+        if not sc or not sc.config_id:
+            # Fallback to finding ANY live interview config for the position if none assigned to group
+            lic_res = await self.session.execute(
+                select(LiveInterviewConfig).where(
+                    LiveInterviewConfig.position_id == group.position_id,
+                    LiveInterviewConfig.organization_id == self.org_id
+                )
+            )
+            lic = lic_res.scalars().first()
+            if not lic:
+                 # Create a default one if none exists
+                 lic = LiveInterviewConfig(
+                     organization_id=self.org_id,
+                     position_id=group.position_id,
+                     title=f"Live Interview for {group.group_name}",
+                     duration_minutes=data.duration_minutes
+                 )
+                 self.session.add(lic)
+                 await self.session.flush()
+            config_id = lic.id
+        else:
+            config_id = sc.config_id
+
+        # Create session
+        new_session = LiveInterviewSession(
+            config_id=config_id,
+            application_id=data.application_id,
+            organization_id=self.org_id,
+            interviewer_id=data.interviewer_id or self.user.id,
+            scheduled_at=data.scheduled_at,
+            meeting_link=data.meeting_link,
+            status="scheduled"
+        )
+        self.session.add(new_session)
+        
+        # Update stage progress status
+        if sc:
+            prog_res = await self.session.execute(
+                select(CandidateStageProgress).where(
+                    CandidateStageProgress.application_id == data.application_id,
+                    CandidateStageProgress.stage_id == sc.stage_id
+                )
+            )
+            prog = prog_res.scalars().first()
+            if prog:
+                prog.status = "scheduled"
+                self.session.add(prog)
+        
+        # Log activity
+        log = SystemLog(
+            action="interview_scheduled",
+            user_id=self.user.id,
+            organization_id=self.org_id,
+            entity_type="candidate_application",
+            entity_id=data.application_id,
+            details={"scheduled_at": data.scheduled_at.isoformat(), "interviewer_id": str(data.interviewer_id)}
+        )
+        self.session.add(log)
+        
+        await self.session.commit()
+        return {"status": "success", "session_id": str(new_session.id)}
 
     # ── Activity Log ──────────────────────────────────────────────────────────
 

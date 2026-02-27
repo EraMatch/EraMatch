@@ -11,8 +11,10 @@ from app.models import (
     User, Project, Position, CandidateApplication, CandidateGroup, 
     CandidateStageProgress, OrganizationUser, Hire, Offer, ProctoringFlag,
     ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, Organization,
-    OrganizationUserSettings
+    OrganizationUserSettings, FilterTemplate
 )
+from app.integrations.llm import get_llm
+import json
 from app.schemas.project import (
     ProjectCreate, ProjectUpdate, PositionCreate, PositionUpdate,
     ProjectSummaryResponse, PositionInsightsResponse, PositionGroupResponse, InsightScores,
@@ -1384,6 +1386,20 @@ class RecruiterService:
                 has_assessment = "assessment" in stage_types
                 has_ai = "ai_interview" in stage_types
                 has_live = "live_interview" in stage_types
+                
+                # Fetch assigned names
+                assigned_hr_name = None
+                assigned_tech_name = None
+                if g.assigned_hr_id or g.assigned_tech_id:
+                    hr_tech_ids = [uid for uid in (g.assigned_hr_id, g.assigned_tech_id) if uid]
+                    if hr_tech_ids:
+                        users_res = await self.session.execute(
+                            select(OrganizationUser.id, OrganizationUser.first_name, OrganizationUser.last_name)
+                            .where(OrganizationUser.id.in_(hr_tech_ids))
+                        )
+                        user_map = {row.id: f"{row.first_name} {row.last_name}" for row in users_res.all()}
+                        assigned_hr_name = user_map.get(g.assigned_hr_id)
+                        assigned_tech_name = user_map.get(g.assigned_tech_id)
 
                 result.append(PositionGroupResponse(
                     id=gid,
@@ -1395,7 +1411,9 @@ class RecruiterService:
                     hasAssessment=has_assessment,
                     hasAIInterview=has_ai,
                     hasLiveInterview=has_live,
-                    position_id=g.position_id
+                    position_id=g.position_id,
+                    assigned_hr_name=assigned_hr_name,
+                    assigned_tech_name=assigned_tech_name
                 ))
             return result
         except Exception as e:
@@ -1961,6 +1979,7 @@ class RecruiterService:
             "two_factor_auth": settings.two_factor_auth,
             "session_timeout": settings.session_timeout,
             "ai_pipeline_config": settings.ai_pipeline_config,
+            "bypass_admin_approval": settings.bypass_admin_approval,
         }
 
     async def update_profile(self, data: dict) -> dict:
@@ -2015,3 +2034,86 @@ class RecruiterService:
         await self.session.commit()
         
         return await self.get_settings()
+
+    # =========================================================================
+    # FILTER TEMPLATES
+    # =========================================================================
+
+    async def get_filter_templates(self) -> List[FilterTemplate]:
+        """Fetch all saved filter templates for the current user."""
+        res = await self.session.execute(
+            select(FilterTemplate).where(FilterTemplate.user_id == self.current_user.id).order_by(desc(FilterTemplate.created_at))
+        )
+        return list(res.scalars().all())
+
+    async def save_filter_template(self, name: str, filters: dict) -> FilterTemplate:
+        """Save a new candidate filter template."""
+        template = FilterTemplate(
+            user_id=self.current_user.id,
+            name=name,
+            filters=filters
+        )
+        self.session.add(template)
+        await self.session.commit()
+        await self.session.refresh(template)
+        return template
+
+    async def delete_filter_template(self, template_id: UUID) -> bool:
+        """Delete a saved filter template."""
+        res = await self.session.execute(
+            select(FilterTemplate).where(
+                FilterTemplate.id == template_id, 
+                FilterTemplate.user_id == self.current_user.id
+            )
+        )
+        template = res.scalar_one_or_none()
+        if not template:
+            return False
+            
+        await self.session.delete(template)
+        await self.session.commit()
+        return True
+
+    # =========================================================================
+    # AI FEATURES (OLLAMA)
+    # =========================================================================
+
+    async def generate_ai_question(self, question_type: str, topic: str, difficulty: str, context: str = "") -> dict:
+        """Generate a technical or interview question using Ollama."""
+        llm = get_llm("ollama")
+        
+        prompts = {
+            "mcq": f"Generate a multiple-choice question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, options (array of 4), correctAnswer (index 0-3), explanation, difficulty.",
+            "essay": f"Generate an essay or theoretical question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, maxWords, rubric, expectedKeywords (array), difficulty.",
+            "code": f"Generate a coding problem about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText (requirements), language, codeTemplate (with a TODO), testCases (array of {{input, expectedOutput, isHidden, points}}), difficulty.",
+            "interview": f"Generate 2 interview questions about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with a 'questions' key containing an array of {{question, criteria (array), keyPoints (array), difficulty}}."
+        }
+        
+        prompt = prompts.get(question_type, prompts["mcq"])
+        try:
+            response = await llm.ainvoke(prompt)
+            # Try to extract JSON from response content
+            content = response.content
+            # Basic cleanup if LLM returns markdown blocks
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+                
+            return json.loads(content)
+        except Exception as e:
+            print(f"Ollama generation failed: {e}")
+            # Fallback mock for safety
+            return {"questionText": f"Stub: {topic} ({difficulty})", "error": str(e)}
+
+    async def refine_question_with_ai(self, question_text: str) -> str:
+        """Refine or polish a question text using Ollama."""
+        llm = get_llm("ollama")
+        prompt = f"Refine and professionalize the following interview question, making it clear and concise: '{question_text}'. Return ONLY the refined question text."
+        
+        try:
+            response = await llm.ainvoke(prompt)
+            return response.content.strip()
+        except Exception as e:
+            print(f"Ollama refinement failed: {e}")
+            return f"Refined: {question_text}"

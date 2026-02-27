@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { X, Search, MapPin, Building, GraduationCap, Briefcase, ChevronDown, ChevronUp } from 'lucide-react';
 import { Slider } from '../../ui/slider';
 import { Checkbox } from '../../ui/checkbox';
+import { recruiterService } from '../../../services/recruiter.service';
+import { toast } from 'sonner';
+import { Save, FolderHeart, Trash } from 'lucide-react';
 
 interface FilterOptions {
     locations: string[];
@@ -49,6 +52,52 @@ export function CandidateFilterSidebar({
         jobTitles: false,
         degrees: false
     });
+    const [templates, setTemplates] = useState<any[]>([]);
+    const [saveTemplateName, setSaveTemplateName] = useState('');
+    const [showSaveModal, setShowSaveModal] = useState(false);
+
+    useEffect(() => {
+        const loadTemplates = async () => {
+            try {
+                const data = await recruiterService.getFilterTemplates();
+                setTemplates(data);
+            } catch (err) {
+                console.error("Failed to load templates", err);
+            }
+        };
+        if (isOpen) loadTemplates();
+    }, [isOpen]);
+
+    const handleSaveTemplate = async () => {
+        if (!saveTemplateName.trim()) {
+            toast.error("Please enter a template name");
+            return;
+        }
+
+        try {
+            const newTemplate = await recruiterService.saveFilterTemplate({
+                name: saveTemplateName,
+                filters: filters
+            });
+            setTemplates([...templates, newTemplate]);
+            setSaveTemplateName('');
+            setShowSaveModal(false);
+            toast.success("Filter template saved!");
+        } catch (err) {
+            toast.error("Failed to save template");
+        }
+    };
+
+    const handleDeleteTemplate = async (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        try {
+            await recruiterService.deleteFilterTemplate(id);
+            setTemplates(templates.filter(t => t.id !== id));
+            toast.success("Template deleted");
+        } catch (err) {
+            toast.error("Failed to delete template");
+        }
+    };
 
     const toggleSection = (section: keyof typeof expandedSections) => {
         setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -92,6 +141,33 @@ export function CandidateFilterSidebar({
                     </button>
                 </div>
             </div>
+
+            {/* Templates Section */}
+            {templates.length > 0 && (
+                <div className="px-6 py-4 border-b border-[#e5e7eb] bg-[#f8fafc]">
+                    <div className="flex items-center gap-2 mb-3">
+                        <FolderHeart size={16} className="text-[#6366f1]" />
+                        <span className="text-[14px] font-medium text-[#1e293b]">Saved Templates</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {templates.map(t => (
+                            <div
+                                key={t.id}
+                                className="group relative flex items-center gap-1 px-3 py-1.5 bg-white border border-[#e2e8f0] rounded-full hover:border-[#6366f1] cursor-pointer transition-all"
+                                onClick={() => onFilterChange(t.filters)}
+                            >
+                                <span className="text-[12px] text-[#475569]">{t.name}</span>
+                                <button
+                                    onClick={(e) => handleDeleteTemplate(t.id, e)}
+                                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-red-500 transition-opacity"
+                                >
+                                    <Trash size={12} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
@@ -238,8 +314,8 @@ export function CandidateFilterSidebar({
                                     key={skill}
                                     onClick={() => handleCheckboxChange('skills', skill)}
                                     className={`px-3 py-1.5 rounded-full text-[13px] border transition-colors font-['Arimo',sans-serif] ${filters.skills.includes(skill)
-                                            ? 'bg-[#6366f1] text-white border-[#6366f1]'
-                                            : 'bg-white text-[#374151] border-[#e5e7eb] hover:border-[#d1d5db]'
+                                        ? 'bg-[#6366f1] text-white border-[#6366f1]'
+                                        : 'bg-white text-[#374151] border-[#e5e7eb] hover:border-[#d1d5db]'
                                         }`}
                                 >
                                     {skill}
@@ -293,7 +369,14 @@ export function CandidateFilterSidebar({
             </div>
 
             {/* Footer Actions */}
-            <div className="px-6 py-4 border-t border-[#e5e7eb] bg-[#f9fafb]">
+            <div className="px-6 py-4 border-t border-[#e5e7eb] bg-[#f9fafb] flex flex-col gap-3">
+                <button
+                    onClick={() => setShowSaveModal(true)}
+                    className="flex items-center justify-center gap-2 w-full h-[40px] bg-white border border-[#6366f1] text-[#6366f1] hover:bg-indigo-50 rounded-[8px] font-medium transition-colors font-['Arimo',sans-serif] text-[14px]"
+                >
+                    <Save size={16} />
+                    Save as Template
+                </button>
                 <button
                     onClick={onClose}
                     className="w-full h-[44px] bg-[#6366f1] hover:bg-[#5558e3] text-white rounded-[8px] font-medium transition-colors font-['Arimo',sans-serif]"
@@ -301,6 +384,42 @@ export function CandidateFilterSidebar({
                     Show Candidates
                 </button>
             </div>
+
+            {/* Save Template Modal */}
+            {showSaveModal && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-[16px] w-full max-w-[400px] shadow-2xl p-6">
+                        <h3 className="text-[#111827] text-[18px] font-semibold mb-4">Save Filter Template</h3>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-[13px] font-medium text-[#374151] mb-1.5">Template Name</label>
+                                <input
+                                    type="text"
+                                    value={saveTemplateName}
+                                    onChange={(e) => setSaveTemplateName(e.target.value)}
+                                    className="w-full px-3 py-2 border border-[#e5e7eb] rounded-[8px] text-[14px] focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                                    placeholder="e.g. Senior Developers in NY"
+                                    autoFocus
+                                />
+                            </div>
+                            <div className="flex gap-3 justify-end pt-2">
+                                <button
+                                    onClick={() => setShowSaveModal(false)}
+                                    className="px-4 py-2 border border-[#e5e7eb] rounded-[8px] text-[14px] font-medium hover:bg-gray-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleSaveTemplate}
+                                    className="px-4 py-2 bg-[#6366f1] text-white rounded-[8px] text-[14px] font-medium hover:bg-indigo-700"
+                                >
+                                    Save Template
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

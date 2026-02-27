@@ -181,7 +181,21 @@ class OrganizationUserSettings(BaseModel, table=True):
     # AI Pipeline Configuration (JSONB)
     ai_pipeline_config: dict | None = Field(default=None, sa_column=Column(JSONB))
     
+    # Workflow Settings
+    bypass_admin_approval: bool = Field(default=False)
+    
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FilterTemplate(BaseModel, table=True):
+    """Persistent saved filter templates for candidates."""
+    __tablename__ = "filter_templates"
+    
+    id: UUID = Field(default_factory=uuid4, alias="template_id", sa_column=Column("template_id", PG_UUID(as_uuid=True), primary_key=True))
+    user_id: UUID = Field(foreign_key="organization_users.user_id")
+    name: str = Field(max_length=255)
+    filters: dict = Field(default_factory=dict, sa_column=Column(JSONB))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class PaymentMethod(BaseModel, table=True):
@@ -516,6 +530,11 @@ class AIInterviewConfig(SQLModel, table=True):
     answer_time_seconds: int | None = Field(default=120)
     questions: dict = Field(sa_column=Column(JSONB))
     live_interview_context: str | None = Field(default=None, sa_column=Column(Text))
+    difficulty: str | None = Field(default="Mid Level")
+    total_duration_minutes: int | None = Field(default=30)
+    show_ai_feedback: bool = Field(default=True)
+    recording_required: bool = Field(default=True)
+    live_flow_config: dict | None = Field(default=None, sa_column=Column(JSONB))
     created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

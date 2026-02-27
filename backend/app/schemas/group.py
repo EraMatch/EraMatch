@@ -55,6 +55,8 @@ class PipelineStage(BaseModel):
 class CandidateStageStatus(BaseModel):
     score: float | None = None
     status: str = "pending"
+    scheduled_at: datetime | None = None
+    meeting_link: str | None = None
 
 
 class IntegrityFlag(BaseModel):
@@ -70,6 +72,7 @@ class CandidateProgressItem(BaseModel):
     email: str
     assessment: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
     ai_interview: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
+    live_interview: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
     meets_criteria: bool = False
     verdict: str = "pending"
     flags: list[IntegrityFlag] = []
@@ -105,6 +108,11 @@ class GroupInterviewItem(BaseModel):
     think_time_seconds: int | None = None
     answer_time_seconds: int | None = None
     live_interview_context: str | None = None
+    difficulty: str | None = "Mid Level"
+    show_ai_feedback: bool = True
+    recording_required: bool = True
+    total_duration_minutes: int | None = 30
+    live_flow_config: dict | None = None
 
 
 class GroupDetailResponse(BaseModel):
@@ -140,9 +148,21 @@ class StageStatsResponse(BaseModel):
 class GroupStatsResponse(BaseModel):
     technical_assessment: StageStatsResponse = Field(default_factory=StageStatsResponse)
     ai_interview: StageStatsResponse = Field(default_factory=StageStatsResponse)
+    live_interview: StageStatsResponse = Field(default_factory=StageStatsResponse)
     review: dict = Field(default_factory=lambda: {"count": 0})
     offer: dict = Field(default_factory=lambda: {"count": 0})
     flagged: dict = Field(default_factory=lambda: {"count": 0})
+
+
+# ─── Schedule Interview ────────────────────────────────────────────────────────
+
+class ScheduleInterviewRequest(BaseModel):
+    """Payload for scheduling a live interview."""
+    application_id: UUID
+    scheduled_at: datetime
+    duration_minutes: int = 60
+    interviewer_id: UUID | None = None
+    meeting_link: str | None = None
 
 
 # ─── Candidate Progress Matrix ───────────────────────────────────────────────

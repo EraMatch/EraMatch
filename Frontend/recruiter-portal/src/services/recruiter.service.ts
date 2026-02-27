@@ -315,9 +315,9 @@ export const recruiterService = {
             interview_config: {
                 title: data.config.title || 'AI Interview',
                 interview_type: data.interview_type === 'live' ? 'live_ai' : data.interview_type,
-                instructions: data.config.systemPrompt || '',
+                instructions: data.config.instructions || data.config.systemPrompt || '',
                 max_retakes: data.config.maxRetakes || 0,
-                // AIInterviewConfig 'questions' is a JSONB column; we nest the rest.
+                ...data.config,
                 questions: {
                     items: data.sections,
                     extended_config: data.config
@@ -397,6 +397,57 @@ export const recruiterService = {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ai_pipeline_config })
+        });
+    },
+
+    // Schedule Interview
+    scheduleInterview: async (groupId: string, data: {
+        application_id: string;
+        scheduled_at: string;
+        duration_minutes?: number;
+        interviewer_id?: string;
+        meeting_link?: string;
+    }) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/interviews/schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    // AI Features
+    generateAIQuestion: async (data: { question_type: string, topic: string, difficulty: string, context?: string }) => {
+        return fetchAPI<any>('/recruiter/ai/generate-question', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    refineAIQuestion: async (questionText: string) => {
+        return fetchAPI<{ refinedText: string }>('/recruiter/ai/refine-question', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question_text: questionText })
+        });
+    },
+
+    // Filter Templates
+    getFilterTemplates: async () => {
+        return fetchAPI<any[]>('/recruiter/filters/templates');
+    },
+
+    saveFilterTemplate: async (template: { name: string, filters: any }) => {
+        return fetchAPI<any>('/recruiter/filters/templates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(template)
+        });
+    },
+
+    deleteFilterTemplate: async (templateId: string) => {
+        return fetchAPI(`/recruiter/filters/templates/${templateId}`, {
+            method: 'DELETE'
         });
     }
 };

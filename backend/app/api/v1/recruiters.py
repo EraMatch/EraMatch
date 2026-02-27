@@ -24,11 +24,14 @@ from app.schemas import (
     GroupAnalysisResponse,
     TechnicalAIResponse,
     RiskBreakdownResponse,
-    RiskBreakdownResponse,
     RecruiterAnalyticsResponse,
     GroupCreateRequest,
     CandidateUploadResponse,
     GroupDetailResponse,
+    FilterTemplateResponse,
+    FilterTemplateCreate,
+    AIGenerateQuestionRequest,
+    AIRefineQuestionRequest,
 )
 from app.services import CandidateService, GroupService
 
@@ -453,3 +456,72 @@ async def update_recruiter_ai_pipeline(
     """Update Technical HR configuration for AI pipeline engine defaults."""
     service = RecruiterService(session, current_user)
     return await service.update_ai_pipeline(data.ai_pipeline_config)
+
+
+# =============================================================================
+# FILTER TEMPLATES
+# =============================================================================
+
+@router.get("/filters/templates", response_model=list[FilterTemplateResponse])
+async def get_filter_templates(
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """List all saved filter templates for the recruiter."""
+    service = RecruiterService(session, current_user)
+    return await service.get_filter_templates()
+
+
+@router.post("/filters/templates", response_model=FilterTemplateResponse)
+async def save_filter_template(
+    data: FilterTemplateCreate,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Save a new candidate filter template."""
+    service = RecruiterService(session, current_user)
+    return await service.save_filter_template(data.name, data.filters)
+
+
+@router.delete("/filters/templates/{template_id}")
+async def delete_filter_template(
+    template_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Delete a saved filter template."""
+    service = RecruiterService(session, current_user)
+    success = await service.delete_filter_template(template_id)
+    if not success:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"status": "success"}
+
+
+# =============================================================================
+# AI FEATURES
+# =============================================================================
+
+@router.post("/ai/generate-question")
+async def generate_ai_question(
+    data: AIGenerateQuestionRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Generate an interview/technical question using Ollama."""
+    service = RecruiterService(session, current_user)
+    return await service.generate_ai_question(
+        data.question_type, data.topic, data.difficulty, data.context
+    )
+
+
+@router.post("/ai/refine-question")
+async def refine_question_with_ai(
+    data: AIRefineQuestionRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Refine or professionalize a question text using Ollama."""
+    service = RecruiterService(session, current_user)
+    refined_text = await service.refine_question_with_ai(data.question_text)
+    return {"refinedText": refined_text}

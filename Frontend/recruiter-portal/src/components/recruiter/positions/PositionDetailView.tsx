@@ -750,7 +750,7 @@ export function PositionDetailView({
                             <div className="flex items-center gap-4 font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                               <span>{group.candidateCount} candidates</span>
                               <span>•</span>
-                              <span>Assigned to {group.recruiter}</span>
+                              <span>Assigned to {user.role === 'technical' ? (group.assigned_hr_name || 'HR (Unassigned)') : (group.assigned_tech_name || 'Tech (Unassigned)')}</span>
                               <span>•</span>
                               <span>Stage: {group.stage}</span>
                               <span>•</span>

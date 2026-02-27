@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { ChevronLeft, Plus, Trash2, GripVertical, Eye, Loader2, Sparkles } from 'lucide-react';
 import { api } from '../../../services/api';
+import { recruiterService } from '../../../services/recruiter.service';
+import { toast } from 'sonner';
 
 interface RecordedInterviewQuestionSetupProps {
   groupName: string;
@@ -24,6 +26,7 @@ export function RecordedInterviewQuestionSetup({
   const [questions, setQuestions] = useState<Question[]>([]);
   const [showPreview, setShowPreview] = useState(false);
   const [showSuggestModal, setShowSuggestModal] = useState(false);
+  const [isRefining, setIsRefining] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const aiSuggestedQuestions = [
@@ -177,16 +180,28 @@ export function RecordedInterviewQuestionSetup({
                         />
                         <button
                           title="Refine with AI"
-                          onClick={() => {
-                            // Simple placeholder logic for an AI refinement mock
-                            const refined = question.text.trim() === ''
-                              ? 'Tell us about a time you solved a complex problem?'
-                              : `Could you elaborate on: ${question.text}?`;
-                            handleQuestionChange(question.id, 'text', refined);
+                          disabled={isRefining === question.id || !question.text.trim()}
+                          onClick={async () => {
+                            if (!question.text.trim()) return;
+                            setIsRefining(question.id);
+                            try {
+                              const response = await recruiterService.refineAIQuestion(question.text);
+                              handleQuestionChange(question.id, 'text', response.refinedText);
+                              toast.success('Question refined with AI!');
+                            } catch (error) {
+                              console.error('Failed to refine question:', error);
+                              toast.error('Failed to refine question');
+                            } finally {
+                              setIsRefining(null);
+                            }
                           }}
-                          className="absolute right-2 top-2 p-1.5 text-[#8b5cf6] hover:bg-[#8b5cf6]/10 rounded-md transition-colors"
+                          className="absolute right-2 top-2 p-1.5 text-[#8b5cf6] hover:bg-[#8b5cf6]/10 rounded-md transition-colors disabled:opacity-50"
                         >
-                          <Sparkles size={16} />
+                          {isRefining === question.id ? (
+                            <Loader2 size={16} className="animate-spin" />
+                          ) : (
+                            <Sparkles size={16} />
+                          )}
                         </button>
                       </div>
                       <div className="flex items-center gap-3 mt-3">
