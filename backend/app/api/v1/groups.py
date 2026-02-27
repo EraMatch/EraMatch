@@ -41,6 +41,8 @@ from app.schemas.group import (
     CandidateNoteResponse,
     CandidateDetailResponse,
     IntegrityFlagsResponse,
+    SendOffersRequest,
+    BulkProgressRequest,
 )
 
 router = APIRouter(tags=["Groups"])
@@ -320,3 +322,32 @@ async def get_integrity_flags(
     application."""
     svc = GroupService(session, current_user)
     return await svc.get_integrity_flags(application_id)
+
+# ─── Final Offers ─────────────────────────────────────────────────────────────
+
+@router.post("/recruiter/groups/{group_id}/offers/send")
+async def send_group_offers(
+    group_id: UUID,
+    request: SendOffersRequest,
+    session: DbSession = ...,
+    current_user: RecruiterUser = ...,
+):
+    """Send final offers to candidates."""
+    svc = GroupService(session, current_user)
+    await svc.send_offers(group_id, request.application_ids, request.email_subject, request.email_body)
+    return {"message": "Offers sent successfully"}
+
+
+# ─── Bulk Candidate Progression ───────────────────────────────────────────────
+
+@router.post("/recruiter/groups/{group_id}/candidates/bulk-progress")
+async def bulk_progress_candidates(
+    group_id: UUID,
+    request: BulkProgressRequest,
+    session: DbSession = ...,
+    current_user: RecruiterUser = ...,
+):
+    """Progress, reject, or hold candidates in bulk."""
+    svc = GroupService(session, current_user)
+    await svc.bulk_progress(group_id, request.application_ids, request.action, request.reason)
+    return {"message": f"Successfully processed {len(request.application_ids)} candidates"}

@@ -10,7 +10,8 @@ from app.core.exceptions import NotFoundException, UnauthorizedException
 from app.models import (
     User, Project, Position, CandidateApplication, CandidateGroup, 
     CandidateStageProgress, OrganizationUser, Hire, Offer, ProctoringFlag,
-    ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, Organization
+    ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, Organization,
+    OrganizationUserSettings
 )
 from app.schemas.project import (
     ProjectCreate, ProjectUpdate, PositionCreate, PositionUpdate,
@@ -1885,3 +1886,90 @@ class RecruiterService:
                 
         await self.session.commit()
         return True
+
+    # =========================================================================
+    # SETTINGS
+    # =========================================================================
+
+    async def get_settings(self) -> dict:
+        """Get the current recruiter's settings and profile information."""
+        user = self.current_user
+        
+        # Fetch or Create settings row for this user
+        res = await self.session.execute(
+            select(OrganizationUserSettings).where(OrganizationUserSettings.user_id == user.id)
+        )
+        settings = res.scalar_one_or_none()
+        
+        if not settings:
+            settings = OrganizationUserSettings(user_id=user.id)
+            self.session.add(settings)
+            await self.session.commit()
+            await self.session.refresh(settings)
+
+        return {
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+            "role": user.role,
+            "email_notifications": settings.email_notifications,
+            "new_member_requests": settings.new_member_requests,
+            "project_updates": settings.project_updates,
+            "weekly_summary": settings.weekly_summary,
+            "two_factor_auth": settings.two_factor_auth,
+            "session_timeout": settings.session_timeout,
+            "ai_pipeline_config": settings.ai_pipeline_config,
+        }
+
+    async def update_profile(self, data: dict) -> dict:
+        """Update just the profile fields on the main OrganizationUser table."""
+        user = self.current_user
+        
+        if "first_name" in data and data["first_name"] is not None:
+            user.first_name = data["first_name"]
+        if "last_name" in data and data["last_name"] is not None:
+            user.last_name = data["last_name"]
+        if "email" in data and data["email"] is not None:
+            user.email = data["email"]
+
+        self.session.add(user)
+        await self.session.commit()
+        
+        return await self.get_settings()
+
+    async def update_preferences(self, data: dict) -> dict:
+        """Update booleans in OrganizationUserSettings table."""
+        res = await self.session.execute(
+            select(OrganizationUserSettings).where(OrganizationUserSettings.user_id == self.current_user.id)
+        )
+        settings = res.scalar_one_or_none()
+        if not settings:
+            settings = OrganizationUserSettings(user_id=self.current_user.id)
+            self.session.add(settings)
+            
+        for key, val in data.items():
+            if val is not None and hasattr(settings, key):
+                setattr(settings, key, val)
+                
+        self.session.add(settings)
+        await self.session.commit()
+        
+        return await self.get_settings()
+
+    async def update_ai_pipeline(self, pipeline_config: dict) -> dict:
+        """Update the JSONB AI pipeline configuration for technical recruiters."""
+        if self.current_user.role != "technical":
+            raise UnauthorizedException("Only Technical HR can modify the AI pipeline settings.")
+            
+        res = await self.session.execute(
+            select(OrganizationUserSettings).where(OrganizationUserSettings.user_id == self.current_user.id)
+        )
+        settings = res.scalar_one_or_none()
+        if not settings:
+            settings = OrganizationUserSettings(user_id=self.current_user.id)
+        
+        settings.ai_pipeline_config = pipeline_config
+        self.session.add(settings)
+        await self.session.commit()
+        
+        return await self.get_settings()

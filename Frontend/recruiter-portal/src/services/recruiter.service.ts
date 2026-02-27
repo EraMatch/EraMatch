@@ -372,4 +372,31 @@ export const recruiterService = {
             body: JSON.stringify(data)
         });
     },
+
+    // Settings
+    getSettings: async () => fetchAPI<any>('/recruiter/settings'),
+
+    updateProfile: async (data: any) => {
+        return fetchAPI<any>('/recruiter/settings/profile', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    updatePreferences: async (data: any) => {
+        return fetchAPI<any>('/recruiter/settings/preferences', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    updateAIPipeline: async (ai_pipeline_config: any) => {
+        return fetchAPI<any>('/recruiter/settings/ai-pipeline', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ai_pipeline_config })
+        });
+    }
 };

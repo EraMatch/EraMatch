@@ -54,6 +54,10 @@ from app.schemas.settings import (
     OrganizationSettingsUpdate,
     PreferencesUpdate,
     AdminSettingsResponse,
+    RecruiterSettingsResponse,
+    RecruiterProfileUpdate,
+    RecruiterPreferencesUpdate,
+    RecruiterAIPipelineUpdate,
 )
 from app.schemas.analytics import (
     OverviewStats,
@@ -148,6 +152,10 @@ __all__ = [
     "OrganizationSettingsUpdate",
     "PreferencesUpdate",
     "AdminSettingsResponse",
+    "RecruiterSettingsResponse",
+    "RecruiterProfileUpdate",
+    "RecruiterPreferencesUpdate",
+    "RecruiterAIPipelineUpdate",
     # Analytics
     "OverviewStats",
     "GroupStatusCount",

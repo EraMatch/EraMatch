@@ -11,6 +11,7 @@ import asyncio
 import logging
 from datetime import timedelta, datetime
 from fastapi import HTTPException
+from app.services.email import EmailService
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,15 @@ class AuthService:
         logger.info(f"RESET LINK: {reset_link}")
         logger.info("="*50 + "\n")
         
-        # In the future, use an actual SMTP client here if settings.SMTP_HOST is set
+        # Send Real Email
+        try:
+            await EmailService.send_password_reset_email(
+                email=email,
+                name=org.organization_name,
+                reset_link=reset_link
+            )
+        except Exception as e:
+            logger.error(f"Failed to send password reset email to {email}: {e}")
 
         return True
 
@@ -226,7 +235,15 @@ class AuthService:
         logger.info(f"RESET LINK: {reset_link}")
         logger.info("="*50 + "\n")
         
-        # In the future, use an actual SMTP client here if settings.SMTP_HOST is set
+        # Send Real Email
+        try:
+            await EmailService.send_password_reset_email(
+                email=email,
+                name=f"{user.first_name} {user.last_name}",
+                reset_link=reset_link
+            )
+        except Exception as e:
+            logger.error(f"Failed to send password reset email to {email}: {e}")
 
         return True
 

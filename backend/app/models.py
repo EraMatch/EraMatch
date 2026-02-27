@@ -161,6 +161,29 @@ class UserPermission(BaseModel, table=True):
     custom_permissions: dict = Field(default_factory=dict, sa_column=Column(JSONB))
 
 
+class OrganizationUserSettings(BaseModel, table=True):
+    """Preferences and configurations for organization users (Recruiters/HR)."""
+    __tablename__ = "organization_user_settings"
+    
+    id: UUID = Field(default_factory=uuid4, alias="settings_id", sa_column=Column("settings_id", PG_UUID(as_uuid=True), primary_key=True))
+    user_id: UUID = Field(foreign_key="organization_users.user_id", unique=True)
+    
+    # Notification Preferences
+    email_notifications: bool = Field(default=True)
+    new_member_requests: bool = Field(default=True)
+    project_updates: bool = Field(default=True)
+    weekly_summary: bool = Field(default=False)
+    
+    # Security Settings
+    two_factor_auth: bool = Field(default=False)
+    session_timeout: bool = Field(default=True)
+    
+    # AI Pipeline Configuration (JSONB)
+    ai_pipeline_config: dict | None = Field(default=None, sa_column=Column(JSONB))
+    
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PaymentMethod(BaseModel, table=True):
     __tablename__ = "payment_methods"
     

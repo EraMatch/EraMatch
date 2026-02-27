@@ -395,10 +395,61 @@ async def create_position_group(
     # create_group returns CandidateGroup model, response_model is GroupDetailResponse
     # We might need to fetch details to match response model or just return basic info.
     # GroupDetailResponse has many fields.
-    # GroupService.create_group returns a CandidateGroup ORM object.
-    # We should probably return the full detail.
-    
     group = await service.create_group(data)
     
     # Fetch full details to return consistent response
     return await service.get_group_details(group.id)
+
+
+# =============================================================================
+# SETTINGS
+# =============================================================================
+
+from app.schemas import (
+    RecruiterSettingsResponse,
+    RecruiterProfileUpdate,
+    RecruiterPreferencesUpdate,
+    RecruiterAIPipelineUpdate,
+)
+
+@router.get("/settings", response_model=RecruiterSettingsResponse)
+async def get_recruiter_settings(
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Get candidate settings for the logged-in recruiter."""
+    service = RecruiterService(session, current_user)
+    return await service.get_settings()
+
+
+@router.patch("/settings/profile", response_model=RecruiterSettingsResponse)
+async def update_recruiter_profile(
+    data: RecruiterProfileUpdate,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Update profile logic."""
+    service = RecruiterService(session, current_user)
+    return await service.update_profile(data.model_dump(exclude_unset=True))
+
+
+@router.patch("/settings/preferences", response_model=RecruiterSettingsResponse)
+async def update_recruiter_preferences(
+    data: RecruiterPreferencesUpdate,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Update boolean preferences (notifications/security)."""
+    service = RecruiterService(session, current_user)
+    return await service.update_preferences(data.model_dump(exclude_unset=True))
+
+
+@router.patch("/settings/ai-pipeline", response_model=RecruiterSettingsResponse)
+async def update_recruiter_ai_pipeline(
+    data: RecruiterAIPipelineUpdate,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Update Technical HR configuration for AI pipeline engine defaults."""
+    service = RecruiterService(session, current_user)
+    return await service.update_ai_pipeline(data.ai_pipeline_config)

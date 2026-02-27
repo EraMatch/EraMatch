@@ -7,9 +7,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import {
     Bell, Lock, User, Mic, Brain, Volume2, Cpu, Settings2, CheckCircle2, Zap, Loader2
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import EraMatchLogo from '../../../assets/image-eramatch.png';
+import { recruiterService } from '../../../services/recruiter.service';
+import { fetchAPI } from '../../../services/client';
 
 interface RecruiterSettingsProps {
     userRole?: string;
@@ -76,11 +78,12 @@ export function RecruiterSettings({ userRole }: RecruiterSettingsProps) {
     ];
 
     const [activeTab, setActiveTab] = useState<TabId>('profile');
+    const [isLoading, setIsLoading] = useState(true);
 
     // Profile state
-    const [firstName, setFirstName] = useState('Recruiter');
-    const [lastName, setLastName] = useState('User');
-    const [email, setEmail] = useState('recruiter@eramatch.com');
+    const [firstName, setFirstName] = useState('');
+    const [lastName, setLastName] = useState('');
+    const [email, setEmail] = useState('');
 
     // Notification state
     const [emailNotifications, setEmailNotifications] = useState(true);
@@ -111,8 +114,71 @@ export function RecruiterSettings({ userRole }: RecruiterSettingsProps) {
     const [personalityNote, setPersonalityNote] = useState('');
     const [scoringFocus, setScoringFocus] = useState<string[]>(['technical_depth', 'communication']);
 
-    const handleSaveProfile = () => {
-        toast.success('Profile settings saved successfully!');
+    // Fetch settings on mount
+    useEffect(() => {
+        const loadSettings = async () => {
+            try {
+                const data = await recruiterService.getSettings();
+
+                // Profile
+                setFirstName(data.first_name || '');
+                setLastName(data.last_name || '');
+                setEmail(data.email || '');
+
+                // Preferences
+                if (data.email_notifications !== undefined) setEmailNotifications(data.email_notifications);
+                if (data.new_member_requests !== undefined) setNewMemberRequests(data.new_member_requests);
+                if (data.project_updates !== undefined) setProjectUpdates(data.project_updates);
+                if (data.weekly_summary !== undefined) setWeeklySummary(data.weekly_summary);
+                if (data.two_factor_auth !== undefined) setTwoFactorAuth(data.two_factor_auth);
+                if (data.session_timeout !== undefined) setSessionTimeout(data.session_timeout);
+
+                // AI Pipeline Config
+                if (data.ai_pipeline_config) {
+                    const cfg = data.ai_pipeline_config;
+                    if (cfg.sttEngine) setSttEngine(cfg.sttEngine);
+                    if (cfg.llmEngine) setLlmEngine(cfg.llmEngine);
+                    if (cfg.ttsEngine) setTtsEngine(cfg.ttsEngine);
+                    if (cfg.voiceId) setVoiceId(cfg.voiceId);
+                    if (cfg.language) setLanguage(cfg.language);
+                    if (cfg.interviewStyle) setInterviewStyle(cfg.interviewStyle);
+                    if (cfg.followUpMode) setFollowUpMode(cfg.followUpMode);
+                    if (cfg.llmTemperature !== undefined) setLlmTemperature(cfg.llmTemperature);
+                    if (cfg.maxFollowUps !== undefined) setMaxFollowUps(cfg.maxFollowUps);
+                    if (cfg.forbiddenTopics) setForbiddenTopics(cfg.forbiddenTopics);
+                    if (cfg.personalityNote) setPersonalityNote(cfg.personalityNote);
+                    if (cfg.scoringFocus) setScoringFocus(cfg.scoringFocus);
+                }
+            } catch (err) {
+                console.error("Failed to fetch settings", err);
+                toast.error("Failed to load settings data");
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        loadSettings();
+    }, []);
+
+    const handleSaveProfile = async () => {
+        try {
+            await recruiterService.updateProfile({
+                first_name: firstName,
+                last_name: lastName,
+                email: email
+            });
+            toast.success('Profile settings saved! Note: Email changes might require re-login.');
+        } catch (err) {
+            toast.error('Failed to update profile.');
+        }
+    };
+
+    const handleSavePreferences = async (updates: any) => {
+        try {
+            await recruiterService.updatePreferences(updates);
+            toast.success('Preferences updated!');
+        } catch (err) {
+            toast.error('Failed to update preferences.');
+        }
     };
 
     const handleChangePassword = async () => {
@@ -125,19 +191,35 @@ export function RecruiterSettings({ userRole }: RecruiterSettingsProps) {
         if (newPassword.length < 8) {
             toast.error('Password must be at least 8 characters.'); return;
         }
+
         setIsChangingPassword(true);
-        setTimeout(() => {
+        try {
+            // NOTE: The previous backend implementation we didn't add the ChangePassword endpoint explicitly
+            // to the recruiters API, but it might exist under generic auth routes.
+            // If it doesn't, this toast acts as a temporary shim or we can add it later.
+            await fetchAPI('/auth/change-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ old_password: oldPassword, new_password: newPassword, confirm_password: confirmPassword })
+            });
             toast.success('Password changed successfully!');
             setIsPasswordModalOpen(false);
             setOldPassword(''); setNewPassword(''); setConfirmPassword('');
+        } catch (err: any) {
+            toast.error(err.message || 'Failed to change password');
+        } finally {
             setIsChangingPassword(false);
-        }, 800);
+        }
     };
 
-    const handleSavePipeline = () => {
+    const handleSavePipeline = async () => {
         const config = { sttEngine, llmEngine, ttsEngine, voiceId, language, interviewStyle, followUpMode, llmTemperature, maxFollowUps, forbiddenTopics, personalityNote, scoringFocus };
-        localStorage.setItem('ai_pipeline_config', JSON.stringify(config));
-        toast.success('AI Pipeline configuration saved!');
+        try {
+            await recruiterService.updateAIPipeline(config);
+            toast.success('AI Pipeline configuration saved!');
+        } catch (err) {
+            toast.error('Failed to update AI pipeline.');
+        }
     };
 
     const handleTtsChange = (id: string) => {

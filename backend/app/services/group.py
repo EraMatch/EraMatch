@@ -36,6 +36,7 @@ from app.models import (
     AIInterviewConfig,
     Assessment,
     User,
+    EmailLog,
 )
 from app.schemas.group import (
     AcceptanceCriteriaResponse,
@@ -200,9 +201,12 @@ class GroupService:
             meets = score_ok and risk_ok
 
             # Verdict
-            if assess_status == "completed" and ai_status == "completed":
+            # Respect explicit passed/failed status from bulk_progress if set
+            if assess_status in ("passed", "failed") or ai_status in ("passed", "failed"):
+                 verdict = "fail" if "failed" in (assess_status, ai_status) else "pass"
+            elif assess_status in ("completed", "passed", "failed") and ai_status in ("completed", "passed", "failed"):
                 verdict = "pass" if meets else "fail"
-            elif assess_status == "completed" or ai_status == "completed":
+            elif assess_status in ("completed", "passed", "failed") or ai_status in ("completed", "passed", "failed"):
                 verdict = "conditional"
             else:
                 verdict = "pending"
@@ -321,11 +325,11 @@ class GroupService:
             pending_c = 0
             
             if st_type == "assessment":
-                completed_c = sum(1 for c in candidates if c.assessment.status == "completed")
-                pending_c = sum(1 for c in candidates if c.assessment.status != "completed")
+                completed_c = sum(1 for c in candidates if c.assessment.status in ("completed", "passed", "failed"))
+                pending_c = sum(1 for c in candidates if c.assessment.status not in ("completed", "passed", "failed"))
             elif st_type == "ai_interview":
-                completed_c = sum(1 for c in candidates if c.ai_interview.status == "completed")
-                pending_c = sum(1 for c in candidates if c.ai_interview.status != "completed")
+                completed_c = sum(1 for c in candidates if c.ai_interview.status in ("completed", "passed", "failed"))
+                pending_c = sum(1 for c in candidates if c.ai_interview.status not in ("completed", "passed", "failed"))
             # TODO: Add logic for other stages if present in candidates model
             
             pipeline_stages.append(PipelineStage(
@@ -439,7 +443,7 @@ class GroupService:
         ).join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id).where(
             GroupStageConfig.group_id == group_id,
             GroupStageConfig.stage_type == "assessment",
-            CandidateStageProgress.status == "completed",
+            CandidateStageProgress.status.in_(["completed", "passed", "failed"]),
         )
 
         # AI interview stats
@@ -449,7 +453,7 @@ class GroupService:
         ).join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id).where(
             GroupStageConfig.group_id == group_id,
             GroupStageConfig.stage_type == "ai_interview",
-            CandidateStageProgress.status == "completed",
+            CandidateStageProgress.status.in_(["completed", "passed", "failed"]),
         )
 
         # Offers
@@ -582,6 +586,82 @@ class GroupService:
                 )
                 self.session.add(new_prog)
                 invitations_sent += 1
+
+            # ── Pre-create Ongoing records
+            if stage_config.config_id:
+                if stage == "assessment":
+                    existing = await self.session.execute(select(OngoingAssessment).where(
+                        OngoingAssessment.application_id == app.id,
+                        OngoingAssessment.assessment_id == stage_config.config_id
+                    ))
+                    if not existing.scalars().first():
+                        new_assessment = OngoingAssessment(
+                            assessment_id=stage_config.config_id,
+                            application_id=app.id,
+                            organization_id=self.org_id,
+                            assigned_questions={},
+                            status="not_started"
+                        )
+                        self.session.add(new_assessment)
+                
+                elif stage in ("ai_interview", "live_interview"):
+                    int_type = "recorded" if stage == "ai_interview" else "live_ai"
+                    existing = await self.session.execute(select(OngoingInterview).where(
+                        OngoingInterview.application_id == app.id,
+                        OngoingInterview.config_id == stage_config.config_id
+                    ))
+                    if not existing.scalars().first():
+                        new_interview = OngoingInterview(
+                            config_id=stage_config.config_id,
+                            application_id=app.id,
+                            organization_id=self.org_id,
+                            interview_type=int_type,
+                            status="not_started"
+                        )
+                        self.session.add(new_interview)
+
+            # ── Candidate Emails and Notifications
+            profile = await self.session.get(CandidateProfile, app.candidate_id)
+            if profile:
+                stage_name_title = stage.replace("_", " ").title()
+                if stage == "ai_interview": stage_name_title = "AI Interview"
+                elif stage == "live_interview": stage_name_title = "Live Interview"
+                
+                # Check if notification already sent to avoid duplicate spam on re-start
+                existing_notif = await self.session.execute(select(Notification).where(
+                    Notification.recipient_candidate_id == profile.id,
+                    Notification.type == f"{stage}_invitation"
+                ))
+                
+                if not existing_notif.scalars().first():
+                    self.session.add(Notification(
+                        organization_id=self.org_id,
+                        recipient_candidate_id=profile.id,
+                        type=f"{stage}_invitation",
+                        title=f"Invitation: {stage_name_title}",
+                        message=f"You have been invited to complete the {stage_name_title} stage for your application. Please log in to your candidate portal to begin.",
+                        data={"stage": stage, "group_id": str(group_id), "application_id": str(app.id)}
+                    ))
+                    
+                    self.session.add(EmailLog(
+                        organization_id=self.org_id,
+                        recipient_email=profile.email,
+                        subject=f"Action Required: EraMatch {stage_name_title} Invitation",
+                        template_type="stage_invitation",
+                        status="sent",
+                        sent_at=datetime.utcnow()
+                    ))
+                    
+                    # Send Real Email
+                    try:
+                        from app.services.email import EmailService
+                        await EmailService.send_stage_invitation_email(
+                            email=profile.email,
+                            name=f"{profile.first_name} {profile.last_name}",
+                            stage_title=stage_name_title
+                        )
+                    except Exception as e:
+                        print(f"Failed to send real stage invitation email to {profile.email}: {e}")
 
             # Update application status
             if app.status in ("applied", "screening"):
@@ -756,6 +836,135 @@ class GroupService:
 
         return ActivityLogResponse(activities=paginated, total_count=total)
 
+    # ── BULK PROGRESSION ──────────────────────────────────────────────────────
+
+    async def bulk_progress(self, group_id: UUID, application_ids: list[UUID], action: str, reason: str | None = None) -> None:
+        """Handle bulk decisions for candidates after a stage finishes."""
+        if not application_ids:
+            return
+
+        # Fetch the candidates' applications
+        query = select(CandidateApplication).where(
+            CandidateApplication.group_id == group_id,
+            CandidateApplication.id.in_(application_ids)
+        )
+        res = await self.session.execute(query)
+        apps = res.scalars().all()
+
+        for app in apps:
+            old_status = app.status
+            new_status = old_status
+            
+            if action == 'progress':
+                # Just moving them along in the 'Review' flow context
+                new_status = "In Progress"
+            elif action == 'reject':
+                new_status = "Rejected"
+            elif action == 'hold':
+                new_status = "On Hold"
+
+            if old_status != new_status:
+                app.status = new_status
+                self.session.add(app)
+                
+                # Fetch the most recent completed stage to update its status
+                recent_prog_res = await self.session.execute(
+                    select(CandidateStageProgress)
+                    .where(
+                        CandidateStageProgress.application_id == app.id,
+                        CandidateStageProgress.status == "completed"
+                    )
+                    .order_by(CandidateStageProgress.completed_at.desc())
+                    .limit(1)
+                )
+                recent_prog = recent_prog_res.scalars().first()
+                if recent_prog:
+                    recent_prog.status = "passed" if action == "progress" else "failed"
+                    recent_prog.passed = (action == "progress")
+                    self.session.add(recent_prog)
+
+                # Record the transition in PipelineTransition
+                transition = PipelineTransition(
+                    application_id=app.id,
+                    from_status=old_status,
+                    to_status=new_status,
+                    reason=reason or f"Bulk {action} from Group Overview",
+                    changed_by_id=self.current_user.id
+                )
+                self.session.add(transition)
+
+                # Add a system log for the audit trail
+                log = SystemLog(
+                    event_type="candidate_bulk_progress",
+                    user_id=self.current_user.id,
+                    organization_id=self.current_user.organization_id,
+                    entity_type="candidate_application",
+                    entity_id=app.id,
+                    details={"action": action, "reason": reason}
+                )
+                self.session.add(log)
+
+        await self.session.commit()
+
+    # ── FINAL OFFERS ────────────────────────────────────────────────────────
+    
+    async def send_offers(self, group_id: UUID, application_ids: list[str], subject: str, body: str) -> None:
+        """Sends offer emails sequentially using the provided body and subject."""
+        from app.services.email import EmailService
+        if not application_ids:
+            return
+
+        # Fetch applications and candidates to get email/name
+        query = (
+            select(CandidateApplication, CandidateProfile)
+            .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .where(
+                CandidateApplication.group_id == group_id,
+                CandidateApplication.id.in_(application_ids)
+            )
+        )
+        res = await self.session.execute(query)
+        rows = res.all()
+
+        for app, profile in rows:
+            # 1. Update application status
+            app.status = "Offered"
+            self.session.add(app)
+            
+            # 2. Add an Offer record so it's tracked explicitly
+            new_offer = Offer(
+                application_id=app.id,
+                organization_id=self.current_user.organization_id,
+                position_id=app.position_id,
+                status="sent"
+            )
+            self.session.add(new_offer)
+
+            # 3. Create a system log / activity log
+            log = SystemLog(
+                event_type="offer_sent",
+                user_id=self.current_user.id,
+                organization_id=self.current_user.organization_id,
+                entity_type="candidate_application",
+                entity_id=app.id,
+                details={"candidate_name": profile.full_name, "subject": subject}
+            )
+            self.session.add(log)
+
+            # 4. Dispatch the actual email
+            try:
+                await EmailService.send_custom_offer_email(
+                    email=profile.email,
+                    name=profile.full_name,
+                    subject=subject,
+                    raw_body=body
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to send offer email: {e}")
+
+        await self.session.commit()
+
     # ── 6. GET /recruiter/groups/export ───────────────────────────────────────
 
     async def export_group_csv(self, group_id: UUID) -> str:
@@ -884,7 +1093,7 @@ class GroupService:
         for app, cand, prog in rows:
             status = prog.status if prog else "pending"
             score = float(prog.score) if prog and prog.score is not None else None
-            is_completed = status == "completed"
+            is_completed = status in ("completed", "passed", "failed")
             if is_completed:
                 completed += 1
                 if score is not None:
@@ -893,7 +1102,12 @@ class GroupService:
                 pending += 1
 
             meets = score is not None and score >= pass_threshold if score is not None else False
-            verdict = "pass" if meets else ("fail" if is_completed else "pending")
+            if status == "passed":
+                verdict = "pass"
+            elif status == "failed":
+                verdict = "fail"
+            else:
+                verdict = "pass" if meets else ("fail" if is_completed else "pending")
 
             app_flags = flag_map.get(app.id, [])
             mon_flags = [

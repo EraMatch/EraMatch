@@ -8,6 +8,20 @@ from pydantic import BaseModel, Field
 
 # ─── Get Group Details ────────────────────────────────────────────────────────
 
+class SendOffersRequest(BaseModel):
+    """Payload for sending final offers to candidates."""
+    application_ids: list[str]
+    email_subject: str
+    email_body: str
+
+
+class BulkProgressRequest(BaseModel):
+    """Payload for progressing candidates in bulk after a stage ends."""
+    application_ids: list[UUID]
+    action: str  # 'progress', 'reject', 'hold'
+    reason: str | None = None
+
+
 class AssignedHRResponse(BaseModel):
     id: UUID
     name: str

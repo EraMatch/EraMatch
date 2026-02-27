@@ -25,6 +25,7 @@ from app.core.security import hash_password
 import secrets
 import string
 from app.services.notification import NotificationService
+from app.services.email import EmailService
 from app.schemas.project import ProjectCreate, PositionCreate
 
 
@@ -841,6 +842,17 @@ CandidateStageProgress.completed_at.isnot(None),
             
             print(f"DEBUG: Created user {request.email} with temp password: {temp_password}")
             
+            # Send welcome email with temporary password
+            try:
+                await EmailService.send_welcome_email(
+                    email=request.email,
+                    name=f"{request.firstName} {request.lastName}",
+                    role=request.role,
+                    temp_password=temp_password
+                )
+            except Exception as email_err:
+                print(f"Failed to send welcome email: {email_err}")
+            
             return MemberRegisterResponse(success=True, userID=new_user.id)
             
         except Exception as e:
@@ -939,6 +951,17 @@ CandidateStageProgress.completed_at.isnot(None),
             self.session.add(log)
             
             await self.session.commit()
+            
+            # Send reassignment email
+            try:
+                await EmailService.send_reassignment_email(
+                    email=new_rec.email,
+                    name=f"{new_rec.first_name} {new_rec.last_name}",
+                    position_title=position.title
+                )
+            except Exception as email_err:
+                print(f"Failed to send reassignment email: {email_err}")
+                
             return True
         except Exception as e:
             print(f"Error reassigning recruiter: {e}")
