@@ -545,6 +545,7 @@ export function EnhancedGroupOverviewV2({
         await api.recruiter.bulkProgressCandidates(groupId, {
           application_ids: appIds,
           action,
+          current_stage_type: currentStage
         });
       }
     } catch (error) {
@@ -846,8 +847,12 @@ export function EnhancedGroupOverviewV2({
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
+      case 'passed':
         return <CheckCircle size={16} className="text-[#10b981]" />;
       case 'pending':
+      case 'unlocked':
+      case 'in_progress':
+      case 'not_started':
         return <Clock size={16} className="text-[#f59e0b]" />;
       case 'failed':
         return <XCircle size={16} className="text-[#ef4444]" />;
@@ -1307,8 +1312,14 @@ export function EnhancedGroupOverviewV2({
                 {activeFlow.includes('assessment') && (
                   <button
                     onClick={() => setShowModuleMonitoring('assessment')}
-                    disabled={stageState !== 'closed'}
-                    title={stageState !== 'closed' ? "Stage must be completed and closed to monitor advanced results" : ""}
+                    disabled={(() => {
+                      const step = pipelineSteps.find(s => s.id === 'assessment');
+                      return !step || step.state === 'not-started';
+                    })()}
+                    title={(() => {
+                      const step = pipelineSteps.find(s => s.id === 'assessment');
+                      return (!step || step.state === 'not-started') ? "Stage must be started to monitor results" : "";
+                    })()}
                     className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-[#6366f1] disabled:hover:to-[#8b5cf6]"
                   >
                     <BarChart3 size={16} />
@@ -1320,8 +1331,20 @@ export function EnhancedGroupOverviewV2({
                 {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
                   <button
                     onClick={() => setShowModuleMonitoring('ai-interview')}
-                    disabled={stageState !== 'closed'}
-                    title={stageState !== 'closed' ? "Stage must be completed and closed to monitor advanced results" : ""}
+                    disabled={(() => {
+                      const aiStep = pipelineSteps.find(s => s.id === 'ai-interview');
+                      const liveStep = pipelineSteps.find(s => s.id === 'live-interview');
+                      const aiStarted = aiStep && aiStep.state !== 'not-started';
+                      const liveStarted = liveStep && liveStep.state !== 'not-started';
+                      return !aiStarted && !liveStarted;
+                    })()}
+                    title={(() => {
+                      const aiStep = pipelineSteps.find(s => s.id === 'ai-interview');
+                      const liveStep = pipelineSteps.find(s => s.id === 'live-interview');
+                      const aiStarted = aiStep && aiStep.state !== 'not-started';
+                      const liveStarted = liveStep && liveStep.state !== 'not-started';
+                      return (!aiStarted && !liveStarted) ? "Interview stages must be started to monitor results" : "";
+                    })()}
                     className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-[#6366f1] disabled:hover:to-[#8b5cf6]"
                   >
                     <BarChart3 size={16} />
@@ -2179,6 +2202,7 @@ export function EnhancedGroupOverviewV2({
             moduleType={showModuleMonitoring}
             candidates={candidateStatuses}
             activeFlow={activeFlow}
+            pipelineSteps={pipelineSteps}
             onClose={() => setShowModuleMonitoring(null)}
             onViewCandidate={(candidateId) => {
               setShowModuleMonitoring(null);

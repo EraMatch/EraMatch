@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { X, BarChart3, TrendingUp, Users, Download, CheckCircle, XCircle, AlertCircle, Award, Flag, Eye, RefreshCw, Mic, Video } from 'lucide-react';
+import { X, BarChart3, TrendingUp, Users, Download, CheckCircle, XCircle, AlertCircle, Award, Flag, Eye, RefreshCw, Mic, Video, Lock } from 'lucide-react';
 
 interface ModuleMonitoringDashboardProps {
   moduleType: 'assessment' | 'ai-interview';
   candidates: any[];
   activeFlow?: string[]; // Pass active filtration flow to determine subpages
+  pipelineSteps?: any[]; // Pass pipeline steps to check stage status
   onClose: () => void;
   onViewCandidate: (candidateId: number) => void;
   onAddVerdict: (candidateId: number) => void;
@@ -20,12 +21,14 @@ interface SubpageConfig {
   color: string;
   bgColor: string;
   borderColor: string;
+  stageId: string;
 }
 
 export function ModuleMonitoringDashboard({
   moduleType,
   candidates,
   activeFlow = [],
+  pipelineSteps = [],
   onClose,
   onViewCandidate,
   onAddVerdict,
@@ -54,6 +57,7 @@ export function ModuleMonitoringDashboard({
           color: 'text-purple-700',
           bgColor: 'bg-purple-50',
           borderColor: 'border-purple-500',
+          stageId: 'ai-interview'
         });
       }
       if ((stage === 'live-interview' || stage === 'live_interview') && !interviewSubpages.find(s => s.key === 'live')) {
@@ -66,12 +70,18 @@ export function ModuleMonitoringDashboard({
           color: 'text-blue-700',
           bgColor: 'bg-blue-50',
           borderColor: 'border-blue-500',
+          stageId: 'live-interview'
         });
       }
     });
   }
 
-  const [activeSubpage, setActiveSubpage] = useState<string>(interviewSubpages[0]?.key || '');
+  const [activeSubpage, setActiveSubpage] = useState<string>(
+    interviewSubpages.find(s => {
+      const step = pipelineSteps.find(ps => ps.id === s.stageId);
+      return step && step.state !== 'not-started';
+    })?.key || interviewSubpages[0]?.key || ''
+  );
 
   const currentSubpage = interviewSubpages.find(s => s.key === activeSubpage) || null;
 
@@ -153,20 +163,32 @@ export function ModuleMonitoringDashboard({
             {interviewSubpages.map((subpage, idx) => {
               const Icon = subpage.icon;
               const isActive = activeSubpage === subpage.key;
+              const step = pipelineSteps.find(ps => ps.id === subpage.stageId || ps.id === subpage.stageId.replace('-', '_'));
+              const isLocked = !step || step.state === 'not-started' || step.state === 'not_started';
+
               return (
                 <button
                   key={subpage.key}
+                  disabled={isLocked}
                   onClick={() => { setActiveSubpage(subpage.key); setFilterStatus('all'); }}
                   className={`flex items-center gap-2 px-5 py-2.5 rounded-[10px] border-2 text-[14px] font-medium transition-all ${isActive
-                      ? `${subpage.borderColor} ${subpage.bgColor} ${subpage.color}`
+                    ? `${subpage.borderColor} ${subpage.bgColor} ${subpage.color}`
+                    : isLocked
+                      ? 'border-dashed border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'
                       : 'border-transparent bg-white/60 text-[#6b7280] hover:bg-white hover:border-gray-300'
                     }`}
+                  title={isLocked ? "This interview stage has not been started yet" : ""}
                 >
-                  <Icon size={16} />
+                  {isLocked ? <Lock size={14} className="text-gray-400" /> : <Icon size={16} />}
                   <span>Stage {idx + 1}: {subpage.label}</span>
                   {isActive && (
                     <span className={`ml-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${subpage.bgColor} ${subpage.color} border ${subpage.borderColor}`}>
-                      Active
+                      Viewing
+                    </span>
+                  )}
+                  {isLocked && (
+                    <span className="ml-1 px-2 py-0.5 rounded-full text-[11px] bg-gray-100 text-gray-400 border border-gray-200">
+                      Locked
                     </span>
                   )}
                 </button>
@@ -180,7 +202,7 @@ export function ModuleMonitoringDashboard({
       <div className="px-8 py-6 border-b border-[#e5e7eb] bg-gray-50">
         {showInterviewSubpages && currentSubpage && (
           <div className="flex items-center gap-2 mb-4">
-            {(() => { const Icon = currentSubpage.icon; return <Icon size={18} className={currentSubpage.color} />; })()}
+            {(() => { const PageIcon = currentSubpage.icon; return <PageIcon size={18} className={currentSubpage.color} />; })()}
             <span className={`font-semibold text-[15px] ${currentSubpage.color}`}>{currentSubpage.label} Statistics</span>
           </div>
         )}

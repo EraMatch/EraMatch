@@ -197,6 +197,23 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     ? Math.max(0, (lastActiveIndex / (timelineStages.length - 1)) * 100)
     : 0;
 
+  const handleStageClick = (stageId: string) => {
+    const mapping: Record<string, TabType> = {
+      'assessment': 'assessment',
+      'aiInterview': 'interview',
+      'liveInterview': 'live-interview',
+      'finalDecision': 'final-report',
+      'github': 'github'
+    };
+    const tabId = mapping[stageId];
+    if (tabId) {
+      const tab = tabs.find(t => t.id === tabId);
+      if (tab && !tab.locked) {
+        setActiveTab(tabId);
+      }
+    }
+  };
+
   return (
     <div className="h-full w-full overflow-auto bg-[#f9fafb]">
       <div className="max-w-[1400px] mx-auto px-[48px] py-[24px]">
@@ -251,16 +268,36 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                   <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Overall Score</div>
                   <div className="text-[24px] text-[#111827]">{candidate.scores.overall}</div>
                 </div>
-                <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                  <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Assessment</div>
+                <div
+                  onClick={() => handleStageClick('assessment')}
+                  className={`rounded-[8px] p-4 cursor-pointer transition-all hover:shadow-md active:scale-95 ${tabs.find(t => t.id === 'assessment')?.locked ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'bg-[#f4f7ff] hover:bg-[#ebf0ff] border border-indigo-100'
+                    }`}
+                >
+                  <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
+                    Assessment
+                    {!tabs.find(t => t.id === 'assessment')?.locked && <Eye size={12} className="text-indigo-400" />}
+                  </div>
                   <div className="text-[24px] text-[#111827]">{candidate.scores.assessment}</div>
                 </div>
-                <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                  <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">AI Interview</div>
+                <div
+                  onClick={() => handleStageClick('aiInterview')}
+                  className={`rounded-[8px] p-4 cursor-pointer transition-all hover:shadow-md active:scale-95 ${tabs.find(t => t.id === 'interview')?.locked ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'bg-[#f4f7ff] hover:bg-[#ebf0ff] border border-indigo-100'
+                    }`}
+                >
+                  <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
+                    AI Interview
+                    {!tabs.find(t => t.id === 'interview')?.locked && <Eye size={12} className="text-indigo-400" />}
+                  </div>
                   <div className="text-[24px] text-[#111827]">{candidate.scores.aiInterview}</div>
                 </div>
-                <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                  <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">GitHub</div>
+                <div
+                  onClick={() => handleStageClick('github')}
+                  className="bg-[#f9fafb] rounded-[8px] p-4 cursor-pointer transition-all hover:bg-[#f3f4f6] hover:shadow-md active:scale-95 border border-transparent hover:border-gray-200"
+                >
+                  <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
+                    GitHub
+                    <Eye size={12} className="text-gray-400" />
+                  </div>
                   <div className="text-[24px] text-[#111827]">{candidate.scores.github}</div>
                 </div>
               </div>
@@ -407,18 +444,25 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                         <div className="relative grid gap-4" style={{ gridTemplateColumns: `repeat(${timelineStages.length}, minmax(0, 1fr))`, zIndex: 1 }}>
                           {timelineStages.map((stage) => {
                             const Icon = stage.status === 'completed' ? stage.completedIcon : stage.status === 'in-progress' ? (stage.inProgressIcon || stage.icon) : stage.icon;
+                            const isClickable = stage.id !== 'groupAssignment' && (stage.status === 'completed' || stage.status === 'in-progress');
+
                             return (
-                              <div key={stage.id} className="flex flex-col items-center">
-                                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 border-4 ${stage.status === 'completed'
-                                  ? 'bg-emerald-500 border-emerald-200'
-                                  : stage.status === 'in-progress'
-                                    ? 'bg-indigo-500 border-indigo-200'
-                                    : 'bg-gray-300 border-gray-200'
+                              <div
+                                key={stage.id}
+                                onClick={() => isClickable && handleStageClick(stage.id)}
+                                className={`flex flex-col items-center group ${isClickable ? 'cursor-pointer' : 'cursor-default'}`}
+                              >
+                                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 border-4 transition-all duration-300 ${stage.status === 'completed'
+                                    ? 'bg-emerald-500 border-emerald-200 group-hover:scale-110 group-hover:shadow-lg'
+                                    : stage.status === 'in-progress'
+                                      ? 'bg-indigo-500 border-indigo-200 group-hover:scale-110 group-hover:shadow-lg'
+                                      : 'bg-gray-300 border-gray-200'
                                   }`}>
                                   <Icon size={24} className={stage.status === 'completed' ? 'text-white' : stage.status === 'in-progress' ? 'text-white animate-pulse' : 'text-gray-500'} />
                                 </div>
                                 <div className="text-center">
-                                  <div className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#111827] mb-1">
+                                  <div className={`font-['Arimo',sans-serif] text-[12px] font-semibold mb-1 transition-colors ${isClickable ? 'text-[#111827] group-hover:text-indigo-600' : 'text-[#9ca3af]'
+                                    }`}>
                                     {stage.label}
                                   </div>
                                   {stage.completedAt && (
