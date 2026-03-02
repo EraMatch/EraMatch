@@ -1962,10 +1962,20 @@ class RecruiterService:
         settings = res.scalar_one_or_none()
         
         if not settings:
-            settings = OrganizationUserSettings(user_id=user.id)
-            self.session.add(settings)
-            await self.session.commit()
-            await self.session.refresh(settings)
+            try:
+                settings = OrganizationUserSettings(user_id=user.id)
+                self.session.add(settings)
+                await self.session.commit()
+                await self.session.refresh(settings)
+            except Exception as e:
+                # Handle race condition where settings might have been created by another request
+                await self.session.rollback()
+                res = await self.session.execute(
+                    select(OrganizationUserSettings).where(OrganizationUserSettings.user_id == user.id)
+                )
+                settings = res.scalar_one_or_none()
+                if not settings:
+                    raise e # Re-raise if it's still not found (some other error)
 
         return {
             "first_name": user.first_name,

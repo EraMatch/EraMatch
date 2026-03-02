@@ -19,6 +19,7 @@ class BulkProgressRequest(BaseModel):
     """Payload for progressing candidates in bulk after a stage ends."""
     application_ids: list[UUID]
     action: str  # 'progress', 'reject', 'hold'
+    current_stage_type: str | None = None
     reason: str | None = None
 
 

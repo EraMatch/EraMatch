@@ -290,7 +290,11 @@ class GroupService:
         stage_configs = stage_configs_res.scalars().all()
 
         flow = [
-            FiltrationFlowStage(order=sc.stage_order, stage=sc.stage_type, status=sc.state)
+            FiltrationFlowStage(
+                order=sc.stage_order, 
+                stage=sc.stage_type.replace("_", "-"), 
+                status=(sc.state.replace("_", "-") if sc.state else "not-started")
+            )
             for sc in stage_configs
         ]
 
@@ -333,36 +337,45 @@ class GroupService:
         }
 
         # Use flow to determine stages
-        for stage_conf in flow:
+        for idx, stage_conf in enumerate(flow):
             st_type = stage_conf.stage.lower().replace("-", "_") # normalize
             st_name = stage_names.get(st_type, stage_conf.stage.title())
             
+            # Initialize stats
+            completed_c = 0
+            pending_c = 0
+            total_c = 0
+            
             # Calculate stats
             active_candidates = []
+            is_first_stage = (idx == 0)
+
             if st_type == "assessment":
-                active_candidates = [c for c in candidates if c.assessment.status != "locked"]
+                active_candidates = [c for c in candidates if c.assessment.status != "locked" or is_first_stage]
                 completed_c = sum(1 for c in active_candidates if c.assessment.status in ("completed", "passed", "failed"))
                 pending_c = sum(1 for c in active_candidates if c.assessment.status not in ("completed", "passed", "failed"))
             elif st_type == "ai_interview":
-                active_candidates = [c for c in candidates if c.ai_interview.status != "locked"]
+                active_candidates = [c for c in candidates if c.ai_interview.status != "locked" or is_first_stage]
                 completed_c = sum(1 for c in active_candidates if c.ai_interview.status in ("completed", "passed", "failed"))
                 pending_c = sum(1 for c in active_candidates if c.ai_interview.status not in ("completed", "passed", "failed"))
             elif st_type == "live_interview":
-                active_candidates = [c for c in candidates if c.live_interview.status != "locked"]
+                active_candidates = [c for c in candidates if c.live_interview.status != "locked" or is_first_stage]
                 completed_c = sum(1 for c in active_candidates if c.live_interview.status in ("completed", "passed", "failed"))
                 pending_c = sum(1 for c in active_candidates if c.live_interview.status not in ("completed", "passed", "failed"))
             else:
-                active_candidates = candidates
+                active_candidates = candidates if is_first_stage else [c for c in candidates if c.status != "Rejected"]
+                completed_c = 0
+                pending_c = len(active_candidates)
             
             total_c = len(active_candidates)
             
             pipeline_stages.append(PipelineStage(
-                id=stage_conf.stage.replace("_", "-"), # Normalize to frontend format (ai-interview)
+                id=st_type.replace("_", "-"),
                 name=st_name,
                 completed=completed_c,
                 total=total_c,
                 pending=pending_c,
-                state=stage_conf.status or "not-started"
+                state=(stage_conf.status.replace("_", "-") if stage_conf.status else "not-started")
             ))
 
         # Fetch created assessments for this group
@@ -618,8 +631,10 @@ class GroupService:
             )
             prog = prog_res.scalars().first()
             if prog:
-                if prog.status in ("locked", "not_started"):
-                    prog.status = "unlocked"
+                # If it's locked, not started, or 'unlocked' (was pre-created by bulk_progress),
+                # we count it as a "new invitation sent" for this stage launch.
+                if prog.status in ("locked", "not_started", "unlocked"):
+                    prog.status = "in_progress" # Actually move to in_progress when stage starts
                     prog.started_at = datetime.now(timezone.utc)
                     self.session.add(prog)
                     invitations_sent += 1
@@ -627,7 +642,7 @@ class GroupService:
                 new_prog = CandidateStageProgress(
                     application_id=app.id,
                     stage_id=stage_config.stage_id,
-                    status="unlocked",
+                    status="in_progress",
                     started_at=datetime.utcnow(),
                 )
                 self.session.add(new_prog)
@@ -914,20 +929,56 @@ class GroupService:
                 self.session.add(app)
                 
                 # Fetch the most recent completed stage to update its status
+                # We join with GroupStageConfig to know the stage_order
                 recent_prog_res = await self.session.execute(
-                    select(CandidateStageProgress)
+                    select(CandidateStageProgress, GroupStageConfig)
+                    .join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id)
                     .where(
                         CandidateStageProgress.application_id == app.id,
-                        CandidateStageProgress.status == "completed"
+                        CandidateStageProgress.status.in_(["completed", "passed", "failed"])
                     )
-                    .order_by(CandidateStageProgress.completed_at.desc())
+                    .order_by(GroupStageConfig.stage_order.desc())
                     .limit(1)
                 )
-                recent_prog = recent_prog_res.scalars().first()
-                if recent_prog:
+                row = recent_prog_res.first()
+                if row:
+                    recent_prog, current_stage_cfg = row
                     recent_prog.status = "passed" if action == "progress" else "failed"
                     recent_prog.passed = (action == "progress")
+                    recent_prog.completed_at = datetime.utcnow()
                     self.session.add(recent_prog)
+
+                    # If progressed, initialize the next stage in the pipeline
+                    if action == 'progress':
+                        next_stage_res = await self.session.execute(
+                            select(GroupStageConfig)
+                            .where(
+                                GroupStageConfig.group_id == group_id,
+                                GroupStageConfig.stage_order > current_stage_cfg.stage_order,
+                                GroupStageConfig.state != 'inactive'
+                            )
+                            .order_by(GroupStageConfig.stage_order)
+                            .limit(1)
+                        )
+                        next_stage_cfg = next_stage_res.scalars().first()
+                        if next_stage_cfg:
+                            # Check if progress already exists for next stage to avoid duplicates
+                            next_prog_check = await self.session.execute(
+                                select(CandidateStageProgress).where(
+                                    CandidateStageProgress.application_id == app.id,
+                                    CandidateStageProgress.stage_id == next_stage_cfg.stage_id
+                                )
+                            )
+                            if not next_prog_check.scalars().first():
+                                # Initialize next stage status. 
+                                # If the stage is already active, we mark it unlocked.
+                                next_status = "unlocked" if next_stage_cfg.state == "active" else "not_started"
+                                new_next_prog = CandidateStageProgress(
+                                    application_id=app.id,
+                                    stage_id=next_stage_cfg.stage_id,
+                                    status=next_status
+                                )
+                                self.session.add(new_next_prog)
 
                 # Record the transition in PipelineTransition
                 transition = PipelineTransition(
@@ -935,15 +986,15 @@ class GroupService:
                     from_status=old_status,
                     to_status=new_status,
                     reason=reason or f"Bulk {action} from Group Overview",
-                    changed_by_id=self.current_user.id
+                    changed_by_id=self.user.id
                 )
                 self.session.add(transition)
 
                 # Add a system log for the audit trail
                 log = SystemLog(
                     event_type="candidate_bulk_progress",
-                    user_id=self.current_user.id,
-                    organization_id=self.current_user.organization_id,
+                    user_id=self.user.id,
+                    organization_id=self.user.organization_id,
                     entity_type="candidate_application",
                     entity_id=app.id,
                     details={"action": action, "reason": reason}
@@ -1657,16 +1708,31 @@ class GroupService:
         """Synchronise GroupStageConfig rows with a list of stage names."""
         group_id = group.id
         
-        # Fetch existing configs
-        current_configs_res = await self.session.execute(
+        # 2. To avoid UniqueViolationError on stage_order during reordering, 
+        #    atomically shift ALL existing orders in the DB for this group to a high range.
+        #    We use raw SQL to ensure every single row is moved simultaneously.
+        await self.session.execute(
+            text("UPDATE group_pipeline_stages SET stage_order = stage_order + 1000 WHERE group_id = :group_id"),
+            {"group_id": group_id}
+        )
+        await self.session.commit()
+        
+        # 3. Re-fetch all fresh objects in a new transaction
+        self.session.add(group)
+        res = await self.session.execute(
             select(GroupStageConfig).where(GroupStageConfig.group_id == group_id)
         )
-        current_configs = {c.stage_type: c for c in current_configs_res.scalars().all()}
+        all_configs = res.scalars().all()
+
+        # Map by type (handle potential duplicates)
+        by_type: dict[str, list[GroupStageConfig]] = {}
+        for c in all_configs:
+            by_type.setdefault(c.stage_type, []).append(c)
         
-        # Process new flow
+        # 3. Process new flow
+        used_stage_ids = set()
         new_flow_types = []
         for idx, stage_str in enumerate(stage_names):
-            # Normalize: frontend uses dashes, backend uses underscores
             stage_type = stage_str.lower().replace("-", "_")
             new_flow_types.append(stage_type)
             
@@ -1676,14 +1742,18 @@ class GroupService:
             elif stage_type == "assessment": stage_name = "Technical Assessment"
             elif stage_type == "live_interview": stage_name = "Live Interview"
             
-            if stage_type in current_configs:
-                # Update existing
-                conf = current_configs[stage_type]
+            rows = by_type.get(stage_type, [])
+            if rows:
+                # Use the first one available
+                conf = rows[0]
                 conf.stage_order = idx
+                conf.stage_name = stage_name
                 if conf.state == 'inactive':
-                    conf.state = 'not_started' # Reactivate
-                # Keep existing state if active/completed
+                    conf.state = 'not_started'
                 self.session.add(conf)
+                used_stage_ids.add(conf.stage_id)
+                # Remove from by_type so it's not reused (in case of duplicate stage_names in input)
+                rows.pop(0)
             else:
                 # Create new
                 new_conf = GroupStageConfig(
@@ -1696,18 +1766,23 @@ class GroupService:
                 )
                 self.session.add(new_conf)
         
-        # Mark removed stages as inactive
-        for st_type, conf in current_configs.items():
-            if st_type not in new_flow_types:
+        # 4. Mark all other rows as inactive with unique high orders
+        # This handles both "removed" stages and "duplicate" stages of the same type.
+        for conf in all_configs:
+            if conf.stage_id not in used_stage_ids:
                 conf.state = 'inactive'
-                conf.stage_order = 999
+                # Use stage_id hex hash or similar to ensure uniqueness in the 1000+ range
+                # Or just keep the current high order (+1000) which is already unique.
+                # Let's just ensure it's > 500 to stay away from the flow.
+                if conf.stage_order < 500:
+                     conf.stage_order += 500
                 self.session.add(conf)
         
         await self.session.commit()
         self.session.add(group)
         await self.session.commit()
 
-    async def bulk_progress(self, group_id: UUID, application_ids: list[UUID], action: str, reason: str | None = None) -> None:
+    async def bulk_progress(self, group_id: UUID, application_ids: list[UUID], action: str, current_stage_type: str | None = None, reason: str | None = None) -> None:
         """Progress, reject, or hold candidates in bulk."""
         if not application_ids:
             return
@@ -1719,39 +1794,96 @@ class GroupService:
         }
         new_status = status_map.get(action, "In Pipeline")
         
-        # Determine current stage of the group to update progress properly
-        active_stage_res = await self.session.execute(
-            select(GroupStageConfig).where(
-                GroupStageConfig.group_id == group_id,
-                GroupStageConfig.state == "active"
+        # 1. Identify the source stage
+        source_stage = None
+        if current_stage_type:
+            # Frontend uses dashes, backend uses underscores
+            normalized_type = current_stage_type.lower().replace("-", "_")
+            res = await self.session.execute(
+                select(GroupStageConfig).where(
+                    GroupStageConfig.group_id == group_id,
+                    GroupStageConfig.stage_type == normalized_type
+                )
             )
-        )
-        active_stage = active_stage_res.scalars().first()
+            source_stage = res.scalars().first()
+        
+        if not source_stage:
+            # Fallback to current global active stage
+            active_stage_res = await self.session.execute(
+                select(GroupStageConfig).where(
+                    GroupStageConfig.group_id == group_id,
+                    GroupStageConfig.state == "active"
+                )
+            )
+            source_stage = active_stage_res.scalars().first()
 
+        # 2. Identify the next stage in flow (if progressing)
+        next_stage = None
+        if action == "progress" and source_stage:
+            next_stage_res = await self.session.execute(
+                select(GroupStageConfig).where(
+                    GroupStageConfig.group_id == group_id,
+                    GroupStageConfig.stage_order > source_stage.stage_order,
+                    GroupStageConfig.state != "inactive"
+                ).order_by(GroupStageConfig.stage_order.asc()).limit(1)
+            )
+            next_stage = next_stage_res.scalars().first()
+
+        # 3. Process each application
         for app_id in application_ids:
             app = await self.session.get(CandidateApplication, app_id)
             if app and app.group_id == group_id:
+                old_status = app.status
                 app.status = new_status
                 self.session.add(app)
 
-                # Update stage progress if an active stage exists
-                if active_stage:
+                # Update status in the source stage
+                if source_stage:
                     prog_res = await self.session.execute(
                         select(CandidateStageProgress).where(
                             CandidateStageProgress.application_id == app.id,
-                            CandidateStageProgress.stage_id == active_stage.stage_id
+                            CandidateStageProgress.stage_id == source_stage.stage_id
                         )
                     )
                     prog = prog_res.scalars().first()
                     if prog:
-                        prog.status = "passed" if action == "progress" else ("failed" if action == "reject" else prog.status)
+                        if action == "progress":
+                            prog.status = "passed"
+                        elif action == "reject":
+                            prog.status = "failed"
                         self.session.add(prog)
+                    elif action == "progress":
+                        # If no record exists but we're progressing, create a completed record
+                        prog = CandidateStageProgress(
+                            application_id=app.id,
+                            stage_id=source_stage.stage_id,
+                            status="passed"
+                        )
+                        self.session.add(prog)
+
+                # Initialize record for the NEXT stage so counts reflect correctly
+                if next_stage:
+                    # Check if already initialized
+                    n_prog_res = await self.session.execute(
+                        select(CandidateStageProgress).where(
+                            CandidateStageProgress.application_id == app.id,
+                            CandidateStageProgress.stage_id == next_stage.stage_id
+                        )
+                    )
+                    n_prog = n_prog_res.scalars().first()
+                    if not n_prog:
+                        n_prog = CandidateStageProgress(
+                            application_id=app.id,
+                            stage_id=next_stage.stage_id,
+                            status="unlocked" # Awaiting start
+                        )
+                        self.session.add(n_prog)
 
                 # Log transition
                 transition = PipelineTransition(
                     application_id=app.id,
                     organization_id=self.org_id,
-                    from_status=app.status,
+                    from_status=old_status,
                     to_status=new_status,
                     triggered_by_user_id=self.user.id,
                     reason=reason
@@ -1765,7 +1897,7 @@ class GroupService:
                     organization_id=self.org_id,
                     entity_type="candidate_application",
                     entity_id=app.id,
-                    details={"reason": reason}
+                    details={"reason": reason, "stage": source_stage.stage_type if source_stage else "unknown"}
                 )
                 self.session.add(log)
 
