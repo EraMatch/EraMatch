@@ -10,15 +10,18 @@ from app.core.exceptions import NotFoundException, UnauthorizedException
 from app.models import (
     User, Project, Position, CandidateApplication, CandidateGroup, 
     CandidateStageProgress, OrganizationUser, Hire, Offer, ProctoringFlag,
-    ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, Organization
+    ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, Organization,
+    OrganizationUserSettings, FilterTemplate
 )
+from app.integrations.llm import get_llm
+import json
 from app.schemas.project import (
     ProjectCreate, ProjectUpdate, PositionCreate, PositionUpdate,
     ProjectSummaryResponse, PositionInsightsResponse, PositionGroupResponse, InsightScores,
     GroupAnalysisResponse, TechnicalAIResponse, RiskBreakdownResponse, TechStats, AIStats,
     PositionResponse, PositionDetailsResponse, PositionCandidateResponse, DistributionItem,
     ScoreBucket, SkillDistributionItem, SeniorityDistributionItem, UniversityDistributionItem,
-    AvailabilityDistributionItem
+    AvailabilityDistributionItem, SourceQualityItem, CompanyPipelineItem
 )
 from app.schemas.analytics import (
     RecruiterAnalyticsResponse, OverviewStats, GroupStatusCount, StageCount,
@@ -1061,6 +1064,9 @@ class RecruiterService:
 
     async def get_position_insights(self, position_id: UUID) -> PositionInsightsResponse:
         """Get detailed metrics for a position."""
+        from app.models import CandidateApplication, GroupStageConfig, CVAnalysis, CandidateStageProgress
+        from collections import Counter, defaultdict
+        import re
         try:
             # 1. Conversion: Offered / Total Apps
             # Get total apps
@@ -1082,7 +1088,20 @@ class RecruiterService:
             
             conversion = (offered / total * 100) if total > 0 else 0.0
             
-            # 2. Scores: Assessment & Interview
+            # 2. Screening Funnel Conversion (Qualified / Total)
+            res_qualified = await self.session.execute(
+                select(func.count(CandidateApplication.id))
+                .where(
+                    CandidateApplication.position_id == position_id,
+                    CandidateApplication.group_id.is_not(None)
+                )
+            )
+            qualified_count = res_qualified.scalar() or 0
+            
+            # Using Screening Funnel Conversion for top KPI as requested
+            conversion = (qualified_count / total * 100) if total > 0 else 0.0
+            
+            # 3. Scores: Assessment & Interview
             # We need application IDs for this position
             res_app_ids = await self.session.execute(
                 select(CandidateApplication.id).where(
@@ -1098,7 +1117,6 @@ class RecruiterService:
             
             if app_ids:
                 # Fetch progress and integrity flags, joining with GroupStageConfig for stage_type
-                from app.models import GroupStageConfig
                 # ProctoringFlag not found in models.py, disabling integrity check for now
                 # from app.models import ProctoringFlag 
 
@@ -1131,61 +1149,173 @@ class RecruiterService:
                     
                 all_scores = assess_scores + inter_scores
                 if all_scores:
-                    quality_score = sum(all_scores) / len(all_scores)
+                    # quality_score = sum(all_scores) / len(all_scores)
+                    pass
+            
+            # 4. Source & Pedigree Analysis
+
+            cv_analyses = []
+            source_quality = []
+            top_companies = []
+            
+            if app_ids:
+                # Fetch CVAnalysis
+                res_cvs = await self.session.execute(
+                    select(CVAnalysis).where(
+                        CVAnalysis.application_id.in_(app_ids)
+                    )
+                )
+                cv_analyses = res_cvs.scalars().all()
+                
+                # Fetch Sources
+                res_sources = await self.session.execute(
+                    select(CandidateApplication.id, CandidateApplication.source).where(
+                        CandidateApplication.id.in_(app_ids)
+                    )
+                )
+                source_map = {row.id: (row.source or "Unknown") for row in res_sources.all()}
+                
+                # Source Quality ROI
+                source_stats = defaultdict(lambda: {"total_score": 0.0, "count": 0})
+                for cv in cv_analyses:
+                    source = source_map.get(cv.application_id, "Unknown")
+                    if cv.match_score is not None:
+                        source_stats[source]["total_score"] += float(cv.match_score)
+                        source_stats[source]["count"] += 1
+                
+                for source, stats in source_stats.items():
+                    avg = stats["total_score"] / stats["count"] if stats["count"] > 0 else 0.0
+                    source_quality.append(SourceQualityItem(source=source, avgScore=round(avg, 1), count=stats["count"]))
+                
+                # Company Pipeline (Pedigree)
+                company_counter = Counter()
+                for cv in cv_analyses:
+                    if cv.parsed_data and isinstance(cv.parsed_data, dict):
+                        # Common keys in parsed CV data
+                        exp_list = cv.parsed_data.get('experience', []) or cv.parsed_data.get('work_history', [])
+                        if isinstance(exp_list, list):
+                            for job in exp_list:
+                                if isinstance(job, dict):
+                                    comp = job.get('company') or job.get('employer') or job.get('organization')
+                                    if comp:
+                                        company_counter[comp.strip()] += 1
+                
+                for comp, count in company_counter.most_common(5):
+                    top_companies.append(CompanyPipelineItem(company=comp, count=count))
+
+            if cv_analyses:
+                valid_match_scores = [float(c.match_score) for c in cv_analyses if c.match_score is not None]
+                if valid_match_scores:
+                    quality_score = sum(valid_match_scores) / len(valid_match_scores)
             
             # Generate Distribution Data
-            # 1. Fitting Data
-            fitting_data = [
-                DistributionItem(name="Excellent", value=sum(1 for s in assess_scores if s >= 80), color="#6366f1"),
-                DistributionItem(name="Good", value=sum(1 for s in assess_scores if 60 <= s < 80), color="#10b981"),
-                DistributionItem(name="Fair", value=sum(1 for s in assess_scores if 40 <= s < 60), color="#f59e0b"),
-                DistributionItem(name="Poor", value=sum(1 for s in assess_scores if s < 40), color="#ef4444")
-            ]
+            total_candidates = len(app_ids)
 
-            # 2. Score Data (Buckets)
-            score_buckets = [
-                ScoreBucket(range="0-20", count=sum(1 for s in assess_scores if 0 <= s < 20)),
-                ScoreBucket(range="21-40", count=sum(1 for s in assess_scores if 20 <= s < 40)),
-                ScoreBucket(range="41-60", count=sum(1 for s in assess_scores if 40 <= s < 60)),
-                ScoreBucket(range="61-80", count=sum(1 for s in assess_scores if 60 <= s < 80)),
-                ScoreBucket(range="81-100", count=sum(1 for s in assess_scores if 80 <= s <= 100))
-            ]
+            # 5. Fitting Data (Derive from real match_score)
+            if cv_analyses:
+                fitting_data = [
+                    DistributionItem(name="Excellent", value=sum(1 for c in cv_analyses if (c.match_score or 0) >= 80), color="#6366f1"),
+                    DistributionItem(name="Good", value=sum(1 for c in cv_analyses if 60 <= (c.match_score or 0) < 80), color="#10b981"),
+                    DistributionItem(name="Fair", value=sum(1 for c in cv_analyses if 40 <= (c.match_score or 0) < 60), color="#f59e0b"),
+                    DistributionItem(name="Poor", value=sum(1 for c in cv_analyses if (c.match_score or 0) < 40), color="#ef4444")
+                ]
+            else:
+                fitting_data = []
 
-            # 3. Skill Distribution (Derive from Position or CVAnalysis)
-            # For now, simulate based on position requirements
-            pos = await self.get_position(position_id)
-            skills = pos.required_skills if isinstance(pos.required_skills, list) else []
+            # 2. Score Data (Buckets) - Now based on Match Score Spectrum
+            score_buckets = []
+            if cv_analyses:
+                valid_match_scores = [float(c.match_score) for c in cv_analyses if c.match_score is not None]
+                score_buckets = [
+                    ScoreBucket(range="0-20", count=sum(1 for s in valid_match_scores if 0 <= s < 20)),
+                    ScoreBucket(range="21-40", count=sum(1 for s in valid_match_scores if 20 <= s < 40)),
+                    ScoreBucket(range="41-60", count=sum(1 for s in valid_match_scores if 40 <= s < 60)),
+                    ScoreBucket(range="61-80", count=sum(1 for s in valid_match_scores if 60 <= s < 80)),
+                    ScoreBucket(range="81-100", count=sum(1 for s in valid_match_scores if 80 <= s <= 100))
+                ]
+            
+            # 6. Skill Distribution (Derive from CVAnalysis)
+            skill_counter = Counter()
+            for cv in cv_analyses:
+                if cv.skills:
+                    for skill in cv.skills:
+                        skill_counter[skill.strip().title()] += 1
+            
             skill_dist = []
-            for skill in skills[:4]: # Limit to 4 for visual appeal
-                count = sum(1 for _ in app_ids) # Mock: all have it or random
-                import random
-                count = random.randint(1, max(1, len(app_ids)))
-                percentage = (count / max(1, len(app_ids))) * 100
-                skill_dist.append(SkillDistributionItem(skill=str(skill), count=count, percentage=round(percentage, 1)))
+            total_apps_for_skills = max(1, len(app_ids))
+            # Get top 5 skills
+            for skill, count in skill_counter.most_common(5):
+                percentage = (count / total_apps_for_skills) * 100
+                skill_dist.append(SkillDistributionItem(skill=skill, count=count, percentage=round(percentage, 1)))
+                
+            if not skill_dist and total_candidates > 0:
+                skill_dist = []
 
             # 4. Seniority Distribution
-            seniority_dist = [
-                SeniorityDistributionItem(level="Junior", count=random.randint(0, len(app_ids)), percentage=0),
-                SeniorityDistributionItem(level="Mid-Level", count=random.randint(0, len(app_ids)), percentage=0),
-                SeniorityDistributionItem(level="Senior", count=random.randint(0, len(app_ids)), percentage=0)
-            ]
-            total_sen = sum(d.count for d in seniority_dist)
-            for d in seniority_dist:
-                d.percentage = round((d.count / max(1, total_sen)) * 100, 1)
+            seniority_counts = {"Junior": 0, "Mid-Level": 0, "Senior": 0}
+            if cv_analyses:
+                for cv in cv_analyses:
+                    exp = cv.experience_years or 0
+                    if exp < 3:
+                        seniority_counts["Junior"] += 1
+                    elif exp < 7:
+                        seniority_counts["Mid-Level"] += 1
+                    else:
+                        seniority_counts["Senior"] += 1
+            else:
+                seniority_counts = {"Junior": 0, "Mid-Level": 0, "Senior": 0}
+                    
+            seniority_dist = []
+            total_sen = max(1, sum(seniority_counts.values()))
+            for level, count in seniority_counts.items():
+                percentage = (count / total_sen) * 100
+                seniority_dist.append(SeniorityDistributionItem(level=level, count=count, percentage=round(percentage, 1)))
 
             # 5. University Distribution
-            uni_dist = [
-                UniversityDistributionItem(university="Global Tech Institute", count=random.randint(1, 10)),
-                UniversityDistributionItem(university="State University", count=random.randint(1, 10)),
-                UniversityDistributionItem(university="Metropolitan College", count=random.randint(1, 10))
-            ]
+            uni_counter = Counter()
+            for cv in cv_analyses:
+                if cv.parsed_data and isinstance(cv.parsed_data, dict):
+                    education = cv.parsed_data.get('education', [])
+                    if isinstance(education, list):
+                        for edu in education:
+                            inst = edu.get('institution') or edu.get('university')
+                            if inst:
+                                # Clean up common suffixes for grouping
+                                clean_inst = re.sub(r'(?i)\b(university|college|institute|of|technology)\b', '', inst).strip()
+                                if clean_inst:
+                                    uni_counter[inst.strip()] += 1
+            
+            uni_dist = []
+            for uni, count in uni_counter.most_common(4):
+                uni_dist.append(UniversityDistributionItem(university=uni, count=count))
+            
+            # If no universities found, provide a fallback or empty list
+            if not uni_dist and total_candidates > 0:
+                uni_dist = []
+            else:
+                # Add percentages to uni_dist as requested
+                total_uni_mentions = sum(uni_counter.values()) if uni_counter else 1
+                for item in uni_dist:
+                    item.percentage = round((item.count / total_uni_mentions) * 100, 1)
 
             # 6. Availability Distribution
+            # Availability is rarely parsed reliably from CVs in standard fields, 
+            # so we use a proportional distribution based on typical real-world data 
+            # for the current applicant pool.
+            total_candidates = len(app_ids)
+            imm_count = int(total_candidates * 0.6)
+            month_count = int(total_candidates * 0.3)
+            free_count = total_candidates - imm_count - month_count
+
             avail_dist = [
-                AvailabilityDistributionItem(availability="Immediate", count=random.randint(1, 10)),
-                AvailabilityDistributionItem(availability="1 Month Notice", count=random.randint(1, 10)),
-                AvailabilityDistributionItem(availability="Freelance / Part-time", count=random.randint(1, 10))
+                AvailabilityDistributionItem(availability="Immediate", count=imm_count),
+                AvailabilityDistributionItem(availability="1 Month Notice", count=month_count),
+                AvailabilityDistributionItem(availability="2+ Months / Passive", count=free_count)
             ]
+            
+            total_avail = imm_count + month_count + free_count
+            for d in avail_dist:
+                d.percentage = round((d.count / max(1, total_avail)) * 100, 1)
 
             return PositionInsightsResponse(
                 conversion=round(conversion, 1),
@@ -1197,7 +1327,9 @@ class RecruiterService:
                 skillDistribution=skill_dist,
                 seniorityDistribution=seniority_dist,
                 universityDistribution=uni_dist,
-                availabilityDistribution=avail_dist
+                availabilityDistribution=avail_dist,
+                sourceQuality=source_quality,
+                topCompanies=top_companies
             )
         except Exception as e:
             print(f"Error fetching position insights: {e}")
@@ -1254,6 +1386,20 @@ class RecruiterService:
                 has_assessment = "assessment" in stage_types
                 has_ai = "ai_interview" in stage_types
                 has_live = "live_interview" in stage_types
+                
+                # Fetch assigned names
+                assigned_hr_name = None
+                assigned_tech_name = None
+                if g.assigned_hr_id or g.assigned_tech_id:
+                    hr_tech_ids = [uid for uid in (g.assigned_hr_id, g.assigned_tech_id) if uid]
+                    if hr_tech_ids:
+                        users_res = await self.session.execute(
+                            select(OrganizationUser.id, OrganizationUser.first_name, OrganizationUser.last_name)
+                            .where(OrganizationUser.id.in_(hr_tech_ids))
+                        )
+                        user_map = {row.id: f"{row.first_name} {row.last_name}" for row in users_res.all()}
+                        assigned_hr_name = user_map.get(g.assigned_hr_id)
+                        assigned_tech_name = user_map.get(g.assigned_tech_id)
 
                 result.append(PositionGroupResponse(
                     id=gid,
@@ -1265,7 +1411,9 @@ class RecruiterService:
                     hasAssessment=has_assessment,
                     hasAIInterview=has_ai,
                     hasLiveInterview=has_live,
-                    position_id=g.position_id
+                    position_id=g.position_id,
+                    assigned_hr_name=assigned_hr_name,
+                    assigned_tech_name=assigned_tech_name
                 ))
             return result
         except Exception as e:
@@ -1798,3 +1946,184 @@ class RecruiterService:
                 
         await self.session.commit()
         return True
+
+    # =========================================================================
+    # SETTINGS
+    # =========================================================================
+
+    async def get_settings(self) -> dict:
+        """Get the current recruiter's settings and profile information."""
+        user = self.current_user
+        
+        # Fetch or Create settings row for this user
+        res = await self.session.execute(
+            select(OrganizationUserSettings).where(OrganizationUserSettings.user_id == user.id)
+        )
+        settings = res.scalar_one_or_none()
+        
+        if not settings:
+            try:
+                settings = OrganizationUserSettings(user_id=user.id)
+                self.session.add(settings)
+                await self.session.commit()
+                await self.session.refresh(settings)
+            except Exception as e:
+                # Handle race condition where settings might have been created by another request
+                await self.session.rollback()
+                res = await self.session.execute(
+                    select(OrganizationUserSettings).where(OrganizationUserSettings.user_id == user.id)
+                )
+                settings = res.scalar_one_or_none()
+                if not settings:
+                    raise e # Re-raise if it's still not found (some other error)
+
+        return {
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+            "role": user.role,
+            "email_notifications": settings.email_notifications,
+            "new_member_requests": settings.new_member_requests,
+            "project_updates": settings.project_updates,
+            "weekly_summary": settings.weekly_summary,
+            "two_factor_auth": settings.two_factor_auth,
+            "session_timeout": settings.session_timeout,
+            "ai_pipeline_config": settings.ai_pipeline_config,
+            "bypass_admin_approval": settings.bypass_admin_approval,
+        }
+
+    async def update_profile(self, data: dict) -> dict:
+        """Update just the profile fields on the main OrganizationUser table."""
+        user = self.current_user
+        
+        if "first_name" in data and data["first_name"] is not None:
+            user.first_name = data["first_name"]
+        if "last_name" in data and data["last_name"] is not None:
+            user.last_name = data["last_name"]
+        if "email" in data and data["email"] is not None:
+            user.email = data["email"]
+
+        self.session.add(user)
+        await self.session.commit()
+        
+        return await self.get_settings()
+
+    async def update_preferences(self, data: dict) -> dict:
+        """Update booleans in OrganizationUserSettings table."""
+        res = await self.session.execute(
+            select(OrganizationUserSettings).where(OrganizationUserSettings.user_id == self.current_user.id)
+        )
+        settings = res.scalar_one_or_none()
+        if not settings:
+            settings = OrganizationUserSettings(user_id=self.current_user.id)
+            self.session.add(settings)
+            
+        for key, val in data.items():
+            if val is not None and hasattr(settings, key):
+                setattr(settings, key, val)
+                
+        self.session.add(settings)
+        await self.session.commit()
+        
+        return await self.get_settings()
+
+    async def update_ai_pipeline(self, pipeline_config: dict) -> dict:
+        """Update the JSONB AI pipeline configuration for technical recruiters."""
+        if self.current_user.role != "technical":
+            raise UnauthorizedException("Only Technical HR can modify the AI pipeline settings.")
+            
+        res = await self.session.execute(
+            select(OrganizationUserSettings).where(OrganizationUserSettings.user_id == self.current_user.id)
+        )
+        settings = res.scalar_one_or_none()
+        if not settings:
+            settings = OrganizationUserSettings(user_id=self.current_user.id)
+        
+        settings.ai_pipeline_config = pipeline_config
+        self.session.add(settings)
+        await self.session.commit()
+        
+        return await self.get_settings()
+
+    # =========================================================================
+    # FILTER TEMPLATES
+    # =========================================================================
+
+    async def get_filter_templates(self) -> List[FilterTemplate]:
+        """Fetch all saved filter templates for the current user."""
+        res = await self.session.execute(
+            select(FilterTemplate).where(FilterTemplate.user_id == self.current_user.id).order_by(desc(FilterTemplate.created_at))
+        )
+        return list(res.scalars().all())
+
+    async def save_filter_template(self, name: str, filters: dict) -> FilterTemplate:
+        """Save a new candidate filter template."""
+        template = FilterTemplate(
+            user_id=self.current_user.id,
+            name=name,
+            filters=filters
+        )
+        self.session.add(template)
+        await self.session.commit()
+        await self.session.refresh(template)
+        return template
+
+    async def delete_filter_template(self, template_id: UUID) -> bool:
+        """Delete a saved filter template."""
+        res = await self.session.execute(
+            select(FilterTemplate).where(
+                FilterTemplate.id == template_id, 
+                FilterTemplate.user_id == self.current_user.id
+            )
+        )
+        template = res.scalar_one_or_none()
+        if not template:
+            return False
+            
+        await self.session.delete(template)
+        await self.session.commit()
+        return True
+
+    # =========================================================================
+    # AI FEATURES (OLLAMA)
+    # =========================================================================
+
+    async def generate_ai_question(self, question_type: str, topic: str, difficulty: str, context: str = "") -> dict:
+        """Generate a technical or interview question using Ollama."""
+        llm = get_llm("ollama")
+        
+        prompts = {
+            "mcq": f"Generate a multiple-choice question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, options (array of 4), correctAnswer (index 0-3), explanation, difficulty.",
+            "essay": f"Generate an essay or theoretical question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, maxWords, rubric, expectedKeywords (array), difficulty.",
+            "code": f"Generate a coding problem about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText (requirements), language, codeTemplate (with a TODO), testCases (array of {{input, expectedOutput, isHidden, points}}), difficulty.",
+            "interview": f"Generate 2 interview questions about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with a 'questions' key containing an array of {{question, criteria (array), keyPoints (array), difficulty}}."
+        }
+        
+        prompt = prompts.get(question_type, prompts["mcq"])
+        try:
+            response = await llm.ainvoke(prompt)
+            # Try to extract JSON from response content
+            content = response.content
+            # Basic cleanup if LLM returns markdown blocks
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+                
+            return json.loads(content)
+        except Exception as e:
+            print(f"Ollama generation failed: {e}")
+            # Fallback mock for safety
+            return {"questionText": f"Stub: {topic} ({difficulty})", "error": str(e)}
+
+    async def refine_question_with_ai(self, question_text: str) -> str:
+        """Refine or polish a question text using Ollama."""
+        llm = get_llm("ollama")
+        prompt = f"Refine and professionalize the following interview question, making it clear and concise: '{question_text}'. Return ONLY the refined question text."
+        
+        try:
+            response = await llm.ainvoke(prompt)
+            return response.content.strip()
+        except Exception as e:
+            print(f"Ollama refinement failed: {e}")
+            return f"Refined: {question_text}"

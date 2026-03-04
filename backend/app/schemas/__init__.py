@@ -54,6 +54,10 @@ from app.schemas.settings import (
     OrganizationSettingsUpdate,
     PreferencesUpdate,
     AdminSettingsResponse,
+    RecruiterSettingsResponse,
+    RecruiterProfileUpdate,
+    RecruiterPreferencesUpdate,
+    RecruiterAIPipelineUpdate,
 )
 from app.schemas.analytics import (
     OverviewStats,
@@ -84,6 +88,13 @@ from app.schemas.group import (
     IntegrityFlagsResponse,
     ExportGroupRequest,
     GroupCreateRequest,
+)
+
+from app.schemas.recruiter_extra import (
+    FilterTemplateResponse,
+    FilterTemplateCreate,
+    AIGenerateQuestionRequest,
+    AIRefineQuestionRequest,
 )
 
 __all__ = [
@@ -148,6 +159,10 @@ __all__ = [
     "OrganizationSettingsUpdate",
     "PreferencesUpdate",
     "AdminSettingsResponse",
+    "RecruiterSettingsResponse",
+    "RecruiterProfileUpdate",
+    "RecruiterPreferencesUpdate",
+    "RecruiterAIPipelineUpdate",
     # Analytics
     "OverviewStats",
     "GroupStatusCount",
@@ -175,4 +190,9 @@ __all__ = [
     "IntegrityFlagsResponse",
     "ExportGroupRequest",
     "GroupCreateRequest",
+    # Recruiter Extra
+    "FilterTemplateResponse",
+    "FilterTemplateCreate",
+    "AIGenerateQuestionRequest",
+    "AIRefineQuestionRequest",
 ]

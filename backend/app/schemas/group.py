@@ -8,6 +8,21 @@ from pydantic import BaseModel, Field
 
 # ─── Get Group Details ────────────────────────────────────────────────────────
 
+class SendOffersRequest(BaseModel):
+    """Payload for sending final offers to candidates."""
+    application_ids: list[str]
+    email_subject: str
+    email_body: str
+
+
+class BulkProgressRequest(BaseModel):
+    """Payload for progressing candidates in bulk after a stage ends."""
+    application_ids: list[UUID]
+    action: str  # 'progress', 'reject', 'hold'
+    current_stage_type: str | None = None
+    reason: str | None = None
+
+
 class AssignedHRResponse(BaseModel):
     id: UUID
     name: str
@@ -41,6 +56,8 @@ class PipelineStage(BaseModel):
 class CandidateStageStatus(BaseModel):
     score: float | None = None
     status: str = "pending"
+    scheduled_at: datetime | None = None
+    meeting_link: str | None = None
 
 
 class IntegrityFlag(BaseModel):
@@ -56,6 +73,7 @@ class CandidateProgressItem(BaseModel):
     email: str
     assessment: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
     ai_interview: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
+    live_interview: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
     meets_criteria: bool = False
     verdict: str = "pending"
     flags: list[IntegrityFlag] = []
@@ -65,6 +83,37 @@ class CandidateProgressItem(BaseModel):
 
 class CandidateProgressResponse(BaseModel):
     candidates: list[CandidateProgressItem] = []
+
+
+class AssessmentConfig(BaseModel):
+    title: str
+    duration: int = 60
+    difficulty: str | None = "Medium"
+
+
+class GroupAssessmentItem(BaseModel):
+    id: UUID
+    status: str
+    config: AssessmentConfig
+    sections: list = []
+
+
+class GroupInterviewItem(BaseModel):
+    id: UUID
+    title: str
+    interview_type: str
+    max_retakes: int
+    questions_count: int
+    instructions: str | None = None
+    questions: dict = {}
+    think_time_seconds: int | None = None
+    answer_time_seconds: int | None = None
+    live_interview_context: str | None = None
+    difficulty: str | None = "Mid Level"
+    show_ai_feedback: bool = True
+    recording_required: bool = True
+    total_duration_minutes: int | None = 30
+    live_flow_config: dict | None = None
 
 
 class GroupDetailResponse(BaseModel):
@@ -82,6 +131,8 @@ class GroupDetailResponse(BaseModel):
     acceptance_criteria: AcceptanceCriteriaResponse = Field(default_factory=AcceptanceCriteriaResponse)
     candidates: list[CandidateProgressItem] = []
     pipeline_stages: list[PipelineStage] = Field(default_factory=list, alias="pipelineStages")
+    assessments: list[GroupAssessmentItem] = []
+    interviews: list[GroupInterviewItem] = []
 
     class Config:
         populate_by_name = True
@@ -98,9 +149,21 @@ class StageStatsResponse(BaseModel):
 class GroupStatsResponse(BaseModel):
     technical_assessment: StageStatsResponse = Field(default_factory=StageStatsResponse)
     ai_interview: StageStatsResponse = Field(default_factory=StageStatsResponse)
+    live_interview: StageStatsResponse = Field(default_factory=StageStatsResponse)
     review: dict = Field(default_factory=lambda: {"count": 0})
     offer: dict = Field(default_factory=lambda: {"count": 0})
     flagged: dict = Field(default_factory=lambda: {"count": 0})
+
+
+# ─── Schedule Interview ────────────────────────────────────────────────────────
+
+class ScheduleInterviewRequest(BaseModel):
+    """Payload for scheduling a live interview."""
+    application_id: UUID
+    scheduled_at: datetime
+    duration_minutes: int = 60
+    interviewer_id: UUID | None = None
+    meeting_link: str | None = None
 
 
 # ─── Candidate Progress Matrix ───────────────────────────────────────────────
@@ -136,6 +199,18 @@ class StartStageResponse(BaseModel):
     invitations_sent: int
     stage: str
     next_stage: str | None = None
+
+
+# ─── Close Stage ──────────────────────────────────────────────────────────────
+
+class CloseStageRequest(BaseModel):
+    stage: str  # "assessment", "ai_interview", "live_interview", "review"
+
+
+class CloseStageResponse(BaseModel):
+    status: int
+    stage: str
+    candidates_evaluated: int
 
 
 # ─── Activity Log ────────────────────────────────────────────────────────────

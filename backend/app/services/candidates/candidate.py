@@ -8,6 +8,10 @@ from sqlmodel import select
 
 from app.models import CandidateProfile, CandidateApplication, User
 from app.schemas import CandidateCreate, CandidateUpdate, ApplicationCreate, CandidateResponse, CandidateUploadResponse
+from app.core.security import hash_password
+from app.services.email import EmailService
+import secrets
+import string
 
 class CandidateService:
     def __init__(self, session: AsyncSession, organization_id: UUID):
@@ -28,13 +32,30 @@ class CandidateService:
             # Update existing? Or just return it? For now, let's return it.
             return existing
 
+        # Generate a temporary password
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        temp_password = ''.join(secrets.choice(alphabet) for i in range(12))
+
         candidate = CandidateProfile(
             organization_id=self.organization_id,
+            password_hash=hash_password(temp_password),
             **data.model_dump()
         )
         self.session.add(candidate)
         await self.session.commit()
         await self.session.refresh(candidate)
+
+        # Send welcome email with the temporary password
+        try:
+            await EmailService.send_welcome_email(
+                email=candidate.email,
+                name=candidate.full_name,
+                role="Candidate",
+                temp_password=temp_password
+            )
+        except Exception as e:
+            print(f"Failed to send welcome email to {candidate.email}: {e}")
+
         return candidate
 
     async def list_profiles(self, skip: int = 0, limit: int = 50) -> list[CandidateProfile]:

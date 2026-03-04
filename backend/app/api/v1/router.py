@@ -14,6 +14,8 @@ from app.api.v1.candidate_portal import router as candidate_portal_router
 from app.api.v1.candidate_interview import router as candidate_interview_router
 from app.api.v1.debug import router as debug_router
 from app.api.v1.groups import router as groups_router
+from app.api.v1.assessments import router as assessments_router
+from app.api.v1.questions import router as questions_router
 from app.routers.monitoring import router as monitoring_router
 
 router = APIRouter()
@@ -30,3 +32,5 @@ router.include_router(candidate_interview_router)
 router.include_router(debug_router)
 router.include_router(monitoring_router)
 router.include_router(groups_router)
+router.include_router(assessments_router)
+router.include_router(questions_router)

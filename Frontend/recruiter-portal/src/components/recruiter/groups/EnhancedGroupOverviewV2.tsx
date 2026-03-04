@@ -3,13 +3,19 @@ import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calenda
 import { motion, AnimatePresence } from 'motion/react';
 import { SuspectReviewPage } from '../candidates/SuspectReviewPage';
 import { CreateAdvancedAssessment } from '../assessments/CreateAdvancedAssessment';
-import { CreateAIInterview } from '../interviews/CreateAIInterview';
+import { UnifiedAIInterviewSetup } from '../interviews/UnifiedAIInterviewSetup';
+import { RecordedInterviewQuestionSetup } from '../interviews/RecordedInterviewQuestionSetup';
+import { LiveInterviewFlowSetup } from '../interviews/LiveInterviewFlowSetup';
 import { StageResultsDashboard } from './StageResultsDashboard';
 import { ModuleMonitoringDashboard } from './ModuleMonitoringDashboard';
 import { StartStageModal } from './StartStageModal';
 import { BulkProgressionModal } from './BulkProgressionModal';
 import { FinalDecisionModal } from './FinalDecisionModal';
 import { FiltrationFlowConfigModal } from './FiltrationFlowConfigModal';
+import { StageReviewPage } from './StageReviewPage';
+import { FinalDecisionPage } from './FinalDecisionPage';
+import { ActivityLogPanel } from './ActivityLogPanel';
+import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
 import { useEffect } from 'react';
 
@@ -101,6 +107,10 @@ interface CandidateStatus {
   overrideApplied?: boolean;
   email?: string;
   phone?: string;
+  /** Backend UUID for the CandidateApplication record. Populated from API. */
+  applicationId?: string;
+  liveInterviewScheduledAt?: string;
+  liveInterviewMeetingLink?: string;
 }
 
 export function EnhancedGroupOverviewV2({
@@ -151,10 +161,16 @@ export function EnhancedGroupOverviewV2({
   // Use recruiterType prop directly instead of state
   const userRole = recruiterType;
 
-  // Assessment creation state
   const [showAssessmentCreation, setShowAssessmentCreation] = useState(false);
+  const [editingAssessmentData, setEditingAssessmentData] = useState<any>(null);
   const [showCreateAIInterview, setShowCreateAIInterview] = useState(false);
+  const [showUnifiedAIInterviewSetup, setShowUnifiedAIInterviewSetup] = useState(false);
+  const [showRecordedQuestionSetup, setShowRecordedQuestionSetup] = useState(false);
+  const [showLiveFlowSetup, setShowLiveFlowSetup] = useState(false);
+  const [pendingAISettings, setPendingAISettings] = useState<any>(null);
   const [groupAssessments, setGroupAssessments] = useState<any[]>([]);
+  const [groupInterviews, setGroupInterviews] = useState<any[]>([]);
+  const [editingInterviewData, setEditingInterviewData] = useState<any>(null);
 
   // NEW: Stage-gated state
   const [currentStage, setCurrentStage] = useState<string>(filtrationFlow[0] || 'assessment');
@@ -196,11 +212,21 @@ export function EnhancedGroupOverviewV2({
   const [showStageResults, setShowStageResults] = useState(false);
   const [showModuleMonitoring, setShowModuleMonitoring] = useState<'assessment' | 'ai-interview' | null>(null);
 
+  // NEW: Full-page views
+  const [showStageReviewPage, setShowStageReviewPage] = useState(false);
+  const [showFinalDecisionPage, setShowFinalDecisionPage] = useState(false);
+
+  // NEW: Schedule Interview modal
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [selectedCandidateForSchedule, setSelectedCandidateForSchedule] = useState<{ id: string, name: string } | null>(null);
+
   // NEW: Pipeline steps state
   const [pipelineSteps, setPipelineSteps] = useState<PipelineStep[]>([]);
   const [candidateStatuses, setCandidateStatuses] = useState<CandidateStatus[]>([]);
   const [activeFlow, setActiveFlow] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [positionId, setPositionId] = useState<string>('');
+  const [interviewConfigId, setInterviewConfigId] = useState<string | null>(null);
 
   // Fetch data on mount
   useEffect(() => {
@@ -208,6 +234,12 @@ export function EnhancedGroupOverviewV2({
       try {
         setIsLoading(true);
         const data = await api.recruiter.getGroupDetails(groupId) as any;
+        if (data.position_id) {
+          setPositionId(data.position_id);
+        }
+        if (data.interview_config_id) {
+          setInterviewConfigId(data.interview_config_id);
+        }
 
         let activeFlowRaw = filtrationFlow; // Default to prop
         if (data.group && data.group.filtration_flow) {
@@ -230,6 +262,14 @@ export function EnhancedGroupOverviewV2({
 
         setActiveFlow(activeFlowRaw);
 
+        if (data.assessments && Array.isArray(data.assessments)) {
+          setGroupAssessments(data.assessments);
+        }
+
+        if (data.interviews && Array.isArray(data.interviews)) {
+          setGroupInterviews(data.interviews);
+        }
+
         const moduleMetaMap: Record<string, { name: string; icon: any }> = {
           'assessment': { name: 'Technical Assessment', icon: FileText },
           'ai-interview': { name: 'AI Interview', icon: Video },
@@ -240,10 +280,14 @@ export function EnhancedGroupOverviewV2({
 
         // Build a lookup from backend stages by a normalised key
         const backendStageMap: Record<string, any> = {};
-        if (Array.isArray(data.pipelineStages)) {
-          data.pipelineStages.forEach((s: any) => {
+        // Backend returns pipeline_stages (snake_case), map by both id (ai-interview) and name
+        const rawPipelineStages = data.pipeline_stages || data.pipelineStages || [];
+        if (Array.isArray(rawPipelineStages)) {
+          rawPipelineStages.forEach((s: any) => {
             const key = (s.id || s.name || '').toLowerCase().replace(/\s+/g, '-');
             backendStageMap[key] = s;
+            // Also index by stage_type key (e.g. 'ai_interview' → 'ai-interview')
+            if (s.id) backendStageMap[s.id] = s;
           });
         }
 
@@ -261,9 +305,36 @@ export function EnhancedGroupOverviewV2({
         });
 
         setPipelineSteps(steps);
-        // Also set currentStage to first step if not already set
+
+        // Restore stage state from backend data
         if (steps.length > 0) {
-          setCurrentStage(steps[0].id);
+          // Find the most advanced stage that has been started
+          const activeStep = steps.find(s => s.state === 'active');
+          const closedSteps = steps.filter(s => s.state === 'closed');
+          const lastClosedStep = closedSteps[closedSteps.length - 1];
+
+          if (activeStep) {
+            // There's an active stage right now
+            setCurrentStage(activeStep.id);
+            setStageState('active');
+            setStageConfigLocked(true);
+          } else if (lastClosedStep) {
+            // All stages so far are closed — find the next not-started one
+            const lastClosedIdx = steps.findIndex(s => s.id === lastClosedStep.id);
+            const nextStep = steps[lastClosedIdx + 1];
+            if (nextStep) {
+              setCurrentStage(nextStep.id);
+              setStageState('not-started');
+            } else {
+              // All stages complete — stay on last closed
+              setCurrentStage(lastClosedStep.id);
+              setStageState('closed');
+            }
+          } else {
+            // Nothing started yet
+            setCurrentStage(steps[0].id);
+            setStageState('not-started');
+          }
         }
 
         // Map candidates
@@ -285,7 +356,9 @@ export function EnhancedGroupOverviewV2({
           technicalVerdict: c.verdict === 'pass' || c.verdict === 'fail' || c.verdict === 'conditional' ? c.verdict : undefined,
           meetsCriteria: c.meets_criteria,
           progressionState: 'active',
-          overrideApplied: false
+          overrideApplied: false,
+          liveInterviewScheduledAt: c.live_interview?.scheduled_at,
+          liveInterviewMeetingLink: c.live_interview?.meeting_link
         }));
 
         setCandidateStatuses(candidates);
@@ -342,10 +415,17 @@ export function EnhancedGroupOverviewV2({
     setShowStartStageModal(true);
   };
 
-  const handleConfirmStartStage = (startDate: Date, expectedEndDate: Date) => {
+  const handleConfirmStartStage = async (startDate: Date, expectedEndDate: Date) => {
     const steps = [...pipelineSteps];
     const currentStepIndex = steps.findIndex(s => s.id === currentStage);
     if (currentStepIndex !== -1) {
+      try {
+        await api.recruiter.startStage(groupId, currentStage);
+      } catch (error) {
+        console.error('Failed to start stage on backend:', error);
+        showToast('Failed to start stage — please try again');
+        return;
+      }
       steps[currentStepIndex].state = 'active';
       steps[currentStepIndex].startDate = startDate;
       steps[currentStepIndex].expectedEndDate = expectedEndDate;
@@ -363,28 +443,52 @@ export function EnhancedGroupOverviewV2({
     }
   };
 
-  const handleCloseStage = () => {
+  const handleCloseStage = async () => {
     const steps = [...pipelineSteps];
     const currentStepIndex = steps.findIndex(s => s.id === currentStage);
     if (currentStepIndex !== -1) {
+      try {
+        await api.recruiter.closeStage(groupId, currentStage);
+      } catch (error) {
+        console.error('Failed to close stage on backend:', error);
+        showToast('Failed to close stage — please try again');
+        return;
+      }
       steps[currentStepIndex].state = 'closed';
       steps[currentStepIndex].actualEndDate = new Date();
       setPipelineSteps(steps);
       setStageState('closed');
-      showToast(`${steps[currentStepIndex].name} stage closed - Review results`);
+      showToast(`${steps[currentStepIndex].name} stage closed — Click "View Stage Results" to review and filter`);
       addActivityLog({
         type: 'stage-close',
         actor: assignedRecruiter,
         actorRole: userRole === 'technical' ? 'technical' : 'hr',
         description: `Closed ${steps[currentStepIndex].name} stage`
       });
-      // Open bulk progression modal after closing
-      setShowBulkProgressionModal(true);
     }
   };
 
-  const handleSendOffers = (selectedCandidateIds: number[], emailContent: string) => {
-    // Update candidate statuses to reflect offer sent
+  const handleSendOffers = async (selectedCandidateIds: number[], emailContent: string) => {
+    try {
+      // Map local numeric IDs to application IDs via candidateStatuses
+      const appIds = selectedCandidateIds
+        .map(id => {
+          const c = candidateStatuses.find(c => c.id === id);
+          return c?.applicationId ?? String(id);
+        });
+
+      if (appIds.length > 0) {
+        await api.recruiter.sendOffers(groupId, {
+          application_ids: appIds,
+          email_subject: `Offer for ${description || 'position'}`,
+          email_body: emailContent,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to send offers via backend:', error);
+      // Continue to update local state even if backend fails — offers UI should still reflect
+    }
+
     const updatedCandidates = candidateStatuses.map(candidate => {
       if (selectedCandidateIds.includes(candidate.id)) {
         return { ...candidate, offer: 'completed' as const };
@@ -393,7 +497,6 @@ export function EnhancedGroupOverviewV2({
     });
     setCandidateStatuses(updatedCandidates);
 
-    // Log activity
     addActivityLog({
       type: 'candidate-progressed',
       actor: assignedRecruiter,
@@ -430,7 +533,27 @@ export function EnhancedGroupOverviewV2({
     showToast(`✓ Exported ${selectedCandidateIds.length} candidate contact(s)`);
   };
 
-  const handleBulkProgression = (selectedIds: number[], action: 'progress' | 'reject' | 'hold') => {
+  const handleBulkProgression = async (selectedIds: number[], action: 'progress' | 'reject' | 'hold') => {
+    try {
+      const appIds = selectedIds
+        .map(id => {
+          const c = candidateStatuses.find(c => c.id === id);
+          return c?.applicationId ?? String(id);
+        });
+
+      if (appIds.length > 0) {
+        await api.recruiter.bulkProgressCandidates(groupId, {
+          application_ids: appIds,
+          action,
+          current_stage_type: currentStage
+        });
+      }
+    } catch (error) {
+      console.error('Failed to bulk progress candidates on backend:', error);
+      showToast('Failed to update candidates — please try again');
+      return;
+    }
+
     const updatedCandidates = candidateStatuses.map(candidate => {
       if (selectedIds.includes(candidate.id)) {
         if (action === 'progress') {
@@ -447,7 +570,6 @@ export function EnhancedGroupOverviewV2({
     setCandidateStatuses(updatedCandidates);
 
     if (action === 'progress') {
-      // Move to next stage
       const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
       if (currentStepIndex < pipelineSteps.length - 1) {
         const nextStage = pipelineSteps[currentStepIndex + 1];
@@ -618,19 +740,98 @@ export function EnhancedGroupOverviewV2({
     });
   };
 
-  const handleSaveAssessment = (assessment: any) => {
-    const newAssessment = {
-      ...assessment,
-      id: `assessment-${Date.now()}`,
-      groupId,
-      createdAt: new Date().toISOString(),
-      createdBy: assignedRecruiter,
-      status: 'draft'
-    };
+  const handleSaveAssessment = async (assessment: any) => {
+    try {
+      showToast(assessment.id && !assessment.id.toString().startsWith('assessment-') ? 'Updating assessment...' : 'Saving assessment...');
 
-    setGroupAssessments([...groupAssessments, newAssessment]);
-    setShowAssessmentCreation(false);
-    showToast(`Assessment "${assessment.config.title}" created successfully!`);
+      const payload = {
+        position_id: positionId, // From component state fetched on mount
+        group_id: groupId,
+        title: assessment.config.title,
+        description: assessment.config.description,
+        duration_minutes: assessment.config.duration,
+        passing_score: assessment.config.passingScore,
+        difficulty_level: assessment.config.difficulty,
+        randomizeQuestions: assessment.config.randomizeQuestions,
+        proctoring: assessment.config.proctoring,
+        showResults: assessment.config.showResults,
+        allowReview: assessment.config.allowReview,
+        sections: assessment.sections
+      };
+
+      if (assessment.id && !assessment.id.toString().startsWith('assessment-')) {
+        await api.recruiter.updateAssessment(assessment.id, payload);
+        const updatedAssessments = groupAssessments.map(a =>
+          a.id === assessment.id ? { ...assessment, status: a.status || 'draft' } : a
+        );
+        setGroupAssessments(updatedAssessments);
+        showToast(`Assessment "${assessment.config.title}" updated successfully!`);
+      } else {
+        const response = await api.recruiter.saveAssessment(payload);
+        const newAssessment = {
+          ...assessment,
+          id: response.assessment_id || `assessment-${Date.now()}`,
+          groupId,
+          createdAt: new Date().toISOString(),
+          createdBy: assignedRecruiter,
+          status: 'draft'
+        };
+        setGroupAssessments([...groupAssessments, newAssessment]);
+        showToast(`Assessment "${assessment.config.title}" created successfully!`);
+      }
+
+      setShowAssessmentCreation(false);
+      setEditingAssessmentData(null);
+    } catch (error) {
+      console.error('Error saving assessment:', error);
+      showToast('Failed to save assessment. Please try again.');
+    }
+  };
+
+  const handleDeleteAssessment = async (assessmentId: string) => {
+    if (confirm('Are you sure you want to delete this assessment?')) {
+      try {
+        await api.recruiter.deleteAssessment(assessmentId);
+        setGroupAssessments(groupAssessments.filter(a => a.id !== assessmentId));
+        showToast('Assessment deleted successfully');
+      } catch (error) {
+        console.error('Error deleting assessment:', error);
+        showToast('Failed to delete assessment');
+      }
+    }
+  };
+
+  const handleDeleteAIInterview = async (interviewId: string) => {
+    if (confirm('Are you sure you want to delete this AI interview?')) {
+      try {
+        await api.recruiter.deleteInterview(groupId, interviewId);
+        setGroupInterviews(groupInterviews.filter(i => i.id !== interviewId));
+        showToast('AI Interview deleted successfully');
+      } catch (error) {
+        console.error('Error deleting AI interview:', error);
+        showToast('Failed to delete AI interview');
+      }
+    }
+  };
+
+  const handleScheduleInterview = async (data: {
+    application_id: string;
+    scheduled_at: string;
+    duration_minutes: number;
+    meeting_link?: string;
+  }) => {
+    try {
+      await api.recruiter.scheduleInterview(groupId, data);
+      setIsLoading(true); // Trigger refresh
+      const details = await api.recruiter.getGroupDetails(groupId) as any;
+      // Re-map candidates or just trigger refreshKey
+      setRefreshKey(prev => prev + 1);
+      showToast('Interview scheduled successfully');
+    } catch (error) {
+      console.error('Failed to schedule interview:', error);
+      showToast('Failed to schedule interview');
+      throw error;
+    }
   };
 
   const handleToggleCandidateSelection = (candidateId: number) => {
@@ -646,8 +847,12 @@ export function EnhancedGroupOverviewV2({
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
+      case 'passed':
         return <CheckCircle size={16} className="text-[#10b981]" />;
       case 'pending':
+      case 'unlocked':
+      case 'in_progress':
+      case 'not_started':
         return <Clock size={16} className="text-[#f59e0b]" />;
       case 'failed':
         return <XCircle size={16} className="text-[#ef4444]" />;
@@ -682,15 +887,26 @@ export function EnhancedGroupOverviewV2({
 
     if (isLastStage && stageState === 'closed') {
       return (
-        <button
-          onClick={() => setShowFinalDecisionModal(true)}
-          className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white transition-colors shadow-lg"
-        >
-          <CheckCircle size={18} />
-          <span className="font-['Arimo',sans-serif] text-[14px] font-semibold">
-            Final Decision - Send Offers
-          </span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowStageReviewPage(true)}
+            className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] text-white transition-colors"
+          >
+            <BarChart3 size={16} />
+            <span className="font-['Arimo',sans-serif] text-[14px]">
+              View Stage Results
+            </span>
+          </button>
+          <button
+            onClick={() => setShowFinalDecisionPage(true)}
+            className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white transition-colors shadow-lg"
+          >
+            <CheckCircle size={18} />
+            <span className="font-['Arimo',sans-serif] text-[14px] font-semibold">
+              Final Decision - Send Offers
+            </span>
+          </button>
+        </div>
       );
     }
 
@@ -725,7 +941,7 @@ export function EnhancedGroupOverviewV2({
     if (stageState === 'closed') {
       return (
         <button
-          onClick={() => setShowStageResults(true)}
+          onClick={() => setShowStageReviewPage(true)}
           className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] text-white transition-colors"
         >
           <BarChart3 size={16} />
@@ -774,29 +990,17 @@ export function EnhancedGroupOverviewV2({
   if (showAssessmentCreation) {
     return (
       <CreateAdvancedAssessment
-        onBack={() => setShowAssessmentCreation(false)}
+        initialData={editingAssessmentData}
+        onBack={() => {
+          setShowAssessmentCreation(false);
+          setEditingAssessmentData(null);
+        }}
         onSave={handleSaveAssessment}
       />
     );
   }
 
-  // If creating an AI Interview
-  if (showCreateAIInterview) {
-    const aiInterviewTypesAllowed: ('live' | 'recorded')[] = [];
-    if (activeFlow.includes('live-interview') || activeFlow.includes('live_interview') || activeFlow.includes('liveInterview')) aiInterviewTypesAllowed.push('live');
-    if (activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview') || activeFlow.includes('aiInterview')) aiInterviewTypesAllowed.push('recorded');
 
-    return (
-      <CreateAIInterview
-        allowedTypes={aiInterviewTypesAllowed.length > 0 ? aiInterviewTypesAllowed : ['recorded']}
-        onBack={() => setShowCreateAIInterview(false)}
-        onSave={(data) => {
-          setShowCreateAIInterview(false);
-          showToast("AI Interview Settings Saved");
-        }}
-      />
-    );
-  }
 
   // If showing suspect review for a candidate
   if (showSuspectReview !== null) {
@@ -815,6 +1019,70 @@ export function EnhancedGroupOverviewV2({
       );
     }
   }
+
+  // Full-page: Stage Review Page
+  if (showStageReviewPage) {
+    const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
+    const isLastStageCheck = currentStepIndex === pipelineSteps.length - 1;
+    return (
+      <StageReviewPage
+        stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
+        stageId={currentStage}
+        candidates={candidateStatuses}
+        pipelineSteps={pipelineSteps.map(s => ({ id: s.id, name: s.name }))}
+        currentStageIndex={currentStepIndex}
+        isLastStage={isLastStageCheck}
+        startDate={pipelineSteps.find(s => s.id === currentStage)?.startDate || new Date()}
+        endDate={pipelineSteps.find(s => s.id === currentStage)?.actualEndDate || new Date()}
+        acceptanceCriteria={acceptanceCriteria}
+        onBack={() => setShowStageReviewPage(false)}
+        onProgressCandidates={(selectedIds, action) => {
+          handleBulkProgression(selectedIds, action);
+          setShowStageReviewPage(false);
+        }}
+        onFinalDecision={() => {
+          setShowStageReviewPage(false);
+          setShowFinalDecisionPage(true);
+        }}
+        onViewCandidate={onViewCandidate}
+      />
+    );
+  }
+
+  // Full-page: Final Decision Page
+  if (showFinalDecisionPage) {
+    return (
+      <FinalDecisionPage
+        groupName={groupName}
+        positionTitle={description}
+        candidates={candidateStatuses
+          .filter(c => c.progressionState === 'selected' || c.progressionState === 'active' || !c.progressionState)
+          .map(c => ({
+            id: c.id,
+            name: c.name,
+            avatar: c.avatar,
+            email: c.email || `candidate${c.id}@example.com`,
+            phone: c.phone || `+1-555-${String(c.id).padStart(4, '0')}`,
+            assessmentScore: c.assessmentScore,
+            aiInterviewScore: c.aiInterviewScore,
+            flags: c.flags,
+            meetsCriteria: c.meetsCriteria,
+            technicalVerdict: c.technicalVerdict,
+            progressionState: c.progressionState
+          }))}
+        stages={pipelineSteps.map(s => ({ id: s.id, name: s.name }))}
+        onBack={() => setShowFinalDecisionPage(false)}
+        onSendOffers={(ids, content) => {
+          handleSendOffers(ids, content);
+          setShowFinalDecisionPage(false);
+        }}
+        onExportContacts={(ids) => {
+          handleExportContacts(ids);
+        }}
+      />
+    );
+  }
+
 
   if (isLoading) {
     return (
@@ -1044,7 +1312,15 @@ export function EnhancedGroupOverviewV2({
                 {activeFlow.includes('assessment') && (
                   <button
                     onClick={() => setShowModuleMonitoring('assessment')}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm"
+                    disabled={(() => {
+                      const step = pipelineSteps.find(s => s.id === 'assessment');
+                      return !step || step.state === 'not-started';
+                    })()}
+                    title={(() => {
+                      const step = pipelineSteps.find(s => s.id === 'assessment');
+                      return (!step || step.state === 'not-started') ? "Stage must be started to monitor results" : "";
+                    })()}
+                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-[#6366f1] disabled:hover:to-[#8b5cf6]"
                   >
                     <BarChart3 size={16} />
                     <span className="font-['Arimo',sans-serif] text-[14px]">
@@ -1055,7 +1331,21 @@ export function EnhancedGroupOverviewV2({
                 {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
                   <button
                     onClick={() => setShowModuleMonitoring('ai-interview')}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm"
+                    disabled={(() => {
+                      const aiStep = pipelineSteps.find(s => s.id === 'ai-interview');
+                      const liveStep = pipelineSteps.find(s => s.id === 'live-interview');
+                      const aiStarted = aiStep && aiStep.state !== 'not-started';
+                      const liveStarted = liveStep && liveStep.state !== 'not-started';
+                      return !aiStarted && !liveStarted;
+                    })()}
+                    title={(() => {
+                      const aiStep = pipelineSteps.find(s => s.id === 'ai-interview');
+                      const liveStep = pipelineSteps.find(s => s.id === 'live-interview');
+                      const aiStarted = aiStep && aiStep.state !== 'not-started';
+                      const liveStarted = liveStep && liveStep.state !== 'not-started';
+                      return (!aiStarted && !liveStarted) ? "Interview stages must be started to monitor results" : "";
+                    })()}
+                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-[#6366f1] disabled:hover:to-[#8b5cf6]"
                   >
                     <BarChart3 size={16} />
                     <span className="font-['Arimo',sans-serif] text-[14px]">
@@ -1068,43 +1358,51 @@ export function EnhancedGroupOverviewV2({
 
             {/* Configuration Buttons - Technical Recruiter Only */}
             {userRole === 'technical' && (
-              <div className="flex gap-3">
-                {activeFlow.includes('assessment') && (
-                  <button
-                    onClick={() => {
-                      if (stageConfigLocked) {
-                        showToast('Cannot modify configuration - stage is active');
-                        return;
-                      }
-                      setShowAssessmentCreation(true);
-                    }}
-                    disabled={stageConfigLocked}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Plus size={16} />
-                    <span className="font-['Arimo',sans-serif] text-[14px]">
-                      Add Tech Assessment
-                    </span>
-                  </button>
-                )}
-                {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
-                  <button
-                    onClick={() => {
-                      if (stageConfigLocked) {
-                        showToast('Cannot modify configuration - stage is active');
-                        return;
-                      }
-                      setShowCreateAIInterview(true);
-                    }}
-                    disabled={stageConfigLocked}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Activity size={16} />
-                    <span className="font-['Arimo',sans-serif] text-[14px]">
-                      AI Interview Settings
-                    </span>
-                  </button>
-                )}
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  {activeFlow.includes('assessment') && (
+                    <button
+                      onClick={() => {
+                        if (stageConfigLocked) {
+                          showToast('Cannot modify configuration - stage is active');
+                          return;
+                        }
+                        setShowAssessmentCreation(true);
+                      }}
+                      disabled={stageConfigLocked}
+                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Plus size={16} />
+                      <span className="font-['Arimo',sans-serif] text-[14px]">
+                        Add Tech Assessment
+                      </span>
+                    </button>
+                  )}
+                  {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
+                    <button
+                      onClick={() => {
+                        if (stageConfigLocked) {
+                          showToast('Cannot modify configuration - stage is active');
+                          return;
+                        }
+                        const hasLive = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');
+                        const hasRecorded = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');
+                        if (hasRecorded || hasLive) {
+                          setShowUnifiedAIInterviewSetup(true);
+                        }
+                      }}
+                      disabled={stageConfigLocked}
+                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Activity size={16} />
+                      <span className="font-['Arimo',sans-serif] text-[14px]">
+                        {interviewConfigId ? 'Edit AI Interview Settings' : 'AI Interview Settings'}
+                      </span>
+                      {interviewConfigId && <CheckCircle size={16} className="text-white ml-1" />}
+                    </button>
+                  )}
+                </div>
+
               </div>
             )}
           </div>
@@ -1145,13 +1443,29 @@ export function EnhancedGroupOverviewV2({
                         </div>
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => {
-                              showToast('Edit assessment feature coming soon');
+                            onClick={async () => {
+                              try {
+                                showToast('Loading assessment details...');
+                                const data = await api.recruiter.getAssessment(assessment.id);
+                                setEditingAssessmentData(data);
+                                setShowAssessmentCreation(true);
+                              } catch (error) {
+                                console.error('Failed to load assessment details:', error);
+                                showToast('Failed to load assessment details for editing');
+                              }
                             }}
                             disabled={stageConfigLocked}
                             className="h-[28px] px-[12px] rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors text-[12px] text-[#374151] disabled:opacity-50"
                           >
                             Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAssessment(assessment.id)}
+                            disabled={stageConfigLocked}
+                            className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280] disabled:opacity-50"
+                            title="Delete Assessment"
+                          >
+                            <Trash2 size={14} />
                           </button>
                           <button
                             onClick={() => {
@@ -1176,6 +1490,72 @@ export function EnhancedGroupOverviewV2({
             </div>
           )}
 
+          {/* Display Created AI Interviews (Technical Recruiter Only) */}
+          {userRole === 'technical' && groupInterviews && groupInterviews.length > 0 && (
+            <div className="mt-4">
+              <div className="space-y-2">
+                <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] mb-2">
+                  Created AI Interviews ({groupInterviews.length})
+                </h4>
+                {groupInterviews.map((interview) => (
+                  <div
+                    key={interview.id}
+                    className="p-3 bg-[#f9fafb] rounded-[8px] border border-[#e5e7eb] hover:border-[#6366f1] transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
+                            {interview.title}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700">
+                            {interview.interview_type === 'live_ai' || interview.interview_type === 'live' ? 'Live AI' : 'Recorded'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 text-[12px] text-[#6b7280]">
+                          <span>{interview.questions_count} questions</span>
+                          <span>•</span>
+                          <span>{interview.max_retakes} max retakes</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            if (stageConfigLocked) {
+                              showToast('Cannot modify configuration - stage is active');
+                              return;
+                            }
+                            setEditingInterviewData(interview);
+                            setShowUnifiedAIInterviewSetup(true);
+                          }}
+                          disabled={stageConfigLocked}
+                          className="h-[28px] px-[12px] rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors text-[12px] text-[#374151] disabled:opacity-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAIInterview(interview.id)}
+                          disabled={stageConfigLocked}
+                          className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280] disabled:opacity-50"
+                          title="Delete Interview"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            showToast('AI Interview ready to be sent to candidates');
+                          }}
+                          className="h-[28px] px-[12px] rounded-[6px] bg-[#1b2559] hover:bg-[#2c3a7c] text-white transition-colors text-[12px]"
+                        >
+                          Send
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
         </div>
       </div>
@@ -1506,9 +1886,40 @@ export function EnhancedGroupOverviewV2({
                             if (stageType === 'live-interview') {
                               return (
                                 <td key={stageType} className="p-4 text-center">
-                                  <button className="flex flex-col items-center gap-1 mx-auto">
+                                  <div className="flex flex-col items-center gap-1 mx-auto">
                                     {getStatusIcon(candidate.liveInterview)}
-                                  </button>
+
+                                    {candidate.liveInterviewScheduledAt ? (
+                                      <div className="flex flex-col items-center mt-1">
+                                        <span className="text-[11px] text-gray-600 font-medium">
+                                          {new Date(candidate.liveInterviewScheduledAt).toLocaleString(undefined, {
+                                            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                                          })}
+                                        </span>
+                                        {candidate.liveInterviewMeetingLink && (
+                                          <a
+                                            href={candidate.liveInterviewMeetingLink}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-[10px] text-blue-600 hover:underline mt-0.5"
+                                          >
+                                            Join Link
+                                          </a>
+                                        )}
+                                      </div>
+                                    ) : candidate.liveInterview !== 'completed' && (
+                                      <button
+                                        onClick={() => {
+                                          setSelectedCandidateForSchedule({ id: String(candidate.id), name: candidate.name });
+                                          setShowScheduleModal(true);
+                                        }}
+                                        className="text-[11px] text-[#6366f1] hover:underline flex items-center gap-1"
+                                      >
+                                        <Calendar size={12} />
+                                        Schedule
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
                               );
                             }
@@ -1747,73 +2158,14 @@ export function EnhancedGroupOverviewV2({
         )
       }
 
-      {/* Activity Log Modal */}
-      {
-        showActivityLog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-            <div className="bg-white rounded-[16px] shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
-              <div className="px-8 py-6 border-b border-[#e5e7eb]">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-[#111827]">Activity & Decision Log</h3>
-                  <button
-                    onClick={() => setShowActivityLog(false)}
-                    className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
-                  >
-                    <X size={20} className="text-[#6b7280]" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-8">
-                <div className="space-y-4">
-                  {activityLog.map((entry) => (
-                    <div key={entry.id} className="flex gap-4">
-                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-[#f3f4f6] flex items-center justify-center">
-                        {entry.actorRole === 'technical' ? (
-                          <Shield size={16} className="text-[#10b981]" />
-                        ) : (
-                          <Users size={16} className="text-[#6366f1]" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-[14px] text-[#111827] font-medium">
-                            {entry.actor}
-                          </span>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${entry.actorRole === 'technical'
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-blue-100 text-blue-700'
-                            }`}>
-                            {entry.actorRole === 'technical' ? 'Technical' : 'HR'}
-                          </span>
-                          <span className="text-[12px] text-[#9ca3af]">
-                            {entry.timestamp.toLocaleString()}
-                          </span>
-                        </div>
-                        <p className="text-[14px] text-[#6b7280]">{entry.description}</p>
-                        {entry.metadata && (
-                          <div className="mt-2 p-2 bg-gray-50 rounded-[6px] text-[12px] text-gray-600">
-                            <code>{JSON.stringify(entry.metadata, null, 2)}</code>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="px-8 py-4 border-t border-[#e5e7eb] flex justify-end">
-                <button
-                  onClick={() => setShowActivityLog(false)}
-                  className="px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      }
+      {/* Activity Log Panel */}
+      {showActivityLog && (
+        <ActivityLogPanel
+          groupId={groupId}
+          groupName={groupName}
+          onClose={() => setShowActivityLog(false)}
+        />
+      )}
 
 
 
@@ -1849,6 +2201,8 @@ export function EnhancedGroupOverviewV2({
           <ModuleMonitoringDashboard
             moduleType={showModuleMonitoring}
             candidates={candidateStatuses}
+            activeFlow={activeFlow}
+            pipelineSteps={pipelineSteps}
             onClose={() => setShowModuleMonitoring(null)}
             onViewCandidate={(candidateId) => {
               setShowModuleMonitoring(null);
@@ -1865,6 +2219,122 @@ export function EnhancedGroupOverviewV2({
           />
         )
       }
+
+      {/* Assessment/Interview Creation Full Screens */}
+      {showAssessmentCreation && (
+        <CreateAdvancedAssessment
+          onBack={() => {
+            setShowAssessmentCreation(false);
+            setEditingAssessmentData(null);
+          }}
+          onSave={handleSaveAssessment}
+          initialData={editingAssessmentData}
+        />
+      )}
+
+      {showUnifiedAIInterviewSetup && (
+        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
+          <UnifiedAIInterviewSetup
+            groupName={groupName}
+            activeFlow={activeFlow}
+            initialData={editingInterviewData}
+            onBack={() => {
+              setShowUnifiedAIInterviewSetup(false);
+              setEditingInterviewData(null);
+            }}
+            onSetupQuestions={(settings) => {
+              setPendingAISettings(settings);
+              setShowUnifiedAIInterviewSetup(false);
+              setShowRecordedQuestionSetup(true);
+            }}
+            onSetupLiveFlow={(settings) => {
+              setPendingAISettings(settings);
+              setShowUnifiedAIInterviewSetup(false);
+              setShowLiveFlowSetup(true);
+            }}
+          />
+        </div>
+      )}
+
+      {showLiveFlowSetup && (
+        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
+          <LiveInterviewFlowSetup
+            groupName={groupName}
+            initialSettings={editingInterviewData?.questions?.extended_config?.live_flow_config
+              ?? editingInterviewData?.questions?.live_flow_config
+              ?? undefined}
+            onBack={() => {
+              setShowLiveFlowSetup(false);
+              setShowUnifiedAIInterviewSetup(true);
+            }}
+            onSave={async (flowSettings) => {
+              try {
+                const mergedConfig = {
+                  ...pendingAISettings,
+                  live_flow_config: flowSettings
+                };
+
+                await api.recruiter.assignInterview(groupId, {
+                  interview_type: 'live',
+                  config: mergedConfig,
+                  id: editingInterviewData?.id,
+                  sections: []
+                });
+                showToast('Live AI Interview configured successfully');
+                setShowLiveFlowSetup(false);
+                setPendingAISettings(null);
+                setEditingInterviewData(null);
+                setRefreshKey(prev => prev + 1);
+              } catch (error) {
+                console.error('Failed to assign live interview:', error);
+                showToast('Failed to save AI Interview');
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {showRecordedQuestionSetup && (
+        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
+          <RecordedInterviewQuestionSetup
+            groupName={groupName}
+            initialQuestions={(() => {
+              // Extract saved questions from the interview being edited
+              const items = editingInterviewData?.questions?.items;
+              if (Array.isArray(items) && items.length > 0) {
+                return items.map((q: any, i: number) => ({
+                  id: q.id || String(i + 1),
+                  text: q.text || q.question || '',
+                  duration: q.duration || q.recordingTime || 120
+                }));
+              }
+              return undefined;
+            })()}
+            onBack={() => {
+              setShowRecordedQuestionSetup(false);
+              setShowUnifiedAIInterviewSetup(true);
+            }}
+            onSave={async (questions) => {
+              try {
+                await api.recruiter.assignInterview(groupId, {
+                  interview_type: 'recorded',
+                  config: pendingAISettings,
+                  id: editingInterviewData?.id,
+                  sections: questions
+                });
+                showToast('Recorded AI Interview configured successfully');
+                setShowRecordedQuestionSetup(false);
+                setPendingAISettings(null);
+                setEditingInterviewData(null);
+                setRefreshKey(prev => prev + 1);
+              } catch (error) {
+                console.error('Failed to assign recorded interview:', error);
+                showToast('Failed to save AI Interview');
+              }
+            }}
+          />
+        </div>
+      )}
 
       {/* Bulk Progression Modal */}
       {
@@ -1947,6 +2417,20 @@ export function EnhancedGroupOverviewV2({
           />
         )
       }
+
+      {/* Schedule Interview Modal */}
+      {showScheduleModal && selectedCandidateForSchedule && (
+        <ScheduleInterviewModal
+          isOpen={showScheduleModal}
+          onClose={() => {
+            setShowScheduleModal(false);
+            setSelectedCandidateForSchedule(null);
+          }}
+          onSchedule={handleScheduleInterview}
+          candidateName={selectedCandidateForSchedule.name}
+          applicationId={selectedCandidateForSchedule.id}
+        />
+      )}
     </div>
   );
 }

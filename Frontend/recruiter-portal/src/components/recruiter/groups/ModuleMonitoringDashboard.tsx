@@ -1,19 +1,34 @@
 import { useState } from 'react';
-import { X, BarChart3, PieChart, TrendingUp, Users, Filter, Download, CheckCircle, XCircle, AlertCircle, Award, Flag, Eye, MessageSquare, RefreshCw } from 'lucide-react';
-import { Button } from '../../ui/button';
+import { X, BarChart3, TrendingUp, Users, Download, CheckCircle, XCircle, AlertCircle, Award, Flag, Eye, RefreshCw, Mic, Video, Lock } from 'lucide-react';
 
 interface ModuleMonitoringDashboardProps {
   moduleType: 'assessment' | 'ai-interview';
   candidates: any[];
+  activeFlow?: string[]; // Pass active filtration flow to determine subpages
+  pipelineSteps?: any[]; // Pass pipeline steps to check stage status
   onClose: () => void;
   onViewCandidate: (candidateId: number) => void;
   onAddVerdict: (candidateId: number) => void;
   onReviewFlags: (candidateId: number) => void;
 }
 
+interface SubpageConfig {
+  key: string;
+  label: string;
+  icon: typeof Mic;
+  statusKey: string;
+  scoreKey: string;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  stageId: string;
+}
+
 export function ModuleMonitoringDashboard({
   moduleType,
   candidates,
+  activeFlow = [],
+  pipelineSteps = [],
   onClose,
   onViewCandidate,
   onAddVerdict,
@@ -22,9 +37,62 @@ export function ModuleMonitoringDashboard({
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'pending' | 'flagged'>('all');
   const [sortBy, setSortBy] = useState<'score-high' | 'score-low' | 'name'>('score-high');
 
-  const moduleTitle = moduleType === 'assessment' ? 'Technical Assessment' : 'AI Interview';
-  const scoreKey = moduleType === 'assessment' ? 'assessmentScore' : 'aiInterviewScore';
-  const statusKey = moduleType === 'assessment' ? 'assessment' : 'aiInterview';
+  // Determine if we need interview subpages
+  const hasRecordedInterview = activeFlow.some(s => s === 'ai-interview' || s === 'ai_interview');
+  const hasLiveInterview = activeFlow.some(s => s === 'live-interview' || s === 'live_interview');
+  const showInterviewSubpages = moduleType === 'ai-interview' && hasRecordedInterview && hasLiveInterview;
+
+  // Build subpages in stage order
+  const interviewSubpages: SubpageConfig[] = [];
+  if (showInterviewSubpages) {
+    const orderedFlow = activeFlow.filter(s => ['ai-interview', 'ai_interview', 'live-interview', 'live_interview'].includes(s));
+    orderedFlow.forEach(stage => {
+      if ((stage === 'ai-interview' || stage === 'ai_interview') && !interviewSubpages.find(s => s.key === 'recorded')) {
+        interviewSubpages.push({
+          key: 'recorded',
+          label: 'Recorded Interview',
+          icon: Mic,
+          statusKey: 'aiInterview',
+          scoreKey: 'aiInterviewScore',
+          color: 'text-purple-700',
+          bgColor: 'bg-purple-50',
+          borderColor: 'border-purple-500',
+          stageId: 'ai-interview'
+        });
+      }
+      if ((stage === 'live-interview' || stage === 'live_interview') && !interviewSubpages.find(s => s.key === 'live')) {
+        interviewSubpages.push({
+          key: 'live',
+          label: 'Live Interview',
+          icon: Video,
+          statusKey: 'liveInterview',
+          scoreKey: 'aiInterviewScore', // same for now, can be extended
+          color: 'text-blue-700',
+          bgColor: 'bg-blue-50',
+          borderColor: 'border-blue-500',
+          stageId: 'live-interview'
+        });
+      }
+    });
+  }
+
+  const [activeSubpage, setActiveSubpage] = useState<string>(
+    interviewSubpages.find(s => {
+      const step = pipelineSteps.find(ps => ps.id === s.stageId);
+      return step && step.state !== 'not-started';
+    })?.key || interviewSubpages[0]?.key || ''
+  );
+
+  const currentSubpage = interviewSubpages.find(s => s.key === activeSubpage) || null;
+
+  // Determine which keys to use based on current state
+  const moduleTitle = moduleType === 'assessment' ? 'Technical Assessment'
+    : showInterviewSubpages ? 'AI Interview Monitor'
+      : hasLiveInterview ? 'Live Interview'
+        : 'Recorded Interview';
+
+  const scoreKey = currentSubpage?.scoreKey ?? (moduleType === 'assessment' ? 'assessmentScore' : 'aiInterviewScore');
+  const statusKey = currentSubpage?.statusKey ?? (moduleType === 'assessment' ? 'assessment' : 'aiInterview');
 
   // Filter and sort candidates
   const filteredCandidates = candidates
@@ -61,7 +129,7 @@ export function ModuleMonitoringDashboard({
           <div>
             <div className="flex items-center gap-3 mb-2">
               <BarChart3 size={24} className="text-[#10b981]" />
-              <h2 className="text-[#111827]">{moduleTitle} - Module Monitoring</h2>
+              <h2 className="text-[#111827]">{moduleTitle} — Module Monitoring</h2>
               <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-[6px] text-[13px] font-medium flex items-center gap-1">
                 <Users size={12} />
                 Technical Recruiter Dashboard
@@ -88,10 +156,56 @@ export function ModuleMonitoringDashboard({
             </button>
           </div>
         </div>
+
+        {/* Interview subpage tabs — only shown when both recorded + live are in the flow */}
+        {showInterviewSubpages && (
+          <div className="flex gap-2 mt-4">
+            {interviewSubpages.map((subpage, idx) => {
+              const Icon = subpage.icon;
+              const isActive = activeSubpage === subpage.key;
+              const step = pipelineSteps.find(ps => ps.id === subpage.stageId || ps.id === subpage.stageId.replace('-', '_'));
+              const isLocked = !step || step.state === 'not-started' || step.state === 'not_started';
+
+              return (
+                <button
+                  key={subpage.key}
+                  disabled={isLocked}
+                  onClick={() => { setActiveSubpage(subpage.key); setFilterStatus('all'); }}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-[10px] border-2 text-[14px] font-medium transition-all ${isActive
+                    ? `${subpage.borderColor} ${subpage.bgColor} ${subpage.color}`
+                    : isLocked
+                      ? 'border-dashed border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'
+                      : 'border-transparent bg-white/60 text-[#6b7280] hover:bg-white hover:border-gray-300'
+                    }`}
+                  title={isLocked ? "This interview stage has not been started yet" : ""}
+                >
+                  {isLocked ? <Lock size={14} className="text-gray-400" /> : <Icon size={16} />}
+                  <span>Stage {idx + 1}: {subpage.label}</span>
+                  {isActive && (
+                    <span className={`ml-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${subpage.bgColor} ${subpage.color} border ${subpage.borderColor}`}>
+                      Viewing
+                    </span>
+                  )}
+                  {isLocked && (
+                    <span className="ml-1 px-2 py-0.5 rounded-full text-[11px] bg-gray-100 text-gray-400 border border-gray-200">
+                      Locked
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Statistics Overview */}
       <div className="px-8 py-6 border-b border-[#e5e7eb] bg-gray-50">
+        {showInterviewSubpages && currentSubpage && (
+          <div className="flex items-center gap-2 mb-4">
+            {(() => { const PageIcon = currentSubpage.icon; return <PageIcon size={18} className={currentSubpage.color} />; })()}
+            <span className={`font-semibold text-[15px] ${currentSubpage.color}`}>{currentSubpage.label} Statistics</span>
+          </div>
+        )}
         <div className="grid grid-cols-5 gap-4">
           <div className="p-4 bg-white rounded-[12px] border border-[#e5e7eb]">
             <div className="flex items-center justify-between mb-2">
@@ -196,7 +310,9 @@ export function ModuleMonitoringDashboard({
                 <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-semibold">Candidate</span>
               </th>
               <th className="px-6 py-4 text-center">
-                <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-semibold">Status</span>
+                <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-semibold">
+                  {showInterviewSubpages && currentSubpage ? `${currentSubpage.label} Status` : 'Status'}
+                </span>
               </th>
               <th className="px-6 py-4 text-center">
                 <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-semibold">Score</span>
@@ -216,7 +332,16 @@ export function ModuleMonitoringDashboard({
             </tr>
           </thead>
           <tbody>
-            {filteredCandidates.map((candidate) => (
+            {filteredCandidates.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-6 py-16 text-center">
+                  <div className="flex flex-col items-center gap-3 text-[#9ca3af]">
+                    <Users size={40} className="opacity-30" />
+                    <p className="text-[14px]">No candidates match the current filter</p>
+                  </div>
+                </td>
+              </tr>
+            ) : filteredCandidates.map((candidate) => (
               <tr key={candidate.id} className="border-b border-[#e5e7eb] hover:bg-gray-50 transition-colors">
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-3">
@@ -227,7 +352,7 @@ export function ModuleMonitoringDashboard({
                     </div>
                     <div>
                       <div className="font-medium text-[14px] text-[#111827]">{candidate.name}</div>
-                      <div className="text-[12px] text-[#6b7280]">ID: {candidate.id}</div>
+                      <div className="text-[12px] text-[#6b7280]">{candidate.email || `ID: ${candidate.id}`}</div>
                     </div>
                   </div>
                 </td>
@@ -350,6 +475,11 @@ export function ModuleMonitoringDashboard({
           <div className="text-[13px] text-[#6b7280]">
             Showing <span className="font-semibold text-[#111827]">{filteredCandidates.length}</span> of{' '}
             <span className="font-semibold text-[#111827]">{candidates.length}</span> candidates
+            {showInterviewSubpages && currentSubpage && (
+              <span className={`ml-2 px-2 py-0.5 rounded-md text-[11px] font-medium ${currentSubpage.bgColor} ${currentSubpage.color}`}>
+                {currentSubpage.label}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">

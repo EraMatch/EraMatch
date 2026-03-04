@@ -76,10 +76,12 @@ export function Sidebar() {
           <Users size={24} />
         </NavLink>
 
-        {/* Question Bank Button */}
-        <NavLink to="/recruiter/question-bank" className={({ isActive }) => getLinkClass(isActive)} title="Question Bank">
-          <BookOpen size={24} />
-        </NavLink>
+        {/* Question Bank Button - Technical Only */}
+        {userRole === 'technical' && (
+          <NavLink to="/recruiter/question-bank" className={({ isActive }) => getLinkClass(isActive)} title="Question Bank">
+            <BookOpen size={24} />
+          </NavLink>
+        )}
 
         {/* Reviews Button - Technical Only */}
         {userRole === 'technical' && (
