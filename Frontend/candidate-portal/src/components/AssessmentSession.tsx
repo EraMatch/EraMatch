@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { AlertCircle, ChevronLeft, ChevronRight, Clock, CheckCircle2, Code2, Flag, Play, Loader2 } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, Clock, CheckCircle2, Code2, Flag, Play, Loader2, Send } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { api } from '../services/api';
 
@@ -11,30 +11,42 @@ interface AssessmentSessionProps {
 }
 
 interface Question {
-  id: number;
+  id: string;
   type: 'essay' | 'mcq' | 'coding';
   question: string;
   options?: string[];
   correctAnswer?: number;
   starterCode?: string;
+  language?: string;
+  testCases?: { input: string; expected_output: string; is_hidden?: boolean }[];
   points: number;
+  section_title?: string;
 }
 
 export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionProps) {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [assessmentTimer, setAssessmentTimer] = useState(45 * 60); // 45 minutes in seconds
-  const [answers, setAnswers] = useState<Record<number, string | number>>({});
+  const [assessmentTimer, setAssessmentTimer] = useState(60 * 60); // 60 minutes default
+  const [initialTimer, setInitialTimer] = useState(60 * 60);
+  const [answers, setAnswers] = useState<Record<string, string | number>>({});
   const [lastActivity, setLastActivity] = useState(Date.now());
   const [inactivityCountdown, setInactivityCountdown] = useState(30); // 30 seconds
   const [showInactivityAlert, setShowInactivityAlert] = useState(false);
   const [showRedBorder, setShowRedBorder] = useState(false);
   const [assessmentComplete, setAssessmentComplete] = useState(false);
-  const [selectedLanguages, setSelectedLanguages] = useState<Record<number, string>>({});
-  const [flaggedQuestions, setFlaggedQuestions] = useState<Set<number>>(new Set());
-  const [codeOutput, setCodeOutput] = useState<Record<number, string>>({});
+  const [selectedLanguages, setSelectedLanguages] = useState<Record<string, string>>({});
+  const [flaggedQuestions, setFlaggedQuestions] = useState<Set<string>>(new Set());
+  const [codeOutput, setCodeOutput] = useState<Record<string, string>>({});
+  const [testResults, setTestResults] = useState<Record<string, { passed: boolean; output: string; expected: string; actual: string }[]>>({});
   const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRunningCode, setIsRunningCode] = useState(false);
+  const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [assessmentId, setAssessmentId] = useState<string | null>(null);
+  const [stageId, setStageId] = useState<string | null>(null);
+  const [attemptCounts, setAttemptCounts] = useState<Record<string, number>>({});
+  const [maxAttempts, setMaxAttempts] = useState<Record<string, number>>({});
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Programming languages
@@ -53,31 +65,83 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     { value: 'rust', label: 'Rust', extension: '.rs' }
   ];
 
-  // Fetch assessment questions from API
+  // Fetch assessment config and start session from API
   useEffect(() => {
-    const fetchAssessmentSession = async () => {
+    const fetchAndStartAssessment = async () => {
       try {
         setIsLoading(true);
-        const sessionData = await api.recruiter.getAssessmentSession('session-123') as any;
+        // Step 1: Get assessment config
+        const config = await api.candidate.getAssessmentConfig() as any;
+        setAssessmentId(config.assessment_id);
+        setStageId(config.stage_id);
+        
+        const durationSeconds = (config.duration_minutes || 60) * 60;
+        setAssessmentTimer(durationSeconds);
+        setInitialTimer(durationSeconds);
+
+        // Step 2: Start assessment session (or resume existing)
+        const session = await api.candidate.startAssessment({
+          assessment_id: config.assessment_id,
+          stage_id: config.stage_id,
+        }) as any;
+        setSessionId(session.session_id);
+
+        // Use remaining_seconds from backend if resuming, otherwise full duration
+        if (session.remaining_seconds !== undefined && session.remaining_seconds !== null) {
+          if (session.remaining_seconds <= 0) {
+            // Timer already expired — auto-submit immediately
+            try {
+              await api.candidate.submitAssessment({ session_id: session.session_id });
+            } catch (e) { console.error('Auto-submit expired session:', e); }
+            setAssessmentComplete(true);
+            setIsLoading(false);
+            return;
+          }
+          setAssessmentTimer(session.remaining_seconds);
+          setInitialTimer(durationSeconds);
+        }
+
         // Map API data to component format
-        const mappedQuestions: Question[] = sessionData.questions.map((q: any) => ({
-          id: q.id,
-          type: q.type as 'essay' | 'mcq' | 'coding',
-          question: q.question, // Use q.question as defined in API mock
-          options: q.options,
-          correctAnswer: q.correctAnswer,
-          starterCode: q.starterCode,
-          points: q.points || 10
-        }));
+        const mappedQuestions: Question[] = session.questions.map((q: any) => {
+          const qType = q.question_type === 'code' ? 'coding' : q.question_type;
+          return {
+            id: q.question_id,
+            type: qType as 'essay' | 'mcq' | 'coding',
+            question: q.question_text,
+            options: q.question_config?.options,
+            starterCode: q.question_config?.starter_code,
+            language: q.question_config?.language || 'python',
+            testCases: q.question_config?.test_cases,
+            points: q.points || 10,
+            section_title: q.section_title,
+          };
+        });
         setQuestions(mappedQuestions);
+
+        // Restore saved answers if resuming
+        if (session.saved_answers) {
+          const restoredAnswers: Record<string, string | number> = {};
+          const restoredAttempts: Record<string, number> = {};
+          for (const [qid, data] of Object.entries(session.saved_answers as Record<string, any>)) {
+            const ad = data.answer_data;
+            if (ad) {
+              if (ad.selected_option !== undefined) restoredAnswers[qid] = ad.selected_option;
+              else if (ad.text !== undefined) restoredAnswers[qid] = ad.text;
+              else if (ad.code !== undefined) restoredAnswers[qid] = ad.code;
+            }
+            if (data.attempt_count) restoredAttempts[qid] = data.attempt_count;
+          }
+          setAnswers(restoredAnswers);
+          setAttemptCounts(restoredAttempts);
+        }
       } catch (error) {
-        console.error('Failed to fetch assessment session:', error);
+        console.error('Failed to fetch/start assessment:', error);
         setQuestions([]);
       } finally {
         setIsLoading(false);
       }
     };
-    fetchAssessmentSession();
+    fetchAndStartAssessment();
   }, []);
 
   const currentQuestion = questions[currentQuestionIndex];
@@ -90,7 +154,20 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       setAssessmentTimer((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          onComplete();
+          // Auto-submit the assessment to backend before navigating away
+          if (sessionId) {
+            api.candidate.submitAssessment({ session_id: sessionId })
+              .then(() => {
+                console.log('Assessment auto-submitted on time expiry');
+                setAssessmentComplete(true);
+              })
+              .catch((err: unknown) => {
+                console.error('Failed to auto-submit on timer expiry:', err);
+                setAssessmentComplete(true);
+              });
+          } else {
+            setAssessmentComplete(true);
+          }
           return 0;
         }
         return prev - 1;
@@ -98,7 +175,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [onComplete, assessmentComplete]);
+  }, [onComplete, assessmentComplete, sessionId]);
 
   // Inactivity detection
   useEffect(() => {
@@ -144,29 +221,29 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   };
 
   // Disable copy/paste
-  useEffect(() => {
-    const preventCopy = (e: ClipboardEvent) => {
-      e.preventDefault();
-    };
+  // useEffect(() => {
+  //   const preventCopy = (e: ClipboardEvent) => {
+  //     e.preventDefault();
+  //   };
 
-    const preventPaste = (e: ClipboardEvent) => {
-      e.preventDefault();
-    };
+  //   const preventPaste = (e: ClipboardEvent) => {
+  //     e.preventDefault();
+  //   };
 
-    const preventContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-    };
+  //   const preventContextMenu = (e: MouseEvent) => {
+  //     e.preventDefault();
+  //   };
 
-    document.addEventListener('copy', preventCopy);
-    document.addEventListener('paste', preventPaste);
-    document.addEventListener('contextmenu', preventContextMenu);
+  //   document.addEventListener('copy', preventCopy);
+  //   document.addEventListener('paste', preventPaste);
+  //   document.addEventListener('contextmenu', preventContextMenu);
 
-    return () => {
-      document.removeEventListener('copy', preventCopy);
-      document.removeEventListener('paste', preventPaste);
-      document.removeEventListener('contextmenu', preventContextMenu);
-    };
-  }, []);
+  //   return () => {
+  //     document.removeEventListener('copy', preventCopy);
+  //     document.removeEventListener('paste', preventPaste);
+  //     document.removeEventListener('contextmenu', preventContextMenu);
+  //   };
+  // }, []);
 
   const handleAnswerChange = (value: string | number) => {
     setAnswers(prev => ({
@@ -174,6 +251,21 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       [currentQuestion.id]: value
     }));
     handleActivity();
+
+    // Auto-save answer to backend (debounced via timeout)
+    if (sessionId) {
+      const answerData = currentQuestion.type === 'mcq'
+        ? { selected_option: value }
+        : currentQuestion.type === 'essay'
+          ? { text: value }
+          : { code: value, language: selectedLanguages[currentQuestion.id] || currentQuestion.language || 'python' };
+
+      api.candidate.saveAnswer({
+        session_id: sessionId,
+        question_id: currentQuestion.id,
+        answer_data: answerData,
+      }).catch(err => console.error('Failed to save answer:', err));
+    }
   };
 
   const handleNextQuestion = () => {
@@ -190,8 +282,16 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     }
   };
 
-  const handleSubmitAssessment = () => {
-    setAssessmentComplete(true);
+  const handleSubmitAssessment = async () => {
+    if (!sessionId) return;
+    try {
+      const result = await api.candidate.submitAssessment({ session_id: sessionId }) as any;
+      console.log('Assessment submitted:', result);
+      setAssessmentComplete(true);
+    } catch (error) {
+      console.error('Failed to submit assessment:', error);
+      setAssessmentComplete(true);
+    }
   };
 
   const handleSubmitClick = () => {
@@ -203,7 +303,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     }
   };
 
-  const toggleFlagQuestion = (questionId: number) => {
+  const toggleFlagQuestion = (questionId: string) => {
     setFlaggedQuestions(prev => {
       const newSet = new Set(prev);
       if (newSet.has(questionId)) {
@@ -216,31 +316,104 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     handleActivity();
   };
 
-  const handleRunCode = () => {
+  const handleRunCode = async () => {
     const code = answers[currentQuestion.id] as string || currentQuestion.starterCode || '';
-    const language = selectedLanguages[currentQuestion.id] || 'javascript';
+    const language = selectedLanguages[currentQuestion.id] || currentQuestion.language || 'python';
 
-    // Simulate code execution (mock implementation)
+    setIsRunningCode(true);
+    setCodeOutput(prev => ({
+      ...prev,
+      [currentQuestion.id]: '⏳ Running code...'
+    }));
+
     try {
-      if (language === 'javascript' || language === 'typescript') {
-        // For demo purposes, we'll evaluate the code
-        // In production, this should use a secure sandbox API
-        const result = eval(code);
-        setCodeOutput(prev => ({
-          ...prev,
-          [currentQuestion.id]: `✓ Code executed successfully\n\nOutput: ${result !== undefined ? JSON.stringify(result) : 'undefined'}`
-        }));
+      const result = await api.candidate.runCode({ code, language }) as any;
+
+      let output = '';
+      if (result.status === 'Accepted') {
+        output = `✓ Code executed successfully\n\nOutput:\n${result.stdout || '(no output)'}`;
+      } else if (result.compile_output) {
+        output = `✗ Compilation Error:\n${result.compile_output}`;
+      } else if (result.stderr) {
+        output = `✗ Runtime Error:\n${result.stderr}`;
       } else {
-        setCodeOutput(prev => ({
-          ...prev,
-          [currentQuestion.id]: `✓ Code syntax validated for ${language}\n\nNote: Full execution available for JavaScript only in this demo.`
-        }));
+        output = `Status: ${result.status}\n${result.stdout || result.stderr || '(no output)'}`;
       }
+
+      if (result.time) output += `\n\n⏱ Time: ${result.time}s`;
+      if (result.memory) output += `\n💾 Memory: ${Math.round(result.memory / 1024)} KB`;
+
+      setCodeOutput(prev => ({
+        ...prev,
+        [currentQuestion.id]: output
+      }));
     } catch (error) {
       setCodeOutput(prev => ({
         ...prev,
         [currentQuestion.id]: `✗ Error: ${(error as Error).message}`
       }));
+    } finally {
+      setIsRunningCode(false);
+    }
+    handleActivity();
+  };
+
+  const handleSubmitAnswer = async () => {
+    if (!sessionId || !currentQuestion) return;
+    
+    const code = answers[currentQuestion.id] as string || currentQuestion.starterCode || '';
+    const language = selectedLanguages[currentQuestion.id] || currentQuestion.language || 'python';
+    const currentAttempts = attemptCounts[currentQuestion.id] || 0;
+    const maxAtt = maxAttempts[currentQuestion.id] || 5;
+
+    if (currentAttempts >= maxAtt) return;
+
+    setIsSubmittingAnswer(true);
+    setCodeOutput(prev => ({
+      ...prev,
+      [currentQuestion.id]: '⏳ Submitting answer & running all tests...'
+    }));
+    setTestResults(prev => ({ ...prev, [currentQuestion.id]: [] }));
+    
+    try {
+      const result = await api.candidate.runTests({
+        session_id: sessionId,
+        question_id: currentQuestion.id,
+        code,
+        language,
+      }) as any;
+
+      // Update attempt counts
+      setAttemptCounts(prev => ({ ...prev, [currentQuestion.id]: result.attempt_count }));
+      setMaxAttempts(prev => ({ ...prev, [currentQuestion.id]: result.max_attempts }));
+
+      // Map visible results
+      const mappedResults = (result.visible_results || []).map((r: any) => ({
+        passed: r.passed,
+        expected: r.expected,
+        actual: r.actual,
+        output: r.actual,
+      }));
+      setTestResults(prev => ({ ...prev, [currentQuestion.id]: mappedResults }));
+
+      // Summary message
+      const hiddenInfo = result.hidden_total > 0
+        ? ` | Hidden: ${result.hidden_passed}/${result.hidden_total} passed`
+        : '';
+      setCodeOutput(prev => ({
+        ...prev,
+        [currentQuestion.id]: result.all_passed
+          ? `✅ All tests passed! (Attempt ${result.attempt_count}/${result.max_attempts})${hiddenInfo}`
+          : `❌ Some tests failed. (Attempt ${result.attempt_count}/${result.max_attempts})${hiddenInfo}`,
+      }));
+    } catch (error: any) {
+      const msg = error?.response?.data?.detail || error?.message || 'Unknown error';
+      setCodeOutput(prev => ({
+        ...prev,
+        [currentQuestion.id]: `✗ Error: ${msg}`
+      }));
+    } finally {
+      setIsSubmittingAnswer(false);
     }
     handleActivity();
   };
@@ -308,7 +481,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
                 <div className="text-sm text-gray-600">Answered</div>
               </div>
               <div className="p-6 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
-                <div className="text-3xl mb-2" style={{ color: '#6366F1' }}>{formatTime(45 * 60 - assessmentTimer)}</div>
+                <div className="text-3xl mb-2" style={{ color: '#6366F1' }}>{formatTime(initialTimer - assessmentTimer)}</div>
                 <div className="text-sm text-gray-600">Time Taken</div>
               </div>
             </div>
@@ -473,7 +646,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         <div className="max-w-5xl mx-auto mb-6">
           <Card className="p-6">
             <h4 className="text-gray-700 mb-4">Quick Navigation</h4>
-            <div className="grid grid-cols-15 gap-2">
+            <div className="flex flex-wrap items-center gap-3">
               {questions.map((q, index) => (
                 <div key={q.id} className="relative">
                   <button
@@ -552,6 +725,28 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
                 </Button>
               </div>
             </div>
+            
+            {/* Sample Test Cases for Coding */}
+            {currentQuestion.type === 'coding' && currentQuestion.testCases && currentQuestion.testCases.some(tc => !tc.is_hidden) && (
+              <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mt-4">
+                <h4 className="font-semibold text-gray-700 text-sm mb-3">Sample Test Cases</h4>
+                <div className="space-y-3">
+                  {currentQuestion.testCases.filter(tc => !tc.is_hidden).map((tc, idx) => (
+                    <div key={idx} className="bg-white p-3 rounded border border-gray-200 shadow-sm flex flex-col md:flex-row gap-4">
+                      <div className="flex-1">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Input</span>
+                        <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">{tc.input}</pre>
+                      </div>
+                      <div className="hidden md:block w-px bg-gray-200"></div>
+                      <div className="flex-1">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Expected Output</span>
+                        <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">{tc.expected_output}</pre>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Answer Section */}
             <div className="pt-4">
@@ -632,15 +827,63 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
                     spellCheck={false}
                   />
                   <div className="flex items-center justify-between mt-2">
-                    <Button
-                      className="rounded-full px-4 gap-2"
-                      style={{ backgroundColor: '#6366F1', color: '#FFFFFF' }}
-                      onClick={handleRunCode}
-                    >
-                      <Play className="w-4 h-4" />
-                      Run Code
-                    </Button>
+                    <div className="flex items-center gap-3">
+                      <Button
+                        className="rounded-full px-4 gap-2 border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                        onClick={handleRunCode}
+                        disabled={isRunningCode}
+                      >
+                        <Play className="w-4 h-4" />
+                        Run Script
+                      </Button>
+                      <Button
+                        className="rounded-full px-4 gap-2"
+                        style={{
+                          backgroundColor: (attemptCounts[currentQuestion.id] || 0) >= (maxAttempts[currentQuestion.id] || 5)
+                            ? '#9CA3AF' : '#10B981',
+                          color: '#FFFFFF',
+                        }}
+                        onClick={handleSubmitAnswer}
+                        disabled={isRunningCode || isSubmittingAnswer || (attemptCounts[currentQuestion.id] || 0) >= (maxAttempts[currentQuestion.id] || 5)}
+                      >
+                        {isSubmittingAnswer ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                        Submit Answer
+                        <span className="ml-1 text-xs opacity-80">
+                          ({attemptCounts[currentQuestion.id] || 0}/{maxAttempts[currentQuestion.id] || 5})
+                        </span>
+                      </Button>
+                    </div>
                   </div>
+                  
+                  {/* Test Cases Results Display */}
+                  {testResults[currentQuestion.id] && testResults[currentQuestion.id].length > 0 && (
+                    <div className="mt-4 space-y-3">
+                      <h4 className="font-semibold text-gray-700 text-sm">Test Results</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {testResults[currentQuestion.id].map((res, idx) => (
+                          <div key={idx} className={`p-4 rounded-lg border-2 ${res.passed ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="font-semibold text-sm text-gray-700">Test Case {idx + 1}</span>
+                              {res.passed ? (
+                                <span className="text-green-600 font-bold text-sm bg-green-200 px-2 rounded-full">Pass</span>
+                              ) : (
+                                <span className="text-red-600 font-bold text-sm bg-red-200 px-2 rounded-full">Fail</span>
+                              )}
+                            </div>
+                            <div className="text-xs font-mono bg-white p-2 rounded border border-gray-200 mt-2">
+                              <span className="text-gray-500 font-semibold">Expected:</span>
+                              <pre className="text-gray-800 whitespace-pre-wrap mt-1">{res.expected}</pre>
+                            </div>
+                            <div className={`text-xs font-mono bg-white p-2 rounded border mt-2 ${res.passed ? 'border-green-200' : 'border-red-200'}`}>
+                              <span className={`${res.passed ? 'text-green-600' : 'text-red-600'} font-semibold`}>Actual:</span>
+                              <pre className={`${res.passed ? 'text-green-800' : 'text-red-800'} whitespace-pre-wrap mt-1`}>{res.actual || '(no output)'}</pre>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {codeOutput[currentQuestion.id] && (
                     <div className="mt-3 p-4 rounded-lg font-mono text-sm whitespace-pre-wrap" style={{ backgroundColor: '#1E293B', color: '#E2E8F0' }}>
                       {codeOutput[currentQuestion.id]}
