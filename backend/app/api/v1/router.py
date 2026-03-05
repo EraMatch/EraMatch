@@ -12,6 +12,7 @@ from app.api.v1.delegation import router as delegation_router
 from app.api.v1.archive import router as archive_router
 from app.api.v1.candidate_portal import router as candidate_portal_router
 from app.api.v1.candidate_interview import router as candidate_interview_router
+from app.api.v1.candidate_assessment import router as candidate_assessment_router
 from app.api.v1.debug import router as debug_router
 from app.api.v1.groups import router as groups_router
 from app.routers.monitoring import router as monitoring_router
@@ -27,6 +28,7 @@ router.include_router(delegation_router)
 router.include_router(archive_router, prefix="/archive", tags=["Archive"])
 router.include_router(candidate_portal_router)
 router.include_router(candidate_interview_router)
+router.include_router(candidate_assessment_router)
 router.include_router(debug_router)
 router.include_router(monitoring_router)
 router.include_router(groups_router)

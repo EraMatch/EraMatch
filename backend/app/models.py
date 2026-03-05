@@ -252,7 +252,7 @@ class CandidateGroup(SQLModel, table=True):
 
 
 class GroupStageConfig(SQLModel, table=True):
-    """Group pipeline stage configuration - uses stage_id as primary key."""
+    """Group pipeline stage configuration - maps to group_pipeline_stages table."""
     __tablename__ = "group_pipeline_stages"
     
     stage_id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -266,13 +266,13 @@ class GroupStageConfig(SQLModel, table=True):
     state: str = Field(default="not_started", max_length=20)
     started_at: datetime | None = Field(default=None)
     closed_at: datetime | None = Field(default=None)
-    started_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.id")
+    started_by_user_id: UUID | None = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class CandidateStageProgress(SQLModel, table=True):
-    """Tracks each candidate's progress through pipeline stages."""
+    """Tracks each candidate's progress through pipeline stages - maps to candidate_pipeline_progress."""
     __tablename__ = "candidate_pipeline_progress"
     
     progress_id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -299,6 +299,12 @@ class CandidateProfile(SQLModel, table=True):
     __tablename__ = "candidate_profiles"
 
     id: UUID = Field(default_factory=uuid4, alias="candidate_id", sa_column=Column("candidate_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    @property
+    def candidate_id(self) -> UUID:
+        """Expose candidate_id as a property (alias for id) for backward compatibility."""
+        return self.id
+
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     email: str = Field(max_length=255)
     full_name: str = Field(max_length=255)
@@ -417,6 +423,18 @@ class OngoingAssessment(BaseModel, table=True):
     recording_url: str | None = Field(default=None, max_length=500)
 
 
+class CandidateAssignedQuestion(BaseModel, table=True):
+    __tablename__ = "candidate_assigned_questions"
+    
+    id: UUID = Field(default_factory=uuid4, alias="assignment_id", sa_column=Column("assignment_id", PG_UUID(as_uuid=True), primary_key=True))
+    session_id: UUID = Field(foreign_key="ongoing_assessments.session_id")
+    section_id: UUID
+    pool_entry_id: UUID
+    question_snapshot: dict = Field(sa_column=Column(JSONB))
+    display_order: int
+    assigned_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class CandidateAnswer(BaseModel, table=True):
     __tablename__ = "candidate_answers"
     
@@ -430,6 +448,7 @@ class CandidateAnswer(BaseModel, table=True):
     points_max: int
     time_spent_seconds: int | None = Field(default=None)
     answered_at: datetime | None = Field(default=None)
+    assignment_id: UUID | None = Field(default=None, foreign_key="candidate_assigned_questions.assignment_id")
 
 
 class StageOnboarding(BaseModel, table=True):

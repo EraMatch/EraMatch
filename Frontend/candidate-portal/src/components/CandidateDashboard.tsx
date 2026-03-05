@@ -9,31 +9,65 @@ interface CandidateDashboardProps {
   onSignOut: () => void;
   onStartRecordedInterview?: () => void;
   onStartLiveInterview?: () => void;
-  recordedInterviewCompleted?: boolean;
-  liveInterviewCompleted?: boolean;
   onStartTechnicalAssessment?: () => void;
-  technicalAssessmentCompleted?: boolean;
   onBack?: () => void;
 }
 
-export function CandidateDashboard({ onSignOut, onStartRecordedInterview, onStartLiveInterview, recordedInterviewCompleted, liveInterviewCompleted, onStartTechnicalAssessment, technicalAssessmentCompleted, onBack }: CandidateDashboardProps) {
-  const [assessments, setAssessments] = useState<any[]>([]);
+// Matches the backend /candidate/assessments response shape
+interface StageInfo {
+  id: string;
+  type: string;          // 'assessment' | 'ai_interview' | 'live_interview'
+  stage_order: number;
+  status: string;        // 'locked' | 'unlocked' | 'in_progress' | 'completed'
+  title: string;
+  description: string;
+  expectedTime: string;
+}
+
+export function CandidateDashboard({
+  onSignOut,
+  onStartRecordedInterview,
+  onStartLiveInterview,
+  onStartTechnicalAssessment,
+  onBack,
+}: CandidateDashboardProps) {
+  const [stages, setStages] = useState<StageInfo[]>([]);
+  const [assessments, setAssessments] = useState<StageInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchAssessments = async () => {
+    const fetchData = async () => {
       try {
         setIsLoading(true);
-        const data = await api.candidate.getAssessments();
-        setAssessments(data);
-      } catch (error) {
-        console.error("Failed to fetch assessments");
+        // Fetch real stage/completion status from backend.
+        // API returns array of {id, type, stage_order, status, title, description, expectedTime}
+        const stageData = await api.candidate.getAssessments() as any;
+        const stageList: StageInfo[] = Array.isArray(stageData) ? stageData : (stageData.stages || []);
+        setStages(stageList);
+        setAssessments(stageList); // stageList IS the cards — shapes already match
+      } catch (err) {
+        console.error('Failed to fetch assessments', err);
+        setError('Failed to load your assessments. Please refresh.');
       } finally {
         setIsLoading(false);
       }
     };
-    fetchAssessments();
+
+    fetchData();
   }, []);
+
+  const getStartHandler = (card: StageInfo) => {
+    if (card.type === 'assessment') return onStartTechnicalAssessment;
+    if (card.type === 'ai_interview') return onStartRecordedInterview;
+    if (card.type === 'live_interview') return onStartLiveInterview;
+    return undefined;
+  };
+
+  const isCompleted = (card: StageInfo) => card.status === 'completed';
+  const isLocked = (card: StageInfo) => card.status === 'locked';
+  const isAvailable = (card: StageInfo) =>
+    card.status === 'unlocked' || card.status === 'in_progress';
 
   if (isLoading) {
     return (
@@ -75,7 +109,7 @@ export function CandidateDashboard({ onSignOut, onStartRecordedInterview, onStar
 
       {/* Main Content */}
       <main className="px-12 py-8">
-        {/* Back Button (only shown when onBack is provided) */}
+        {/* Back Button */}
         {onBack && (
           <button
             onClick={onBack}
@@ -86,29 +120,57 @@ export function CandidateDashboard({ onSignOut, onStartRecordedInterview, onStar
           </button>
         )}
 
-        <h2 className="text-gray-700 mb-8 text-2xl font-semibold">Available assessments</h2>
+        <h2 className="text-gray-700 mb-8 text-2xl font-semibold">Your Assessments</h2>
+
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+            {error}
+          </div>
+        )}
 
         <div className="space-y-6">
+          {assessments.length === 0 && !error && (
+            <p className="text-gray-500 text-center py-12">No assessments available at this time.</p>
+          )}
+
           {assessments.map((assessment) => (
-            <Card key={assessment.id} className="p-6 hover:shadow-lg transition-shadow">
+            <Card key={assessment.id} className={`p-6 hover:shadow-lg transition-shadow ${isLocked(assessment) ? 'opacity-60' : ''}`}>
               <div className="flex items-center justify-between gap-6">
                 <div className="flex-1">
-                  <h3 className="text-gray-700 mb-2">{assessment.title}</h3>
+                  <h3 className="text-gray-700 mb-2 font-semibold">{assessment.title}</h3>
                   <p className="text-gray-500 text-sm leading-relaxed">
                     {assessment.description}
                   </p>
+                  {/* Status badge */}
+                  <div className="mt-2">
+                    {isCompleted(assessment) && (
+                      <span className="inline-flex items-center gap-1 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                        <CheckCircle2 className="w-3 h-3" /> Completed
+                      </span>
+                    )}
+                    {assessment.status === 'in_progress' && (
+                      <span className="inline-flex items-center gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                        <Clock className="w-3 h-3" /> In Progress
+                      </span>
+                    )}
+                    {isLocked(assessment) && (
+                      <span className="inline-flex items-center gap-1 text-xs text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
+                        🔒 Locked
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-6">
                   {assessment.type === 'assessment' ? (
                     <div className="flex items-center gap-2 text-gray-600 text-sm">
                       <FileText className="w-4 h-4" />
-                      <span>{assessment.questions}</span>
+                      <span>Technical Assessment</span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 text-gray-600 text-sm">
                       <Layers className="w-4 h-4" />
-                      <span>{assessment.parts}</span>
+                      <span>{assessment.type === 'live_interview' ? 'Live Interview' : 'Video Interview'}</span>
                     </div>
                   )}
 
@@ -117,34 +179,33 @@ export function CandidateDashboard({ onSignOut, onStartRecordedInterview, onStar
                     <span>{assessment.expectedTime}</span>
                   </div>
 
-                  {/* Check completion status and render appropriate button */}
-                  {(recordedInterviewCompleted && assessment.type === 'interview' && assessment.parts === 5) ||
-                    (liveInterviewCompleted && assessment.type === 'interview' && assessment.parts === 1) ||
-                    (technicalAssessmentCompleted && assessment.type === 'assessment') ? (
-                    <div className="flex items-center gap-3">
-                      <Button
-                        className="rounded-full px-6 whitespace-nowrap w-44 bg-gray-300 cursor-not-allowed"
-                        disabled
-                      >
-                        Completed
-                      </Button>
-                      <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                  {isCompleted(assessment) ? (
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="flex items-center gap-3">
+                        <Button
+                          className="rounded-full px-6 whitespace-nowrap w-44 bg-gray-200 text-gray-500 cursor-not-allowed"
+                          disabled
+                        >
+                          Completed
+                        </Button>
+                        <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                      </div>
+                      <span className="text-xs text-gray-500 mt-1 mr-8">Wait for your next stage</span>
                     </div>
+                  ) : isLocked(assessment) ? (
+                    <Button
+                      className="rounded-full px-6 whitespace-nowrap w-44 bg-gray-200 text-gray-400 cursor-not-allowed"
+                      disabled
+                    >
+                      Locked
+                    </Button>
                   ) : (
                     <Button
                       className="text-white rounded-full px-6 whitespace-nowrap w-44"
                       style={{ backgroundColor: '#6366F1' }}
-                      onClick={
-                        assessment.type === 'interview' && assessment.parts === 5
-                          ? onStartRecordedInterview
-                          : assessment.type === 'interview' && assessment.parts === 1
-                            ? onStartLiveInterview
-                            : assessment.type === 'assessment'
-                              ? onStartTechnicalAssessment
-                              : undefined
-                      }
+                      onClick={getStartHandler(assessment)}
                     >
-                      {assessment.type === 'assessment' ? 'Start Assessment' : 'Start Interview'}
+                      {assessment.status === 'in_progress' ? 'Continue' : assessment.type === 'assessment' ? 'Start Assessment' : 'Start Interview'}
                     </Button>
                   )}
                 </div>

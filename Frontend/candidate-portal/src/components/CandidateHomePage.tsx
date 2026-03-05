@@ -1,4 +1,4 @@
-import { Bell, CheckCircle2, Clock, FileText, Video, Calendar, ArrowRight, AlertCircle, Wrench, Loader2 } from 'lucide-react';
+import { Bell, CheckCircle2, Clock, FileText, Video, Calendar, ArrowRight, AlertCircle, Wrench, Loader2, Lock } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
@@ -7,7 +7,6 @@ import logo from '../imports/image-eramatch.png';
 
 interface CandidateHomePageProps {
   onOpenTestingPage?: () => void;
-  currentStage?: 'screening' | 'assessment' | 'ai-interview' | 'live-interview';
 }
 
 interface Notification {
@@ -19,24 +18,43 @@ interface Notification {
   read: boolean;
 }
 
+interface StageData {
+  stage_id: string;
+  stage_type: string;
+  stage_order: number;
+  status: string;
+  title: string;
+  score: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
 interface HomeData {
   profile: { full_name: string; email: string } | null;
   position: { job_title: string } | null;
-  project: { name: string } | null;
+  project: { name: string; description: string } | null;
   group: { group_name: string } | null;
-  current_stage: { stage_type: string; title: string } | null;
-  stages: Array<{ stage_type: string; stage_order: number; status: string }>;
+  current_stage: StageData | null;
+  stages: StageData[];
   notifications: Notification[];
 }
 
+const stageIcon = (type: string) => {
+  switch (type) {
+    case 'screening': return CheckCircle2;
+    case 'assessment': return FileText;
+    case 'ai_interview': return Video;
+    case 'live_interview': return Calendar;
+    default: return FileText;
+  }
+};
+
 export function CandidateHomePage({
-  onOpenTestingPage,
-  currentStage: propStage
+  onOpenTestingPage
 }: CandidateHomePageProps) {
   const navigate = useNavigate();
   const [homeData, setHomeData] = useState<HomeData | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [currentStage, setCurrentStage] = useState(propStage || 'assessment');
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -49,16 +67,6 @@ export function CandidateHomePage({
           ...n,
           type: n.type as 'success' | 'info' | 'warning'
         })));
-        // Map stage_type to UI stage id
-        if (!propStage && data.current_stage) {
-          const stageMap: Record<string, 'screening' | 'assessment' | 'ai-interview' | 'live-interview'> = {
-            'screening': 'screening',
-            'assessment': 'assessment',
-            'ai_interview': 'ai-interview',
-            'live_interview': 'live-interview'
-          };
-          setCurrentStage(stageMap[data.current_stage.stage_type] || 'assessment');
-        }
       } catch (error) {
         console.error("Failed to load candidate home data", error);
       } finally {
@@ -66,7 +74,7 @@ export function CandidateHomePage({
       }
     };
     fetchData();
-  }, [propStage]);
+  }, []);
 
   if (isLoading) {
     return (
@@ -80,7 +88,11 @@ export function CandidateHomePage({
   const candidateName = homeData?.profile?.full_name || 'Candidate';
   const jobTitle = homeData?.position?.job_title || 'Position';
   const projectName = homeData?.project?.name || 'Project';
-  const nextStageTitle = homeData?.current_stage?.title || 'Complete Next Stage';
+  const stages = homeData?.stages || [];
+  const currentStage = homeData?.current_stage;
+
+  // All stages completed?
+  const allCompleted = stages.length > 0 && stages.every(s => s.status === 'completed');
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -88,22 +100,31 @@ export function CandidateHomePage({
     setNotifications(notifications.map(n => ({ ...n, read: true })));
   };
 
-  // Define stage states
-  const stages = [
-    { id: 'screening', label: 'Screening', icon: CheckCircle2 },
-    { id: 'assessment', label: 'Assessment', icon: FileText },
-    { id: 'ai-interview', label: 'AI Interview', icon: Video },
-    { id: 'live-interview', label: 'Live Interview', icon: Calendar }
-  ];
+  // Get overall application status based on stages
+  const getOverallStatus = () => {
+    if (allCompleted) return 'Completed';
+    if (stages.some(s => s.status === 'in_progress')) return 'In Progress';
+    if (stages.some(s => s.status === 'unlocked')) return 'Ready';
+    return 'Pending';
+  };
 
-  const getStageStatus = (stageId: string) => {
-    const stageOrder = ['screening', 'assessment', 'ai-interview', 'live-interview'];
-    const currentIndex = stageOrder.indexOf(currentStage);
-    const stageIndex = stageOrder.indexOf(stageId);
+  const overallStatus = getOverallStatus();
+  const statusColors: Record<string, { bg: string; border: string; text: string }> = {
+    'Completed': { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-600' },
+    'In Progress': { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-600' },
+    'Ready': { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600' },
+    'Pending': { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-600' },
+  };
+  const sc = statusColors[overallStatus] || statusColors['Pending'];
 
-    if (stageIndex < currentIndex) return 'completed';
-    if (stageIndex === currentIndex) return 'active';
-    return 'pending';
+  // Navigate to the right page based on stage type
+  const handleStartStage = () => {
+    if (!currentStage) return;
+    const stageType = currentStage.stage_type;
+    if (stageType === 'assessment') navigate('/assessment/technical');
+    else if (stageType === 'ai_interview') navigate('/interview/video');
+    else if (stageType === 'live_interview') navigate('/assessment/live');
+    else navigate('/testing');
   };
 
   return (
@@ -163,38 +184,44 @@ export function CandidateHomePage({
                       {projectName}
                     </p>
                   </div>
-                  <div className="h-[28px] px-[12px] rounded-full bg-blue-50 border border-blue-200 flex items-center">
-                    <span className="font-['Arimo',sans-serif] text-[12px] text-blue-600 font-medium">
-                      In Progress
+                  <div className={`h-[28px] px-[12px] rounded-full ${sc.bg} border ${sc.border} flex items-center`}>
+                    <span className={`font-['Arimo',sans-serif] text-[12px] ${sc.text} font-medium`}>
+                      {overallStatus}
                     </span>
                   </div>
                 </div>
 
-                {/* Progress Steps */}
+                {/* Progress Steps — REAL from API stages */}
                 <div className="flex items-center gap-[8px] mb-[16px]">
                   {stages.map((stage, index) => {
-                    const status = getStageStatus(stage.id);
-                    const Icon = stage.icon;
+                    const Icon = stageIcon(stage.stage_type);
+                    const isCompleted = stage.status === 'completed';
+                    const isActive = stage.status === 'in_progress' || stage.status === 'unlocked';
+                    const isLocked = stage.status === 'locked';
 
                     return (
-                      <div key={stage.id} className="flex items-center gap-[8px] flex-1">
-                        <div className={`w-[32px] h-[32px] rounded-full flex items-center justify-center transition-all ${status === 'completed'
-                          ? 'bg-emerald-100'
-                          : status === 'active'
-                            ? 'bg-blue-100 border-2 border-blue-500'
-                            : 'bg-gray-100'
-                          }`}>
-                          <Icon size={16} className={
-                            status === 'completed'
-                              ? 'text-emerald-600'
-                              : status === 'active'
-                                ? 'text-blue-600'
-                                : 'text-gray-400'
-                          } />
+                      <div key={stage.stage_id} className="flex items-center gap-[8px] flex-1">
+                        <div className={`w-[32px] h-[32px] rounded-full flex items-center justify-center transition-all ${
+                          isCompleted
+                            ? 'bg-emerald-100'
+                            : isActive
+                              ? 'bg-blue-100 border-2 border-blue-500'
+                              : 'bg-gray-100'
+                        }`}>
+                          {isLocked ? (
+                            <Lock size={16} className="text-gray-400" />
+                          ) : (
+                            <Icon size={16} className={
+                              isCompleted
+                                ? 'text-emerald-600'
+                                : isActive
+                                  ? 'text-blue-600'
+                                  : 'text-gray-400'
+                            } />
+                          )}
                         </div>
                         {index < stages.length - 1 && (
-                          <div className={`h-[2px] flex-1 ${status === 'completed' ? 'bg-emerald-200' : 'bg-gray-200'
-                            }`}></div>
+                          <div className={`h-[2px] flex-1 ${isCompleted ? 'bg-emerald-200' : 'bg-gray-200'}`}></div>
                         )}
                       </div>
                     );
@@ -204,10 +231,17 @@ export function CandidateHomePage({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-[6px]">
                     <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                      Current Stage: {stages.find(s => s.id === currentStage)?.label}
+                      {allCompleted
+                        ? 'All stages completed — wait for recruiter to proceed'
+                        : currentStage
+                          ? `Current Stage: ${currentStage.title}`
+                          : 'No active stage — wait for recruiter to start one'}
                     </span>
                   </div>
-                  <button className="flex items-center gap-[6px] text-[#6366f1] hover:text-[#5558e3] transition-colors">
+                  <button
+                    onClick={() => navigate('/testing')}
+                    className="flex items-center gap-[6px] text-[#6366f1] hover:text-[#5558e3] transition-colors"
+                  >
                     <span className="font-['Arimo',sans-serif] text-[13px] font-medium">
                       View Details
                     </span>
@@ -223,40 +257,74 @@ export function CandidateHomePage({
                 </h3>
 
                 <div className="bg-[#fafbfc] rounded-[10px] p-[20px] border border-[#e5e7eb]">
-                  <div className="flex items-start justify-between mb-[12px]">
-                    <div className="flex-1">
-                      <h4 className="font-['Arimo',sans-serif] text-[15px] text-black font-medium mb-[4px]">
-                        {nextStageTitle}
-                      </h4>
-                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] leading-[18px]">
-                        Complete this stage to advance in your application
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between">
+                  {allCompleted ? (
+                    /* All done — show completed message */
                     <div className="flex items-center gap-[16px]">
-                      <div className="flex items-center gap-[6px]">
-                        <FileText size={14} className="text-[#6b7280]" />
-                        <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                          15 questions
-                        </span>
+                      <div className="w-[40px] h-[40px] rounded-full bg-emerald-100 flex items-center justify-center">
+                        <CheckCircle2 size={20} className="text-emerald-600" />
                       </div>
-                      <div className="flex items-center gap-[6px]">
-                        <Clock size={14} className="text-[#6b7280]" />
-                        <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                          45 minutes
-                        </span>
+                      <div>
+                        <h4 className="font-['Arimo',sans-serif] text-[15px] text-black font-medium mb-[2px]">
+                          All Stages Completed
+                        </h4>
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                          You have completed all stages. Wait for the recruiter to review and proceed.
+                        </p>
                       </div>
                     </div>
+                  ) : currentStage ? (
+                    /* Current stage available */
+                    <>
+                      <div className="flex items-start justify-between mb-[12px]">
+                        <div className="flex-1">
+                          <h4 className="font-['Arimo',sans-serif] text-[15px] text-black font-medium mb-[4px]">
+                            {currentStage.title}
+                          </h4>
+                          <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] leading-[18px]">
+                            {currentStage.status === 'in_progress'
+                              ? 'You have started this stage. Continue to complete it.'
+                              : 'Complete this stage to advance in your application'}
+                          </p>
+                        </div>
+                      </div>
 
-                    <Button
-                      onClick={() => navigate('/interview/video')}
-                      className="bg-[#6366f1] hover:bg-[#5558e3] text-white h-[36px] px-[20px] rounded-[6px] font-['Arimo',sans-serif] text-[14px]"
-                    >
-                      Start Now
-                    </Button>
-                  </div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-[16px]">
+                          <div className="flex items-center gap-[6px]">
+                            {(() => { const Icon = stageIcon(currentStage.stage_type); return <Icon size={14} className="text-[#6b7280]" />; })()}
+                            <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                              {currentStage.stage_type === 'assessment' ? 'Technical Assessment'
+                                : currentStage.stage_type === 'ai_interview' ? 'AI Video Interview'
+                                : currentStage.stage_type === 'live_interview' ? 'Live Interview'
+                                : currentStage.stage_type.replace('_', ' ')}
+                            </span>
+                          </div>
+                        </div>
+
+                        <Button
+                          onClick={handleStartStage}
+                          className="bg-[#6366f1] hover:bg-[#5558e3] text-white h-[36px] px-[20px] rounded-[6px] font-['Arimo',sans-serif] text-[14px]"
+                        >
+                          {currentStage.status === 'in_progress' ? 'Continue' : 'Start Now'}
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    /* No current stage — waiting */
+                    <div className="flex items-center gap-[16px]">
+                      <div className="w-[40px] h-[40px] rounded-full bg-gray-100 flex items-center justify-center">
+                        <Clock size={20} className="text-gray-400" />
+                      </div>
+                      <div>
+                        <h4 className="font-['Arimo',sans-serif] text-[15px] text-black font-medium mb-[2px]">
+                          Waiting for Next Stage
+                        </h4>
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                          The recruiter has not opened the next stage yet. Check back later.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -293,40 +361,49 @@ export function CandidateHomePage({
               </div>
 
               <div className="space-y-[12px]">
-                {notifications.map((notification) => (
-                  <div
-                    key={notification.id}
-                    className={`p-[16px] rounded-[8px] border ${notification.read
-                      ? 'bg-white border-[#e5e7eb]'
-                      : 'bg-[#eef2ff] border-[#c7d2fe]'
+                {notifications.length === 0 ? (
+                  <p className="font-['Arimo',sans-serif] text-[13px] text-[#9ca3af] text-center py-[20px]">
+                    No notifications yet
+                  </p>
+                ) : (
+                  notifications.map((notification) => (
+                    <div
+                      key={notification.id}
+                      className={`p-[16px] rounded-[8px] border ${notification.read
+                        ? 'bg-white border-[#e5e7eb]'
+                        : 'bg-[#eef2ff] border-[#c7d2fe]'
                       }`}
-                  >
-                    <div className="flex items-start gap-[12px]">
-                      <div className={`w-[32px] h-[32px] rounded-full flex items-center justify-center shrink-0 ${notification.type === 'success'
-                        ? 'bg-emerald-100'
-                        : notification.type === 'info'
-                          ? 'bg-blue-100'
-                          : 'bg-amber-100'
+                    >
+                      <div className="flex items-start gap-[12px]">
+                        <div className={`w-[32px] h-[32px] rounded-full flex items-center justify-center shrink-0 ${
+                          notification.type === 'success'
+                            ? 'bg-emerald-100'
+                            : notification.type === 'info'
+                              ? 'bg-blue-100'
+                              : 'bg-amber-100'
                         }`}>
-                        {notification.type === 'success' && <CheckCircle2 size={16} className="text-emerald-600" />}
-                        {notification.type === 'info' && <Bell size={16} className="text-blue-600" />}
-                        {notification.type === 'warning' && <AlertCircle size={16} className="text-amber-600" />}
-                      </div>
+                          {notification.type === 'success' && <CheckCircle2 size={16} className="text-emerald-600" />}
+                          {notification.type === 'info' && <Bell size={16} className="text-blue-600" />}
+                          {notification.type === 'warning' && <AlertCircle size={16} className="text-amber-600" />}
+                        </div>
 
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-['Arimo',sans-serif] text-[13px] text-black font-medium mb-[4px]">
-                          {notification.title}
-                        </h4>
-                        <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] leading-[16px] mb-[8px]">
-                          {notification.message}
-                        </p>
-                        <span className="font-['Arimo',sans-serif] text-[11px] text-[#9ca3af]">
-                          {notification.time}
-                        </span>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-['Arimo',sans-serif] text-[13px] text-black font-medium mb-[4px]">
+                            {notification.title}
+                          </h4>
+                          <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] leading-[16px] mb-[8px]">
+                            {notification.message}
+                          </p>
+                          {notification.time && (
+                            <span className="font-['Arimo',sans-serif] text-[11px] text-[#9ca3af]">
+                              {notification.time}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           </div>
