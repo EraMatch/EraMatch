@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel, Relationship, Column
-from sqlalchemy import Text
+from sqlalchemy import Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, BYTEA, ARRAY, UUID as PG_UUID
 from sqlalchemy import String
 
@@ -161,6 +161,43 @@ class UserPermission(BaseModel, table=True):
     custom_permissions: dict = Field(default_factory=dict, sa_column=Column(JSONB))
 
 
+class OrganizationUserSettings(BaseModel, table=True):
+    """Preferences and configurations for organization users (Recruiters/HR)."""
+    __tablename__ = "organization_user_settings"
+    
+    id: UUID = Field(default_factory=uuid4, alias="settings_id", sa_column=Column("settings_id", PG_UUID(as_uuid=True), primary_key=True))
+    user_id: UUID = Field(foreign_key="organization_users.user_id", unique=True)
+    
+    # Notification Preferences
+    email_notifications: bool = Field(default=True)
+    new_member_requests: bool = Field(default=True)
+    project_updates: bool = Field(default=True)
+    weekly_summary: bool = Field(default=False)
+    
+    # Security Settings
+    two_factor_auth: bool = Field(default=False)
+    session_timeout: bool = Field(default=True)
+    
+    # AI Pipeline Configuration (JSONB)
+    ai_pipeline_config: dict | None = Field(default=None, sa_column=Column(JSONB))
+    
+    # Workflow Settings
+    bypass_admin_approval: bool = Field(default=False)
+    
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FilterTemplate(BaseModel, table=True):
+    """Persistent saved filter templates for candidates."""
+    __tablename__ = "filter_templates"
+    
+    id: UUID = Field(default_factory=uuid4, alias="template_id", sa_column=Column("template_id", PG_UUID(as_uuid=True), primary_key=True))
+    user_id: UUID = Field(foreign_key="organization_users.user_id")
+    name: str = Field(max_length=255)
+    filters: dict = Field(default_factory=dict, sa_column=Column(JSONB))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PaymentMethod(BaseModel, table=True):
     __tablename__ = "payment_methods"
     
@@ -245,7 +282,6 @@ class CandidateGroup(SQLModel, table=True):
     group_name: str = Field(max_length=100)
     assigned_hr_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     assigned_tech_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
-    filtration_flow: dict = Field(default_factory=list, sa_column=Column(JSONB))
     status: str = Field(default="active", max_length=20)
     created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -266,7 +302,7 @@ class GroupStageConfig(SQLModel, table=True):
     state: str = Field(default="not_started", max_length=20)
     started_at: datetime | None = Field(default=None)
     closed_at: datetime | None = Field(default=None)
-    started_by_user_id: UUID | None = Field(default=None)
+    started_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -333,7 +369,6 @@ class CandidateApplication(SQLModel, table=True):
     source: str | None = Field(default=None, max_length=50)
     status: str = Field(default="applied", max_length=30)
     applied_at: datetime = Field(default_factory=datetime.utcnow)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
 
 
@@ -369,6 +404,7 @@ class QuestionBank(BaseModel, table=True):
     usage_count: int = Field(default=0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
+    is_base_question: bool = Field(default=True)
 
 
 class QuestionBankFavorite(BaseModel, table=True):
@@ -390,18 +426,46 @@ class Assessment(BaseModel, table=True):
     id: UUID = Field(default_factory=uuid4, alias="assessment_id", sa_column=Column("assessment_id", PG_UUID(as_uuid=True), primary_key=True))
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID | None = Field(default=None, foreign_key="positions.position_id")
+    group_id: UUID | None = Field(default=None, foreign_key="candidate_groups.group_id")
     title: str = Field(max_length=255)
+    description: str | None = Field(default=None, sa_column=Column(Text))
     instructions: str | None = Field(default=None, sa_column=Column(Text))
     duration_minutes: int = Field(default=60)
     passing_score: Decimal = Field(default=60)
     shuffle_sections: bool = Field(default=False)
     anti_cheating_enabled: bool = Field(default=True)
-    structure: dict = Field(sa_column=Column(JSONB))
     status: str = Field(default="draft", max_length=20)
     created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
+
+
+class AssessmentSection(BaseModel, table=True):
+    __tablename__ = "assessment_sections"
+    __table_args__ = (UniqueConstraint("assessment_id", "section_order", name="assessment_sections_assessment_id_section_order_key"),)
+    
+    id: UUID = Field(default_factory=uuid4, alias="section_id", sa_column=Column("section_id", PG_UUID(as_uuid=True), primary_key=True))
+    assessment_id: UUID = Field(foreign_key="assessments.assessment_id")
+    section_order: int
+    section_title: str | None = Field(default=None, max_length=255)
+    question_type: str = Field(max_length=50)
+    variants_to_select: int | None = Field(default=1)
+    points_per_question: int | None = Field(default=10)
+    selection_strategy: str | None = Field(default="random", max_length=50)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SectionQuestionPool(BaseModel, table=True):
+    __tablename__ = "section_question_pool"
+    
+    id: UUID = Field(default_factory=uuid4, alias="pool_entry_id", sa_column=Column("pool_entry_id", PG_UUID(as_uuid=True), primary_key=True))
+    section_id: UUID = Field(foreign_key="assessment_sections.section_id")
+    question_id: UUID = Field(foreign_key="question_bank.question_id")
+    variant_order: int | None = Field(default=None)
+    is_active: bool | None = Field(default=True)
+    difficulty_weight: Decimal | None = Field(default=Decimal("1.0"), max_digits=3, decimal_places=2)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class OngoingAssessment(BaseModel, table=True):
@@ -475,8 +539,8 @@ class AIInterviewConfig(SQLModel, table=True):
     __tablename__ = "ai_interview_configs"
     
     config_id: UUID = Field(default_factory=uuid4, primary_key=True)
-    organization_id: UUID = Field(foreign_key="organizations.id")
-    position_id: UUID | None = Field(default=None, foreign_key="positions.id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    position_id: UUID | None = Field(default=None, foreign_key="positions.position_id")
     title: str = Field(max_length=255)
     interview_type: str = Field(max_length=20)  # recorded, live_ai
     instructions: str | None = Field(default=None, sa_column=Column(Text))
@@ -485,7 +549,12 @@ class AIInterviewConfig(SQLModel, table=True):
     answer_time_seconds: int | None = Field(default=120)
     questions: dict = Field(sa_column=Column(JSONB))
     live_interview_context: str | None = Field(default=None, sa_column=Column(Text))
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.id")
+    difficulty: str | None = Field(default="Mid Level")
+    total_duration_minutes: int | None = Field(default=30)
+    show_ai_feedback: bool = Field(default=True)
+    recording_required: bool = Field(default=True)
+    live_flow_config: dict | None = Field(default=None, sa_column=Column(JSONB))
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
@@ -498,7 +567,7 @@ class OngoingInterview(SQLModel, table=True):
     session_id: UUID = Field(default_factory=uuid4, primary_key=True)
     config_id: UUID = Field(foreign_key="ai_interview_configs.config_id")
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
-    organization_id: UUID = Field(foreign_key="organizations.id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
     interview_type: str = Field(max_length=20)
     status: str = Field(default="not_started", max_length=20)
     started_at: datetime | None = Field(default=None)

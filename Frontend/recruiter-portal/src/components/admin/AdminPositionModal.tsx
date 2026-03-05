@@ -45,17 +45,24 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
 
     useEffect(() => {
         const userStr = localStorage.getItem('user');
+        let role = '';
         if (userStr) {
             const user = JSON.parse(userStr);
-            setUserRole(user.role?.toLowerCase());
+            role = user.role?.toLowerCase() || '';
+            setUserRole(role);
         }
 
-        // Fetch recruiters and settings
+        // Fetch recruiters and (admin-only) settings
         const fetchData = async () => {
             try {
+                const isAdminRole = role === 'admin';
+
                 const [recruitersRes, settingsRes] = await Promise.all([
                     api.admin.getRecruiterDelegation(),
-                    api.admin.getSettings().catch(() => ({})) // Fail gracefully
+                    // Only fetch admin settings when the current user is an admin
+                    isAdminRole
+                        ? api.admin.getSettings().catch(() => ({}))
+                        : Promise.resolve({})
                 ]);
 
                 setTechRecruiters(recruitersRes.technicalRecruiters || []);
@@ -124,6 +131,13 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        // Admins must assign both HR and Technical Recruiter
+        if (isAdmin && (!assignedHRId || !assignedTechId)) {
+            toast.error('Both HR Recruiter and Technical Recruiter must be assigned before creating a position.');
+            return;
+        }
+
         setIsLoading(true);
 
         try {
@@ -303,27 +317,25 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                         />
                     </div>
 
-                    {(isAdmin || (isHR && bypassAdminApproval)) && (
+                    {(isAdmin || isHR) && (
                         <div className="grid grid-cols-2 gap-4">
-                            {isAdmin && (
-                                <div className="space-y-2">
-                                    <Label className="text-sm font-semibold text-gray-700">Assign HR Recruiter <span className="text-red-500">*</span></Label>
-                                    <Select value={assignedHRId} onValueChange={setAssignedHRId}>
-                                        <SelectTrigger className="bg-white/50 border-gray-200 rounded-xl">
-                                            <SelectValue placeholder="Select HR recruiter" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {hrRecruiters.map(rec => (
-                                                <SelectItem key={rec.id} value={rec.id.toString()}>
-                                                    {rec.name} ({rec.assignedCount || 0} active)
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            )}
                             <div className="space-y-2">
-                                <Label className="text-sm font-semibold text-gray-700">Assign Technical Recruiter {isAdmin && <span className="text-red-500">*</span>}</Label>
+                                <Label className="text-sm font-semibold text-gray-700">Assign HR Recruiter <span className="text-red-500">*</span></Label>
+                                <Select value={assignedHRId} onValueChange={setAssignedHRId}>
+                                    <SelectTrigger className="bg-white/50 border-gray-200 rounded-xl">
+                                        <SelectValue placeholder="Select HR recruiter" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {hrRecruiters.map(rec => (
+                                            <SelectItem key={rec.id} value={rec.id.toString()}>
+                                                {rec.name} ({rec.assignedCount || 0} active)
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="text-sm font-semibold text-gray-700">Assign Technical Recruiter <span className="text-red-500">*</span></Label>
                                 <Select value={assignedTechId} onValueChange={setAssignedTechId}>
                                     <SelectTrigger className="bg-white/50 border-gray-200 rounded-xl">
                                         <SelectValue placeholder="Select technical recruiter" />
@@ -344,8 +356,8 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                         <div className="flex items-start gap-3 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100">
                             <Info className="w-5 h-5 text-indigo-500 shrink-0 mt-0.5" />
                             <p className="text-xs text-indigo-700 leading-relaxed">
-                                As an HR recruiter, this position creation will be submitted to administrators.
-                                <strong> An Admin will assign a Technical Recruiter</strong> when approving the request.
+                                As an HR recruiter, this position creation will be submitted to administrators for final approval.
+                                Please ensure you have assigned both recruiters.
                             </p>
                         </div>
                     )}
@@ -361,7 +373,7 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                         </Button>
                         <Button
                             type="submit"
-                            disabled={isLoading || !jobTitle.trim() || (isAdmin && (!assignedHRId || !assignedTechId))}
+                            disabled={isLoading || !jobTitle.trim() || !assignedTechId || (isAdmin && !assignedHRId)}
                             className="rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg"
                         >
                             {isLoading && <Loader2 className="w-4 h-4 animate-spin mr-2" />}

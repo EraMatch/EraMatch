@@ -28,20 +28,75 @@ class CandidateUpdate(BaseModel):
     portfolio_url: str | None = None
 
 
+class JobExperience(BaseModel):
+    """Job experience schema."""
+    title: str
+    company: str
+    duration: str
+    description: str
+
+class Education(BaseModel):
+    """Education schema."""
+    degree: str
+    school: str
+    year: str
+
+class CandidateScores(BaseModel):
+    """Candidate scores for different stages."""
+    overall: float = 0.0
+    assessment: float = 0.0
+    aiInterview: float = 0.0
+    github: float = 0.0
+
 class CandidateResponse(BaseModel):
-    """Candidate profile response."""
+    """Candidate profile response with enriched data for report view."""
     id: UUID
     email: str
     full_name: str
+    name: str | None = None  # Alias for full_name to prevent frontend crash
+    title: str | None = "Software Engineer" # Default title
     phone: str | None
     location: str | None
     linkedin_url: str | None
     github_url: str | None
     portfolio_url: str | None
+    avatar_url: str | None = None
     created_at: datetime
+    
+    # Scores Object
+    scores: CandidateScores = CandidateScores()
+    
+    # Enriched Report Data
+    skills: list[str] = []
+    experience: float = 0.0
+    workHistory: list[JobExperience] = []
+    education: list[Education] = []
+    pipelineStatus: dict | None = None
+    assessmentData: dict | None = None
+    interviewData: dict | None = None
+    assessmentQuestions: list[dict] = []
+    videoInterviewQuestions: list[dict] = []
+    liveInterviewData: dict | None = None
+    offerStatus: str | None = "not_sent"
+    offerAcceptedDate: str | None = None
+    filtrationFlow: list[str] | None = None
+    groupAssigned: bool = False
     
     class Config:
         from_attributes = True
+
+    @classmethod
+    def from_orm(cls, obj: any):
+        """Custom from_orm to ensure 'name' is populated."""
+        if hasattr(obj, "full_name") and not hasattr(obj, "name"):
+            setattr(obj, "name", obj.full_name)
+        if not hasattr(obj, "scores"):
+            setattr(obj, "scores", CandidateScores())
+        if not hasattr(obj, "workHistory"):
+            setattr(obj, "workHistory", [])
+        if not hasattr(obj, "education"):
+            setattr(obj, "education", [])
+        return super().from_orm(obj)
 
 
 class ApplicationCreate(BaseModel):
@@ -71,3 +126,12 @@ class ApplicationResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class CandidateUploadResponse(BaseModel):
+    """Response for bulk candidate upload."""
+    total_processed: int
+    success_count: int
+    failed_count: int
+    errors: list[str] = []
+    created_candidates: list[CandidateResponse] = []

@@ -49,3 +49,41 @@ class AdminSettingsResponse(BaseModel):
 
     # Preferences (Workflow)
     bypass_admin_approval: bool
+
+class RecruiterProfileUpdate(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    email: EmailStr | None = None
+
+class RecruiterPreferencesUpdate(BaseModel):
+    email_notifications: bool | None = None
+    new_member_requests: bool | None = None
+    project_updates: bool | None = None
+    weekly_summary: bool | None = None
+    two_factor_auth: bool | None = None
+    session_timeout: bool | None = None
+    bypass_admin_approval: bool | None = None
+
+class RecruiterAIPipelineUpdate(BaseModel):
+    ai_pipeline_config: dict
+
+class RecruiterSettingsResponse(BaseModel):
+    # Profile
+    first_name: str
+    last_name: str
+    email: str
+    role: str
+
+    # Preferences (Notifications)
+    email_notifications: bool
+    new_member_requests: bool
+    project_updates: bool
+    weekly_summary: bool
+
+    # Preferences (Security)
+    two_factor_auth: bool
+    session_timeout: bool
+    bypass_admin_approval: bool = False
+
+    # Technical AI Pipeline Config
+    ai_pipeline_config: dict | None = None

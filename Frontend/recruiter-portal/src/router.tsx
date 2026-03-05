@@ -1,4 +1,4 @@
-import { createBrowserRouter, useNavigate, useSearchParams, useParams } from 'react-router-dom';
+import { createBrowserRouter, useNavigate, useSearchParams, useParams, Navigate } from 'react-router-dom';
 import React from 'react';
 import { Toaster } from 'sonner';
 import { AdminLoginPage } from './components/admin/AdminLoginPage';
@@ -64,6 +64,25 @@ const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
             </div>
         </div>
     );
+};
+
+// Protected Route Guards
+const AdminProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+    const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+    if (!token || !user) {
+        return <Navigate to="/admin/login" replace />;
+    }
+    return <>{children}</>;
+};
+
+const RecruiterProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+    const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+    if (!token || !user) {
+        return <Navigate to="/recruiter/login" replace />;
+    }
+    return <>{children}</>;
 };
 
 // Landing Page Wrapper - Simplified with 2 buttons
@@ -139,18 +158,26 @@ const ProjectsPageWrapper = () => {
 const GroupOverviewWrapper = () => {
     const { groupId } = useParams();
     const navigate = useNavigate();
-    const [group, setGroup] = React.useState<PositionGroup | null>(null);
+    const [group, setGroup] = React.useState<any | null>(null);
     const [loading, setLoading] = React.useState(true);
+    const [error, setError] = React.useState<string | null>(null);
+
+    // Derive recruiterType from localStorage user role
+    const userStr = localStorage.getItem('user');
+    const userObj = userStr ? JSON.parse(userStr) : null;
+    const userRole: string = (userObj?.role || '').toLowerCase();
+    const recruiterType: 'recruiter' | 'technical' = userRole === 'technical' ? 'technical' : 'recruiter';
 
     React.useEffect(() => {
         const loadGroup = async () => {
             if (!groupId) return;
             try {
-                const groups = await api.recruiter.getProjectGroups('1');
-                const found = groups.find(g => g.id.toString() === groupId);
-                if (found) setGroup(found);
+                // Use the correct endpoint to get group details by ID
+                const groupData = await api.recruiter.getGroupDetails(groupId);
+                setGroup(groupData);
             } catch (err) {
-                console.error(err);
+                console.error("Failed to load group details:", err);
+                setError("Failed to load group details");
             } finally {
                 setLoading(false);
             }
@@ -158,24 +185,62 @@ const GroupOverviewWrapper = () => {
         loadGroup();
     }, [groupId]);
 
-    if (loading) return <div className="p-8">Loading group...</div>;
-    if (!group) return <div className="p-8">Group not found</div>;
+    if (loading) return (
+        <div className="flex items-center justify-center min-h-screen bg-[#f8fafc]">
+            <p className="text-[#64748b] font-medium">Loading group details...</p>
+        </div>
+    );
 
+    if (error || !group) return (
+        <div className="flex items-center justify-center min-h-screen bg-[#f8fafc]">
+            <p className="text-[#ef4444] font-medium">{error || "Group not found"}</p>
+        </div>
+    );
+
+    // Map filtration flow from backend response — handles plain strings, {stage,...} and {type,...} objects
     const flow: ('assessment' | 'ai-interview' | 'live-interview')[] = [];
-    if (group.hasAssessment) flow.push('assessment');
-    if (group.hasAIInterview) flow.push('ai-interview');
-    if (group.hasLiveInterview) flow.push('live-interview');
+    const stageAliases: Record<string, 'assessment' | 'ai-interview' | 'live-interview'> = {
+        'assessment': 'assessment',
+        'ai-interview': 'ai-interview',
+        'ai_interview': 'ai-interview',
+        'live-interview': 'live-interview',
+        'live_interview': 'live-interview',
+    };
+    if (Array.isArray(group.filtration_flow)) {
+        group.filtration_flow.forEach((item: any) => {
+            // item may be a plain string, {stage: '...'} or {type: '...'} object
+            let raw: string;
+            if (typeof item === 'string') {
+                raw = item;
+            } else if (typeof item === 'object' && item !== null) {
+                raw = item.stage || item.type || '';
+            } else {
+                raw = '';
+            }
+            const mapped = stageAliases[raw.toLowerCase()];
+            if (mapped && !flow.includes(mapped)) flow.push(mapped);
+        });
+    }
 
     return (
         <EnhancedGroupOverviewV2
-            groupId={group.id.toString()}
-            groupName={group.groupName}
-            description="High-performing candidates filtered by criteria"
-            assignedRecruiter={"John Doe - Senior Recruiter"}
-            candidateIds={[1, 2, 3, 4, 5, 6, 7, 8]}
-            recruiterType="technical"
+            groupId={group.id}
+            groupName={group.name}
+            description={group.description || "High-performing candidates filtered by criteria"}
+            assignedRecruiter={group.assigned_hr?.name || "Unassigned"}
+            candidateIds={[]} // We'll let EnhancedGroupOverviewV2 fetch candidates if needed, or pass empty
+            recruiterType={recruiterType}
             filtrationFlow={flow}
-            onBack={() => navigate(-1)}
+            onBack={() => {
+                // Check if we should go back to projects with groups tab
+                const url = new URL(window.location.href);
+                if (url.searchParams.get('tab') === 'groups') {
+                    navigate(-1);
+                } else {
+                    // Default fallback
+                    navigate('/recruiter/projects');
+                }
+            }}
             onViewCandidate={(id) => navigate(`/recruiter/candidates/${id}`)}
         />
     );
@@ -185,8 +250,8 @@ const CandidateProfileWrapper = () => {
     const { candidateId } = useParams();
     const navigate = useNavigate();
 
-    // Ensure candidateId is a number
-    const id = candidateId ? parseInt(candidateId, 10) : 0;
+    // Pass candidateId as a string (UUID) directly
+    const id = candidateId ?? '';
 
     return (
         <CandidateProfile
@@ -230,59 +295,73 @@ export const router = createBrowserRouter([
     {
         path: "/admin/dashboard",
         element: (
-            <AdminLayout>
-                <AdminDashboard onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminDashboard onSignOut={() => window.location.href = '/'} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
         errorElement: <ErrorPage />,
     },
     {
         path: "/admin/requests",
         element: (
-            <AdminLayout>
-                <AdminRequests />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminRequests />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
         errorElement: <ErrorPage />,
     },
     {
         path: "/admin/members",
         element: (
-            <AdminLayout>
-                <AdminOrganizationMembers onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminOrganizationMembers onSignOut={() => window.location.href = '/'} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
     },
     {
         path: "/admin/notifications",
         element: (
-            <AdminLayout>
-                <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
     },
     {
         path: "/admin/settings",
         element: (
-            <AdminLayout>
-                <AdminSettings onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminSettings onSignOut={() => window.location.href = '/'} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
     },
     {
         path: "/admin/delegation",
         element: (
-            <AdminLayout>
-                <AdminRecruiterDelegation onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminRecruiterDelegation onSignOut={() => window.location.href = '/'} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
     },
     {
         path: "/admin/closed-positions",
         element: (
-            <AdminLayout>
-                <AdminClosedPositions onSignOut={() => window.location.href = '/'} />
-            </AdminLayout>
+            <AdminProtectedRoute>
+                <AdminLayout>
+                    <AdminClosedPositions onSignOut={() => window.location.href = '/'} />
+                </AdminLayout>
+            </AdminProtectedRoute>
         ),
     },
 
@@ -311,90 +390,117 @@ export const router = createBrowserRouter([
     {
         path: "/recruiter/dashboard",
         element: (
-            <RecruiterLayout>
-                <DashboardWrapper />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <DashboardWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         ),
         errorElement: <ErrorPage />,
     },
     {
         path: "/recruiter/projects",
         element: (
-            <RecruiterLayout>
-                <ProjectsPageWrapper />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <ProjectsPageWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         ),
     },
     {
         path: "/recruiter/group/:groupId",
         element: (
-            <RecruiterLayout>
-                <GroupOverviewWrapper />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <GroupOverviewWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         ),
     },
     {
         path: "/recruiter/alerts",
         element: (
-            <RecruiterLayout>
-                <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/suspect-review",
         element: (
-            <RecruiterLayout>
-                <SuspectReviewWrapper />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <SuspectReviewWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/reviews",
         element: (
-            <RecruiterLayout>
-                <ReviewRequests />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <ReviewRequests />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/candidates",
         element: (
-            <RecruiterLayout>
-                <CandidatesPage onBack={() => { }} />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <CandidatesPage onBack={() => { }} />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         ),
     },
     {
         path: "/recruiter/question-bank",
         element: (
-            <RecruiterLayout>
-                <QuestionBankPage onBack={() => window.history.back()} />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <QuestionBankPage onBack={() => window.history.back()} />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/settings",
-        element: (
-            <RecruiterLayout>
-                <RecruiterSettings />
-            </RecruiterLayout>
-        )
+        element: (() => {
+            const userStr = localStorage.getItem('user');
+            const userObj = userStr ? JSON.parse(userStr) : null;
+            const userRole: string = (userObj?.role || '').toLowerCase();
+            return (
+                <RecruiterProtectedRoute>
+                    <RecruiterLayout>
+                        <RecruiterSettings userRole={userRole} />
+                    </RecruiterLayout>
+                </RecruiterProtectedRoute>
+            );
+        })()
     },
     {
         path: "/recruiter/suspicious-activity",
         element: (
-            <RecruiterLayout>
-                <SuspiciousActivityLog onBack={() => window.history.back()} />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <SuspiciousActivityLog onBack={() => window.history.back()} />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         )
     },
     {
         path: "/recruiter/candidates/:candidateId",
         element: (
-            <RecruiterLayout>
-                <CandidateProfileWrapper />
-            </RecruiterLayout>
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <CandidateProfileWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
         ),
     },
 ]);

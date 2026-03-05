@@ -76,5 +76,16 @@ export const authService = {
             method: 'POST',
             body: JSON.stringify({ old_password: oldPass, new_password: newPass, confirm_password: confirmNewPass })
         });
-    }
+    },
+
+    logout: async () => {
+        try {
+            await fetchAPI('/auth/logout', { method: 'POST' });
+        } catch (_) {
+            // Even if the API call fails, clear local session
+        } finally {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+        }
+    },
 };

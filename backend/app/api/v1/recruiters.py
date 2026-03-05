@@ -25,7 +25,15 @@ from app.schemas import (
     TechnicalAIResponse,
     RiskBreakdownResponse,
     RecruiterAnalyticsResponse,
+    GroupCreateRequest,
+    CandidateUploadResponse,
+    GroupDetailResponse,
+    FilterTemplateResponse,
+    FilterTemplateCreate,
+    AIGenerateQuestionRequest,
+    AIRefineQuestionRequest,
 )
+from app.services import CandidateService, GroupService
 
 router = APIRouter(prefix="/recruiter", tags=["Recruiters"])
 
@@ -51,6 +59,16 @@ async def get_notifications(
 # =============================================================================
 # PROJECTS
 # =============================================================================
+from app.schemas import PositionCandidateResponse
+
+@router.get("/candidates", response_model=list[PositionCandidateResponse])
+async def list_all_candidates(
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """List all candidate profiles in the organization."""
+    service = RecruiterService(session, current_user)
+    return await service.list_all_candidates()
 
 
 @router.post("/projects", response_model=ProjectResponse, status_code=201)
@@ -318,4 +336,192 @@ async def get_analytics(
 ):
     """Get recruiter analytics."""
     service = RecruiterService(session, current_user)
+    service = RecruiterService(session, current_user)
     return await service.get_analytics(current_user.id)
+
+
+# =============================================================================
+# CANDIDATE IMPORT & GROUPS
+# =============================================================================
+
+from fastapi import UploadFile, File
+
+@router.post("/positions/{position_id}/candidates/upload", response_model=CandidateUploadResponse)
+async def upload_candidates_zip(
+    position_id: UUID,
+    file: UploadFile = File(...),
+    session: DbSession = ...,
+    current_user: RecruiterUser = ...,
+):
+    """
+    Upload a zip file of CVs/Resumes.
+    Only HR can perform this action.
+    """
+    # RBAC Check
+    if current_user.role != "hr" and current_user.role != "admin": # Allow Admin too? Plan said HR only/Tech view. Admin usually has all access.
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Only HR users can import candidates.")
+
+    if not file.filename.endswith('.zip'):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Only .zip files are supported.")
+    
+    content = await file.read()
+    
+    # Use CandidateService
+    service = CandidateService(session, current_user.organization_id)
+    return await service.process_zip_upload(content, position_id)
+
+
+@router.post("/positions/{position_id}/groups", response_model=GroupDetailResponse)
+async def create_position_group(
+    position_id: UUID,
+    data: GroupCreateRequest,
+    session: DbSession = ...,
+    current_user: RecruiterUser = ...,
+):
+    """
+    Create a candidate group for a position.
+    Only HR can perform this action.
+    """
+    # RBAC Check
+    if current_user.role != "hr" and current_user.role != "admin":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Only HR users can create groups.")
+        
+    if data.position_id != position_id:
+         from fastapi import HTTPException
+         raise HTTPException(status_code=400, detail="Position ID mismatch.")
+
+    # Use GroupService
+    service = GroupService(session, current_user)
+    # create_group returns CandidateGroup model, response_model is GroupDetailResponse
+    # We might need to fetch details to match response model or just return basic info.
+    # GroupDetailResponse has many fields.
+    group = await service.create_group(data)
+    
+    # Fetch full details to return consistent response
+    return await service.get_group_details(group.id)
+
+
+# =============================================================================
+# SETTINGS
+# =============================================================================
+
+from app.schemas import (
+    RecruiterSettingsResponse,
+    RecruiterProfileUpdate,
+    RecruiterPreferencesUpdate,
+    RecruiterAIPipelineUpdate,
+)
+
+@router.get("/settings", response_model=RecruiterSettingsResponse)
+async def get_recruiter_settings(
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Get candidate settings for the logged-in recruiter."""
+    service = RecruiterService(session, current_user)
+    return await service.get_settings()
+
+
+@router.patch("/settings/profile", response_model=RecruiterSettingsResponse)
+async def update_recruiter_profile(
+    data: RecruiterProfileUpdate,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Update profile logic."""
+    service = RecruiterService(session, current_user)
+    return await service.update_profile(data.model_dump(exclude_unset=True))
+
+
+@router.patch("/settings/preferences", response_model=RecruiterSettingsResponse)
+async def update_recruiter_preferences(
+    data: RecruiterPreferencesUpdate,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Update boolean preferences (notifications/security)."""
+    service = RecruiterService(session, current_user)
+    return await service.update_preferences(data.model_dump(exclude_unset=True))
+
+
+@router.patch("/settings/ai-pipeline", response_model=RecruiterSettingsResponse)
+async def update_recruiter_ai_pipeline(
+    data: RecruiterAIPipelineUpdate,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Update Technical HR configuration for AI pipeline engine defaults."""
+    service = RecruiterService(session, current_user)
+    return await service.update_ai_pipeline(data.ai_pipeline_config)
+
+
+# =============================================================================
+# FILTER TEMPLATES
+# =============================================================================
+
+@router.get("/filters/templates", response_model=list[FilterTemplateResponse])
+async def get_filter_templates(
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """List all saved filter templates for the recruiter."""
+    service = RecruiterService(session, current_user)
+    return await service.get_filter_templates()
+
+
+@router.post("/filters/templates", response_model=FilterTemplateResponse)
+async def save_filter_template(
+    data: FilterTemplateCreate,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Save a new candidate filter template."""
+    service = RecruiterService(session, current_user)
+    return await service.save_filter_template(data.name, data.filters)
+
+
+@router.delete("/filters/templates/{template_id}")
+async def delete_filter_template(
+    template_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Delete a saved filter template."""
+    service = RecruiterService(session, current_user)
+    success = await service.delete_filter_template(template_id)
+    if not success:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"status": "success"}
+
+
+# =============================================================================
+# AI FEATURES
+# =============================================================================
+
+@router.post("/ai/generate-question")
+async def generate_ai_question(
+    data: AIGenerateQuestionRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Generate an interview/technical question using Ollama."""
+    service = RecruiterService(session, current_user)
+    return await service.generate_ai_question(
+        data.question_type, data.topic, data.difficulty, data.context
+    )
+
+
+@router.post("/ai/refine-question")
+async def refine_question_with_ai(
+    data: AIRefineQuestionRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Refine or professionalize a question text using Ollama."""
+    service = RecruiterService(session, current_user)
+    refined_text = await service.refine_question_with_ai(data.question_text)
+    return {"refinedText": refined_text}

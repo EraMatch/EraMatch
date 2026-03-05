@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
+import { authService } from "../../services/auth.service";
 
 export function AdminSidebar() {
   const getLinkClass = (isActive: boolean) =>
@@ -52,7 +53,10 @@ export function AdminSidebar() {
 
       {/* Sign Out */}
       <button
-        onClick={() => window.location.href = '/admin/login'}
+        onClick={async () => {
+          await authService.logout();
+          window.location.href = '/admin/login';
+        }}
         className="w-12 h-12 rounded-xl flex items-center justify-center text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors"
         title="Sign Out"
       >

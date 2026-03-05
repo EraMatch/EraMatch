@@ -17,6 +17,7 @@ from app.schemas.auth import (
     ResetPasswordRequest,
     CandidateLoginRequest,
     CandidateAuthResponse,
+    LogoutResponse,
 )
 from app.schemas.candidate import (
     CandidateCreate,
@@ -25,6 +26,7 @@ from app.schemas.candidate import (
     ApplicationCreate,
     ApplicationUpdate,
     ApplicationResponse,
+    CandidateUploadResponse,
 )
 from app.schemas.project import (
     ProjectCreate,
@@ -52,6 +54,10 @@ from app.schemas.settings import (
     OrganizationSettingsUpdate,
     PreferencesUpdate,
     AdminSettingsResponse,
+    RecruiterSettingsResponse,
+    RecruiterProfileUpdate,
+    RecruiterPreferencesUpdate,
+    RecruiterAIPipelineUpdate,
 )
 from app.schemas.analytics import (
     OverviewStats,
@@ -81,6 +87,14 @@ from app.schemas.group import (
     CandidateDetailResponse,
     IntegrityFlagsResponse,
     ExportGroupRequest,
+    GroupCreateRequest,
+)
+
+from app.schemas.recruiter_extra import (
+    FilterTemplateResponse,
+    FilterTemplateCreate,
+    AIGenerateQuestionRequest,
+    AIRefineQuestionRequest,
 )
 
 __all__ = [
@@ -96,6 +110,7 @@ __all__ = [
     "ResetPasswordRequest",
     "CandidateLoginRequest",
     "CandidateAuthResponse",
+    "LogoutResponse",
     # Candidate
     "CandidateCreate",
     "CandidateUpdate",
@@ -103,6 +118,7 @@ __all__ = [
     "ApplicationCreate",
     "ApplicationUpdate",
     "ApplicationResponse",
+    "CandidateUploadResponse",
     # Project
     "ProjectCreate",
     "ProjectUpdate",
@@ -143,6 +159,10 @@ __all__ = [
     "OrganizationSettingsUpdate",
     "PreferencesUpdate",
     "AdminSettingsResponse",
+    "RecruiterSettingsResponse",
+    "RecruiterProfileUpdate",
+    "RecruiterPreferencesUpdate",
+    "RecruiterAIPipelineUpdate",
     # Analytics
     "OverviewStats",
     "GroupStatusCount",
@@ -169,4 +189,10 @@ __all__ = [
     "CandidateDetailResponse",
     "IntegrityFlagsResponse",
     "ExportGroupRequest",
+    "GroupCreateRequest",
+    # Recruiter Extra
+    "FilterTemplateResponse",
+    "FilterTemplateCreate",
+    "AIGenerateQuestionRequest",
+    "AIRefineQuestionRequest",
 ]

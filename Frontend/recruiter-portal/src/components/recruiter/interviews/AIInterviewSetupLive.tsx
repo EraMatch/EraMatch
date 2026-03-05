@@ -27,7 +27,7 @@ export function AIInterviewSetupLive({ groupName, onBack }: AIInterviewSetupLive
     const fetchConfig = async () => {
       try {
         setIsLoading(true);
-        const config = await api.recruiter.getAIInterviewConfig();
+        const config = await api.recruiter.getAIInterviewConfig('new');
         // Map API data to component format
         if (config && typeof config === 'object') {
           const apiConfig = config as any;

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, AlertCircle, Clock, Eye, Trash2, UserPlus, UserMinus, Activity } from 'lucide-react';
+import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, AlertCircle, Clock, Eye, Trash2, UserPlus, UserMinus, Activity, X } from 'lucide-react';
 import { api } from '../../../services/api';
 
 interface EnhancedGroupOverviewProps {
@@ -61,7 +61,7 @@ export function EnhancedGroupOverview({
         // In a real app, these would probably be fetched together or via specific endpoints
         // For now, we'll simulate fetching or use available API methods if they exist.
         // Assuming api.recruiter.getGroupDetails returns this info.
-        const groupDetails = await api.recruiter.getGroupDetails(groupId);
+        const groupDetails = (await api.recruiter.getGroupDetails(groupId)) as { pipelineSteps: PipelineStep[], candidates: CandidateStatus[] };
 
         // If the API returns this structure, map it. Otherwise, we might need to adapt.
         // Since I don't have the exact API response shape for 'getGroupDetails' fully remembered,

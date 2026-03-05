@@ -7,7 +7,7 @@ from app.models import (
     User, Organization, Position, Project, CandidateApplication, Hire, 
     CandidateStageProgress, OrganizationUser, UserPermission, PaymentMethod,
     SystemLog, CandidateGroup, Offer, SubscriptionPlan, ProctoringFlag,
-    ApprovalRequest, Notification
+    ApprovalRequest, Notification, GroupStageConfig
 )
 from app.core.exceptions import ForbiddenException
 from app.schemas.admin import (
@@ -25,6 +25,7 @@ from app.core.security import hash_password
 import secrets
 import string
 from app.services.notification import NotificationService
+from app.services.email import EmailService
 from app.schemas.project import ProjectCreate, PositionCreate
 
 
@@ -195,8 +196,10 @@ class AdminService:
             # Calculate from CandidateStageProgress timestamps
             # We want average days per stage for this organization
             q_stages = select(
-                CandidateStageProgress.stage_type,
+                GroupStageConfig.stage_type,
                 func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
+            ).join(
+                GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
             ).join(
                 CandidateApplication
             ).join(
@@ -210,7 +213,7 @@ class AdminService:
                 Project.is_deleted == False,
 CandidateStageProgress.completed_at.isnot(None),
                 CandidateStageProgress.started_at.isnot(None)
-            ).group_by(CandidateStageProgress.stage_type)
+            ).group_by(GroupStageConfig.stage_type)
             
             res_stages = await self.session.execute(q_stages)
             stage_data = res_stages.all()
@@ -276,6 +279,8 @@ CandidateStageProgress.completed_at.isnot(None),
             
             # Quality: Assessment scores
             q_scores = select(CandidateStageProgress.score).join(
+                GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
+            ).join(
                 CandidateApplication
             ).join(
                 Position, CandidateApplication.position_id == Position.id
@@ -286,7 +291,7 @@ CandidateStageProgress.completed_at.isnot(None),
                 CandidateApplication.is_deleted == False,
                 Position.is_deleted == False,
                 Project.is_deleted == False,
-CandidateStageProgress.stage_type == "assessment",
+                GroupStageConfig.stage_type == "assessment",
                 CandidateStageProgress.score.isnot(None)
             )
             res_scores = await self.session.execute(q_scores)
@@ -458,6 +463,8 @@ CandidateStageProgress.stage_type == "assessment",
 
             # 4. Quality (One query for all scores)
             q_scores = select(CandidateStageProgress.score).join(
+                GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
+            ).join(
                 CandidateApplication
             ).join(
                 Position, CandidateApplication.position_id == Position.id
@@ -468,7 +475,7 @@ CandidateStageProgress.stage_type == "assessment",
                 CandidateApplication.is_deleted == False,
                 Position.is_deleted == False,
                 Project.is_deleted == False,
-CandidateStageProgress.stage_type == "assessment",
+                GroupStageConfig.stage_type == "assessment",
                 CandidateStageProgress.score.isnot(None)
             )
             
@@ -484,8 +491,10 @@ CandidateStageProgress.stage_type == "assessment",
 
             # 5. Real Stage Timing
             q_stages = select(
-                CandidateStageProgress.stage_type,
+                GroupStageConfig.stage_type,
                 func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
+            ).join(
+                GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
             ).join(
                 CandidateApplication
             ).join(
@@ -499,7 +508,7 @@ CandidateStageProgress.stage_type == "assessment",
                 Project.is_deleted == False,
 CandidateStageProgress.completed_at.isnot(None),
                 CandidateStageProgress.started_at.isnot(None)
-            ).group_by(CandidateStageProgress.stage_type)
+            ).group_by(GroupStageConfig.stage_type)
             
             res_stages = await self.session.execute(q_stages)
             stage_data = res_stages.all()
@@ -833,6 +842,17 @@ CandidateStageProgress.completed_at.isnot(None),
             
             print(f"DEBUG: Created user {request.email} with temp password: {temp_password}")
             
+            # Send welcome email with temporary password
+            try:
+                await EmailService.send_welcome_email(
+                    email=request.email,
+                    name=f"{request.firstName} {request.lastName}",
+                    role=request.role,
+                    temp_password=temp_password
+                )
+            except Exception as email_err:
+                print(f"Failed to send welcome email: {email_err}")
+            
             return MemberRegisterResponse(success=True, userID=new_user.id)
             
         except Exception as e:
@@ -931,6 +951,17 @@ CandidateStageProgress.completed_at.isnot(None),
             self.session.add(log)
             
             await self.session.commit()
+            
+            # Send reassignment email
+            try:
+                await EmailService.send_reassignment_email(
+                    email=new_rec.email,
+                    name=f"{new_rec.first_name} {new_rec.last_name}",
+                    position_title=position.title
+                )
+            except Exception as email_err:
+                print(f"Failed to send reassignment email: {email_err}")
+                
             return True
         except Exception as e:
             print(f"Error reassigning recruiter: {e}")
@@ -1128,10 +1159,18 @@ CandidateStageProgress.completed_at.isnot(None),
             live_interviews_passed = 0
             
             if app_ids:
-                q_prog = select(CandidateStageProgress.stage_type, func.count()).where(
-                    CandidateStageProgress.application_id.in_(app_ids),
-                    CandidateStageProgress.status == "completed"
-                ).group_by(CandidateStageProgress.stage_type)
+                q_prog = (
+                    select(GroupStageConfig.stage_type, func.count())
+                    .join(
+                        CandidateStageProgress,
+                        GroupStageConfig.stage_id == CandidateStageProgress.stage_id
+                    )
+                    .where(
+                        CandidateStageProgress.application_id.in_(app_ids),
+                        CandidateStageProgress.status == "completed"
+                    )
+                    .group_by(GroupStageConfig.stage_type)
+                )
                 
                 res_prog = await self.session.execute(q_prog)
                 prog_rows = res_prog.all()
@@ -1698,22 +1737,24 @@ CandidateStageProgress.completed_at.isnot(None),
                 count = res_count.scalar() or 0
                 flags = res_flags.scalar() or 0
                 
-                # Derive stage flags from filtration_flow
-                flow = group.filtration_flow
-                if isinstance(flow, dict): # Handle if it's a dict instead of list
-                    flow = flow.get("stages", []) if isinstance(flow.get("stages"), list) else []
-                
-                flow_list = flow if isinstance(flow, list) else []
-                has_assessment = any(str(s.get("type")).lower() == "assessment" for s in flow_list if isinstance(s, dict))
-                has_ai = any(str(s.get("type")).lower() == "ai_interview" for s in flow_list if isinstance(s, dict))
-                has_live = any(str(s.get("type")).lower() == "live_interview" for s in flow_list if isinstance(s, dict))
+                # Derive stage flags from GroupStageConfig (sole authoritative source)
+                stage_types_res = await self.session.execute(
+                    select(GroupStageConfig.stage_type).where(
+                        GroupStageConfig.group_id == gid,
+                        GroupStageConfig.state != "inactive"
+                    )
+                )
+                stage_types = {st.lower() for st in stage_types_res.scalars().all()}
+                has_assessment = "assessment" in stage_types
+                has_ai = "ai_interview" in stage_types
+                has_live = "live_interview" in stage_types
 
                 result.append({
                     "groupID": str(gid),
                     "id": str(gid),
-                    "groupName": group.group_name,
+                    "name": group.group_name,
                     "positionTitle": job_title,
-                    "candidatesCount": count,
+                    "candidateCount": count,
                     "integrityIssues": flags,
                     "hasAssessment": has_assessment,
                     "hasAIInterview": has_ai,
@@ -1836,14 +1877,18 @@ CandidateStageProgress.completed_at.isnot(None),
                 
                 if position:
                     if decision.status == "approved":
-                        # CHANGED: Admin approval now sends to Technical Review
-                        position.status = "technical_review"
-                        req.status = "technical_review" # Keep the request alive/in-review
-                        
                         # Apply overrides and assignment
                         if decision.assigned_tech_id:
                             position.assigned_tech_id = decision.assigned_tech_id
                             req.assigned_tech_id = decision.assigned_tech_id
+
+                        # Enforce Technical Recruiter Assignment
+                        if not position.assigned_tech_id:
+                             raise HTTPException(status_code=400, detail="A Technical Recruiter must be assigned to approve a position.")
+
+                        # CHANGED: Admin approval now sends to Technical Review
+                        position.status = "technical_review"
+                        req.status = "technical_review" # Keep the request alive/in-review
                         
                         notification_msg += f"\nPosition '{position.job_title}' has been approved by Admin and is now pending Technical Review."
                         

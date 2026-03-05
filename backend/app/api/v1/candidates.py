@@ -3,7 +3,7 @@ Candidate endpoints.
 """
 from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.api.deps import DbSession, CurrentUser
 from app.services import CandidateService
@@ -45,7 +45,16 @@ async def get_candidate(
 ):
     """Get a candidate by ID."""
     service = CandidateService(session, current_user.organization_id)
-    return await service.get_profile(candidate_id)
+    candidate = await service.get_profile(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+        
+    print("--- RAW BACKEND PAYLOAD ---")
+    print(f"filtrationFlow: {candidate.filtrationFlow}")
+    print(f"groupAssigned: {candidate.groupAssigned}")
+    print(f"pipelineStatus: {candidate.pipelineStatus}")
+    
+    return candidate
 
 
 @router.patch("/{candidate_id}", response_model=CandidateResponse)
@@ -91,3 +100,19 @@ async def list_candidate_applications(
     """List applications for a candidate."""
     service = CandidateService(session, current_user.organization_id)
     return await service.list_applications_by_candidate(candidate_id)
+@router.get("/{candidate_id}/suspect-review", response_model=list[dict])
+async def get_suspect_review(
+    candidate_id: UUID, session: DbSession, current_user: CurrentUser
+):
+    """Get suspect review activities for a candidate."""
+    service = CandidateService(session, current_user.organization_id)
+    return await service.get_suspect_review(candidate_id)
+
+
+@router.get("/{candidate_id}/knowledge-graph", response_model=dict)
+async def get_knowledge_graph(
+    candidate_id: UUID, session: DbSession, current_user: CurrentUser
+):
+    """Get knowledge graph data for a candidate."""
+    service = CandidateService(session, current_user.organization_id)
+    return await service.get_knowledge_graph(candidate_id)

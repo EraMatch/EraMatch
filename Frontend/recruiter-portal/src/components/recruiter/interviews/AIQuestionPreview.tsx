@@ -5,7 +5,7 @@ import { Button } from '../../ui/button';
 interface QuestionVariant {
   id: string;
   questionText: string;
-  type: 'mcq' | 'essay' | 'code';
+  type: 'mcq' | 'essay' | 'code' | 'interview';
   [key: string]: any;
 }
 
@@ -17,10 +17,10 @@ interface AIQuestionPreviewProps {
   references?: string[];
 }
 
-export function AIQuestionPreview({ 
-  question, 
-  onAccept, 
-  onRegenerate, 
+export function AIQuestionPreview({
+  question,
+  onAccept,
+  onRegenerate,
   onClose,
   references = [
     'MDN Web Docs - JavaScript Reference',
@@ -65,11 +65,10 @@ export function AIQuestionPreview({
                     AI Generated
                   </span>
                   {question.difficulty && (
-                    <span className={`px-3 py-1 rounded-full text-[12px] font-medium ${
-                      question.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
-                      question.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-red-100 text-red-700'
-                    }`}>
+                    <span className={`px-3 py-1 rounded-full text-[12px] font-medium ${question.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
+                        question.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-red-100 text-red-700'
+                      }`}>
                       {question.difficulty}
                     </span>
                   )}
@@ -100,28 +99,25 @@ export function AIQuestionPreview({
                 </h3>
                 <div className="space-y-2">
                   {question.options.map((option: string, idx: number) => {
-                    const isCorrect = question.multipleCorrect 
+                    const isCorrect = question.multipleCorrect
                       ? Array.isArray(question.correctAnswer) && question.correctAnswer.includes(idx)
                       : question.correctAnswer === idx;
-                    
+
                     return (
                       <div
                         key={idx}
-                        className={`p-4 rounded-[8px] border-2 transition-colors ${
-                          isCorrect 
-                            ? 'border-green-500 bg-green-50' 
+                        className={`p-4 rounded-[8px] border-2 transition-colors ${isCorrect
+                            ? 'border-green-500 bg-green-50'
                             : 'border-[#e5e7eb] bg-white'
-                        }`}
+                          }`}
                       >
                         <div className="flex items-start gap-3">
-                          <span className={`font-['Arimo',sans-serif] text-[14px] font-semibold ${
-                            isCorrect ? 'text-green-700' : 'text-[#6b7280]'
-                          }`}>
+                          <span className={`font-['Arimo',sans-serif] text-[14px] font-semibold ${isCorrect ? 'text-green-700' : 'text-[#6b7280]'
+                            }`}>
                             {String.fromCharCode(65 + idx)}.
                           </span>
-                          <span className={`font-['Arimo',sans-serif] text-[14px] flex-1 ${
-                            isCorrect ? 'text-green-900 font-medium' : 'text-[#374151]'
-                          }`}>
+                          <span className={`font-['Arimo',sans-serif] text-[14px] flex-1 ${isCorrect ? 'text-green-900 font-medium' : 'text-[#374151]'
+                            }`}>
                             {option}
                           </span>
                           {isCorrect && (

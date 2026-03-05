@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
+from app.db.session import init_db
 
 # Configure logging
 logging.basicConfig(
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
     logger.info(f"Starting {settings.PROJECT_NAME}...")
+    await init_db()
     yield
     # Shutdown
     logger.info(f"Shutting down {settings.PROJECT_NAME}...")

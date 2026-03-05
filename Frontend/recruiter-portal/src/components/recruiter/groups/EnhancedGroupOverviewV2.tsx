@@ -3,12 +3,19 @@ import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calenda
 import { motion, AnimatePresence } from 'motion/react';
 import { SuspectReviewPage } from '../candidates/SuspectReviewPage';
 import { CreateAdvancedAssessment } from '../assessments/CreateAdvancedAssessment';
-import { CreateAIInterview } from '../interviews/CreateAIInterview';
+import { UnifiedAIInterviewSetup } from '../interviews/UnifiedAIInterviewSetup';
+import { RecordedInterviewQuestionSetup } from '../interviews/RecordedInterviewQuestionSetup';
+import { LiveInterviewFlowSetup } from '../interviews/LiveInterviewFlowSetup';
 import { StageResultsDashboard } from './StageResultsDashboard';
 import { ModuleMonitoringDashboard } from './ModuleMonitoringDashboard';
 import { StartStageModal } from './StartStageModal';
 import { BulkProgressionModal } from './BulkProgressionModal';
 import { FinalDecisionModal } from './FinalDecisionModal';
+import { FiltrationFlowConfigModal } from './FiltrationFlowConfigModal';
+import { StageReviewPage } from './StageReviewPage';
+import { FinalDecisionPage } from './FinalDecisionPage';
+import { ActivityLogPanel } from './ActivityLogPanel';
+import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
 import { useEffect } from 'react';
 
@@ -100,6 +107,10 @@ interface CandidateStatus {
   overrideApplied?: boolean;
   email?: string;
   phone?: string;
+  /** Backend UUID for the CandidateApplication record. Populated from API. */
+  applicationId?: string;
+  liveInterviewScheduledAt?: string;
+  liveInterviewMeetingLink?: string;
 }
 
 export function EnhancedGroupOverviewV2({
@@ -126,6 +137,8 @@ export function EnhancedGroupOverviewV2({
   const [showMoveStageModal, setShowMoveStageModal] = useState(false);
   const [showRuleBuilderModal, setShowRuleBuilderModal] = useState(false);
   const [showAIInterviewSettingsModal, setShowAIInterviewSettingsModal] = useState(false);
+  const [showFlowConfigModal, setShowFlowConfigModal] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // New state for enhancements
   const [selectedCandidates, setSelectedCandidates] = useState<number[]>([]);
@@ -148,10 +161,16 @@ export function EnhancedGroupOverviewV2({
   // Use recruiterType prop directly instead of state
   const userRole = recruiterType;
 
-  // Assessment creation state
   const [showAssessmentCreation, setShowAssessmentCreation] = useState(false);
+  const [editingAssessmentData, setEditingAssessmentData] = useState<any>(null);
   const [showCreateAIInterview, setShowCreateAIInterview] = useState(false);
+  const [showUnifiedAIInterviewSetup, setShowUnifiedAIInterviewSetup] = useState(false);
+  const [showRecordedQuestionSetup, setShowRecordedQuestionSetup] = useState(false);
+  const [showLiveFlowSetup, setShowLiveFlowSetup] = useState(false);
+  const [pendingAISettings, setPendingAISettings] = useState<any>(null);
   const [groupAssessments, setGroupAssessments] = useState<any[]>([]);
+  const [groupInterviews, setGroupInterviews] = useState<any[]>([]);
+  const [editingInterviewData, setEditingInterviewData] = useState<any>(null);
 
   // NEW: Stage-gated state
   const [currentStage, setCurrentStage] = useState<string>(filtrationFlow[0] || 'assessment');
@@ -193,20 +212,65 @@ export function EnhancedGroupOverviewV2({
   const [showStageResults, setShowStageResults] = useState(false);
   const [showModuleMonitoring, setShowModuleMonitoring] = useState<'assessment' | 'ai-interview' | null>(null);
 
+  // NEW: Full-page views
+  const [showStageReviewPage, setShowStageReviewPage] = useState(false);
+  const [showFinalDecisionPage, setShowFinalDecisionPage] = useState(false);
+
+  // NEW: Schedule Interview modal
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [selectedCandidateForSchedule, setSelectedCandidateForSchedule] = useState<{ id: string, name: string } | null>(null);
+
   // NEW: Pipeline steps state
   const [pipelineSteps, setPipelineSteps] = useState<PipelineStep[]>([]);
   const [candidateStatuses, setCandidateStatuses] = useState<CandidateStatus[]>([]);
+  const [activeFlow, setActiveFlow] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [positionId, setPositionId] = useState<string>('');
+  const [interviewConfigId, setInterviewConfigId] = useState<string | null>(null);
 
   // Fetch data on mount
   useEffect(() => {
     const fetchData = async () => {
       try {
         setIsLoading(true);
-        const data = await api.recruiter.getGroupDetails(groupId);
+        const data = await api.recruiter.getGroupDetails(groupId) as any;
+        if (data.position_id) {
+          setPositionId(data.position_id);
+        }
+        if (data.interview_config_id) {
+          setInterviewConfigId(data.interview_config_id);
+        }
 
-        // Map pipeline stages
-        const moduleMap: Record<string, { name: string; icon: any }> = {
+        let activeFlowRaw = filtrationFlow; // Default to prop
+        if (data.group && data.group.filtration_flow) {
+          // Parse backend response which might be object array or strings
+          // If getGroupDetails returns full group object in response
+          const flowData = data.group.filtration_flow;
+          if (Array.isArray(flowData)) {
+            activeFlowRaw = flowData.map((s: any) =>
+              (s.stage || s.type || '').toLowerCase().replace('_', '-')
+            ).filter((s: string) => ['assessment', 'ai-interview', 'live-interview'].includes(s));
+          }
+        }
+
+        // Actually api.recruiter.getGroupDetails returns GroupDetailResponse which has filtration_flow
+        if (data.filtration_flow && Array.isArray(data.filtration_flow)) {
+          activeFlowRaw = data.filtration_flow.map((s: any) =>
+            (s.stage || s.type || '').toLowerCase().replace('_', '-')
+          ).filter((s: string) => ['assessment', 'ai-interview', 'live-interview'].includes(s));
+        }
+
+        setActiveFlow(activeFlowRaw);
+
+        if (data.assessments && Array.isArray(data.assessments)) {
+          setGroupAssessments(data.assessments);
+        }
+
+        if (data.interviews && Array.isArray(data.interviews)) {
+          setGroupInterviews(data.interviews);
+        }
+
+        const moduleMetaMap: Record<string, { name: string; icon: any }> = {
           'assessment': { name: 'Technical Assessment', icon: FileText },
           'ai-interview': { name: 'AI Interview', icon: Video },
           'live-interview': { name: 'Live Interview', icon: MessageSquare },
@@ -214,37 +278,87 @@ export function EnhancedGroupOverviewV2({
           'offer': { name: 'Offer', icon: Send }
         };
 
-        const steps: PipelineStep[] = data.pipelineStages.map((stage: any) => ({
-          id: stage.id || stage.name.toLowerCase().replace(' ', '-'),
-          name: stage.name,
-          completed: stage.completed,
-          total: stage.total,
-          pending: stage.pending,
-          state: (stage.state as StageState) || 'not-started'
-        }));
+        // Build a lookup from backend stages by a normalised key
+        const backendStageMap: Record<string, any> = {};
+        // Backend returns pipeline_stages (snake_case), map by both id (ai-interview) and name
+        const rawPipelineStages = data.pipeline_stages || data.pipelineStages || [];
+        if (Array.isArray(rawPipelineStages)) {
+          rawPipelineStages.forEach((s: any) => {
+            const key = (s.id || s.name || '').toLowerCase().replace(/\s+/g, '-');
+            backendStageMap[key] = s;
+            // Also index by stage_type key (e.g. 'ai_interview' → 'ai-interview')
+            if (s.id) backendStageMap[s.id] = s;
+          });
+        }
+
+        const steps: PipelineStep[] = activeFlowRaw.map((stageType) => {
+          const meta = moduleMetaMap[stageType] || { name: stageType, icon: FileText };
+          const backend = backendStageMap[stageType] || backendStageMap[meta.name.toLowerCase().replace(/\s+/g, '-')];
+          return {
+            id: stageType,
+            name: meta.name,
+            completed: backend?.completed ?? 0,
+            total: backend?.total ?? 0,
+            pending: backend?.pending ?? 0,
+            state: (backend?.state as StageState) || 'not-started'
+          };
+        });
 
         setPipelineSteps(steps);
 
+        // Restore stage state from backend data
+        if (steps.length > 0) {
+          // Find the most advanced stage that has been started
+          const activeStep = steps.find(s => s.state === 'active');
+          const closedSteps = steps.filter(s => s.state === 'closed');
+          const lastClosedStep = closedSteps[closedSteps.length - 1];
+
+          if (activeStep) {
+            // There's an active stage right now
+            setCurrentStage(activeStep.id);
+            setStageState('active');
+            setStageConfigLocked(true);
+          } else if (lastClosedStep) {
+            // All stages so far are closed — find the next not-started one
+            const lastClosedIdx = steps.findIndex(s => s.id === lastClosedStep.id);
+            const nextStep = steps[lastClosedIdx + 1];
+            if (nextStep) {
+              setCurrentStage(nextStep.id);
+              setStageState('not-started');
+            } else {
+              // All stages complete — stay on last closed
+              setCurrentStage(lastClosedStep.id);
+              setStageState('closed');
+            }
+          } else {
+            // Nothing started yet
+            setCurrentStage(steps[0].id);
+            setStageState('not-started');
+          }
+        }
+
         // Map candidates
         const candidates: CandidateStatus[] = data.candidates.map((c: any) => ({
-          id: c.id,
+          id: c.candidate_id, // backend sends candidate_id
           name: c.name,
           email: c.email,
-          phone: c.phone || `+1-555-${String(c.id).padStart(4, '0')}`,
+          phone: c.phone || `+1-555-${String(c.candidate_id).slice(-4)}`,
           avatar: c.name.split(' ').map((n: string) => n[0]).join(''),
-          assessment: (c.pipelineStatus.assessment as any) || 'not-started',
-          aiInterview: (c.pipelineStatus.aiInterview as any) || 'not-started',
-          liveInterview: (c.pipelineStatus.liveInterview as any) || 'not-started',
-          review: (c.pipelineStatus.review as any) || 'not-started',
-          offer: (c.pipelineStatus.offer as any) || 'not-started',
-          assessmentScore: c.assessmentScore || 0,
-          aiInterviewScore: c.aiInterviewScore || 0,
-          flags: c.flags || [],
-          currentStage: c.currentStage || 'Assessment',
-          technicalVerdict: c.technicalVerdict,
-          meetsCriteria: c.meetsCriteria,
-          progressionState: c.progressionState || 'active',
-          overrideApplied: c.overrideApplied
+          assessment: (c.assessment?.status as any) || 'not-started',
+          aiInterview: (c.ai_interview?.status as any) || 'not-started',
+          liveInterview: (c.live_interview?.status as any) || 'pending',
+          review: 'not-started',
+          offer: 'not-started',
+          assessmentScore: c.assessment?.score || 0,
+          aiInterviewScore: c.ai_interview?.score || 0,
+          flags: c.flags ? c.flags.map((f: any) => f.description) : [],
+          currentStage: c.currentStage || 'assessment',
+          technicalVerdict: c.verdict === 'pass' || c.verdict === 'fail' || c.verdict === 'conditional' ? c.verdict : undefined,
+          meetsCriteria: c.meets_criteria,
+          progressionState: 'active',
+          overrideApplied: false,
+          liveInterviewScheduledAt: c.live_interview?.scheduled_at,
+          liveInterviewMeetingLink: c.live_interview?.meeting_link
         }));
 
         setCandidateStatuses(candidates);
@@ -268,7 +382,19 @@ export function EnhancedGroupOverviewV2({
     };
 
     fetchData();
-  }, [groupId]);
+  }, [groupId, refreshKey]);
+
+  const handleSaveFlow = async (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[]) => {
+    try {
+      await api.recruiter.updateGroup(groupId, { filtration_flow: flowConfig });
+      setShowFlowConfigModal(false);
+      setRefreshKey(prev => prev + 1); // Trigger refresh
+      showToast('Filtration flow updated successfully');
+    } catch (error) {
+      console.error('Failed to save flow:', error);
+      showToast('Failed to update filtration flow');
+    }
+  };
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -289,10 +415,17 @@ export function EnhancedGroupOverviewV2({
     setShowStartStageModal(true);
   };
 
-  const handleConfirmStartStage = (startDate: Date, expectedEndDate: Date) => {
+  const handleConfirmStartStage = async (startDate: Date, expectedEndDate: Date) => {
     const steps = [...pipelineSteps];
     const currentStepIndex = steps.findIndex(s => s.id === currentStage);
     if (currentStepIndex !== -1) {
+      try {
+        await api.recruiter.startStage(groupId, currentStage);
+      } catch (error) {
+        console.error('Failed to start stage on backend:', error);
+        showToast('Failed to start stage — please try again');
+        return;
+      }
       steps[currentStepIndex].state = 'active';
       steps[currentStepIndex].startDate = startDate;
       steps[currentStepIndex].expectedEndDate = expectedEndDate;
@@ -310,28 +443,52 @@ export function EnhancedGroupOverviewV2({
     }
   };
 
-  const handleCloseStage = () => {
+  const handleCloseStage = async () => {
     const steps = [...pipelineSteps];
     const currentStepIndex = steps.findIndex(s => s.id === currentStage);
     if (currentStepIndex !== -1) {
+      try {
+        await api.recruiter.closeStage(groupId, currentStage);
+      } catch (error) {
+        console.error('Failed to close stage on backend:', error);
+        showToast('Failed to close stage — please try again');
+        return;
+      }
       steps[currentStepIndex].state = 'closed';
       steps[currentStepIndex].actualEndDate = new Date();
       setPipelineSteps(steps);
       setStageState('closed');
-      showToast(`${steps[currentStepIndex].name} stage closed - Review results`);
+      showToast(`${steps[currentStepIndex].name} stage closed — Click "View Stage Results" to review and filter`);
       addActivityLog({
         type: 'stage-close',
         actor: assignedRecruiter,
         actorRole: userRole === 'technical' ? 'technical' : 'hr',
         description: `Closed ${steps[currentStepIndex].name} stage`
       });
-      // Open bulk progression modal after closing
-      setShowBulkProgressionModal(true);
     }
   };
 
-  const handleSendOffers = (selectedCandidateIds: number[], emailContent: string) => {
-    // Update candidate statuses to reflect offer sent
+  const handleSendOffers = async (selectedCandidateIds: number[], emailContent: string) => {
+    try {
+      // Map local numeric IDs to application IDs via candidateStatuses
+      const appIds = selectedCandidateIds
+        .map(id => {
+          const c = candidateStatuses.find(c => c.id === id);
+          return c?.applicationId ?? String(id);
+        });
+
+      if (appIds.length > 0) {
+        await api.recruiter.sendOffers(groupId, {
+          application_ids: appIds,
+          email_subject: `Offer for ${description || 'position'}`,
+          email_body: emailContent,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to send offers via backend:', error);
+      // Continue to update local state even if backend fails — offers UI should still reflect
+    }
+
     const updatedCandidates = candidateStatuses.map(candidate => {
       if (selectedCandidateIds.includes(candidate.id)) {
         return { ...candidate, offer: 'completed' as const };
@@ -340,7 +497,6 @@ export function EnhancedGroupOverviewV2({
     });
     setCandidateStatuses(updatedCandidates);
 
-    // Log activity
     addActivityLog({
       type: 'candidate-progressed',
       actor: assignedRecruiter,
@@ -377,7 +533,27 @@ export function EnhancedGroupOverviewV2({
     showToast(`✓ Exported ${selectedCandidateIds.length} candidate contact(s)`);
   };
 
-  const handleBulkProgression = (selectedIds: number[], action: 'progress' | 'reject' | 'hold') => {
+  const handleBulkProgression = async (selectedIds: number[], action: 'progress' | 'reject' | 'hold') => {
+    try {
+      const appIds = selectedIds
+        .map(id => {
+          const c = candidateStatuses.find(c => c.id === id);
+          return c?.applicationId ?? String(id);
+        });
+
+      if (appIds.length > 0) {
+        await api.recruiter.bulkProgressCandidates(groupId, {
+          application_ids: appIds,
+          action,
+          current_stage_type: currentStage
+        });
+      }
+    } catch (error) {
+      console.error('Failed to bulk progress candidates on backend:', error);
+      showToast('Failed to update candidates — please try again');
+      return;
+    }
+
     const updatedCandidates = candidateStatuses.map(candidate => {
       if (selectedIds.includes(candidate.id)) {
         if (action === 'progress') {
@@ -394,7 +570,6 @@ export function EnhancedGroupOverviewV2({
     setCandidateStatuses(updatedCandidates);
 
     if (action === 'progress') {
-      // Move to next stage
       const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
       if (currentStepIndex < pipelineSteps.length - 1) {
         const nextStage = pipelineSteps[currentStepIndex + 1];
@@ -565,19 +740,98 @@ export function EnhancedGroupOverviewV2({
     });
   };
 
-  const handleSaveAssessment = (assessment: any) => {
-    const newAssessment = {
-      ...assessment,
-      id: `assessment-${Date.now()}`,
-      groupId,
-      createdAt: new Date().toISOString(),
-      createdBy: assignedRecruiter,
-      status: 'draft'
-    };
+  const handleSaveAssessment = async (assessment: any) => {
+    try {
+      showToast(assessment.id && !assessment.id.toString().startsWith('assessment-') ? 'Updating assessment...' : 'Saving assessment...');
 
-    setGroupAssessments([...groupAssessments, newAssessment]);
-    setShowAssessmentCreation(false);
-    showToast(`Assessment "${assessment.config.title}" created successfully!`);
+      const payload = {
+        position_id: positionId, // From component state fetched on mount
+        group_id: groupId,
+        title: assessment.config.title,
+        description: assessment.config.description,
+        duration_minutes: assessment.config.duration,
+        passing_score: assessment.config.passingScore,
+        difficulty_level: assessment.config.difficulty,
+        randomizeQuestions: assessment.config.randomizeQuestions,
+        proctoring: assessment.config.proctoring,
+        showResults: assessment.config.showResults,
+        allowReview: assessment.config.allowReview,
+        sections: assessment.sections
+      };
+
+      if (assessment.id && !assessment.id.toString().startsWith('assessment-')) {
+        await api.recruiter.updateAssessment(assessment.id, payload);
+        const updatedAssessments = groupAssessments.map(a =>
+          a.id === assessment.id ? { ...assessment, status: a.status || 'draft' } : a
+        );
+        setGroupAssessments(updatedAssessments);
+        showToast(`Assessment "${assessment.config.title}" updated successfully!`);
+      } else {
+        const response = await api.recruiter.saveAssessment(payload);
+        const newAssessment = {
+          ...assessment,
+          id: response.assessment_id || `assessment-${Date.now()}`,
+          groupId,
+          createdAt: new Date().toISOString(),
+          createdBy: assignedRecruiter,
+          status: 'draft'
+        };
+        setGroupAssessments([...groupAssessments, newAssessment]);
+        showToast(`Assessment "${assessment.config.title}" created successfully!`);
+      }
+
+      setShowAssessmentCreation(false);
+      setEditingAssessmentData(null);
+    } catch (error) {
+      console.error('Error saving assessment:', error);
+      showToast('Failed to save assessment. Please try again.');
+    }
+  };
+
+  const handleDeleteAssessment = async (assessmentId: string) => {
+    if (confirm('Are you sure you want to delete this assessment?')) {
+      try {
+        await api.recruiter.deleteAssessment(assessmentId);
+        setGroupAssessments(groupAssessments.filter(a => a.id !== assessmentId));
+        showToast('Assessment deleted successfully');
+      } catch (error) {
+        console.error('Error deleting assessment:', error);
+        showToast('Failed to delete assessment');
+      }
+    }
+  };
+
+  const handleDeleteAIInterview = async (interviewId: string) => {
+    if (confirm('Are you sure you want to delete this AI interview?')) {
+      try {
+        await api.recruiter.deleteInterview(groupId, interviewId);
+        setGroupInterviews(groupInterviews.filter(i => i.id !== interviewId));
+        showToast('AI Interview deleted successfully');
+      } catch (error) {
+        console.error('Error deleting AI interview:', error);
+        showToast('Failed to delete AI interview');
+      }
+    }
+  };
+
+  const handleScheduleInterview = async (data: {
+    application_id: string;
+    scheduled_at: string;
+    duration_minutes: number;
+    meeting_link?: string;
+  }) => {
+    try {
+      await api.recruiter.scheduleInterview(groupId, data);
+      setIsLoading(true); // Trigger refresh
+      const details = await api.recruiter.getGroupDetails(groupId) as any;
+      // Re-map candidates or just trigger refreshKey
+      setRefreshKey(prev => prev + 1);
+      showToast('Interview scheduled successfully');
+    } catch (error) {
+      console.error('Failed to schedule interview:', error);
+      showToast('Failed to schedule interview');
+      throw error;
+    }
   };
 
   const handleToggleCandidateSelection = (candidateId: number) => {
@@ -593,8 +847,12 @@ export function EnhancedGroupOverviewV2({
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
+      case 'passed':
         return <CheckCircle size={16} className="text-[#10b981]" />;
       case 'pending':
+      case 'unlocked':
+      case 'in_progress':
+      case 'not_started':
         return <Clock size={16} className="text-[#f59e0b]" />;
       case 'failed':
         return <XCircle size={16} className="text-[#ef4444]" />;
@@ -611,21 +869,44 @@ export function EnhancedGroupOverviewV2({
     const currentStepData = pipelineSteps.find(s => s.id === currentStage);
     if (!currentStepData) return null;
 
+    // HR users are in monitoring/read-only mode — no stage actions allowed
+    if (userRole === 'recruiter') {
+      return (
+        <div className="flex items-center gap-2 px-4 py-2 rounded-[8px] bg-blue-50 border border-blue-200 text-blue-700">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+          <span className="font-['Arimo',sans-serif] text-[13px]">
+            Monitoring mode — only the Technical Recruiter can take stage actions
+          </span>
+        </div>
+      );
+    }
+
     // Check if this is the last stage and it's closed - show Final Decision button
     const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
     const isLastStage = currentStepIndex === pipelineSteps.length - 1;
 
     if (isLastStage && stageState === 'closed') {
       return (
-        <button
-          onClick={() => setShowFinalDecisionModal(true)}
-          className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white transition-colors shadow-lg"
-        >
-          <CheckCircle size={18} />
-          <span className="font-['Arimo',sans-serif] text-[14px] font-semibold">
-            Final Decision - Send Offers
-          </span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowStageReviewPage(true)}
+            className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] text-white transition-colors"
+          >
+            <BarChart3 size={16} />
+            <span className="font-['Arimo',sans-serif] text-[14px]">
+              View Stage Results
+            </span>
+          </button>
+          <button
+            onClick={() => setShowFinalDecisionPage(true)}
+            className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white transition-colors shadow-lg"
+          >
+            <CheckCircle size={18} />
+            <span className="font-['Arimo',sans-serif] text-[14px] font-semibold">
+              Final Decision - Send Offers
+            </span>
+          </button>
+        </div>
       );
     }
 
@@ -660,7 +941,7 @@ export function EnhancedGroupOverviewV2({
     if (stageState === 'closed') {
       return (
         <button
-          onClick={() => setShowStageResults(true)}
+          onClick={() => setShowStageReviewPage(true)}
           className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] text-white transition-colors"
         >
           <BarChart3 size={16} />
@@ -709,24 +990,17 @@ export function EnhancedGroupOverviewV2({
   if (showAssessmentCreation) {
     return (
       <CreateAdvancedAssessment
-        onBack={() => setShowAssessmentCreation(false)}
+        initialData={editingAssessmentData}
+        onBack={() => {
+          setShowAssessmentCreation(false);
+          setEditingAssessmentData(null);
+        }}
         onSave={handleSaveAssessment}
       />
     );
   }
 
-  // If creating an AI Interview
-  if (showCreateAIInterview) {
-    return (
-      <CreateAIInterview
-        onBack={() => setShowCreateAIInterview(false)}
-        onSave={(data) => {
-          setShowCreateAIInterview(false);
-          showToast("AI Interview Settings Saved");
-        }}
-      />
-    );
-  }
+
 
   // If showing suspect review for a candidate
   if (showSuspectReview !== null) {
@@ -745,6 +1019,70 @@ export function EnhancedGroupOverviewV2({
       );
     }
   }
+
+  // Full-page: Stage Review Page
+  if (showStageReviewPage) {
+    const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
+    const isLastStageCheck = currentStepIndex === pipelineSteps.length - 1;
+    return (
+      <StageReviewPage
+        stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
+        stageId={currentStage}
+        candidates={candidateStatuses}
+        pipelineSteps={pipelineSteps.map(s => ({ id: s.id, name: s.name }))}
+        currentStageIndex={currentStepIndex}
+        isLastStage={isLastStageCheck}
+        startDate={pipelineSteps.find(s => s.id === currentStage)?.startDate || new Date()}
+        endDate={pipelineSteps.find(s => s.id === currentStage)?.actualEndDate || new Date()}
+        acceptanceCriteria={acceptanceCriteria}
+        onBack={() => setShowStageReviewPage(false)}
+        onProgressCandidates={(selectedIds, action) => {
+          handleBulkProgression(selectedIds, action);
+          setShowStageReviewPage(false);
+        }}
+        onFinalDecision={() => {
+          setShowStageReviewPage(false);
+          setShowFinalDecisionPage(true);
+        }}
+        onViewCandidate={onViewCandidate}
+      />
+    );
+  }
+
+  // Full-page: Final Decision Page
+  if (showFinalDecisionPage) {
+    return (
+      <FinalDecisionPage
+        groupName={groupName}
+        positionTitle={description}
+        candidates={candidateStatuses
+          .filter(c => c.progressionState === 'selected' || c.progressionState === 'active' || !c.progressionState)
+          .map(c => ({
+            id: c.id,
+            name: c.name,
+            avatar: c.avatar,
+            email: c.email || `candidate${c.id}@example.com`,
+            phone: c.phone || `+1-555-${String(c.id).padStart(4, '0')}`,
+            assessmentScore: c.assessmentScore,
+            aiInterviewScore: c.aiInterviewScore,
+            flags: c.flags,
+            meetsCriteria: c.meetsCriteria,
+            technicalVerdict: c.technicalVerdict,
+            progressionState: c.progressionState
+          }))}
+        stages={pipelineSteps.map(s => ({ id: s.id, name: s.name }))}
+        onBack={() => setShowFinalDecisionPage(false)}
+        onSendOffers={(ids, content) => {
+          handleSendOffers(ids, content);
+          setShowFinalDecisionPage(false);
+        }}
+        onExportContacts={(ids) => {
+          handleExportContacts(ids);
+        }}
+      />
+    );
+  }
+
 
   if (isLoading) {
     return (
@@ -791,49 +1129,6 @@ export function EnhancedGroupOverviewV2({
               {description || 'No description provided'}
             </p>
 
-            {/* Filtration Flow Indicator */}
-            <div className="mb-3 p-3 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-[8px] border border-emerald-200">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp size={14} className="text-emerald-600" />
-                <span className="font-['Arimo',sans-serif] text-[12px] font-medium text-emerald-900">
-                  Configured Filtration Flow
-                </span>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                {filtrationFlow.map((moduleType, index) => {
-                  const moduleInfo = {
-                    'assessment': { name: 'Assessment', icon: FileText, color: 'emerald' },
-                    'ai-interview': { name: 'AI Interview', icon: Video, color: 'blue' },
-                    'live-interview': { name: 'Live Interview', icon: MessageSquare, color: 'purple' }
-                  };
-                  const info = moduleInfo[moduleType];
-                  const Icon = info.icon;
-
-                  return (
-                    <div key={moduleType} className="flex items-center gap-2">
-                      <div className={`flex items-center gap-1.5 px-2.5 py-1 bg-white border border-${info.color}-200 rounded-[6px]`}>
-                        <div className={`w-5 h-5 rounded bg-${info.color}-100 flex items-center justify-center`}>
-                          <Icon size={12} className={`text-${info.color}-600`} />
-                        </div>
-                        <span className="font-['Arimo',sans-serif] text-[12px] text-gray-700">
-                          {index + 1}. {info.name}
-                        </span>
-                      </div>
-                      {index < filtrationFlow.length - 1 && (
-                        <span className="text-emerald-400">→</span>
-                      )}
-                    </div>
-                  );
-                })}
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-[6px]">
-                  <CheckCircle size={12} className="text-gray-500" />
-                  <span className="font-['Arimo',sans-serif] text-[12px] text-gray-500">
-                    Review & Offer
-                  </span>
-                </div>
-              </div>
-            </div>
-
             <div className="flex items-center gap-2">
               <Users size={14} className="text-[#6b7280]" />
               <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
@@ -848,6 +1143,18 @@ export function EnhancedGroupOverviewV2({
           </div>
 
           <div className="flex gap-2">
+            {userRole === 'technical' && (
+              <button
+                onClick={() => setShowFlowConfigModal(true)}
+                className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
+                title="Configure Pipeline Flow"
+              >
+                <Edit size={16} className="text-[#6b7280]" />
+                <span className="font-['Arimo',sans-serif] text-[#111827] text-[14px]">
+                  Configure Flow
+                </span>
+              </button>
+            )}
             {getStageActionButton()}
             <button
               onClick={() => setShowActivityLog(true)}
@@ -867,62 +1174,112 @@ export function EnhancedGroupOverviewV2({
           </div>
         </div>
 
-        {/* Pipeline Progress with Stage States */}
-        <div className="mt-6 grid grid-cols-5 gap-4">
-          {pipelineSteps.map((step, index) => {
-            const isCurrentStage = step.id === currentStage;
-            const isPastStage = pipelineSteps.findIndex(s => s.id === currentStage) > index;
-            const isFutureStage = pipelineSteps.findIndex(s => s.id === currentStage) < index;
-
-            return (
-              <div
-                key={step.id}
-                className={`p-4 rounded-[12px] border-2 transition-all ${isCurrentStage
-                  ? 'border-[#6366f1] bg-[#f5f3ff]'
-                  : isPastStage
-                    ? 'border-[#e5e7eb] bg-white opacity-60'
-                    : 'border-[#e5e7eb] bg-white opacity-40'
-                  }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className={`font-['Arimo',sans-serif] text-[13px] ${isCurrentStage ? 'text-[#6366f1] font-semibold' : 'text-[#6b7280]'
-                    }`}>
-                    {step.name}
-                  </span>
-                  {step.state !== 'not-started' && (
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${step.state === 'active' ? 'bg-emerald-100 text-emerald-700' :
-                      step.state === 'closed' ? 'bg-amber-100 text-amber-700' :
-                        step.state === 'review-mode' ? 'bg-purple-100 text-purple-700' :
-                          'bg-gray-100 text-gray-600'
-                      }`}>
-                      {step.state.replace('-', ' ')}
-                    </span>
-                  )}
-                  {isFutureStage && (
-                    <Lock size={12} className="text-gray-400" />
-                  )}
-                </div>
-                <div className="flex items-baseline gap-1">
-                  <span className={`text-[20px] ${isCurrentStage ? 'text-[#6366f1]' : 'text-[#111827]'
-                    }`}>
-                    {step.completed}
-                  </span>
-                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                    / {step.total}
-                  </span>
-                </div>
-                {!isFutureStage && (
-                  <div className="mt-2 h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
-                    <div
-                      className={`h-full ${isCurrentStage ? 'bg-[#6366f1]' : 'bg-[#10b981]'
-                        } transition-all`}
-                      style={{ width: `${(step.completed / step.total) * 100}%` }}
-                    />
-                  </div>
-                )}
+        {/* Filtration Flow Indicator */}
+        {activeFlow.length > 0 && (
+          <div className="mt-4 px-8 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-100">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <TrendingUp size={13} className="text-emerald-600" />
+                <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-emerald-900">
+                  Filtration Flow:
+                </span>
               </div>
-            );
-          })}
+              {activeFlow.map((moduleType, index) => {
+                const moduleInfo: Record<string, { name: string; icon: any; color: string }> = {
+                  'assessment': { name: 'Technical Assessment', icon: FileText, color: 'emerald' },
+                  'ai-interview': { name: 'AI Interview', icon: Video, color: 'blue' },
+                  'live-interview': { name: 'Live Interview', icon: MessageSquare, color: 'purple' }
+                };
+                const info = moduleInfo[moduleType] || { name: moduleType, icon: FileText, color: 'gray' };
+                const Icon = info.icon;
+                return (
+                  <div key={moduleType} className="flex items-center gap-2">
+                    <div className={`flex items-center gap-1.5 px-2.5 py-1 bg-white border border-${info.color}-200 rounded-[6px]`}>
+                      <div className={`w-5 h-5 rounded bg-${info.color}-100 flex items-center justify-center`}>
+                        <Icon size={12} className={`text-${info.color}-600`} />
+                      </div>
+                      <span className="font-['Arimo',sans-serif] text-[12px] text-gray-700">
+                        {index + 1}. {info.name}
+                      </span>
+                    </div>
+                    {index < activeFlow.length - 1 && (
+                      <span className="text-emerald-400 font-medium">→</span>
+                    )}
+                  </div>
+                );
+              })}
+              <span className="text-emerald-400 font-medium">→</span>
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-[6px]">
+                <CheckCircle size={12} className="text-gray-500" />
+                <span className="font-['Arimo',sans-serif] text-[12px] text-gray-500">Review & Offer</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Pipeline Progress with Stage States */}
+        <div className="px-8 mt-6">
+          <div className={`grid gap-4 ${pipelineSteps.length === 1 ? 'grid-cols-1' :
+            pipelineSteps.length === 2 ? 'grid-cols-2' :
+              pipelineSteps.length === 3 ? 'grid-cols-3' :
+                pipelineSteps.length === 4 ? 'grid-cols-4' :
+                  'grid-cols-5'
+            }`}>
+            {pipelineSteps.map((step, index) => {
+              const isCurrentStage = step.id === currentStage;
+              const isPastStage = pipelineSteps.findIndex(s => s.id === currentStage) > index;
+              const isFutureStage = pipelineSteps.findIndex(s => s.id === currentStage) < index;
+
+              return (
+                <div
+                  key={step.id}
+                  className={`p-4 rounded-[12px] border-2 transition-all ${isCurrentStage
+                    ? 'border-[#6366f1] bg-[#f5f3ff]'
+                    : isPastStage
+                      ? 'border-[#e5e7eb] bg-white opacity-60'
+                      : 'border-[#e5e7eb] bg-white opacity-40'
+                    }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className={`font-['Arimo',sans-serif] text-[13px] ${isCurrentStage ? 'text-[#6366f1] font-semibold' : 'text-[#6b7280]'
+                      }`}>
+                      {step.name}
+                    </span>
+                    {step.state !== 'not-started' && (
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${step.state === 'active' ? 'bg-emerald-100 text-emerald-700' :
+                        step.state === 'closed' ? 'bg-amber-100 text-amber-700' :
+                          step.state === 'review-mode' ? 'bg-purple-100 text-purple-700' :
+                            'bg-gray-100 text-gray-600'
+                        }`}>
+                        {step.state.replace('-', ' ')}
+                      </span>
+                    )}
+                    {isFutureStage && (
+                      <Lock size={12} className="text-gray-400" />
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className={`text-[20px] ${isCurrentStage ? 'text-[#6366f1]' : 'text-[#111827]'
+                      }`}>
+                      {step.completed}
+                    </span>
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      / {step.total}
+                    </span>
+                  </div>
+                  {!isFutureStage && (
+                    <div className="mt-2 h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                      <div
+                        className={`h-full ${isCurrentStage ? 'bg-[#6366f1]' : 'bg-[#10b981]'
+                          } transition-all`}
+                        style={{ width: `${(step.completed / step.total) * 100}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Stage Configuration Section */}
@@ -944,19 +1301,7 @@ export function EnhancedGroupOverviewV2({
               )}
             </div>
 
-            {/* Current Recruiter Type Badge */}
-            <div className="flex items-center gap-3">
-              <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                Logged in as:
-              </span>
-              <span className={`flex items-center gap-1.5 h-[32px] px-[12px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${userRole === 'technical'
-                ? 'bg-emerald-50 text-[#10b981] border border-emerald-200'
-                : 'bg-indigo-50 text-[#6366f1] border border-indigo-200'
-                }`}>
-                {userRole === 'technical' ? <Shield size={14} /> : <Users size={14} />}
-                {userRole === 'technical' ? 'Technical Recruiter' : 'HR Recruiter'}
-              </span>
-            </div>
+
           </div>
 
           <div className="space-y-3">
@@ -964,74 +1309,102 @@ export function EnhancedGroupOverviewV2({
             {/* Module Monitoring Dashboard - Available to both HR and Technical */}
             {(userRole === 'technical' || userRole === 'recruiter') && (
               <div className="flex gap-3">
-                <button
-                  onClick={() => setShowModuleMonitoring('assessment')}
-                  className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm"
-                >
-                  <BarChart3 size={16} />
-                  <span className="font-['Arimo',sans-serif] text-[14px]">
-                    Monitor Assessment Results
-                  </span>
-                </button>
-                <button
-                  onClick={() => setShowModuleMonitoring('ai-interview')}
-                  className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm"
-                >
-                  <BarChart3 size={16} />
-                  <span className="font-['Arimo',sans-serif] text-[14px]">
-                    Monitor AI Interview Results
-                  </span>
-                </button>
+                {activeFlow.includes('assessment') && (
+                  <button
+                    onClick={() => setShowModuleMonitoring('assessment')}
+                    disabled={(() => {
+                      const step = pipelineSteps.find(s => s.id === 'assessment');
+                      return !step || step.state === 'not-started';
+                    })()}
+                    title={(() => {
+                      const step = pipelineSteps.find(s => s.id === 'assessment');
+                      return (!step || step.state === 'not-started') ? "Stage must be started to monitor results" : "";
+                    })()}
+                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-[#6366f1] disabled:hover:to-[#8b5cf6]"
+                  >
+                    <BarChart3 size={16} />
+                    <span className="font-['Arimo',sans-serif] text-[14px]">
+                      Monitor Assessment Results
+                    </span>
+                  </button>
+                )}
+                {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
+                  <button
+                    onClick={() => setShowModuleMonitoring('ai-interview')}
+                    disabled={(() => {
+                      const aiStep = pipelineSteps.find(s => s.id === 'ai-interview');
+                      const liveStep = pipelineSteps.find(s => s.id === 'live-interview');
+                      const aiStarted = aiStep && aiStep.state !== 'not-started';
+                      const liveStarted = liveStep && liveStep.state !== 'not-started';
+                      return !aiStarted && !liveStarted;
+                    })()}
+                    title={(() => {
+                      const aiStep = pipelineSteps.find(s => s.id === 'ai-interview');
+                      const liveStep = pipelineSteps.find(s => s.id === 'live-interview');
+                      const aiStarted = aiStep && aiStep.state !== 'not-started';
+                      const liveStarted = liveStep && liveStep.state !== 'not-started';
+                      return (!aiStarted && !liveStarted) ? "Interview stages must be started to monitor results" : "";
+                    })()}
+                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-[#6366f1] disabled:hover:to-[#8b5cf6]"
+                  >
+                    <BarChart3 size={16} />
+                    <span className="font-['Arimo',sans-serif] text-[14px]">
+                      Monitor AI Interview Results
+                    </span>
+                  </button>
+                )}
               </div>
             )}
 
-            {/* Configuration Buttons */}
-            <div className="flex gap-3">
-              {userRole === 'technical' && (
-                <>
-                  <button
-                    onClick={() => {
-                      if (stageConfigLocked) {
-                        showToast('Cannot modify configuration - stage is active');
-                        return;
-                      }
-                      setShowAssessmentCreation(true);
-                    }}
-                    disabled={stageConfigLocked}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Plus size={16} />
-                    <span className="font-['Arimo',sans-serif] text-[14px]">
-                      Add Tech Assessment
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (stageConfigLocked) {
-                        showToast('Cannot modify configuration - stage is active');
-                        return;
-                      }
-                      setShowCreateAIInterview(true);
-                    }}
-                    disabled={stageConfigLocked}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Activity size={16} />
-                    <span className="font-['Arimo',sans-serif] text-[14px]">
-                      AI Interview Settings
-                    </span>
-                  </button>
-                </>
-              )}
-              {userRole === 'recruiter' && (
-                <div className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#f9fafb] border border-[#e5e7eb]">
-                  <Shield size={16} className="text-[#6b7280]" />
-                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                    Switch to Technical Recruiter to configure assessments and interviews
-                  </span>
+            {/* Configuration Buttons - Technical Recruiter Only */}
+            {userRole === 'technical' && (
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  {activeFlow.includes('assessment') && (
+                    <button
+                      onClick={() => {
+                        if (stageConfigLocked) {
+                          showToast('Cannot modify configuration - stage is active');
+                          return;
+                        }
+                        setShowAssessmentCreation(true);
+                      }}
+                      disabled={stageConfigLocked}
+                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Plus size={16} />
+                      <span className="font-['Arimo',sans-serif] text-[14px]">
+                        Add Tech Assessment
+                      </span>
+                    </button>
+                  )}
+                  {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
+                    <button
+                      onClick={() => {
+                        if (stageConfigLocked) {
+                          showToast('Cannot modify configuration - stage is active');
+                          return;
+                        }
+                        const hasLive = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');
+                        const hasRecorded = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');
+                        if (hasRecorded || hasLive) {
+                          setShowUnifiedAIInterviewSetup(true);
+                        }
+                      }}
+                      disabled={stageConfigLocked}
+                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Activity size={16} />
+                      <span className="font-['Arimo',sans-serif] text-[14px]">
+                        {interviewConfigId ? 'Edit AI Interview Settings' : 'AI Interview Settings'}
+                      </span>
+                      {interviewConfigId && <CheckCircle size={16} className="text-white ml-1" />}
+                    </button>
+                  )}
                 </div>
-              )}
-            </div>
+
+              </div>
+            )}
           </div>
 
           {/* Display Created Assessments (Technical Recruiter Only) */}
@@ -1070,13 +1443,29 @@ export function EnhancedGroupOverviewV2({
                         </div>
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => {
-                              showToast('Edit assessment feature coming soon');
+                            onClick={async () => {
+                              try {
+                                showToast('Loading assessment details...');
+                                const data = await api.recruiter.getAssessment(assessment.id);
+                                setEditingAssessmentData(data);
+                                setShowAssessmentCreation(true);
+                              } catch (error) {
+                                console.error('Failed to load assessment details:', error);
+                                showToast('Failed to load assessment details for editing');
+                              }
                             }}
                             disabled={stageConfigLocked}
                             className="h-[28px] px-[12px] rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors text-[12px] text-[#374151] disabled:opacity-50"
                           >
                             Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAssessment(assessment.id)}
+                            disabled={stageConfigLocked}
+                            className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280] disabled:opacity-50"
+                            title="Delete Assessment"
+                          >
+                            <Trash2 size={14} />
                           </button>
                           <button
                             onClick={() => {
@@ -1101,109 +1490,73 @@ export function EnhancedGroupOverviewV2({
             </div>
           )}
 
-          {/* Technical Acceptance Criteria - Technical Recruiter Only */}
-          {userRole === 'technical' && (
-            <div className="mt-4 pt-4 border-t border-[#e5e7eb]">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-semibold flex items-center gap-2">
-                  <CheckSquare size={16} className="text-[#10b981]" />
-                  Technical Acceptance Criteria
+          {/* Display Created AI Interviews (Technical Recruiter Only) */}
+          {userRole === 'technical' && groupInterviews && groupInterviews.length > 0 && (
+            <div className="mt-4">
+              <div className="space-y-2">
+                <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] mb-2">
+                  Created AI Interviews ({groupInterviews.length})
                 </h4>
-                <button
-                  onClick={() => setShowCriteriaEditor(!showCriteriaEditor)}
-                  disabled={stageConfigLocked}
-                  className="flex items-center gap-1 px-3 py-1 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors text-[13px] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Edit size={14} />
-                  Edit Criteria
-                </button>
+                {groupInterviews.map((interview) => (
+                  <div
+                    key={interview.id}
+                    className="p-3 bg-[#f9fafb] rounded-[8px] border border-[#e5e7eb] hover:border-[#6366f1] transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
+                            {interview.title}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700">
+                            {interview.interview_type === 'live_ai' || interview.interview_type === 'live' ? 'Live AI' : 'Recorded'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 text-[12px] text-[#6b7280]">
+                          <span>{interview.questions_count} questions</span>
+                          <span>•</span>
+                          <span>{interview.max_retakes} max retakes</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            if (stageConfigLocked) {
+                              showToast('Cannot modify configuration - stage is active');
+                              return;
+                            }
+                            setEditingInterviewData(interview);
+                            setShowUnifiedAIInterviewSetup(true);
+                          }}
+                          disabled={stageConfigLocked}
+                          className="h-[28px] px-[12px] rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors text-[12px] text-[#374151] disabled:opacity-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAIInterview(interview.id)}
+                          disabled={stageConfigLocked}
+                          className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280] disabled:opacity-50"
+                          title="Delete Interview"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            showToast('AI Interview ready to be sent to candidates');
+                          }}
+                          className="h-[28px] px-[12px] rounded-[6px] bg-[#1b2559] hover:bg-[#2c3a7c] text-white transition-colors text-[12px]"
+                        >
+                          Send
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
-
-              <div className="grid grid-cols-3 gap-3 mb-3">
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-[8px]">
-                  <div className="text-[11px] text-blue-700 mb-1">Minimum Technical Score</div>
-                  <div className="text-[18px] font-semibold text-blue-900">{acceptanceCriteria.minimumTechnicalScore}%</div>
-                </div>
-                <div className="p-3 bg-purple-50 border border-purple-200 rounded-[8px]">
-                  <div className="text-[11px] text-purple-700 mb-1">Allowed Integrity Risk</div>
-                  <div className="text-[18px] font-semibold text-purple-900 capitalize">{acceptanceCriteria.allowedIntegrityRisk}</div>
-                </div>
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-[8px]">
-                  <div className="text-[11px] text-emerald-700 mb-1">Required Verdict</div>
-                  <div className="text-[18px] font-semibold text-emerald-900 capitalize">{acceptanceCriteria.requiredVerdict}</div>
-                </div>
-              </div>
-
-              {showCriteriaEditor && (
-                <div className="p-4 bg-gray-50 border border-gray-200 rounded-[8px] space-y-3">
-                  <div>
-                    <label className="block text-[13px] text-[#374151] mb-2">
-                      Minimum Technical Score (%)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={acceptanceCriteria.minimumTechnicalScore}
-                      onChange={(e) => setAcceptanceCriteria({
-                        ...acceptanceCriteria,
-                        minimumTechnicalScore: parseInt(e.target.value) || 0
-                      })}
-                      className="w-full h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[14px]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[13px] text-[#374151] mb-2">
-                      Allowed Integrity Risk
-                    </label>
-                    <select
-                      value={acceptanceCriteria.allowedIntegrityRisk}
-                      onChange={(e) => setAcceptanceCriteria({
-                        ...acceptanceCriteria,
-                        allowedIntegrityRisk: e.target.value as 'none' | 'low' | 'medium'
-                      })}
-                      className="w-full h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[14px]"
-                    >
-                      <option value="none">None</option>
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[13px] text-[#374151] mb-2">
-                      Required Technical Verdict
-                    </label>
-                    <select
-                      value={acceptanceCriteria.requiredVerdict}
-                      onChange={(e) => setAcceptanceCriteria({
-                        ...acceptanceCriteria,
-                        requiredVerdict: e.target.value as 'pass' | 'conditional' | 'any'
-                      })}
-                      className="w-full h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[14px]"
-                    >
-                      <option value="pass">Pass Only</option>
-                      <option value="conditional">Pass or Conditional</option>
-                      <option value="any">Any</option>
-                    </select>
-                  </div>
-                  <div className="flex justify-end gap-2 pt-2">
-                    <button
-                      onClick={() => setShowCriteriaEditor(false)}
-                      className="px-4 py-2 rounded-[6px] border border-[#e5e7eb] text-[13px] hover:bg-white transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleSaveCriteria}
-                      className="px-4 py-2 rounded-[6px] bg-[#10b981] hover:bg-[#059669] text-white text-[13px] transition-colors"
-                    >
-                      Save Criteria
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
+
         </div>
       </div>
 
@@ -1341,20 +1694,19 @@ export function EnhancedGroupOverviewV2({
                   <th className="p-4 text-left">
                     <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Candidate</span>
                   </th>
-                  <th className="p-4 text-center">
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Assessment</span>
-                  </th>
-                  <th className="p-4 text-center">
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">AI Interview</span>
-                  </th>
-                  <th className="p-4 text-center">
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Meets Criteria</span>
-                  </th>
-                  {userRole === 'technical' && (
-                    <th className="p-4 text-center">
-                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Verdict</span>
-                    </th>
-                  )}
+                  {activeFlow.map(stageType => {
+                    const moduleNames: Record<string, string> = {
+                      'assessment': 'Assessment',
+                      'ai-interview': 'AI Interview',
+                      'live-interview': 'Live Interview'
+                    };
+                    return (
+                      <th key={stageType} className="p-4 text-center">
+                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">{moduleNames[stageType] || stageType}</span>
+                      </th>
+                    );
+                  })}
+
                   <th className="p-4 text-center">
                     <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Comments</span>
                   </th>
@@ -1367,249 +1719,303 @@ export function EnhancedGroupOverviewV2({
                 </tr>
               </thead>
               <tbody>
-                {candidateStatuses
-                  .filter(candidate => {
-                    // Apply filters
-                    if (moduleFilters.meetsCriteria !== 'all') {
-                      if (moduleFilters.meetsCriteria === 'yes' && !candidate.meetsCriteria) return false;
-                      if (moduleFilters.meetsCriteria === 'no' && candidate.meetsCriteria) return false;
-                    }
-                    if (moduleFilters.flagsFilter !== 'all') {
-                      if (moduleFilters.flagsFilter === 'integrity' && candidate.flags.length === 0) return false;
-                    }
-                    if (moduleFilters.hasHRComment) {
-                      const comments = getCandidateComments(candidate.id);
-                      if (!comments.some(c => c.author === 'hr')) return false;
-                    }
-                    if (moduleFilters.hasTechnicalComment) {
-                      const comments = getCandidateComments(candidate.id);
-                      if (!comments.some(c => c.author === 'technical')) return false;
-                    }
-                    return true;
-                  })
-                  .map((candidate) => {
+                {candidateStatuses.length === 0 ? (
+                  <tr>
+                    <td colSpan={userRole === 'recruiter' && stageState === 'review-mode' ? 5 + activeFlow.length : 4 + activeFlow.length} className="p-8 text-center">
+                      <div className="flex flex-col items-center justify-center text-[#6b7280]">
+                        <Users size={40} className="mb-3 opacity-20" />
+                        <p className="font-['Arimo',sans-serif] text-[15px]">No candidates in this group yet.</p>
+                        <p className="text-[13px]">Add candidates to track their progress.</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : candidateStatuses.filter(candidate => {
+                  // Apply filters
+                  if (moduleFilters.meetsCriteria !== 'all') {
+                    if (moduleFilters.meetsCriteria === 'yes' && !candidate.meetsCriteria) return false;
+                    if (moduleFilters.meetsCriteria === 'no' && candidate.meetsCriteria) return false;
+                  }
+                  if (moduleFilters.flagsFilter !== 'all') {
+                    if (moduleFilters.flagsFilter === 'integrity' && candidate.flags.length === 0) return false;
+                  }
+                  if (moduleFilters.hasHRComment) {
                     const comments = getCandidateComments(candidate.id);
-                    return (
-                      <tr key={candidate.id} className="border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
-                        {/* Selection checkbox - HR only in review mode */}
-                        {userRole === 'recruiter' && stageState === 'review-mode' && (
+                    if (!comments.some(c => c.author === 'hr')) return false;
+                  }
+                  if (moduleFilters.hasTechnicalComment) {
+                    const comments = getCandidateComments(candidate.id);
+                    if (!comments.some(c => c.author === 'technical')) return false;
+                  }
+                  return true;
+                }).length === 0 ? (
+                  <tr>
+                    <td colSpan={userRole === 'recruiter' && stageState === 'review-mode' ? 5 + activeFlow.length : 4 + activeFlow.length} className="p-8 text-center text-[#6b7280]">
+                      <p className="font-['Arimo',sans-serif] text-[15px]">No candidates match your current filters.</p>
+                    </td>
+                  </tr>
+                ) : (
+                  candidateStatuses
+                    .filter(candidate => {
+                      // Apply filters
+                      if (moduleFilters.meetsCriteria !== 'all') {
+                        if (moduleFilters.meetsCriteria === 'yes' && !candidate.meetsCriteria) return false;
+                        if (moduleFilters.meetsCriteria === 'no' && candidate.meetsCriteria) return false;
+                      }
+                      if (moduleFilters.flagsFilter !== 'all') {
+                        if (moduleFilters.flagsFilter === 'integrity' && candidate.flags.length === 0) return false;
+                      }
+                      if (moduleFilters.hasHRComment) {
+                        const comments = getCandidateComments(candidate.id);
+                        if (!comments.some(c => c.author === 'hr')) return false;
+                      }
+                      if (moduleFilters.hasTechnicalComment) {
+                        const comments = getCandidateComments(candidate.id);
+                        if (!comments.some(c => c.author === 'technical')) return false;
+                      }
+                      return true;
+                    })
+                    .map((candidate) => {
+                      const comments = getCandidateComments(candidate.id);
+                      return (
+                        <tr key={candidate.id} className="border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
+                          {/* Selection checkbox - HR only in review mode */}
+                          {userRole === 'recruiter' && stageState === 'review-mode' && (
+                            <td className="p-4">
+                              {candidate.progressionState === 'active' && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedCandidates.includes(candidate.id)}
+                                  onChange={() => handleToggleCandidateSelection(candidate.id)}
+                                  className="w-4 h-4 rounded border-gray-300 text-[#6366f1]"
+                                />
+                              )}
+                            </td>
+                          )}
                           <td className="p-4">
-                            {candidate.progressionState === 'active' && (
-                              <input
-                                type="checkbox"
-                                checked={selectedCandidates.includes(candidate.id)}
-                                onChange={() => handleToggleCandidateSelection(candidate.id)}
-                                className="w-4 h-4 rounded border-gray-300 text-[#6366f1]"
-                              />
-                            )}
-                          </td>
-                        )}
-                        <td className="p-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-[40px] h-[40px] rounded-full bg-[#ede9fe] flex items-center justify-center">
-                              <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
-                                {candidate.avatar}
-                              </span>
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => onViewCandidate(candidate.id)}
-                                  className="font-['Arimo',sans-serif] text-[14px] text-[#111827] hover:text-[#6366f1] hover:underline"
-                                >
-                                  {candidate.name}
-                                </button>
-                                {candidate.overrideApplied && (
-                                  <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] rounded-full flex items-center gap-1">
-                                    <AlertTriangle size={10} />
-                                    Override
-                                  </span>
+                            <div className="flex items-center gap-3">
+                              <div className="w-[40px] h-[40px] rounded-full bg-[#ede9fe] flex items-center justify-center">
+                                <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
+                                  {candidate.avatar}
+                                </span>
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => onViewCandidate(candidate.id)}
+                                    className="font-['Arimo',sans-serif] text-[14px] text-[#111827] hover:text-[#6366f1] hover:underline"
+                                  >
+                                    {candidate.name}
+                                  </button>
+                                  {candidate.overrideApplied && (
+                                    <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] rounded-full flex items-center gap-1">
+                                      <AlertTriangle size={10} />
+                                      Override
+                                    </span>
+                                  )}
+                                </div>
+                                {candidate.flags.length > 0 && (
+                                  <div className="flex items-center gap-1 mt-1">
+                                    {candidate.flags.map((flag, idx) => (
+                                      <span
+                                        key={idx}
+                                        className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] rounded-full"
+                                      >
+                                        {flag}
+                                      </span>
+                                    ))}
+                                  </div>
                                 )}
                               </div>
-                              {candidate.flags.length > 0 && (
-                                <div className="flex items-center gap-1 mt-1">
-                                  {candidate.flags.map((flag, idx) => (
-                                    <span
-                                      key={idx}
-                                      className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] rounded-full"
+                            </div>
+                          </td>
+                          {activeFlow.map(stageType => {
+                            if (stageType === 'assessment') {
+                              return (
+                                <td key={stageType} className="p-4 text-center">
+                                  <button
+                                    onClick={() => {
+                                      if (candidate.assessmentScore > 0 && onViewModuleDetail) {
+                                        onViewModuleDetail({
+                                          type: 'assessment',
+                                          candidateId: candidate.id,
+                                          candidateName: candidate.name,
+                                          score: candidate.assessmentScore,
+                                          completedDate: new Date().toLocaleDateString()
+                                        });
+                                      }
+                                    }}
+                                    className={`flex flex-col items-center gap-1 mx-auto ${candidate.assessmentScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
+                                  >
+                                    {getStatusIcon(candidate.assessment)}
+                                    {candidate.assessmentScore > 0 && (
+                                      <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
+                                        {candidate.assessmentScore}%
+                                      </span>
+                                    )}
+                                  </button>
+                                </td>
+                              );
+                            }
+                            if (stageType === 'ai-interview') {
+                              return (
+                                <td key={stageType} className="p-4 text-center">
+                                  <button
+                                    onClick={() => {
+                                      if (candidate.aiInterviewScore > 0 && onViewModuleDetail) {
+                                        onViewModuleDetail({
+                                          type: 'ai-interview',
+                                          candidateId: candidate.id,
+                                          candidateName: candidate.name,
+                                          score: candidate.aiInterviewScore,
+                                          completedDate: new Date().toLocaleDateString()
+                                        });
+                                      }
+                                    }}
+                                    className={`flex flex-col items-center gap-1 mx-auto ${candidate.aiInterviewScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
+                                  >
+                                    {getStatusIcon(candidate.aiInterview)}
+                                    {candidate.aiInterviewScore > 0 && (
+                                      <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
+                                        {candidate.aiInterviewScore}%
+                                      </span>
+                                    )}
+                                  </button>
+                                </td>
+                              );
+                            }
+                            if (stageType === 'live-interview') {
+                              return (
+                                <td key={stageType} className="p-4 text-center">
+                                  <div className="flex flex-col items-center gap-1 mx-auto">
+                                    {getStatusIcon(candidate.liveInterview)}
+
+                                    {candidate.liveInterviewScheduledAt ? (
+                                      <div className="flex flex-col items-center mt-1">
+                                        <span className="text-[11px] text-gray-600 font-medium">
+                                          {new Date(candidate.liveInterviewScheduledAt).toLocaleString(undefined, {
+                                            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                                          })}
+                                        </span>
+                                        {candidate.liveInterviewMeetingLink && (
+                                          <a
+                                            href={candidate.liveInterviewMeetingLink}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-[10px] text-blue-600 hover:underline mt-0.5"
+                                          >
+                                            Join Link
+                                          </a>
+                                        )}
+                                      </div>
+                                    ) : candidate.liveInterview !== 'completed' && (
+                                      <button
+                                        onClick={() => {
+                                          setSelectedCandidateForSchedule({ id: String(candidate.id), name: candidate.name });
+                                          setShowScheduleModal(true);
+                                        }}
+                                        className="text-[11px] text-[#6366f1] hover:underline flex items-center gap-1"
+                                      >
+                                        <Calendar size={12} />
+                                        Schedule
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              );
+                            }
+                            return null;
+                          })}
+
+                          <td className="p-4 text-center">
+                            <button
+                              onClick={() => setShowCommentModal(candidate.id)}
+                              className="flex items-center gap-1 mx-auto px-3 py-1 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors"
+                            >
+                              <MessageSquare size={14} className="text-[#6b7280]" />
+                              <span className="text-[12px] text-[#374151]">
+                                {comments.length > 0 ? comments.length : 'Add'}
+                              </span>
+                            </button>
+                          </td>
+                          <td className="p-4 text-center">
+                            {candidate.progressionState && candidate.progressionState !== 'active' ? (
+                              <span className={`px-3 py-1 rounded-full text-[12px] font-medium ${candidate.progressionState === 'selected'
+                                ? 'bg-blue-100 text-blue-700'
+                                : candidate.progressionState === 'rejected'
+                                  ? 'bg-red-100 text-red-700'
+                                  : candidate.progressionState === 'on-hold'
+                                    ? 'bg-yellow-100 text-yellow-700'
+                                    : 'bg-gray-100 text-gray-700'
+                                }`}>
+                                {candidate.progressionState.replace('-', ' ')}
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 rounded-full text-[12px] font-medium bg-emerald-100 text-emerald-700">
+                                Active
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center justify-center gap-2">
+                              {userRole === 'recruiter' && stageState === 'review-mode' && !candidate.meetsCriteria && !candidate.overrideApplied && (
+                                <button
+                                  onClick={() => handleOverride(candidate.id)}
+                                  className="p-2 rounded-[6px] border border-orange-300 bg-orange-50 hover:bg-orange-100 transition-colors"
+                                  title="Override criteria"
+                                >
+                                  <AlertTriangle size={14} className="text-orange-600" />
+                                </button>
+                              )}
+                              {userRole === 'technical' && (
+                                <button
+                                  onClick={() => {
+                                    if (candidate.flags.length > 0) {
+                                      setShowSuspectReview(candidate.id);
+                                    } else {
+                                      showToast('No integrity flags for this candidate');
+                                    }
+                                  }}
+                                  disabled={candidate.flags.length === 0}
+                                  className="p-2 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                  <Flag size={14} className="text-[#6b7280]" />
+                                </button>
+                              )}
+                              {userRole === 'recruiter' && candidate.progressionState === 'active' && (
+                                <div className="relative group">
+                                  <button className="p-2 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
+                                    <MoreVertical size={14} className="text-[#6b7280]" />
+                                  </button>
+                                  <div className="absolute right-0 mt-1 w-[160px] bg-white border border-[#e5e7eb] rounded-[8px] shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                                    <button
+                                      onClick={() => handleMarkCandidateState(candidate.id, 'rejected')}
+                                      className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-red-600"
                                     >
-                                      {flag}
-                                    </span>
-                                  ))}
+                                      <Ban size={14} />
+                                      Mark Rejected
+                                    </button>
+                                    <button
+                                      onClick={() => handleMarkCandidateState(candidate.id, 'on-hold')}
+                                      className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-amber-600"
+                                    >
+                                      <Clock size={14} />
+                                      Mark On Hold
+                                    </button>
+                                    <button
+                                      onClick={() => handleMarkCandidateState(candidate.id, 'archived')}
+                                      className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-gray-600"
+                                    >
+                                      <Archive size={14} />
+                                      Archive
+                                    </button>
+                                  </div>
                                 </div>
                               )}
                             </div>
-                          </div>
-                        </td>
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={() => {
-                              if (candidate.assessmentScore > 0 && onViewModuleDetail) {
-                                onViewModuleDetail({
-                                  type: 'assessment',
-                                  candidateId: candidate.id,
-                                  candidateName: candidate.name,
-                                  score: candidate.assessmentScore,
-                                  completedDate: new Date().toLocaleDateString()
-                                });
-                              }
-                            }}
-                            className={`flex flex-col items-center gap-1 mx-auto ${candidate.assessmentScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
-                          >
-                            {getStatusIcon(candidate.assessment)}
-                            {candidate.assessmentScore > 0 && (
-                              <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
-                                {candidate.assessmentScore}%
-                              </span>
-                            )}
-                          </button>
-                        </td>
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={() => {
-                              if (candidate.aiInterviewScore > 0 && onViewModuleDetail) {
-                                onViewModuleDetail({
-                                  type: 'ai-interview',
-                                  candidateId: candidate.id,
-                                  candidateName: candidate.name,
-                                  score: candidate.aiInterviewScore,
-                                  completedDate: new Date().toLocaleDateString()
-                                });
-                              }
-                            }}
-                            className={`flex flex-col items-center gap-1 mx-auto ${candidate.aiInterviewScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
-                          >
-                            {getStatusIcon(candidate.aiInterview)}
-                            {candidate.aiInterviewScore > 0 && (
-                              <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
-                                {candidate.aiInterviewScore}%
-                              </span>
-                            )}
-                          </button>
-                        </td>
-                        <td className="p-4 text-center">
-                          {candidate.meetsCriteria !== undefined ? (
-                            <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-[12px] font-medium ${candidate.meetsCriteria
-                              ? 'bg-emerald-100 text-emerald-700'
-                              : 'bg-red-100 text-red-700'
-                              }`}>
-                              {candidate.meetsCriteria ? (
-                                <><CheckCircle size={12} /> Yes</>
-                              ) : (
-                                <><XCircle size={12} /> No</>
-                              )}
-                            </span>
-                          ) : (
-                            <span className="text-[#9ca3af] text-[12px]">Pending</span>
-                          )}
-                        </td>
-                        {userRole === 'technical' && (
-                          <td className="p-4 text-center">
-                            <button
-                              onClick={() => setShowVerdictModal(candidate.id)}
-                              className={`px-3 py-1 rounded-full text-[12px] font-medium ${candidate.technicalVerdict === 'pass'
-                                ? 'bg-emerald-100 text-emerald-700'
-                                : candidate.technicalVerdict === 'fail'
-                                  ? 'bg-red-100 text-red-700'
-                                  : candidate.technicalVerdict === 'conditional'
-                                    ? 'bg-amber-100 text-amber-700'
-                                    : 'bg-gray-100 text-gray-600 border border-dashed'
-                                }`}
-                            >
-                              {candidate.technicalVerdict ? candidate.technicalVerdict : 'Set Verdict'}
-                            </button>
                           </td>
-                        )}
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={() => setShowCommentModal(candidate.id)}
-                            className="flex items-center gap-1 mx-auto px-3 py-1 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors"
-                          >
-                            <MessageSquare size={14} className="text-[#6b7280]" />
-                            <span className="text-[12px] text-[#374151]">
-                              {comments.length > 0 ? comments.length : 'Add'}
-                            </span>
-                          </button>
-                        </td>
-                        <td className="p-4 text-center">
-                          {candidate.progressionState && candidate.progressionState !== 'active' ? (
-                            <span className={`px-3 py-1 rounded-full text-[12px] font-medium ${candidate.progressionState === 'selected'
-                              ? 'bg-blue-100 text-blue-700'
-                              : candidate.progressionState === 'rejected'
-                                ? 'bg-red-100 text-red-700'
-                                : candidate.progressionState === 'on-hold'
-                                  ? 'bg-yellow-100 text-yellow-700'
-                                  : 'bg-gray-100 text-gray-700'
-                              }`}>
-                              {candidate.progressionState.replace('-', ' ')}
-                            </span>
-                          ) : (
-                            <span className="px-3 py-1 rounded-full text-[12px] font-medium bg-emerald-100 text-emerald-700">
-                              Active
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-4">
-                          <div className="flex items-center justify-center gap-2">
-                            {userRole === 'recruiter' && stageState === 'review-mode' && !candidate.meetsCriteria && !candidate.overrideApplied && (
-                              <button
-                                onClick={() => handleOverride(candidate.id)}
-                                className="p-2 rounded-[6px] border border-orange-300 bg-orange-50 hover:bg-orange-100 transition-colors"
-                                title="Override criteria"
-                              >
-                                <AlertTriangle size={14} className="text-orange-600" />
-                              </button>
-                            )}
-                            {userRole === 'technical' && (
-                              <button
-                                onClick={() => {
-                                  if (candidate.flags.length > 0) {
-                                    setShowSuspectReview(candidate.id);
-                                  } else {
-                                    showToast('No integrity flags for this candidate');
-                                  }
-                                }}
-                                disabled={candidate.flags.length === 0}
-                                className="p-2 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                              >
-                                <Flag size={14} className="text-[#6b7280]" />
-                              </button>
-                            )}
-                            {userRole === 'recruiter' && candidate.progressionState === 'active' && (
-                              <div className="relative group">
-                                <button className="p-2 rounded-[6px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
-                                  <MoreVertical size={14} className="text-[#6b7280]" />
-                                </button>
-                                <div className="absolute right-0 mt-1 w-[160px] bg-white border border-[#e5e7eb] rounded-[8px] shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
-                                  <button
-                                    onClick={() => handleMarkCandidateState(candidate.id, 'rejected')}
-                                    className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-red-600"
-                                  >
-                                    <Ban size={14} />
-                                    Mark Rejected
-                                  </button>
-                                  <button
-                                    onClick={() => handleMarkCandidateState(candidate.id, 'on-hold')}
-                                    className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-amber-600"
-                                  >
-                                    <Clock size={14} />
-                                    Mark On Hold
-                                  </button>
-                                  <button
-                                    onClick={() => handleMarkCandidateState(candidate.id, 'archived')}
-                                    className="w-full px-4 py-2 text-left text-[13px] hover:bg-[#f9fafb] flex items-center gap-2 text-gray-600"
-                                  >
-                                    <Archive size={14} />
-                                    Archive
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        </tr>
+                      );
+                    }))}
               </tbody>
             </table>
           </div>
@@ -1617,272 +2023,345 @@ export function EnhancedGroupOverviewV2({
       </div>
 
       {/* Comment Modal */}
-      {showCommentModal !== null && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-          <div className="bg-white rounded-[16px] shadow-2xl max-w-2xl w-full">
-            <div className="px-8 py-6 border-b border-[#e5e7eb]">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[#111827]">
-                  Comments for {candidateStatuses.find(c => c.id === showCommentModal)?.name}
-                </h3>
+      {
+        showCommentModal !== null && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+            <div className="bg-white rounded-[16px] shadow-2xl max-w-2xl w-full">
+              <div className="px-8 py-6 border-b border-[#e5e7eb]">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[#111827]">
+                    Comments for {candidateStatuses.find(c => c.id === showCommentModal)?.name}
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowCommentModal(null);
+                      setCommentText('');
+                    }}
+                    className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+                  >
+                    <X size={20} className="text-[#6b7280]" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-8">
+                {/* Existing comments */}
+                <div className="mb-6 space-y-3 max-h-[300px] overflow-y-auto">
+                  {getCandidateComments(showCommentModal).length > 0 ? (
+                    getCandidateComments(showCommentModal).map((comment) => (
+                      <div
+                        key={comment.id}
+                        className={`p-4 rounded-[12px] border ${comment.author === 'technical'
+                          ? 'bg-emerald-50 border-emerald-200'
+                          : 'bg-blue-50 border-blue-200'
+                          }`}
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className={`px-2 py-1 rounded-full text-[10px] font-medium ${comment.author === 'technical'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-blue-100 text-blue-700'
+                            }`}>
+                            {comment.author === 'technical' ? (
+                              <><Shield size={10} className="inline mr-1" />Technical</>
+                            ) : (
+                              <><Users size={10} className="inline mr-1" />HR</>
+                            )}
+                          </span>
+                          <span className="text-[12px] text-[#6b7280]">
+                            {comment.timestamp.toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="text-[14px] text-[#374151]">{comment.text}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-center text-[14px] text-[#6b7280] py-8">
+                      No comments yet. Add the first comment below.
+                    </p>
+                  )}
+                </div>
+
+                {/* Add new comment */}
+                <div>
+                  <label className="block text-[13px] text-[#374151] mb-2">
+                    Add Comment ({userRole === 'technical' ? 'Technical Recruiter' : 'HR Recruiter'})
+                  </label>
+                  <textarea
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    placeholder="Enter your comment..."
+                    rows={3}
+                    className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                  />
+                </div>
+              </div>
+
+              <div className="px-8 py-4 border-t border-[#e5e7eb] flex justify-end gap-3">
                 <button
                   onClick={() => {
                     setShowCommentModal(null);
                     setCommentText('');
                   }}
-                  className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+                  className="px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
                 >
-                  <X size={20} className="text-[#6b7280]" />
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleAddComment(showCommentModal)}
+                  disabled={!commentText.trim()}
+                  className="px-6 py-2 rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] text-white text-[14px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add Comment
                 </button>
               </div>
             </div>
+          </div>
+        )
+      }
 
-            <div className="p-8">
-              {/* Existing comments */}
-              <div className="mb-6 space-y-3 max-h-[300px] overflow-y-auto">
-                {getCandidateComments(showCommentModal).length > 0 ? (
-                  getCandidateComments(showCommentModal).map((comment) => (
-                    <div
-                      key={comment.id}
-                      className={`p-4 rounded-[12px] border ${comment.author === 'technical'
-                        ? 'bg-emerald-50 border-emerald-200'
-                        : 'bg-blue-50 border-blue-200'
-                        }`}
-                    >
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className={`px-2 py-1 rounded-full text-[10px] font-medium ${comment.author === 'technical'
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : 'bg-blue-100 text-blue-700'
-                          }`}>
-                          {comment.author === 'technical' ? (
-                            <><Shield size={10} className="inline mr-1" />Technical</>
-                          ) : (
-                            <><Users size={10} className="inline mr-1" />HR</>
-                          )}
-                        </span>
-                        <span className="text-[12px] text-[#6b7280]">
-                          {comment.timestamp.toLocaleString()}
-                        </span>
-                      </div>
-                      <p className="text-[14px] text-[#374151]">{comment.text}</p>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-center text-[14px] text-[#6b7280] py-8">
-                    No comments yet. Add the first comment below.
-                  </p>
-                )}
+      {/* Verdict Modal - Technical Recruiter Only */}
+      {
+        showVerdictModal !== null && userRole === 'technical' && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+            <div className="bg-white rounded-[16px] shadow-2xl max-w-md w-full p-8">
+              <h3 className="text-[#111827] mb-4">
+                Set Technical Verdict for {candidateStatuses.find(c => c.id === showVerdictModal)?.name}
+              </h3>
+              <div className="space-y-3">
+                <button
+                  onClick={() => handleSetVerdict(showVerdictModal, 'pass')}
+                  className="w-full p-4 rounded-[8px] border-2 border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 font-medium transition-colors"
+                >
+                  Pass
+                </button>
+                <button
+                  onClick={() => handleSetVerdict(showVerdictModal, 'conditional')}
+                  className="w-full p-4 rounded-[8px] border-2 border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-medium transition-colors"
+                >
+                  Conditional
+                </button>
+                <button
+                  onClick={() => handleSetVerdict(showVerdictModal, 'fail')}
+                  className="w-full p-4 rounded-[8px] border-2 border-red-300 bg-red-50 hover:bg-red-100 text-red-900 font-medium transition-colors"
+                >
+                  Fail
+                </button>
               </div>
-
-              {/* Add new comment */}
-              <div>
-                <label className="block text-[13px] text-[#374151] mb-2">
-                  Add Comment ({userRole === 'technical' ? 'Technical Recruiter' : 'HR Recruiter'})
-                </label>
-                <textarea
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  placeholder="Enter your comment..."
-                  rows={3}
-                  className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
-                />
-              </div>
-            </div>
-
-            <div className="px-8 py-4 border-t border-[#e5e7eb] flex justify-end gap-3">
               <button
-                onClick={() => {
-                  setShowCommentModal(null);
-                  setCommentText('');
-                }}
-                className="px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
+                onClick={() => setShowVerdictModal(null)}
+                className="mt-6 w-full px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
               >
                 Cancel
               </button>
-              <button
-                onClick={() => handleAddComment(showCommentModal)}
-                disabled={!commentText.trim()}
-                className="px-6 py-2 rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] text-white text-[14px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Add Comment
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
-      {/* Verdict Modal - Technical Recruiter Only */}
-      {showVerdictModal !== null && userRole === 'technical' && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-          <div className="bg-white rounded-[16px] shadow-2xl max-w-md w-full p-8">
-            <h3 className="text-[#111827] mb-4">
-              Set Technical Verdict for {candidateStatuses.find(c => c.id === showVerdictModal)?.name}
-            </h3>
-            <div className="space-y-3">
-              <button
-                onClick={() => handleSetVerdict(showVerdictModal, 'pass')}
-                className="w-full p-4 rounded-[8px] border-2 border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 font-medium transition-colors"
-              >
-                Pass
-              </button>
-              <button
-                onClick={() => handleSetVerdict(showVerdictModal, 'conditional')}
-                className="w-full p-4 rounded-[8px] border-2 border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-medium transition-colors"
-              >
-                Conditional
-              </button>
-              <button
-                onClick={() => handleSetVerdict(showVerdictModal, 'fail')}
-                className="w-full p-4 rounded-[8px] border-2 border-red-300 bg-red-50 hover:bg-red-100 text-red-900 font-medium transition-colors"
-              >
-                Fail
-              </button>
-            </div>
-            <button
-              onClick={() => setShowVerdictModal(null)}
-              className="mt-6 w-full px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Activity Log Modal */}
+      {/* Activity Log Panel */}
       {showActivityLog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-          <div className="bg-white rounded-[16px] shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="px-8 py-6 border-b border-[#e5e7eb]">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[#111827]">Activity & Decision Log</h3>
-                <button
-                  onClick={() => setShowActivityLog(false)}
-                  className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
-                >
-                  <X size={20} className="text-[#6b7280]" />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-8">
-              <div className="space-y-4">
-                {activityLog.map((entry) => (
-                  <div key={entry.id} className="flex gap-4">
-                    <div className="flex-shrink-0 w-10 h-10 rounded-full bg-[#f3f4f6] flex items-center justify-center">
-                      {entry.actorRole === 'technical' ? (
-                        <Shield size={16} className="text-[#10b981]" />
-                      ) : (
-                        <Users size={16} className="text-[#6366f1]" />
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[14px] text-[#111827] font-medium">
-                          {entry.actor}
-                        </span>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${entry.actorRole === 'technical'
-                          ? 'bg-emerald-100 text-emerald-700'
-                          : 'bg-blue-100 text-blue-700'
-                          }`}>
-                          {entry.actorRole === 'technical' ? 'Technical' : 'HR'}
-                        </span>
-                        <span className="text-[12px] text-[#9ca3af]">
-                          {entry.timestamp.toLocaleString()}
-                        </span>
-                      </div>
-                      <p className="text-[14px] text-[#6b7280]">{entry.description}</p>
-                      {entry.metadata && (
-                        <div className="mt-2 p-2 bg-gray-50 rounded-[6px] text-[12px] text-gray-600">
-                          <code>{JSON.stringify(entry.metadata, null, 2)}</code>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="px-8 py-4 border-t border-[#e5e7eb] flex justify-end">
-              <button
-                onClick={() => setShowActivityLog(false)}
-                className="px-6 py-2 rounded-[8px] border border-[#e5e7eb] text-[14px] hover:bg-[#f9fafb] transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <ActivityLogPanel
+          groupId={groupId}
+          groupName={groupName}
+          onClose={() => setShowActivityLog(false)}
+        />
       )}
 
 
 
       {/* Start Stage Modal */}
-      {showStartStageModal && (
-        <StartStageModal
-          stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
-          onConfirm={handleConfirmStartStage}
-          onCancel={() => setShowStartStageModal(false)}
+      {
+        showStartStageModal && (
+          <StartStageModal
+            stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
+            onConfirm={handleConfirmStartStage}
+            onCancel={() => setShowStartStageModal(false)}
+          />
+        )
+      }
+
+      {/* Stage Results Dashboard - Full Screen */}
+      {
+        showStageResults && (
+          <StageResultsDashboard
+            stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
+            stageId={currentStage}
+            candidates={candidateStatuses}
+            onClose={() => setShowStageResults(false)}
+            onEnterReviewMode={handleEnterReviewMode}
+            startDate={pipelineSteps.find(s => s.id === currentStage)?.startDate || new Date()}
+            endDate={pipelineSteps.find(s => s.id === currentStage)?.actualEndDate || new Date()}
+          />
+        )
+      }
+
+      {/* Module Monitoring Dashboard - Full Screen */}
+      {
+        showModuleMonitoring && (
+          <ModuleMonitoringDashboard
+            moduleType={showModuleMonitoring}
+            candidates={candidateStatuses}
+            activeFlow={activeFlow}
+            pipelineSteps={pipelineSteps}
+            onClose={() => setShowModuleMonitoring(null)}
+            onViewCandidate={(candidateId) => {
+              setShowModuleMonitoring(null);
+              onViewCandidate(candidateId);
+            }}
+            onAddVerdict={(candidateId) => {
+              setShowModuleMonitoring(null);
+              setShowVerdictModal(candidateId);
+            }}
+            onReviewFlags={(candidateId) => {
+              setShowModuleMonitoring(null);
+              setShowSuspectReview(candidateId);
+            }}
+          />
+        )
+      }
+
+      {/* Assessment/Interview Creation Full Screens */}
+      {showAssessmentCreation && (
+        <CreateAdvancedAssessment
+          onBack={() => {
+            setShowAssessmentCreation(false);
+            setEditingAssessmentData(null);
+          }}
+          onSave={handleSaveAssessment}
+          initialData={editingAssessmentData}
         />
       )}
 
-      {/* Stage Results Dashboard */}
-      {showStageResults && (
-        <StageResultsDashboard
-          stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
-          stageId={currentStage}
-          candidates={candidateStatuses}
-          onClose={() => setShowStageResults(false)}
-          onEnterReviewMode={handleEnterReviewMode}
-          startDate={pipelineSteps.find(s => s.id === currentStage)?.startDate || new Date()}
-          endDate={pipelineSteps.find(s => s.id === currentStage)?.actualEndDate || new Date()}
-        />
+      {showUnifiedAIInterviewSetup && (
+        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
+          <UnifiedAIInterviewSetup
+            groupName={groupName}
+            activeFlow={activeFlow}
+            initialData={editingInterviewData}
+            onBack={() => {
+              setShowUnifiedAIInterviewSetup(false);
+              setEditingInterviewData(null);
+            }}
+            onSetupQuestions={(settings) => {
+              setPendingAISettings(settings);
+              setShowUnifiedAIInterviewSetup(false);
+              setShowRecordedQuestionSetup(true);
+            }}
+            onSetupLiveFlow={(settings) => {
+              setPendingAISettings(settings);
+              setShowUnifiedAIInterviewSetup(false);
+              setShowLiveFlowSetup(true);
+            }}
+          />
+        </div>
       )}
 
-      {/* Module Monitoring Dashboard */}
-      {showModuleMonitoring && (
-        <ModuleMonitoringDashboard
-          moduleType={showModuleMonitoring}
-          candidates={candidateStatuses}
-          onClose={() => setShowModuleMonitoring(null)}
-          onViewCandidate={(candidateId) => {
-            setShowModuleMonitoring(null);
-            onViewCandidate(candidateId);
-          }}
-          onAddVerdict={(candidateId) => {
-            setShowModuleMonitoring(null);
-            setShowVerdictModal(candidateId);
-          }}
-          onReviewFlags={(candidateId) => {
-            setShowModuleMonitoring(null);
-            setShowSuspectReview(candidateId);
-          }}
-        />
+      {showLiveFlowSetup && (
+        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
+          <LiveInterviewFlowSetup
+            groupName={groupName}
+            initialSettings={editingInterviewData?.questions?.extended_config?.live_flow_config
+              ?? editingInterviewData?.questions?.live_flow_config
+              ?? undefined}
+            onBack={() => {
+              setShowLiveFlowSetup(false);
+              setShowUnifiedAIInterviewSetup(true);
+            }}
+            onSave={async (flowSettings) => {
+              try {
+                const mergedConfig = {
+                  ...pendingAISettings,
+                  live_flow_config: flowSettings
+                };
+
+                await api.recruiter.assignInterview(groupId, {
+                  interview_type: 'live',
+                  config: mergedConfig,
+                  id: editingInterviewData?.id,
+                  sections: []
+                });
+                showToast('Live AI Interview configured successfully');
+                setShowLiveFlowSetup(false);
+                setPendingAISettings(null);
+                setEditingInterviewData(null);
+                setRefreshKey(prev => prev + 1);
+              } catch (error) {
+                console.error('Failed to assign live interview:', error);
+                showToast('Failed to save AI Interview');
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {showRecordedQuestionSetup && (
+        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
+          <RecordedInterviewQuestionSetup
+            groupName={groupName}
+            initialQuestions={(() => {
+              // Extract saved questions from the interview being edited
+              const items = editingInterviewData?.questions?.items;
+              if (Array.isArray(items) && items.length > 0) {
+                return items.map((q: any, i: number) => ({
+                  id: q.id || String(i + 1),
+                  text: q.text || q.question || '',
+                  duration: q.duration || q.recordingTime || 120
+                }));
+              }
+              return undefined;
+            })()}
+            onBack={() => {
+              setShowRecordedQuestionSetup(false);
+              setShowUnifiedAIInterviewSetup(true);
+            }}
+            onSave={async (questions) => {
+              try {
+                await api.recruiter.assignInterview(groupId, {
+                  interview_type: 'recorded',
+                  config: pendingAISettings,
+                  id: editingInterviewData?.id,
+                  sections: questions
+                });
+                showToast('Recorded AI Interview configured successfully');
+                setShowRecordedQuestionSetup(false);
+                setPendingAISettings(null);
+                setEditingInterviewData(null);
+                setRefreshKey(prev => prev + 1);
+              } catch (error) {
+                console.error('Failed to assign recorded interview:', error);
+                showToast('Failed to save AI Interview');
+              }
+            }}
+          />
+        </div>
       )}
 
       {/* Bulk Progression Modal */}
-      {showBulkProgressionModal && (
-        <BulkProgressionModal
-          currentStage={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
-          nextStage={
-            (() => {
-              const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
-              return pipelineSteps[currentStepIndex + 1]?.name || 'Review';
-            })()
-          }
-          candidates={candidateStatuses
-            .filter(c => c.progressionState === 'active' || !c.progressionState)
-            .map(c => ({
-              id: c.id,
-              name: c.name,
-              avatar: c.avatar,
-              score: c.assessmentScore,
-              flags: c.flags,
-              meetsCriteria: c.meetsCriteria || false
-            }))}
-          onConfirm={handleBulkProgression}
-          onCancel={() => setShowBulkProgressionModal(false)}
-        />
-      )}
+      {
+        showBulkProgressionModal && (
+          <BulkProgressionModal
+            currentStage={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
+            nextStage={
+              (() => {
+                const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
+                return pipelineSteps[currentStepIndex + 1]?.name || 'Review';
+              })()
+            }
+            candidates={candidateStatuses
+              .filter(c => c.progressionState === 'active' || !c.progressionState)
+              .map(c => ({
+                id: c.id,
+                name: c.name,
+                avatar: c.avatar,
+                score: c.assessmentScore,
+                flags: c.flags,
+                meetsCriteria: c.meetsCriteria || false
+              }))}
+            onConfirm={handleBulkProgression}
+            onCancel={() => setShowBulkProgressionModal(false)}
+          />
+        )
+      }
 
       {/* Final Decision Modal */}
       <FinalDecisionModal
@@ -1922,6 +2401,36 @@ export function EnhancedGroupOverviewV2({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Filtration Flow Configuration Modal */}
+      {
+        showFlowConfigModal && (
+          <FiltrationFlowConfigModal
+            groupData={{
+              id: groupId,
+              name: groupName,
+              candidateCount: candidateStatuses.length,
+              filtration_flow: pipelineSteps.map(s => s.id)
+            }}
+            onClose={() => setShowFlowConfigModal(false)}
+            onSave={handleSaveFlow}
+          />
+        )
+      }
+
+      {/* Schedule Interview Modal */}
+      {showScheduleModal && selectedCandidateForSchedule && (
+        <ScheduleInterviewModal
+          isOpen={showScheduleModal}
+          onClose={() => {
+            setShowScheduleModal(false);
+            setSelectedCandidateForSchedule(null);
+          }}
+          onSchedule={handleScheduleInterview}
+          candidateName={selectedCandidateForSchedule.name}
+          applicationId={selectedCandidateForSchedule.id}
+        />
+      )}
     </div>
   );
 }

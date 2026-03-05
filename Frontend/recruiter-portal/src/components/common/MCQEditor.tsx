@@ -11,6 +11,7 @@ interface QuestionVariant {
   correctAnswer?: number | number[];
   multipleCorrect?: boolean;
   explanation?: string;
+  category?: string;
   difficulty?: 'Easy' | 'Medium' | 'Hard';
   tags?: string[];
 }
@@ -28,6 +29,7 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
     correctAnswer: variant.correctAnswer || (variant.multipleCorrect ? [] : 0),
     multipleCorrect: variant.multipleCorrect || false,
     difficulty: variant.difficulty || 'Medium',
+    category: variant.category || '',
     tags: variant.tags || []
   });
 
@@ -225,8 +227,8 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
                       <button
                         onClick={() => handleToggleCorrectAnswer(index)}
                         className={`flex-shrink-0 w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all ${isCorrect
-                            ? 'border-emerald-500 bg-emerald-50'
-                            : 'border-gray-300 bg-white hover:border-[#6366f1]'
+                          ? 'border-emerald-500 bg-emerald-50'
+                          : 'border-gray-300 bg-white hover:border-[#6366f1]'
                           }`}
                         title={`Mark as ${isCorrect ? 'incorrect' : 'correct'}`}
                       >
@@ -326,6 +328,20 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
               )}
             </div>
 
+            {/* Category */}
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Category (Optional)
+              </label>
+              <input
+                type="text"
+                value={questionData.category || ''}
+                onChange={(e) => setQuestionData({ ...questionData, category: e.target.value })}
+                placeholder="e.g., Fundamentals, React Hooks, Algorithms..."
+                className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+              />
+            </div>
+
             {/* Difficulty */}
             <div>
               <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-3">
@@ -337,12 +353,12 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
                     key={difficulty}
                     onClick={() => setQuestionData({ ...questionData, difficulty })}
                     className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${questionData.difficulty === difficulty
-                        ? difficulty === 'Easy'
-                          ? 'border-green-500 bg-green-50 text-green-700'
-                          : difficulty === 'Medium'
-                            ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
-                            : 'border-red-500 bg-red-50 text-red-700'
-                        : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]'
+                      ? difficulty === 'Easy'
+                        ? 'border-green-500 bg-green-50 text-green-700'
+                        : difficulty === 'Medium'
+                          ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
+                          : 'border-red-500 bg-red-50 text-red-700'
+                      : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]'
                       }`}
                   >
                     {difficulty}

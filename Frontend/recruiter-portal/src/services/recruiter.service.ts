@@ -96,18 +96,20 @@ export const recruiterService = {
 
     getFiltrationFlowConfig: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/filtration-flow`),
 
+    getPositionGroups: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/groups`),
+
     getSkillClusters: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/skills`),
 
     // Candidate Management
-    getCandidates: async () => fetchAPI('/groups/candidates/all'),
+    getCandidates: async () => fetchAPI<any[]>('/recruiter/candidates'),
 
     getGroupCandidates: async () => fetchAPI('/groups/candidates/all'),
 
-    getCandidate: async (candidateId: number) => fetchAPI<any>(`/candidates/${candidateId}`),
+    getCandidate: async (candidateId: string) => fetchAPI<any>(`/candidates/${candidateId}`),
 
-    getSuspectReview: async (candidateId: number) => fetchAPI(`/candidates/${candidateId}/suspect-review`),
+    getSuspectReview: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/suspect-review`),
 
-    getKnowledgeGraphData: async (candidateId: number) => fetchAPI(`/candidates/${candidateId}/knowledge-graph`),
+    getKnowledgeGraphData: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/knowledge-graph`),
 
     getCandidateSkills: async (candidateIds: number[]) => {
         const res = await fetch(`${API_URL}/candidates/skills`, {
@@ -129,9 +131,9 @@ export const recruiterService = {
     },
 
     // Group Management
-    getGroupDetails: async (groupId: string) => fetchAPI(`/groups/${groupId}/details`),
+    getGroupDetails: async (groupId: string) => fetchAPI(`/recruiter/groups/${groupId}`),
 
-    getGroupOverviewV2: async (groupId: string) => fetchAPI(`/groups/${groupId}/overview`),
+    getGroupOverviewV2: async (groupId: string) => fetchAPI(`/recruiter/groups/${groupId}`),
 
     getGroupCreationConfig: async () => fetchAPI('/groups/config/creation'),
 
@@ -141,14 +143,52 @@ export const recruiterService = {
     getPipelineModules: async () => fetchAPI<any[]>('/recruiter/pipeline-modules'),
 
     // Assessment Management
+    getAssessment: async (assessmentId: string) => {
+        return fetchAPI(`/assessments/${assessmentId}`);
+    },
+
+    updateAssessment: async (assessmentId: string, data: any) => {
+        return fetchAPI(`/assessments/${assessmentId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    deleteAssessment: async (assessmentId: string) => {
+        return fetchAPI(`/assessments/${assessmentId}`, {
+            method: 'DELETE'
+        });
+    },
+
     getAssessmentDetails: async (candidateId: number) => fetchAPI(`/candidates/${candidateId}/assessment-details`),
 
     getAssessmentTemplates: async () => fetchAPI('/assessments/templates'),
 
     getAssessmentSession: async (sessionId: string) => fetchAPI(`/assessments/sessions/${sessionId}`),
 
+    saveAssessment: async (data: any) => {
+        return fetchAPI<any>('/assessments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
     // Question Bank
     getQuestionBank: async () => fetchAPI('/questions/bank'),
+
+    createQuestionBank: async (data: any) => {
+        return fetchAPI('/questions/bank', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    toggleQuestionFavorite: async (questionId: string) => fetchAPI(`/questions/bank/${questionId}/favorite`, { method: 'POST' }),
+
+    deleteQuestionBank: async (questionId: string) => fetchAPI(`/questions/bank/${questionId}`, { method: 'DELETE' }),
 
     getQuestionBankVariants: async (type: string) => fetchAPI(`/questions/variants?type=${type}`),
 
@@ -178,6 +218,236 @@ export const recruiterService = {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status, review_notes: reviewNotes })
+        });
+    },
+
+    // Candidate Import & Group Creation
+    uploadCandidates: async (positionId: string, file: File) => {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Note: fetchAPI wrapper might default to JSON content type. 
+        // If fetchAPI sets 'Content-Type': 'application/json' automatically, this might fail.
+        // We might need to use raw fetch or ensure fetchAPI handles FormData.
+        // Assuming fetchAPI handles it or we override.
+        // Actually, let's use API_URL + fetch directly to be safe if fetchAPI is rigid.
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/recruiter/positions/${positionId}/candidates/upload`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`
+                // No Content-Type header, browser sets it with boundary for FormData
+            },
+            body: formData
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            let errorMessage = 'Upload failed';
+            if (err.detail) {
+                if (typeof err.detail === 'string') {
+                    errorMessage = err.detail;
+                } else if (Array.isArray(err.detail)) {
+                    errorMessage = err.detail.map((e: any) => e.msg).join(', ');
+                } else {
+                    errorMessage = JSON.stringify(err.detail);
+                }
+            }
+            throw new Error(errorMessage);
+        }
+        return res.json();
+    },
+
+    createGroup: async (data: {
+        name: string;
+        position_id: string;
+        candidate_ids: string[]; // Frontend likely uses string IDs, backend expects UUIDs
+        description?: string;
+        ai_ranking_used?: boolean;
+        nlp_query?: string;
+    }) => {
+        return fetchAPI<any>(`/recruiter/positions/${data.position_id}/groups`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    deleteGroup: async (groupId: string) => {
+        return fetchAPI(`/recruiter/groups/${groupId}`, {
+            method: 'DELETE'
+        });
+    },
+
+    updateGroup: async (groupId: string, data: { name?: string; status?: string; filtration_flow?: string[] }) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    // Stage Management
+    startStage: async (groupId: string, stage: string) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/stages/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage })
+        });
+    },
+
+    // Activity Log
+    getGroupActivityLog: async (groupId: string) => {
+        return fetchAPI(`/recruiter/groups/${groupId}/activity`);
+    },
+
+    // Interview Assignment
+    assignInterview: async (groupId: string, data: {
+        interview_type: 'live' | 'recorded';
+        config: any;
+        sections: any[];
+        id?: string;
+    }) => {
+        // Transform the frontend data structure into the exact shape expected by the backend
+        // schema `AssignInterviewRequest`
+        const payload = {
+            create_new: !data.id,
+            interview_config_id: data.id,
+            interview_config: {
+                title: data.config.title || 'AI Interview',
+                interview_type: data.interview_type === 'live' ? 'live_ai' : data.interview_type,
+                instructions: data.config.instructions || data.config.systemPrompt || '',
+                max_retakes: data.config.maxRetakes || 0,
+                ...data.config,
+                questions: {
+                    items: data.sections,
+                    extended_config: data.config
+                }
+            }
+        };
+
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/interviews/assign`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    },
+
+    deleteInterview: async (groupId: string, interviewId: string) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/interviews/${interviewId}`, {
+            method: 'DELETE'
+        });
+    },
+
+    // Close Stage
+    closeStage: async (groupId: string, stage: string) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/stages/close`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage })
+        });
+    },
+
+    // Bulk Candidate Progression
+    bulkProgressCandidates: async (groupId: string, data: {
+        application_ids: string[];
+        action: 'progress' | 'reject' | 'hold';
+        reason?: string;
+    }) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/candidates/bulk-progress`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    // Send Offers
+    sendOffers: async (groupId: string, data: {
+        application_ids: string[];
+        email_subject: string;
+        email_body: string;
+    }) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/offers/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    // Settings
+    getSettings: async () => fetchAPI<any>('/recruiter/settings'),
+
+    updateProfile: async (data: any) => {
+        return fetchAPI<any>('/recruiter/settings/profile', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    updatePreferences: async (data: any) => {
+        return fetchAPI<any>('/recruiter/settings/preferences', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    updateAIPipeline: async (ai_pipeline_config: any) => {
+        return fetchAPI<any>('/recruiter/settings/ai-pipeline', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ai_pipeline_config })
+        });
+    },
+
+    // Schedule Interview
+    scheduleInterview: async (groupId: string, data: {
+        application_id: string;
+        scheduled_at: string;
+        duration_minutes?: number;
+        interviewer_id?: string;
+        meeting_link?: string;
+    }) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/interviews/schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    // AI Features
+    generateAIQuestion: async (data: { question_type: string, topic: string, difficulty: string, context?: string }) => {
+        return fetchAPI<any>('/recruiter/ai/generate-question', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    refineAIQuestion: async (questionText: string) => {
+        return fetchAPI<{ refinedText: string }>('/recruiter/ai/refine-question', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question_text: questionText })
+        });
+    },
+
+    // Filter Templates
+    getFilterTemplates: async () => {
+        return fetchAPI<any[]>('/recruiter/filters/templates');
+    },
+
+    saveFilterTemplate: async (template: { name: string, filters: any }) => {
+        return fetchAPI<any>('/recruiter/filters/templates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(template)
+        });
+    },
+
+    deleteFilterTemplate: async (templateId: string) => {
+        return fetchAPI(`/recruiter/filters/templates/${templateId}`, {
+            method: 'DELETE'
         });
     }
 };

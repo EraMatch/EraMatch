@@ -1,6 +1,7 @@
-import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2 } from 'lucide-react';
+import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../../services/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../ui/dialog';
 import { Switch } from '../../ui/switch';
@@ -9,9 +10,10 @@ import { GroupCreationPage } from '../groups/GroupCreationPage';
 import { FiltrationFlowConfigModal } from '../groups/FiltrationFlowConfigModal';
 import { CandidateProfile } from '../candidates/CandidateProfile';
 import { SimpleGroupCreationModal } from '../groups/SimpleGroupCreationModal';
+import { CandidateFilterSidebar, CandidateFilters } from '../candidates/CandidateFilterSidebar';
 
 interface Candidate {
-  id: number;
+  id: string;
   name: string;
   email: string;
   score: number;
@@ -19,6 +21,14 @@ interface Candidate {
   color: string;
   starred: boolean;
   selected: boolean;
+  // New fields for filtering
+  experience: number;
+  location: string;
+  companies: string[];
+  skills: string[];
+  job_titles: string[];
+  degrees: string[];
+  universities: string[];
 }
 
 interface Assessment {
@@ -69,6 +79,11 @@ export function PositionDetailView({
   const [seniorityDistribution, setSeniorityDistribution] = useState<any[]>([]);
   const [universityDistribution, setUniversityDistribution] = useState<any[]>([]);
   const [availabilityDistribution, setAvailabilityDistribution] = useState<any[]>([]);
+  const [conversion, setConversion] = useState<number>(0);
+  const [qualityScore, setQualityScore] = useState<number>(0);
+  const [integrityIssues, setIntegrityIssues] = useState<number>(0);
+  const [sourceQuality, setSourceQuality] = useState<any[]>([]);
+  const [topCompanies, setTopCompanies] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editPositionTitle, setEditPositionTitle] = useState(positionTitle);
@@ -82,7 +97,80 @@ export function PositionDetailView({
   const [showGroupCreationPage, setShowGroupCreationPage] = useState(false);
   const [showFlowConfigModal, setShowFlowConfigModal] = useState(false);
   const [pendingGroupData, setPendingGroupData] = useState<any>(null);
-  const [viewingCandidateId, setViewingCandidateId] = useState<number | null>(null);
+  const [viewingCandidateId, setViewingCandidateId] = useState<string | null>(null);
+
+  // Filtering State
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [filters, setFilters] = useState<CandidateFilters>({
+    keywords: '',
+    locations: [],
+    companies: [],
+    schools: [],
+    experienceRange: [0, 20],
+    skills: [],
+    jobTitles: [],
+    degrees: []
+  });
+
+  // Rename Group State
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editGroupName, setEditGroupName] = useState('');
+
+  // Derived Filter Options
+  const filterOptions = {
+    locations: Array.from(new Set(candidates.map(c => c.location || 'Unknown'))).filter(Boolean).sort(),
+    companies: Array.from(new Set(candidates.flatMap(c => c.companies || []))).filter(Boolean).sort(),
+    schools: Array.from(new Set(candidates.flatMap(c => c.universities || []))).filter(Boolean).sort(),
+    skills: Array.from(new Set(candidates.flatMap(c => c.skills || []))).filter(Boolean).sort(),
+    jobTitles: Array.from(new Set(candidates.flatMap(c => c.job_titles || []))).filter(Boolean).sort(),
+    degrees: Array.from(new Set(candidates.flatMap(c => c.degrees || []))).filter(Boolean).sort(),
+  };
+
+  // Filter Logic
+  const filteredCandidates = candidates.filter(c => {
+    // Keywords (Name, Email, Job Titles, Skills)
+    if (filters.keywords) {
+      const term = filters.keywords.toLowerCase();
+      const matchesKeyword =
+        c.name.toLowerCase().includes(term) ||
+        c.email.toLowerCase().includes(term) ||
+        c.job_titles?.some(t => t.toLowerCase().includes(term)) ||
+        c.skills?.some(s => s.toLowerCase().includes(term));
+
+      if (!matchesKeyword) return false;
+    }
+
+    // Locations
+    if (filters.locations.length > 0 && !filters.locations.includes(c.location || 'Unknown')) return false;
+
+    // Experience
+    if (c.experience !== undefined) {
+      const min = filters.experienceRange[0];
+      const max = filters.experienceRange[1];
+      if (c.experience < min) return false;
+      if (max < 20 && c.experience > max) return false;
+    }
+
+    // Skills (OR logic: has at least one of selected)
+    if (filters.skills.length > 0) {
+      const hasSkill = c.skills?.some(s => filters.skills.includes(s));
+      if (!hasSkill) return false;
+    }
+
+    // Companies
+    if (filters.companies.length > 0) {
+      const hasCompany = c.companies?.some(comp => filters.companies.includes(comp));
+      if (!hasCompany) return false;
+    }
+
+    // Schools
+    if (filters.schools.length > 0) {
+      const hasSchool = c.universities?.some(u => filters.schools.includes(u));
+      if (!hasSchool) return false;
+    }
+
+    return true;
+  });
 
   // Assessment management - use savedAssessments from props
   const assessments = savedAssessments;
@@ -91,35 +179,76 @@ export function PositionDetailView({
     const fetchData = async () => {
       try {
         setIsLoading(true);
-        const [details, insights] = await Promise.all([
+        const [detailsRes, insightsRes] = await Promise.all([
           api.recruiter.getPositionDetails(positionId),
           api.recruiter.getPositionInsights(positionId)
         ]);
+        const details = detailsRes as any;
+        const insights = insightsRes as any;
 
         setCandidates(details.candidates);
         setGroups(details.groups);
-        setFittingData(insights.fittingData);
-        setScoreData(insights.scoreData);
-        setSkillDistribution(insights.skillDistribution);
-        setSeniorityDistribution(insights.seniorityDistribution);
-        setUniversityDistribution(insights.universityDistribution);
-        setAvailabilityDistribution(insights.availabilityDistribution);
+
+        // Set metrics individually as setMetrics state object does not exist
+        // Assuming these states exist based on previous code reading, or if not, I should check defaults.
+        // Actually, looking at lines 1-150, I don't see 'setMetrics'. 
+        // I see 'setFittingData', 'setScoreData' etc.
+        // I should just set the insights data as before but safely.
+
+        setFittingData(insights.fittingData || []);
+        setScoreData(insights.scoreData || []);
+        setSkillDistribution(insights.skillDistribution || []);
+        setSeniorityDistribution(insights.seniorityDistribution || []);
+        setUniversityDistribution(insights.universityDistribution || []);
+        setAvailabilityDistribution(insights.availabilityDistribution || []);
+        setConversion(insights.conversion || 0);
+        setQualityScore(insights.qualityScore || 0);
+        setIntegrityIssues(insights.integrityIssues || 0);
+        setSourceQuality(insights.sourceQuality || []);
+        setTopCompanies(insights.topCompanies || []);
       } catch (error) {
-        console.error('Failed to fetch position data:', error);
+        console.error('Failed to fetch position details:', error);
       } finally {
         setIsLoading(false);
       }
     };
-    fetchData();
-  }, []);
+    if (positionId) { fetchData(); }
+  }, [positionId]);
 
-  const toggleStar = (id: number) => {
+  // Auth / Role Check
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const isHR = user.role === 'hr' || user.role === 'admin';
+  const navigate = useNavigate();
+
+  // Upload Logic
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+
+  const handleZipUpload = async () => {
+    if (!zipFile || !positionId) return;
+
+    setIsUploading(true);
+    setUploadError(null);
+    try {
+      const res = await api.recruiter.uploadCandidates(positionId, zipFile);
+      setUploadSuccess(`Successfully processed ${res.total_processed} files. Created ${res.success_count} candidates.`);
+      // Optionally refresh candidates list here
+    } catch (err: any) {
+      setUploadError(err.message || "Upload failed");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const toggleStar = (id: string) => {
     setCandidates(candidates.map(c =>
       c.id === id ? { ...c, starred: !c.starred } : c
     ));
   };
 
-  const toggleSelect = (id: number) => {
+  const toggleSelect = (id: string) => {
     setCandidates(candidates.map(c =>
       c.id === id ? { ...c, selected: !c.selected } : c
     ));
@@ -137,6 +266,28 @@ export function PositionDetailView({
     if (editPositionTitle.trim()) {
       onSave(editPositionTitle, editPositionDescription, editPositionScreening, editPositionIsOpen);
       setIsEditDialogOpen(false);
+    }
+  };
+
+  const startRenaming = (group: any) => {
+    setEditingGroupId(group.id);
+    setEditGroupName(group.name);
+  };
+
+  const cancelRenaming = () => {
+    setEditingGroupId(null);
+    setEditGroupName('');
+  };
+
+  const saveRenaming = async (groupId: string) => {
+    if (!editGroupName.trim()) return;
+    try {
+      await api.recruiter.updateGroup(groupId, { name: editGroupName });
+      const updatedGroups = await api.recruiter.getPositionGroups(positionId) as any[];
+      setGroups(updatedGroups);
+      setEditingGroupId(null);
+    } catch (err) {
+      console.error("Failed to rename group", err);
     }
   };
 
@@ -307,7 +458,7 @@ export function PositionDetailView({
                   <Users size={18} className="text-[#6366f1]" />
                 </div>
                 <p className="font-['Arimo',sans-serif] text-[28px] text-black">
-                  {candidates.length}
+                  {filteredCandidates.length}
                 </p>
               </div>
 
@@ -332,9 +483,15 @@ export function PositionDetailView({
                   </h4>
                   <div className="w-[8px] h-[8px] rounded-full bg-[#10b981]"></div>
                 </div>
-                <p className="font-['Arimo',sans-serif] text-[28px] text-black">
+                <p className="font-['Arimo',sans-serif] text-[28px] text-black mb-2">
                   {groups.reduce((sum, g) => sum + g.candidateCount, 0)}
                 </p>
+                <div className="w-full h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#10b981]"
+                    style={{ width: `${(groups.reduce((sum, g) => sum + g.candidateCount, 0) / (candidates.length || 1)) * 100}%` }}
+                  ></div>
+                </div>
               </div>
 
               {/* Unassigned Candidates */}
@@ -345,9 +502,15 @@ export function PositionDetailView({
                   </h4>
                   <div className="w-[8px] h-[8px] rounded-full bg-[#f59e0b]"></div>
                 </div>
-                <p className="font-['Arimo',sans-serif] text-[28px] text-black">
+                <p className="font-['Arimo',sans-serif] text-[28px] text-black mb-2">
                   {candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)}
                 </p>
+                <div className="w-full h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#f59e0b]"
+                    style={{ width: `${((candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)) / (candidates.length || 1)) * 100}%` }}
+                  ></div>
+                </div>
               </div>
             </div>
 
@@ -406,10 +569,17 @@ export function PositionDetailView({
             <div className="bg-white rounded-[12px] p-6 shadow-sm">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="font-['Arimo',sans-serif] text-[18px] text-black">
-                  All Candidates ({candidates.length})
+                  All Candidates ({filteredCandidates.length})
                 </h3>
                 <div className="flex items-center gap-2">
-                  <button className="flex items-center justify-center w-[32px] h-[32px] rounded-[6px] hover:bg-[#f3f4f6] transition-colors">
+                  <button
+                    onClick={() => setIsFilterOpen(true)}
+                    className={`flex items-center justify-center w-[32px] h-[32px] rounded-[6px] transition-colors ${Object.values(filters).some(v => Array.isArray(v) ? v.length > 0 : !!v) &&
+                      (filters.experienceRange[0] > 0 || filters.experienceRange[1] < 20)
+                      ? 'bg-[#6366f1] text-white hover:bg-[#5558e3]'
+                      : 'hover:bg-[#f3f4f6] text-[#6366f1]'
+                      }`}
+                  >
                     <Filter size={18} className="text-[#6366f1]" strokeWidth={1.5} />
                   </button>
                   <button className="flex items-center justify-center w-[32px] h-[32px] rounded-[6px] hover:bg-[#f3f4f6] transition-colors">
@@ -420,17 +590,11 @@ export function PositionDetailView({
 
               <div className="max-h-[500px] overflow-y-auto pr-2">
                 <div className="flex flex-col gap-3">
-                  {candidates.map((candidate) => (
+                  {filteredCandidates.map((candidate) => (
                     <div
                       key={candidate.id}
                       className="flex items-center gap-4 p-4 rounded-[10px] bg-[#f9fafb] hover:bg-[#f3f4f6] transition-colors"
                     >
-                      <input
-                        type="checkbox"
-                        checked={candidate.selected}
-                        onChange={() => toggleSelect(candidate.id)}
-                        className="w-[18px] h-[18px] rounded-[3px] border border-[#d1d5db] text-[#6366f1] focus:ring-2 focus:ring-[#6366f1] focus:ring-offset-0 cursor-pointer accent-[#6366f1]"
-                      />
                       <div className={`w-[4px] h-[44px] rounded-full`} style={{ backgroundColor: candidate.color }}></div>
                       <div className="flex-1 min-w-0">
                         <p className="font-['Arimo',sans-serif] text-[15px] text-black">
@@ -449,17 +613,7 @@ export function PositionDetailView({
                         </p>
                       </div>
                       <button
-                        onClick={() => toggleStar(candidate.id)}
-                        className="flex items-center justify-center w-[32px] h-[32px] hover:bg-white rounded-[4px] transition-colors"
-                      >
-                        <Star
-                          size={22}
-                          className={candidate.starred ? 'text-[#f59e0b] fill-[#f59e0b]' : 'text-[#d1d5db]'}
-                          strokeWidth={1.5}
-                        />
-                      </button>
-                      <button
-                        onClick={() => setViewingCandidateId(candidate.id)}
+                        onClick={() => navigate(`/recruiter/candidates/${candidate.id}`)}
                         className="h-[40px] px-[20px] rounded-[8px] bg-[#5b21b6] hover:bg-[#6d28d9] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
                       >
                         View Report
@@ -476,16 +630,30 @@ export function PositionDetailView({
         {activeTab === 'groups' && (
           <>
             {showGroupCreationPage ? (
-              <div className="fixed inset-0 bg-[#edf0f8] z-50">
+              <div className="fixed inset-0 bg-[#edf0f8] z-[100]">
                 <GroupCreationPage
                   positionTitle={positionTitle}
+                  positionId={positionId}
                   onCancel={() => setShowGroupCreationPage(false)}
-                  onCreate={(groupData) => {
-                    console.log('Group created:', groupData);
-                    setShowGroupCreationPage(false);
-                    // Store group data and show flow config modal
-                    setPendingGroupData(groupData);
-                    setShowFlowConfigModal(true);
+                  onCreate={async (data) => {
+                    try {
+                      const newGroup = await api.recruiter.createGroup({
+                        name: data.name,
+                        position_id: positionId,
+                        candidate_ids: data.candidateIds,
+                        ai_ranking_used: data.aiRankingUsed,
+                        nlp_query: data.nlpQuery
+                      });
+
+                      setShowGroupCreationPage(false);
+
+                      // Refresh groups
+                      const groups = await api.recruiter.getPositionGroups(positionId) as any[];
+                      setGroups(groups);
+                    } catch (err) {
+                      console.error("Failed to create group", err);
+                      throw err;
+                    }
                   }}
                 />
               </div>
@@ -495,15 +663,17 @@ export function PositionDetailView({
                   <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
                     Candidate Groups
                   </h2>
-                  <button
-                    onClick={() => setShowGroupCreationPage(true)}
-                    className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] transition-colors"
-                  >
-                    <Plus size={18} className="text-white" strokeWidth={2} />
-                    <span className="font-['Arimo',sans-serif] text-[14px] text-white">
-                      Create Group
-                    </span>
-                  </button>
+                  {isHR && (
+                    <button
+                      onClick={() => setShowGroupCreationPage(true)}
+                      className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] transition-colors"
+                    >
+                      <Plus size={18} className="text-white" strokeWidth={2} />
+                      <span className="font-['Arimo',sans-serif] text-[14px] text-white">
+                        Create Group
+                      </span>
+                    </button>
+                  )}
                 </div>
 
                 {groups.length === 0 ? (
@@ -515,14 +685,18 @@ export function PositionDetailView({
                       No Groups Created Yet
                     </h3>
                     <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af] mb-6 max-w-[400px] mx-auto">
-                      Create candidate groups to organize and track subsets of candidates through your recruitment pipeline.
+                      {isHR
+                        ? "Create candidate groups to organize and track subsets of candidates through your recruitment pipeline."
+                        : "No candidate groups have been created for this position yet."}
                     </p>
-                    <button
-                      onClick={() => setShowGroupCreationPage(true)}
-                      className="h-[44px] px-[24px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
-                    >
-                      Create Your First Group
-                    </button>
+                    {isHR && (
+                      <button
+                        onClick={() => setShowGroupCreationPage(true)}
+                        className="h-[44px] px-[24px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
+                      >
+                        Create Your First Group
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -531,12 +705,44 @@ export function PositionDetailView({
                         <div className="flex items-start justify-between mb-4">
                           <div className="flex-1">
                             <div className="flex items-center gap-3 mb-2">
-                              <h3 className="font-['Arimo',sans-serif] text-[17px] text-black">
-                                {group.name}
-                              </h3>
-                              <span className={`px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${group.status === 'Live' ? 'bg-[#dcfce7] text-[#10b981]' :
-                                group.status === 'Paused' ? 'bg-[#fef3c7] text-[#f59e0b]' :
-                                  'bg-[#f3f4f6] text-[#6b7280]'
+                              {editingGroupId === group.id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={editGroupName}
+                                    onChange={(e) => setEditGroupName(e.target.value)}
+                                    className="border border-[#d1d5db] rounded-[4px] px-2 py-1 font-['Arimo',sans-serif] text-[17px] text-black w-[200px]"
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') saveRenaming(group.id);
+                                      if (e.key === 'Escape') cancelRenaming();
+                                    }}
+                                  />
+                                  <button
+                                    onClick={() => saveRenaming(group.id)}
+                                    className="p-1 hover:bg-[#dcfce7] rounded text-[#10b981]"
+                                  >
+                                    <CheckCircle size={18} />
+                                  </button>
+                                  <button
+                                    onClick={cancelRenaming}
+                                    className="p-1 hover:bg-[#fee2e2] rounded text-[#ef4444]"
+                                  >
+                                    <X size={18} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <h3
+                                  onClick={() => onViewGroup && onViewGroup(group.id)}
+                                  className="font-['Arimo',sans-serif] text-[17px] text-black cursor-pointer hover:text-[#6366f1] hover:underline"
+                                >
+                                  {group.name}
+                                </h3>
+                              )}
+                              <span className={`px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] ${group.status?.toLowerCase() === 'live' ? 'bg-[#dcfce7] text-[#10b981]' :
+                                group.status?.toLowerCase() === 'paused' ? 'bg-[#fef3c7] text-[#f59e0b]' :
+                                  group.status?.toLowerCase() === 'on hold' ? 'bg-[#ffedd5] text-[#f97316]' :
+                                    'bg-[#f3f4f6] text-[#6b7280]'
                                 }`}>
                                 {group.status}
                               </span>
@@ -544,7 +750,7 @@ export function PositionDetailView({
                             <div className="flex items-center gap-4 font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                               <span>{group.candidateCount} candidates</span>
                               <span>•</span>
-                              <span>Assigned to {group.recruiter}</span>
+                              <span>Assigned to {user.role === 'technical' ? (group.assigned_hr_name || 'HR (Unassigned)') : (group.assigned_tech_name || 'Tech (Unassigned)')}</span>
                               <span>•</span>
                               <span>Stage: {group.stage}</span>
                               <span>•</span>
@@ -568,24 +774,67 @@ export function PositionDetailView({
                             />
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {group.status?.toLowerCase() === 'on hold' && user.role === 'technical' ? (
+                            // Tech HR sees an actionable button to configure the flow
+                            <button
+                              onClick={() => {
+                                setPendingGroupData(group);
+                                setShowFlowConfigModal(true);
+                              }}
+                              title="Click to configure the filtration flow for this group"
+                              className="h-[36px] px-[16px] rounded-[8px] font-['Arimo',sans-serif] text-[13px] transition-colors bg-[#f97316] hover:bg-[#ea6c0a] text-white flex items-center gap-2"
+                            >
+                              <Sliders size={14} />
+                              Configure Flow
+                            </button>
+                          ) : (
+                            // HR / others see a disabled status indicator
+                            <button
+                              onClick={() => {
+                                if (group.status?.toLowerCase() !== 'on hold') {
+                                  onViewGroup && onViewGroup(group.id);
+                                }
+                              }}
+                              disabled={group.status?.toLowerCase() === 'on hold'}
+                              title={group.status?.toLowerCase() === 'on hold' ? 'Awaiting flow configuration by Technical HR' : undefined}
+                              className={`h-[36px] px-[16px] rounded-[8px] font-['Arimo',sans-serif] text-[13px] transition-colors ${group.status?.toLowerCase() === 'on hold'
+                                ? 'bg-[#e5e7eb] text-[#9ca3af] cursor-not-allowed'
+                                : 'bg-[#6366f1] hover:bg-[#5558e3] text-white'
+                                }`}
+                            >
+                              {group.status?.toLowerCase() === 'on hold' ? '🔒 Awaiting Config' : 'Open'}
+                            </button>
+                          )}
+
                           <button
-                            onClick={() => onViewGroup && onViewGroup(group.id)}
-                            className="h-[36px] px-[16px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[13px] text-white transition-colors"
+                            onClick={() => startRenaming(group)}
+                            className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#374151] transition-colors"
                           >
-                            Open
-                          </button>
-                          <button className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#374151] transition-colors">
                             Rename
                           </button>
-                          <button className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#374151] transition-colors">
-                            Duplicate
-                          </button>
-                          <button className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#374151] transition-colors">
-                            Export
-                          </button>
-                          <button className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#ef4444] font-['Arimo',sans-serif] text-[13px] text-[#ef4444] transition-colors ml-auto">
-                            Archive
+                          <button
+                            onClick={async () => {
+                              if (window.confirm('Are you sure you want to delete this group? Candidates will be unassigned.')) {
+                                try {
+                                  await api.recruiter.deleteGroup(group.id);
+                                  // Refresh groups
+                                  const updatedGroups = await api.recruiter.getPositionGroups(positionId) as any[];
+                                  setGroups(updatedGroups);
+                                  // Refresh candidates to show them as unassigned
+                                  const details = await api.recruiter.getPositionDetails(positionId) as any;
+                                  if (details && details.candidates) {
+                                    setCandidates(details.candidates);
+                                  }
+                                } catch (err) {
+                                  console.error("Failed to delete group", err);
+                                  alert("Failed to delete group");
+                                }
+                              }
+                            }}
+                            className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#ef4444] font-['Arimo',sans-serif] text-[13px] text-[#ef4444] transition-colors"
+                          >
+                            Delete
                           </button>
                         </div>
                       </div>
@@ -599,139 +848,219 @@ export function PositionDetailView({
 
         {/* Insights Tab Content */}
         {activeTab === 'insights' && (
-          <div className="w-full">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
-                Role Insights
-              </h2>
-              <button className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors">
-                <Download size={18} className="text-[#6b7280]" />
-                <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                  Export Insights
+          <div className="w-full animate-in fade-in duration-500">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 className="font-['Arimo',sans-serif] text-[24px] font-semibold text-slate-900 tracking-tight">
+                  Role Insights
+                </h2>
+                <p className="text-[14px] text-slate-500 mt-1 font-['Arimo',sans-serif]">
+                  AI-powered analytics and candidate distribution metrics
+                </p>
+              </div>
+              <button className="flex items-center gap-2 h-[40px] px-[20px] rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:shadow-sm transition-all focus:ring-2 focus:ring-indigo-500/20 active:scale-95">
+                <Download size={18} className="text-slate-500" />
+                <span className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-700">
+                  Export Report
                 </span>
               </button>
             </div>
 
-            {/* Candidate Analytics Charts */}
-            <div className="grid grid-cols-2 gap-6 mb-6">
-              {/* Candidate Fitting Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm flex flex-col">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-8">
-                  Candidate Fitting Distribution
-                </h3>
-                <div className="flex-1 flex items-center justify-center">
-                  <div className="relative flex items-center justify-center pt-6 pb-4" style={{ minHeight: '340px' }}>
-                    {/* Pie Chart Container */}
-                    <div className="relative" style={{ width: '280px', height: '280px', minWidth: '280px', minHeight: '280px' }}>
-                      <ResponsiveContainer width={280} height={280}>
-                        <PieChart>
-                          <Pie
-                            data={fittingData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={0}
-                            outerRadius={120}
-                            paddingAngle={1}
-                            dataKey="value"
-                            startAngle={90}
-                            endAngle={450}
-                          >
-                            {fittingData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.color} stroke="white" strokeWidth={2} />
-                            ))}
-                          </Pie>
-                        </PieChart>
-                      </ResponsiveContainer>
-
-                      {/* Labels positioned around the pie */}
-                      {fittingData.map((item, index) => {
-                        // Position labels based on index for simplicity in this specific layout
-                        // 0: Excellent (Top Right), 1: Good (Left), 2: Fair (Bottom), 3: Poor (Right)
-                        // This matches the order in the mock data
-                        const positions = [
-                          { top: '40px', right: '-120px' }, // Excellent
-                          { top: '120px', left: '-80px' },   // Good
-                          { bottom: '-8px', left: '50%', transform: 'translateX(-50%)' }, // Fair
-                          { top: '120px', right: '-70px' }  // Poor
-                        ];
-                        const pos = positions[index] || {};
-
-                        return (
-                          <div key={index} className="absolute" style={pos}>
-                            <span className="font-['Arimo',sans-serif] text-[14px] whitespace-nowrap" style={{ color: item.color }}>
-                              {item.name} ({index === 3 ? '<40%' : index === 2 ? '40-59%' : index === 1 ? '60-79%' : '80-100%'}): {item.value}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
+            {/* Top KPI Cards */}
+            <div className="grid grid-cols-3 gap-6 mb-8">
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-md transition-all">
+                <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:opacity-40 transition-opacity">
+                  <Target size={48} className="text-indigo-600" />
+                </div>
+                <div className="relative z-10">
+                  <p className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-500 mb-2 mt-1">Conversion Rate</p>
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="font-['Arimo',sans-serif] text-[36px] font-bold text-slate-900">{conversion}%</h3>
+                  </div>
+                  <div className="mt-4 flex items-center gap-1.5 text-emerald-600 bg-emerald-50 w-fit px-2 py-1 rounded-md">
+                    <TrendingUp size={14} />
+                    <span className="text-[12px] font-semibold text-emerald-700">+2.4% vs avg</span>
                   </div>
                 </div>
               </div>
 
-              {/* Score Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm flex flex-col">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-8">
-                  Score Distribution
-                </h3>
-                <div className="flex-1 flex items-center justify-center">
-                  <div style={{ width: '100%', height: '340px', minHeight: '340px' }}>
-                    <ResponsiveContainer width="100%" height={340}>
-                      <BarChart data={scoreData} margin={{ top: 10, right: 20, left: -10, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#d1d5db" vertical={true} horizontal={true} />
-                        <XAxis
-                          dataKey="range"
-                          axisLine={{ stroke: '#6b7280' }}
-                          tickLine={false}
-                          tick={{ fill: '#6b7280', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
-                        />
-                        <YAxis
-                          axisLine={{ stroke: '#6b7280' }}
-                          tickLine={false}
-                          tick={{ fill: '#6b7280', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
-                          domain={[0, 4]}
-                          ticks={[0, 1, 2, 3, 4]}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: '#374151',
-                            border: 'none',
-                            borderRadius: '6px',
-                            color: 'white',
-                            fontSize: '12px',
-                            fontFamily: 'Arimo, sans-serif'
-                          }}
-                          cursor={{ fill: 'rgba(99, 102, 241, 0.1)' }}
-                        />
-                        <Bar dataKey="count" fill="#5b21b6" radius={[4, 4, 0, 0]} maxBarSize={80} />
-                      </BarChart>
-                    </ResponsiveContainer>
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-md transition-all">
+                <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:opacity-40 transition-opacity">
+                  <Award size={48} className="text-violet-600" />
+                </div>
+                <div className="relative z-10">
+                  <p className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-500 mb-2 mt-1">Quality Score</p>
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="font-['Arimo',sans-serif] text-[36px] font-bold text-slate-900">{qualityScore}<span className="text-[20px] text-slate-400">/10</span></h3>
+                  </div>
+                  <div className="mt-4 flex items-center gap-1.5 text-indigo-600 bg-indigo-50 w-fit px-2 py-1 rounded-md">
+                    <Sparkles size={14} />
+                    <span className="text-[12px] font-semibold text-indigo-700">High potential</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100 relative overflow-hidden group hover:shadow-md transition-all">
+                <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:opacity-40 transition-opacity">
+                  <ShieldCheck size={48} className={integrityIssues > 0 ? "text-amber-500" : "text-emerald-500"} />
+                </div>
+                <div className="relative z-10">
+                  <p className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-500 mb-2 mt-1">Integrity Flags</p>
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="font-['Arimo',sans-serif] text-[36px] font-bold text-slate-900">{integrityIssues}</h3>
+                  </div>
+                  <div className={`mt-4 flex items-center gap-1.5 w-fit px-2 py-1 rounded-md ${integrityIssues > 0 ? 'text-amber-700 bg-amber-50' : 'text-emerald-700 bg-emerald-50'}`}>
+                    <CheckCircle size={14} />
+                    <span className={`text-[12px] font-semibold ${integrityIssues > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>{integrityIssues > 0 ? 'Review needed' : 'All clear'}</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Insights Grid */}
-            <div className="grid grid-cols-2 gap-6 mb-6">
-              {/* Skill Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
-                  Skill Distribution
+            {/* Main Charts */}
+            <div className="grid grid-cols-2 gap-6 mb-8">
+              {/* Candidate Fitting Donut */}
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100 flex flex-col">
+                <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900 mb-2">
+                  Matching Accuracy
                 </h3>
-                <div className="space-y-3">
-                  {skillDistribution.map((item, index) => (
-                    <div key={index}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-                          {item.skill}
-                        </span>
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                          {item.count} candidates ({item.percentage}%)
+                <p className="text-[13px] text-slate-500 mb-6 font-['Arimo',sans-serif]">Distribution of candidate fit relative to job requirements.</p>
+                <div className="flex-1 flex items-center justify-between gap-4">
+                  <div className="relative flex items-center justify-center w-[220px] h-[220px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-3 rounded-xl shadow-lg">
+                                  <p className="font-['Arimo',sans-serif] text-[14px] font-semibold text-slate-800">{data.name}</p>
+                                  <p className="font-['Arimo',sans-serif] text-[13px] text-slate-600">{data.value} Candidates</p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Pie
+                          data={fittingData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={65}
+                          outerRadius={90}
+                          paddingAngle={5}
+                          dataKey="value"
+                          stroke="none"
+                          cornerRadius={8}
+                        >
+                          {fittingData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} style={{ filter: `drop-shadow(0px 4px 12px ${entry.color}40)` }} />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <span className="text-[28px] font-bold text-slate-900 tracking-tight font-['Arimo',sans-serif]">
+                        {fittingData.reduce((acc, curr) => acc + curr.value, 0)}
+                      </span>
+                      <span className="text-[11px] text-slate-500 font-medium font-['Arimo',sans-serif] uppercase tracking-wider">
+                        Total Pool
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex-1 space-y-3 pr-4">
+                    {fittingData.map((item, index) => (
+                      <div key={index} className="flex items-center justify-between group">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                          <span className="text-[14px] font-medium text-slate-700 font-['Arimo',sans-serif]">{item.name}</span>
+                        </div>
+                        <span className="text-[14px] font-bold text-slate-900 font-['Arimo',sans-serif]">
+                          {item.value}
                         </span>
                       </div>
-                      <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Match Score Spectrum Bar Chart */}
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100 flex flex-col">
+                <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900 mb-2">
+                  Match Score Spectrum
+                </h3>
+                <p className="text-[13px] text-slate-500 mb-6 font-['Arimo',sans-serif]">Granular distribution of AI matching scores across the applicant pool.</p>
+                <div className="flex-1 w-full h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={scoreData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.9} />
+                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.6} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis
+                        dataKey="range"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#64748b', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
+                        dy={10}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#64748b', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
+                        dx={-10}
+                      />
+                      <Tooltip
+                        cursor={{ fill: '#f8fafc' }}
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            return (
+                              <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-3 rounded-xl shadow-lg">
+                                <p className="font-['Arimo',sans-serif] text-[13px] text-slate-500 mb-1">Range: <span className="font-semibold text-slate-800">{payload[0].payload.range}</span></p>
+                                <p className="font-['Arimo',sans-serif] text-[14px] font-bold text-indigo-600">{payload[0].value} Candidates</p>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Bar dataKey="count" fill="url(#colorCount)" radius={[6, 6, 0, 0]} maxBarSize={60} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Metrics Grids */}
+            <div className="grid grid-cols-2 gap-6 mb-8">
+              {/* Skill Distribution */}
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                    <Sparkles size={16} className="text-indigo-600" />
+                  </div>
+                  <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900">
+                    Skill Frequency
+                  </h3>
+                </div>
+                <div className="space-y-4">
+                  {skillDistribution.map((item, index) => (
+                    <div key={index} className="group cursor-default">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-700 group-hover:text-indigo-600 transition-colors">
+                          {item.skill}
+                        </span>
+                        <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-slate-500">
+                          {item.percentage}%
+                        </span>
+                      </div>
+                      <div className="w-full h-[8px] bg-slate-100 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-[#10b981]"
+                          className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 rounded-full transition-all duration-700 ease-out group-hover:shadow-[0_0_8px_rgba(99,102,241,0.5)]"
                           style={{ width: `${item.percentage}%` }}
                         />
                       </div>
@@ -741,24 +1070,29 @@ export function PositionDetailView({
               </div>
 
               {/* Seniority Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
-                  Seniority Distribution
-                </h3>
-                <div className="space-y-3">
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                    <Target size={16} className="text-emerald-600" />
+                  </div>
+                  <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900">
+                    Experience Levels
+                  </h3>
+                </div>
+                <div className="space-y-4">
                   {seniorityDistribution.map((item, index) => (
-                    <div key={index}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
+                    <div key={index} className="group cursor-default">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-700 group-hover:text-emerald-600 transition-colors">
                           {item.level}
                         </span>
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                          {item.count} candidates ({item.percentage}%)
+                        <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-slate-500">
+                          {item.percentage}%
                         </span>
                       </div>
-                      <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                      <div className="w-full h-[8px] bg-slate-100 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-[#6366f1]"
+                          className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-full transition-all duration-700 ease-out group-hover:shadow-[0_0_8px_rgba(16,185,129,0.5)]"
                           style={{ width: `${item.percentage}%` }}
                         />
                       </div>
@@ -768,43 +1102,61 @@ export function PositionDetailView({
               </div>
 
               {/* University Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
-                  University Distribution
-                </h3>
-                <div className="space-y-3">
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
+                    <Award size={16} className="text-blue-600" />
+                  </div>
+                  <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900">
+                    Alumni Networks
+                  </h3>
+                </div>
+                <div className="space-y-4">
                   {universityDistribution.map((item, index) => (
-                    <div key={index} className="flex items-center justify-between">
-                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-                        {item.university}
-                      </span>
-                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                        {item.count} candidates
-                      </span>
+                    <div key={index} className="group cursor-default">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-700 group-hover:text-blue-600 transition-colors truncate pr-4">
+                          {item.university}
+                        </span>
+                        <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-slate-500 whitespace-nowrap">
+                          {item.percentage}%
+                        </span>
+                      </div>
+                      <div className="w-full h-[8px] bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full transition-all duration-700 ease-out group-hover:shadow-[0_0_8px_rgba(59,130,246,0.5)]"
+                          style={{ width: `${item.percentage}%` }}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
 
               {/* Availability Distribution */}
-              <div className="bg-white rounded-[12px] p-6 shadow-sm">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
-                  Availability Distribution
-                </h3>
-                <div className="space-y-3">
+              <div className="bg-white rounded-[20px] p-6 shadow-sm border border-slate-100">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center">
+                    <Calendar size={16} className="text-orange-600" />
+                  </div>
+                  <h3 className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-900">
+                    Hiring Outlook
+                  </h3>
+                </div>
+                <div className="space-y-4">
                   {availabilityDistribution.map((item, index) => (
-                    <div key={index}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-                          {(item as any).availability}
+                    <div key={index} className="group cursor-default">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-['Arimo',sans-serif] text-[14px] font-medium text-slate-700 group-hover:text-orange-600 transition-colors">
+                          {item.availability}
                         </span>
-                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                          {item.count} candidates ({item.percentage}%)
+                        <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-slate-500">
+                          {item.percentage}%
                         </span>
                       </div>
-                      <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                      <div className="w-full h-[8px] bg-slate-100 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-[#f59e0b]"
+                          className="h-full bg-gradient-to-r from-orange-400 to-orange-600 rounded-full transition-all duration-700 ease-out group-hover:shadow-[0_0_8px_rgba(249,115,22,0.5)]"
                           style={{ width: `${item.percentage}%` }}
                         />
                       </div>
@@ -814,30 +1166,112 @@ export function PositionDetailView({
               </div>
             </div>
 
-            {/* Assessment Performance */}
-            <div className="bg-white rounded-[12px] p-6 shadow-sm">
-              <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
-                Assessment Performance Distribution
-              </h3>
-              <div style={{ width: '100%', height: '300px', minHeight: '300px' }}>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={scoreData} margin={{ top: 10, right: 20, left: -10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#d1d5db" />
-                    <XAxis
-                      dataKey="range"
-                      axisLine={{ stroke: '#6b7280' }}
-                      tick={{ fill: '#6b7280', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
-                    />
-                    <YAxis
-                      axisLine={{ stroke: '#6b7280' }}
-                      tick={{ fill: '#6b7280', fontSize: 13, fontFamily: 'Arimo, sans-serif' }}
-                    />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+            {/* Sourcing Intelligence Section - The Surprise Surprise! */}
+            <div className="mb-8 overflow-hidden rounded-[24px] border border-indigo-100 bg-gradient-to-br from-indigo-50/10 to-white p-1">
+              <div className="bg-white rounded-[22px] p-6">
+                <div className="flex items-center justify-between mb-8">
+                  <div>
+                    <h3 className="font-['Arimo',sans-serif] text-[18px] font-bold text-slate-900 border-l-4 border-indigo-500 pl-4 mb-1">
+                      Talent Intelligence & Sourcing ROI
+                    </h3>
+                    <p className="text-[13px] text-slate-500 font-['Arimo',sans-serif] pl-5">Identifying high-performing talent channels and originating pipelines through AI matching.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-8">
+                  {/* Source ROI */}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2 mb-6">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
+                        <Globe size={16} className="text-indigo-600" />
+                      </div>
+                      <h4 className="font-['Arimo',sans-serif] text-[15px] font-semibold text-slate-800">Channel Performance ROI</h4>
+                    </div>
+
+                    <div className="h-[220px] w-full">
+                      {sourceQuality.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart layout="vertical" data={sourceQuality} margin={{ left: 20, right: 30, top: 0, bottom: 0 }}>
+                            <XAxis type="number" hide domain={[0, 100]} />
+                            <YAxis
+                              dataKey="source"
+                              type="category"
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{ fill: '#64748b', fontSize: 13, fontWeight: 500 }}
+                              width={90}
+                            />
+                            <Tooltip
+                              cursor={{ fill: 'transparent' }}
+                              content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                  return (
+                                    <div className="bg-slate-900 text-white p-2 rounded-lg text-[12px] shadow-xl border border-slate-800">
+                                      <p className="font-bold">{payload[0].payload.source}</p>
+                                      <p className="text-indigo-300">Avg Quality: {payload[0].value}%</p>
+                                      <p className="text-slate-400">Total: {payload[0].payload.count} apps</p>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              }}
+                            />
+                            <Bar
+                              dataKey="avgScore"
+                              radius={[0, 4, 4, 0]}
+                              barSize={18}
+                            >
+                              {sourceQuality.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={index === 0 ? '#6366f1' : '#818cf8'} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center h-full text-slate-400 border border-dashed border-slate-100 rounded-xl">
+                          <p className="text-[12px]">Collecting source metrics...</p>
+                        </div>
+                      )}
+                    </div>
+                    <p className="mt-2 text-[12px] text-slate-400 italic text-center">ROI based on average AI match accuracy per source.</p>
+                  </div>
+
+                  {/* Company Pedigree */}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2 mb-6">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                        <Building2 size={16} className="text-emerald-600" />
+                      </div>
+                      <h4 className="font-['Arimo',sans-serif] text-[15px] font-semibold text-slate-800">Originating Talent Pipelines</h4>
+                    </div>
+
+                    <div className="space-y-4">
+                      {topCompanies.length > 0 ? (
+                        topCompanies.map((item, index) => (
+                          <div key={index} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100 group hover:bg-white hover:shadow-sm hover:border-emerald-200 transition-all cursor-default">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-[12px] font-bold text-slate-400 group-hover:text-emerald-500 group-hover:border-emerald-100 group-hover:bg-emerald-50 transition-colors">
+                                {index + 1}
+                              </div>
+                              <span className="font-['Arimo',sans-serif] text-[14px] font-semibold text-slate-700 group-hover:text-slate-900 line-clamp-1">{item.company}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[12px] font-bold text-slate-500 bg-slate-200/50 px-2.5 py-1 rounded-full">{item.count} Candidates</span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex flex-col items-center justify-center h-[200px] text-slate-400 border border-dashed border-slate-100 rounded-xl">
+                          <Building2 size={32} className="mb-2 opacity-20" />
+                          <p className="text-[13px]">Insufficient data for pedigree analysis</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
+
           </div>
         )}
       </div>
@@ -950,52 +1384,108 @@ export function PositionDetailView({
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-[#111827] text-[20px]">Upload CVs (.zip)</h3>
               <button
-                onClick={() => setShowZipUploadModal(false)}
+                onClick={() => {
+                  setShowZipUploadModal(false);
+                  setZipFile(null);
+                  setUploadError(null);
+                  setUploadSuccess(null);
+                }}
                 className="w-[32px] h-[32px] flex items-center justify-center rounded-[6px] hover:bg-[#f3f4f6] transition-colors"
               >
                 <X size={18} className="text-[#6b7280]" />
               </button>
             </div>
 
-            <div className="border-2 border-dashed border-[#e5e7eb] rounded-[12px] p-12 text-center mb-6 hover:border-[#6366f1] hover:bg-[#f9fafb] transition-colors cursor-pointer">
-              <Upload size={48} className="text-[#6b7280] mx-auto mb-4" />
-              <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] mb-2">
-                Drag and drop your ZIP file here, or click to browse
-              </p>
-              <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                Supported format: .zip (max 100MB)
-              </p>
-            </div>
+            {!uploadSuccess ? (
+              <>
+                <div
+                  className={`border-2 border-dashed rounded-[12px] p-12 text-center mb-6 transition-colors cursor-pointer relative ${zipFile ? 'border-[#6366f1] bg-[#eef2ff]' : 'border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb]'
+                    }`}
+                >
+                  <input
+                    type="file"
+                    accept=".zip"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setZipFile(e.target.files[0]);
+                        setUploadError(null);
+                      }
+                    }}
+                  />
+                  <Upload size={48} className={`mx-auto mb-4 ${zipFile ? 'text-[#6366f1]' : 'text-[#6b7280]'}`} />
+                  <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] mb-2">
+                    {zipFile ? zipFile.name : "Drag and drop your ZIP file here, or click to browse"}
+                  </p>
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                    Supported format: .zip (max 100MB)
+                  </p>
+                </div>
 
-            <div className="bg-[#f9fafb] rounded-[8px] p-4 mb-6">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-[6px] h-[6px] rounded-full bg-[#6366f1]" />
-                <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-                  Parsing Status
-                </span>
-              </div>
-              <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden mb-2">
-                <div className="h-full bg-[#6366f1] rounded-full w-0" style={{ width: '0%' }} />
-              </div>
-              <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                Waiting for upload...
-              </p>
-            </div>
+                {uploadError && (
+                  <div className="mb-4 text-red-500 text-sm font-['Arimo',sans-serif]">
+                    {uploadError}
+                  </div>
+                )}
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowZipUploadModal(false)}
-                className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                disabled
-                className="flex-1 h-[44px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
-              >
-                Add to Position
-              </button>
-            </div>
+                {isUploading && (
+                  <div className="bg-[#f9fafb] rounded-[8px] p-4 mb-6">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-[6px] h-[6px] rounded-full bg-[#6366f1]" />
+                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
+                        Uploading & Processing...
+                      </span>
+                    </div>
+                    <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden mb-2">
+                      <div className="h-full bg-[#6366f1] rounded-full w-full animate-pulse" />
+                    </div>
+                    <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                      Please wait while we extract and process the candidates.
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      setShowZipUploadModal(false);
+                      setZipFile(null);
+                    }}
+                    className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleZipUpload}
+                    disabled={!zipFile || isUploading}
+                    className="flex-1 h-[44px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors flex items-center justify-center gap-2"
+                  >
+                    {isUploading ? <Loader2 size={16} className="animate-spin" /> : null}
+                    Add to Position
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle size={32} className="text-green-600" />
+                </div>
+                <h4 className="text-lg font-medium text-gray-900 mb-2">Upload Complete!</h4>
+                <p className="text-sm text-gray-500 mb-6">{uploadSuccess}</p>
+                <button
+                  onClick={() => {
+                    setShowZipUploadModal(false);
+                    setZipFile(null);
+                    setUploadSuccess(null);
+                    // Refresh data
+                    window.location.reload(); // Quick refresh or re-fetch
+                  }}
+                  className="px-6 py-2 bg-[#6366f1] text-white rounded-lg hover:bg-[#5558e3]"
+                >
+                  Done
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1078,12 +1568,12 @@ export function PositionDetailView({
         <FiltrationFlowConfigModal
           onClose={() => setShowFlowConfigModal(false)}
           groupData={pendingGroupData}
-          onSave={(flowConfig) => {
-            console.log('Flow config saved:', flowConfig);
+          onSave={async (_flowConfig) => {
+            // The modal already called api.recruiter.updateGroup (sets status + filtration_flow)
+            // Just close and refresh the group list
             setShowFlowConfigModal(false);
-            if (onViewGroup) {
-              onViewGroup(`group-${Date.now()}`);
-            }
+            const groups = await api.recruiter.getPositionGroups(positionId) as any[];
+            setGroups(groups);
           }}
         />
       )}

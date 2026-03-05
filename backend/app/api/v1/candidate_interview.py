@@ -457,9 +457,46 @@ async def complete_interview_session(
         {"sid": UUID(request.session_id)}
     )
     
-    # NOTE: Stage transitions are recruiter-controlled.
-    # The recruiter opens/closes stages for the group. Candidates only get
-    # their own progress marked as 'completed'. No auto-unlock of next stage.
+    # --- Trigger Recruiter Notification ---
+    # Fetch recruiter ID and candidate info
+    recruiter_res = await session.execute(
+        text("""
+            SELECT 
+                cg.assigned_hr_id,
+                ca.organization_id,
+                cp.full_name,
+                cg.group_name,
+                ca.application_id
+            FROM ongoing_interviews oi
+            JOIN candidate_applications ca ON oi.application_id = ca.application_id
+            JOIN candidate_profiles cp ON ca.candidate_id = cp.candidate_id
+            JOIN candidate_groups cg ON ca.group_id = cg.group_id
+            WHERE oi.session_id = :sid
+            LIMIT 1
+        """),
+        {"sid": request.session_id}
+    )
+    recruiter_row = recruiter_res.fetchone()
+    
+    if recruiter_row and recruiter_row[0]:  # assigned_hr_id
+        await session.execute(
+            text("""
+                INSERT INTO notifications (
+                    notification_id, organization_id, recipient_user_id,
+                    type, title, message, data, is_read, created_at
+                ) VALUES (
+                    gen_random_uuid(), :org_id, :uid,
+                    'stage_completed', :title, :msg, :data, false, NOW()
+                )
+            """),
+            {
+                "org_id": str(recruiter_row[1]),
+                "uid": str(recruiter_row[0]),
+                "title": "AI Interview Completed",
+                "msg": f"Candidate {recruiter_row[2]} has completed their AI interview for group {recruiter_row[3]}.",
+                "data": {"session_id": str(request.session_id), "application_id": str(recruiter_row[4])}
+            }
+        )
     
     await session.commit()
     

@@ -9,8 +9,9 @@ from app.schemas import TokenResponse, AdminLoginResponse, AdminLoginResponseUse
 from app.core.config import settings
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import timedelta, datetime
 from fastapi import HTTPException
+from app.services.email import EmailService
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,6 @@ class AuthService:
         )
 
         # 5. Update last login timestamp
-        from datetime import datetime
         user.last_login_at = datetime.utcnow()
         self.session.add(user)
         await self.session.commit()
@@ -151,7 +151,15 @@ class AuthService:
         logger.info(f"RESET LINK: {reset_link}")
         logger.info("="*50 + "\n")
         
-        # In the future, use an actual SMTP client here if settings.SMTP_HOST is set
+        # Send Real Email
+        try:
+            await EmailService.send_password_reset_email(
+                email=email,
+                name=org.organization_name,
+                reset_link=reset_link
+            )
+        except Exception as e:
+            logger.error(f"Failed to send password reset email to {email}: {e}")
 
         return True
 
@@ -227,7 +235,15 @@ class AuthService:
         logger.info(f"RESET LINK: {reset_link}")
         logger.info("="*50 + "\n")
         
-        # In the future, use an actual SMTP client here if settings.SMTP_HOST is set
+        # Send Real Email
+        try:
+            await EmailService.send_password_reset_email(
+                email=email,
+                name=f"{user.first_name} {user.last_name}",
+                reset_link=reset_link
+            )
+        except Exception as e:
+            logger.error(f"Failed to send password reset email to {email}: {e}")
 
         return True
 
@@ -332,10 +348,34 @@ class AuthService:
         # TODO: Implement token refresh
         pass
 
+    '''-------------- Logout -----------------------'''
+
+    async def logout(self, user_id: UUID, role: str) -> bool:
+        """
+        Record logout for org users (update last_login_at timestamp).
+        Token invalidation is handled client-side.
+        """
+        if role != "admin":
+            try:
+                res = await self.session.execute(
+                    select(OrganizationUser).where(OrganizationUser.id == user_id)
+                )
+                user = res.scalar_one_or_none()
+                if user:
+                    user.last_login_at = datetime.utcnow()
+                    self.session.add(user)
+                    await self.session.commit()
+            except Exception as e:
+                logger.error(f"Error recording logout for user {user_id}: {e}")
+                await self.session.rollback()
+        return True
+
     async def get_current_user(self, token: str) -> User:
         """Get current user from token."""
         try:
             payload = decode_token(token)
+            if not payload:
+                raise UnauthorizedException("Invalid token")
             user_id = payload.get("sub")
             role = payload.get("role")
             

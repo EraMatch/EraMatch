@@ -77,8 +77,8 @@ class PositionCreate(BaseModel):
     years_of_experience: int = 0
     education_level: str | None = None
     benefits: list[str] = []
-    assigned_hr_id: UUID | None = None
-    assigned_tech_id: UUID | None = None
+    assigned_hr_id: UUID
+    assigned_tech_id: UUID
 
 
 class PositionUpdate(BaseModel):
@@ -138,11 +138,27 @@ class PositionCandidateResponse(BaseModel):
     color: str = "#6366f1"
     starred: bool = False
     selected: bool = False
+    
+    # Group Assignment
+    groupId: UUID | None = None
+    groupName: str | None = None
+    applicationId: UUID | None = None
+    
+    # New fields for Group Creation
+    experience: float = 0.0
+    location: str | None = "Unknown"
+    skills: list[str] = []
+    
+    # Detailed fields for filtering
+    companies: list[str] = []
+    job_titles: list[str] = []
+    universities: list[str] = []
+    degrees: list[str] = []
 
 class PositionGroupResponse(BaseModel):
-    groupID: UUID
-    groupName: str
-    candidatesCount: int
+    id: UUID = Field(alias="id")
+    name: str = Field(alias="name")
+    candidateCount: int = Field(alias="candidateCount")
     status: str
     createdDate: datetime
     integrityIssues: int = 0
@@ -152,6 +168,8 @@ class PositionGroupResponse(BaseModel):
     position_id: UUID | None = None
     progress: int = 0
     recruiter: str = "Unassigned"
+    assigned_hr_name: str | None = None
+    assigned_tech_name: str | None = None
     stage: str = "Initial"
     lastUpdated: str = "Just now"
 
@@ -168,6 +186,15 @@ class ProjectSummaryResponse(BaseModel):
 class InsightScores(BaseModel):
     assessment: float
     interview: float
+
+class SourceQualityItem(BaseModel):
+    source: str
+    avgScore: float
+    count: int
+
+class CompanyPipelineItem(BaseModel):
+    company: str
+    count: int
 
 class DistributionItem(BaseModel):
     name: str
@@ -191,10 +218,12 @@ class SeniorityDistributionItem(BaseModel):
 class UniversityDistributionItem(BaseModel):
     university: str
     count: int
+    percentage: float = 0.0
 
 class AvailabilityDistributionItem(BaseModel):
     availability: str
     count: int
+    percentage: float = 0.0
 
 class PositionInsightsResponse(BaseModel):
     conversion: float
@@ -207,6 +236,8 @@ class PositionInsightsResponse(BaseModel):
     seniorityDistribution: list[SeniorityDistributionItem] = []
     universityDistribution: list[UniversityDistributionItem] = []
     availabilityDistribution: list[AvailabilityDistributionItem] = []
+    sourceQuality: list[SourceQualityItem] = []
+    topCompanies: list[CompanyPipelineItem] = []
 
 
 class GroupAnalysisResponse(BaseModel):

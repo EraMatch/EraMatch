@@ -2,21 +2,23 @@ import { useState } from 'react';
 import { X, Wand2, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { AIQuestionPreview } from './AIQuestionPreview';
+import { recruiterService } from '../../../services/recruiter.service';
 
 interface QuestionVariant {
   id: string;
   questionText: string;
-  type: 'mcq' | 'essay' | 'code';
+  type: 'mcq' | 'essay' | 'code' | 'interview';
   [key: string]: any;
 }
 
 interface AIGeneratorModalProps {
-  questionType: 'mcq' | 'essay' | 'code';
-  onGenerate: (question: QuestionVariant) => void;
+  questionType?: 'mcq' | 'essay' | 'code' | 'interview';
+  onGenerate: (question: any) => void;
   onClose: () => void;
+  context?: any;
 }
 
-export function AIGeneratorModal({ questionType, onGenerate, onClose }: AIGeneratorModalProps) {
+export function AIGeneratorModal({ questionType, onGenerate, onClose, context: externalContext }: AIGeneratorModalProps) {
   const [topic, setTopic] = useState('');
   const [difficulty, setDifficulty] = useState<'Easy' | 'Medium' | 'Hard'>('Medium');
   const [context, setContext] = useState('');
@@ -30,80 +32,22 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose }: AIGenera
       return;
     }
 
-    setIsGenerating(true);
-    
-    // Simulate AI generation
-    setTimeout(() => {
-      let question: QuestionVariant;
+    try {
+      const question = await recruiterService.generateAIQuestion({
+        question_type: effectiveType,
+        topic,
+        difficulty,
+        context
+      });
 
-      if (questionType === 'mcq') {
-        question = {
-          id: `ai-mcq-${Date.now()}`,
-          type: 'mcq',
-          questionText: `${topic}: Which of the following best describes ${topic.toLowerCase()}?`,
-          options: [
-            `A key concept in ${topic}`,
-            `An alternative approach to ${topic}`,
-            `A common misconception about ${topic}`,
-            `A deprecated method in ${topic}`
-          ],
-          correctAnswer: 0,
-          difficulty,
-          explanation: `This question tests understanding of core concepts in ${topic}. The correct answer highlights the fundamental principles that define ${topic}.`,
-          tags: [topic, 'AI-Generated']
-        };
-      } else if (questionType === 'essay') {
-        question = {
-          id: `ai-essay-${Date.now()}`,
-          type: 'essay',
-          questionText: `Discuss the key principles of ${topic} and provide examples of how they apply in real-world scenarios.`,
-          maxWords: 400,
-          rubric: `Answer should demonstrate understanding of ${topic}, provide relevant examples, and show critical thinking. Look for: clear explanation of concepts, practical examples, and analytical depth.`,
-          expectedKeywords: [topic, 'principles', 'examples', 'application', 'best practices'],
-          difficulty,
-          tags: [topic, 'AI-Generated']
-        };
-      } else { // code
-        question = {
-          id: `ai-code-${Date.now()}`,
-          type: 'code',
-          questionText: `Implement a solution for ${topic}. ${context || 'Your solution should be efficient and well-documented.'}`,
-          language: 'JavaScript',
-          codeTemplate: `function solution(input) {\n  // Implement ${topic} here\n  // TODO: Add your implementation\n  return output;\n}`,
-          testCases: [
-            {
-              id: 'tc1',
-              input: 'input1',
-              expectedOutput: 'output1',
-              isHidden: false,
-              points: 10
-            },
-            {
-              id: 'tc2',
-              input: 'input2',
-              expectedOutput: 'output2',
-              isHidden: true,
-              points: 15
-            },
-            {
-              id: 'tc3',
-              input: 'edge_case',
-              expectedOutput: 'edge_output',
-              isHidden: true,
-              points: 10
-            }
-          ],
-          difficulty,
-          timeLimit: 5,
-          memoryLimit: 256,
-          tags: [topic, 'AI-Generated']
-        };
-      }
-
-      setIsGenerating(false);
       setGeneratedQuestion(question);
       setShowPreview(true);
-    }, 1500);
+    } catch (error) {
+      console.error('Failed to generate AI question:', error);
+      alert('Failed to generate AI question. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleAcceptQuestion = (question: QuestionVariant) => {
@@ -139,6 +83,8 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose }: AIGenera
     );
   }
 
+  const effectiveType = externalContext?.type || questionType || 'mcq';
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
       <div className="bg-white rounded-[16px] shadow-2xl max-w-2xl w-full">
@@ -152,7 +98,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose }: AIGenera
               <div>
                 <h2 className="text-[#111827]">AI Question Generator</h2>
                 <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                  Generate a {questionType === 'mcq' ? 'multiple choice' : questionType} question with AI
+                  Generate a {effectiveType === 'mcq' ? 'multiple choice' : effectiveType} question with AI
                 </p>
               </div>
             </div>
@@ -192,15 +138,14 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose }: AIGenera
                   <button
                     key={level}
                     onClick={() => setDifficulty(level)}
-                    className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${
-                      difficulty === level
-                        ? level === 'Easy'
-                          ? 'border-green-500 bg-green-50 text-green-700'
-                          : level === 'Medium'
+                    className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${difficulty === level
+                      ? level === 'Easy'
+                        ? 'border-green-500 bg-green-50 text-green-700'
+                        : level === 'Medium'
                           ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
                           : 'border-red-500 bg-red-50 text-red-700'
-                        : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-purple-300'
-                    }`}
+                      : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-purple-300'
+                      }`}
                   >
                     {level}
                   </button>
@@ -231,7 +176,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose }: AIGenera
                     <strong>AI will generate:</strong>
                   </p>
                   <ul className="font-['Arimo',sans-serif] text-[13px] text-purple-800 list-disc list-inside space-y-1">
-                    {questionType === 'mcq' && (
+                    {effectiveType === 'mcq' && (
                       <>
                         <li>A relevant multiple-choice question</li>
                         <li>4 plausible options with marked correct answer</li>
@@ -239,7 +184,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose }: AIGenera
                         <li>References from trusted sources</li>
                       </>
                     )}
-                    {questionType === 'essay' && (
+                    {effectiveType === 'essay' && (
                       <>
                         <li>A thought-provoking essay question</li>
                         <li>Grading rubric with key evaluation criteria</li>
@@ -247,12 +192,19 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose }: AIGenera
                         <li>References from academic sources</li>
                       </>
                     )}
-                    {questionType === 'code' && (
+                    {effectiveType === 'code' && (
                       <>
                         <li>A coding problem with clear requirements</li>
                         <li>Code template in your preferred language</li>
                         <li>Test cases for validation</li>
                         <li>References to relevant documentation</li>
+                      </>
+                    )}
+                    {effectiveType === 'interview' && (
+                      <>
+                        <li>Relevant interview questions</li>
+                        <li>Evaluation criteria and key points</li>
+                        <li>Tailored to the selected difficulty</li>
                       </>
                     )}
                   </ul>

@@ -218,6 +218,73 @@ async def list_groups(session: DbSession, admin: AdminUser):
     return await service.list_organization_groups()
 
 
+@router.patch("/positions/backfill-assignments")
+async def backfill_position_assignments(session: DbSession, admin: AdminUser):
+    """
+    Backfill missing HR and Technical Recruiter assignments for positions.
+    Assigns the first available HR/Technical user to any position missing those assignments.
+    Requires admin role.
+    """
+    from sqlmodel import select
+    from app.models import Position, OrganizationUser
+
+    org_id = admin.organization_id
+
+    # Find first available HR user
+    res_hr = await session.execute(
+        select(OrganizationUser).where(
+            OrganizationUser.organization_id == org_id,
+            OrganizationUser.role == "hr",
+            OrganizationUser.status == "active"
+        ).limit(1)
+    )
+    default_hr = res_hr.scalar_one_or_none()
+
+    # Find first available Technical user
+    res_tech = await session.execute(
+        select(OrganizationUser).where(
+            OrganizationUser.organization_id == org_id,
+            OrganizationUser.role == "technical",
+            OrganizationUser.status == "active"
+        ).limit(1)
+    )
+    default_tech = res_tech.scalar_one_or_none()
+
+    if not default_hr and not default_tech:
+        raise HTTPException(status_code=400, detail="No active HR or Technical users found in the organization.")
+
+    # Find positions missing assignments
+    res_positions = await session.execute(
+        select(Position).where(
+            Position.organization_id == org_id,
+            Position.is_deleted == False,
+            (Position.assigned_hr_id == None) | (Position.assigned_tech_id == None)
+        )
+    )
+    positions = res_positions.scalars().all()
+
+    updated_count = 0
+    for pos in positions:
+        changed = False
+        if pos.assigned_hr_id is None and default_hr:
+            pos.assigned_hr_id = default_hr.id
+            changed = True
+        if pos.assigned_tech_id is None and default_tech:
+            pos.assigned_tech_id = default_tech.id
+            changed = True
+        if changed:
+            session.add(pos)
+            updated_count += 1
+
+    await session.commit()
+    return {
+        "status": "success",
+        "updated_positions": updated_count,
+        "default_hr": f"{default_hr.first_name} {default_hr.last_name}" if default_hr else None,
+        "default_tech": f"{default_tech.first_name} {default_tech.last_name}" if default_tech else None
+    }
+
+
 @router.get("/alerts", response_model=list[NotificationResponse])
 async def get_alerts(
     session: DbSession,
