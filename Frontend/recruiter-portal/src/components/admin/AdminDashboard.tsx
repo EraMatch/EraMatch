@@ -303,7 +303,7 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
             <div>
               <h1 className="text-gray-900 text-3xl mb-2">Group Insights</h1>
               <p className="text-gray-500">
-                {selectedGroup.groupName} • {selectedGroup.positionTitle}
+                {(selectedGroup.name || selectedGroup.groupName)} • {selectedGroup.positionTitle}
               </p>
             </div>
           </div>
@@ -1900,12 +1900,12 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
                     <tr key={group.id} className="border-b border-gray-100 hover:bg-gray-50">
                       <td className="p-4 text-center">
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
-                          {group.groupName}
+                          {group.name || group.groupName}
                         </span>
                       </td>
                       <td className="p-4 text-center">
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                          {group.candidatesCount}
+                          {group.candidateCount ?? group.candidatesCount ?? 0}
                         </span>
                       </td>
                       <td className="p-4 text-center">

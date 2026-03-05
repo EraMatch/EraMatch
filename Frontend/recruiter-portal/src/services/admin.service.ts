@@ -86,8 +86,12 @@ export const adminService = {
         const transformedGroups = (groups || []).map((g: any) => ({
             ...g,
             id: g.groupID || g.group_id || g.id,
-            groupName: g.groupName || g.group_name || 'Unnamed Group',
-            candidatesCount: g.candidatesCount || g.candidates_count || 0,
+            // API returns `name` (not groupName/group_name) — fix was here
+            groupName: g.name || g.groupName || g.group_name || 'Unnamed Group',
+            name: g.name || g.groupName || g.group_name || 'Unnamed Group',
+            // API returns `candidateCount` (not candidatesCount) — fix was here
+            candidatesCount: g.candidateCount ?? g.candidatesCount ?? g.candidates_count ?? 0,
+            candidateCount: g.candidateCount ?? g.candidatesCount ?? g.candidates_count ?? 0,
             integrityIssues: g.integrityIssues || g.integrity_issues || 0,
             status: g.status || 'Active',
             createdDate: g.createdDate || g.created_at || new Date().toISOString()

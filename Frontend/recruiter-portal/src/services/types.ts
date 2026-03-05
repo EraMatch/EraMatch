@@ -36,11 +36,13 @@ export interface Project {
 
 export interface PositionGroup {
     id: string;
-    groupName: string;
+    groupName: string;    // transformed field (friendly alias)
+    name?: string;        // raw field from API /admin/groups
     positionTitle: string;
-    candidatesCount: number;
+    candidatesCount: number;    // transformed field
+    candidateCount?: number;    // raw field from API /admin/groups
     integrityIssues?: number;
-    status: 'Active' | 'Processing' | 'Completed' | 'On Hold';
+    status: string;
     createdDate: string;
     hasAssessment: boolean;
     hasAIInterview: boolean;
