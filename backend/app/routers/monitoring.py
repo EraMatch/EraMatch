@@ -46,7 +46,7 @@ class CandidateProgressDTO(BaseModel):
 
 @router.get("/candidates", response_model=List[CandidateProgressDTO])
 async def get_candidates_progress(session: DbSession):
-    """Get only candidates who have started an interview session - real data only."""
+    """Get only candidates who have actual interview responses - real data only."""
     
     result = await session.execute(
         text("""
@@ -76,6 +76,11 @@ async def get_candidates_progress(session: DbSession):
                 ls.status as status,
                 ls.last_updated
             FROM latest_sessions ls
+            WHERE (
+                -- Only include candidates with actual responses or completed sessions
+                (SELECT COUNT(*) FROM interview_responses ir WHERE ir.session_id = ls.session_id) > 0
+                OR ls.status IN ('completed', 'in_progress')
+            )
             ORDER BY ls.last_updated DESC NULLS LAST
             LIMIT 50
         """)
@@ -139,6 +144,166 @@ async def get_candidate_responses(candidate_id: str, session: DbSession):
             ai_feedback=row[8],
             processing_status=row[9],
             submitted_at=row[10] or datetime.utcnow()
+        )
+        for row in rows
+    ]
+
+
+# =============================================================================
+# ASSESSMENT MONITORING
+# =============================================================================
+
+class AssessmentCandidateDTO(BaseModel):
+    candidate_id: str
+    candidate_name: str
+    candidate_email: str
+    assessment_title: str
+    total_questions: int
+    answered_questions: int
+    total_score: float | None
+    max_score: int | None
+    percentage: float | None
+    status: str
+    started_at: datetime | None
+    submitted_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class AssessmentAnswerDTO(BaseModel):
+    answer_id: str
+    question_text: str
+    question_type: str
+    answer_data: dict
+    is_correct: bool | None
+    points_earned: float | None
+    points_max: int
+    time_spent_seconds: int | None
+    answered_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/assessment-candidates", response_model=List[AssessmentCandidateDTO])
+async def get_assessment_candidates_progress(session: DbSession):
+    """Get candidates who have actual assessment activity (answered questions)."""
+
+    result = await session.execute(
+        text("""
+            WITH latest_sessions AS (
+                -- For each candidate, pick the session with the most recent activity
+                SELECT DISTINCT ON (ca.candidate_id)
+                    ca.candidate_id,
+                    oa.session_id,
+                    oa.assessment_id,
+                    oa.max_points,
+                    oa.total_score,
+                    oa.total_points,
+                    oa.status,
+                    oa.started_at,
+                    oa.submitted_at
+                FROM ongoing_assessments oa
+                JOIN candidate_applications ca ON oa.application_id = ca.application_id
+                WHERE (
+                    (SELECT COUNT(*) FROM candidate_answers ca2 WHERE ca2.session_id = oa.session_id) > 0
+                    OR oa.status = 'in_progress'
+                )
+                ORDER BY ca.candidate_id, COALESCE(oa.submitted_at, oa.started_at) DESC NULLS LAST
+            )
+            SELECT
+                ls.candidate_id::text,
+                cp.full_name,
+                cp.email,
+                a.title as assessment_title,
+                ls.max_points,
+                ls.total_score,
+                ls.total_points,
+                ls.status,
+                ls.started_at,
+                ls.submitted_at,
+                ls.session_id::text,
+                (SELECT COUNT(*) FROM candidate_answers ca2 
+                 WHERE ca2.session_id = ls.session_id) as answered_questions,
+                (SELECT jsonb_array_length(
+                    (SELECT assigned_questions->'questions' 
+                     FROM ongoing_assessments oa2 
+                     WHERE oa2.session_id = ls.session_id)
+                )) as total_questions
+            FROM latest_sessions ls
+            JOIN candidate_profiles cp ON ls.candidate_id = cp.candidate_id
+            JOIN assessments a ON ls.assessment_id = a.assessment_id
+            WHERE (cp.is_deleted = false OR cp.is_deleted IS NULL)
+            ORDER BY COALESCE(ls.submitted_at, ls.started_at) DESC NULLS LAST
+            LIMIT 50
+        """)
+    )
+    rows = result.mappings().all()
+
+    return [
+        AssessmentCandidateDTO(
+            candidate_id=row["candidate_id"],
+            candidate_name=row["full_name"] or "Unknown",
+            candidate_email=row["email"] or "",
+            assessment_title=row["assessment_title"] or "",
+            total_questions=row["total_questions"] or 0,
+            answered_questions=row["answered_questions"] or 0,
+            total_score=float(row["total_points"]) if row["total_points"] else None,
+            max_score=row["max_points"],
+            percentage=float(row["total_score"]) if row["total_score"] else None,
+            status=row["status"] or "not_started",
+            started_at=row["started_at"],
+            submitted_at=row["submitted_at"],
+        )
+        for row in rows
+    ]
+
+
+@router.get("/assessment-responses/{candidate_id}", response_model=List[AssessmentAnswerDTO])
+async def get_assessment_responses(candidate_id: str, session: DbSession):
+    """Get assessment answers for a specific candidate — only from their latest session."""
+
+    result = await session.execute(
+        text("""
+            WITH latest_session AS (
+                SELECT oa.session_id
+                FROM ongoing_assessments oa
+                JOIN candidate_applications ca ON oa.application_id = ca.application_id
+                WHERE ca.candidate_id = :candidate_id
+                ORDER BY COALESCE(oa.submitted_at, oa.started_at) DESC NULLS LAST
+                LIMIT 1
+            )
+            SELECT 
+                ans.answer_id::text,
+                qb.question_text,
+                qb.question_type,
+                ans.answer_data,
+                ans.is_correct,
+                ans.points_earned,
+                ans.points_max,
+                ans.time_spent_seconds,
+                ans.answered_at
+            FROM candidate_answers ans
+            JOIN latest_session ls ON ans.session_id = ls.session_id
+            JOIN question_bank qb ON ans.question_id = qb.question_id
+            ORDER BY ans.question_order ASC, ans.answered_at ASC
+        """),
+        {"candidate_id": candidate_id}
+    )
+    rows = result.mappings().all()
+
+    return [
+        AssessmentAnswerDTO(
+            answer_id=row["answer_id"],
+            question_text=row["question_text"] or "",
+            question_type=row["question_type"] or "",
+            answer_data=row["answer_data"] or {},
+            is_correct=row["is_correct"],
+            points_earned=float(row["points_earned"]) if row["points_earned"] else None,
+            points_max=row["points_max"] or 0,
+            time_spent_seconds=row["time_spent_seconds"],
+            answered_at=row["answered_at"],
         )
         for row in rows
     ]

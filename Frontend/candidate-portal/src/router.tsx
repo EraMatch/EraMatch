@@ -29,16 +29,17 @@ const CandidateLoginWrapper = () => {
     );
 };
 
+// CandidateHomePage fetches stage from the API – no hardcoded currentStage
 const CandidateHomePageWrapper = () => {
     const navigate = useNavigate();
     return (
         <CandidateHomePage
             onOpenTestingPage={() => navigate('/testing')}
-            currentStage="assessment"
         />
     );
 };
 
+// CandidateDashboard fetches completion status itself from the API
 const CandidateDashboardWrapper = () => {
     const navigate = useNavigate();
     return (
@@ -46,11 +47,8 @@ const CandidateDashboardWrapper = () => {
             onSignOut={() => navigate('/login')}
             onBack={() => navigate('/home')}
             onStartRecordedInterview={() => navigate('/assessment/recorded')}
-            recordedInterviewCompleted={false}
             onStartLiveInterview={() => navigate('/assessment/live')}
-            liveInterviewCompleted={false}
             onStartTechnicalAssessment={() => navigate('/assessment/technical')}
-            technicalAssessmentCompleted={false}
         />
     );
 };
@@ -60,8 +58,8 @@ const TechnicalAssessmentWrapper = () => {
     return (
         <TechnicalAssessmentFlow
             onSignOut={() => navigate('/login')}
-            onExit={() => navigate('/testing')}
-            onCompletion={() => navigate('/testing')}
+            onExit={() => navigate('/home')}
+            onCompletion={() => navigate('/home')}
         />
     );
 };
@@ -82,8 +80,8 @@ const LiveInterviewWrapper = () => {
     return (
         <LiveInterviewFlow
             onSignOut={() => navigate('/login')}
-            onExit={() => navigate('/testing')}
-            onCompletion={() => navigate('/testing')}
+            onExit={() => navigate('/home')}
+            onCompletion={() => navigate('/home')}
         />
     );
 };

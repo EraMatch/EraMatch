@@ -5,6 +5,7 @@ Provides data for the candidate portal dashboard.
 """
 import logging
 from uuid import UUID
+from sqlalchemy import text
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -13,8 +14,6 @@ from app.models import (
     CandidateProfile,
     CandidateApplication,
     CandidateGroup,
-    GroupStageConfig,
-    CandidateStageProgress,
     Position,
     Assessment,
     AIInterviewConfig,
@@ -36,7 +35,6 @@ class CandidateDashboardService:
         Returns candidate profile, application status, group info, project, 
         current stage, stages pipeline, and notifications.
         """
-        from sqlalchemy import text
         
         try:
             # Get candidate profile
@@ -151,6 +149,7 @@ class CandidateDashboardService:
                             gps.stage_order,
                             gps.config_id,
                             gps.state,
+                            gps.stage_name,
                             COALESCE(cpp.status, 'locked') as progress_status,
                             cpp.score,
                             cpp.started_at,
@@ -175,10 +174,11 @@ class CandidateDashboardService:
                 for row in stage_rows:
                     stage_type = row[1]
                     stage_order = row[2]
-                    progress_status = row[5] or "locked"
+                    stage_name = row[5]
+                    progress_status = row[6] or "locked"
                     
                     # Create human-readable title
-                    title = row[9] or stage_type.replace("_", " ").title()
+                    title = row[10] or stage_name or stage_type.replace("_", " ").title()
                     
                     stage_data = {
                         "stage_id": str(row[0]),
@@ -186,9 +186,9 @@ class CandidateDashboardService:
                         "stage_order": stage_order,
                         "status": progress_status,
                         "title": title,
-                        "score": float(row[6]) if row[6] else None,
-                        "started_at": row[7].isoformat() if row[7] else None,
-                        "completed_at": row[8].isoformat() if row[8] else None,
+                        "score": float(row[7]) if row[7] else None,
+                        "started_at": row[8].isoformat() if row[8] else None,
+                        "completed_at": row[9].isoformat() if row[9] else None,
                     }
                     stages.append(stage_data)
                     
@@ -196,25 +196,41 @@ class CandidateDashboardService:
                     if current_stage is None and progress_status in ("unlocked", "in_progress"):
                         current_stage = stage_data.copy()
             
-            # Generate mock notifications for UI
-            notifications = [
-                {
-                    "id": 1,
-                    "type": "success",
-                    "title": "Assessment Completed",
-                    "message": "You have successfully completed the technical assessment.",
-                    "time": "2 hours ago",
-                    "read": False
-                },
-                {
-                    "id": 2,
-                    "type": "info",
-                    "title": "Next Step Available",
-                    "message": "Your AI interview is now unlocked and ready to start.",
-                    "time": "1 hour ago",
-                    "read": False
-                },
-            ] if current_stage else []
+            # Generate REAL notifications based on actual stage progress
+            notifications = []
+            notif_id = 1
+            for stg in stages:
+                if stg["status"] == "completed":
+                    notifications.append({
+                        "id": notif_id,
+                        "type": "success",
+                        "title": f"{stg['title']} Completed",
+                        "message": f"You have successfully completed {stg['title']}.",
+                        "time": stg.get("completed_at", ""),
+                        "read": True,
+                    })
+                    notif_id += 1
+                elif stg["status"] == "in_progress":
+                    notifications.append({
+                        "id": notif_id,
+                        "type": "warning",
+                        "title": f"{stg['title']} In Progress",
+                        "message": f"You have started {stg['title']}. Continue to complete it.",
+                        "time": stg.get("started_at", ""),
+                        "read": False,
+                    })
+                    notif_id += 1
+                elif stg["status"] == "unlocked":
+                    notifications.append({
+                        "id": notif_id,
+                        "type": "info",
+                        "title": f"{stg['title']} Available",
+                        "message": f"{stg['title']} is now unlocked and ready to start.",
+                        "time": "",
+                        "read": False,
+                    })
+                    notif_id += 1
+                # locked stages get no notification
             
             return {
                 "profile": profile,
@@ -242,56 +258,69 @@ class CandidateDashboardService:
                 "notifications": [],
             }
 
+
     async def get_assessments(self, candidate_id: UUID) -> list[dict]:
         """
         Get list of assessments/stages available for the candidate.
-        
         Returns stages with their status (locked, unlocked, in_progress, completed).
+        Uses raw SQL with correct tables: group_pipeline_stages + candidate_pipeline_progress.
         """
-        application = await self._get_active_application(candidate_id)
-        
-        if not application or not application.group_id:
+        # 1. Get active application
+        app_result = await self.session.execute(
+            text("""
+                SELECT application_id, group_id, status
+                FROM candidate_applications
+                WHERE candidate_id = :cid AND is_deleted = false
+                ORDER BY applied_at DESC
+                LIMIT 1
+            """),
+            {"cid": str(candidate_id)}
+        )
+        app_row = app_result.mappings().first()
+        if not app_row or not app_row["group_id"]:
             return []
-        
-        # Get stage configs for this group
-        stage_configs = await self._get_stage_configs(application.group_id)
-        
-        # Get candidate's progress on each stage
-        progress_map = await self._get_stage_progress_map(application.application_id)
-        
+
+        # 2. Get stages with progress
+        stages_result = await self.session.execute(
+            text("""
+                SELECT
+                    gps.stage_id, gps.stage_type, gps.stage_order,
+                    gps.config_id, gps.state, gps.stage_name,
+                    COALESCE(cpp.status, 'locked') as progress_status,
+                    CASE gps.stage_type
+                        WHEN 'assessment' THEN (SELECT title FROM assessments WHERE assessment_id = gps.config_id)
+                        WHEN 'ai_interview' THEN (SELECT title FROM ai_interview_configs WHERE config_id = gps.config_id)
+                        WHEN 'live_interview' THEN 'Live Interview'
+                    END as stage_title,
+                    CASE gps.stage_type
+                        WHEN 'assessment' THEN (SELECT duration_minutes::text || ' mins' FROM assessments WHERE assessment_id = gps.config_id)
+                        WHEN 'ai_interview' THEN '30-45 mins'
+                        WHEN 'live_interview' THEN '45-60 mins'
+                    END as duration
+                FROM group_pipeline_stages gps
+                LEFT JOIN candidate_pipeline_progress cpp
+                    ON cpp.application_id = :app_id
+                    AND cpp.stage_id = gps.stage_id
+                WHERE gps.group_id = :gid
+                ORDER BY gps.stage_order
+            """),
+            {"app_id": str(app_row["application_id"]), "gid": str(app_row["group_id"])}
+        )
+        stage_rows = stages_result.mappings().all()
+
         assessments = []
-        for i, stage in enumerate(stage_configs):
-            progress = progress_map.get(str(stage.stage_id))
-            
-            # Determine status
-            if progress:
-                status = progress.status
-            else:
-                # Check if previous stage is completed
-                if i == 0:
-                    status = "unlocked"  # First stage is always unlocked
-                else:
-                    prev_progress = progress_map.get(str(stage_configs[i-1].stage_id))
-                    if prev_progress and prev_progress.status == "completed":
-                        status = "unlocked"
-                    else:
-                        status = "locked"
-            
-            # Get stage details based on type
-            stage_details = await self._get_stage_details(stage)
-            
+        for row in stage_rows:
+            title = row["stage_title"] or row["stage_name"] or row["stage_type"].replace("_", " ").title()
             assessments.append({
-                "id": str(stage.stage_id),
-                "type": stage.stage_type,
-                "stage_order": stage.stage_order,
-                "status": status,
-                "title": stage_details.get("title", f"Stage {stage.stage_order}: {stage.stage_type}"),
-                "description": stage_details.get("description", ""),
-                "expectedTime": stage_details.get("duration", "Unknown"),
-                "questions": stage_details.get("questions"),
-                "parts": stage_details.get("parts"),
+                "id": str(row["stage_id"]),
+                "type": row["stage_type"],
+                "stage_order": row["stage_order"],
+                "status": row["progress_status"],
+                "title": title,
+                "description": f"Complete the {title}",
+                "expectedTime": row["duration"] or "Unknown",
             })
-        
+
         return assessments
 
     # =========================================================================
@@ -317,21 +346,23 @@ class CandidateDashboardService:
     async def _get_active_application(self, candidate_id: UUID) -> CandidateApplication | None:
         """Get the most recent active application for a candidate."""
         try:
+
             stmt = (
                 select(CandidateApplication)
                 .where(
                     CandidateApplication.candidate_id == candidate_id,
-                    CandidateApplication.is_deleted == False,
+                    # CandidateApplication.is_deleted == False,
                 )
                 .order_by(CandidateApplication.applied_at.desc())
                 .limit(1)
             )
             result = await self.session.execute(stmt)
             return result.scalar_one_or_none()
+
         except Exception as e:
-            print(f"[DEBUG ERROR] _get_active_application failed: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"\n[DEBUG ERROR] _get_active_application failed: {str(e)}\n")
+            # import traceback
+            # traceback.print_exc()
             return None
     
     async def _get_group(self, group_id: UUID) -> CandidateGroup | None:
@@ -346,80 +377,5 @@ class CandidateDashboardService:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
     
-    async def _get_stage_configs(self, group_id: UUID) -> list[GroupStageConfig]:
-        """Get stage configs for a group, ordered by stage_order."""
-        stmt = (
-            select(GroupStageConfig)
-            .where(GroupStageConfig.group_id == group_id)
-            .order_by(GroupStageConfig.stage_order)
-        )
-        result = await self.session.execute(stmt)
-        return list(result.scalars().all())
-    
-    async def _get_stage_progress_map(self, application_id: UUID) -> dict:
-        """Get map of stage progress keyed by stage_id."""
-        stmt = select(CandidateStageProgress).where(
-            CandidateStageProgress.application_id == application_id
-        )
-        result = await self.session.execute(stmt)
-        progress_list = result.scalars().all()
-        
-        return {
-            str(p.stage_id): p
-            for p in progress_list
-        }
-    
-    async def _get_stage_details(self, stage: GroupStageConfig) -> dict:
-        """Get title and details for a stage based on its type and config."""
-        if stage.stage_type == "assessment":
-            # Try to get assessment config
-            stmt = select(Assessment).where(Assessment.id == stage.config_id)
-            result = await self.session.execute(stmt)
-            assessment = result.scalar_one_or_none()
-            
-            if assessment:
-                # Count questions from structure
-                question_count = 0
-                if assessment.structure and isinstance(assessment.structure, dict):
-                    sections = assessment.structure.get("sections", [])
-                    for section in sections:
-                        question_count += len(section.get("question_ids", []))
-                
-                return {
-                    "title": assessment.title,
-                    "description": assessment.instructions or "Complete the technical assessment",
-                    "duration": f"{assessment.duration_minutes} mins",
-                    "questions": f"{question_count} questions" if question_count else None,
-                }
-        
-        elif stage.stage_type == "ai_interview":
-            stmt = select(AIInterviewConfig).where(AIInterviewConfig.config_id == stage.config_id)
-            result = await self.session.execute(stmt)
-            config = result.scalar_one_or_none()
-            
-            if config:
-                question_count = 0
-                if config.questions and isinstance(config.questions, list):
-                    question_count = len(config.questions)
-                
-                return {
-                    "title": config.title,
-                    "description": config.instructions or "Complete the AI interview",
-                    "duration": "30-45 mins",
-                    "parts": f"{question_count} parts" if question_count else "5 parts",
-                }
-        
-        elif stage.stage_type == "live_interview":
-            return {
-                "title": "Live Interview",
-                "description": "Schedule and complete a live interview with the hiring team",
-                "duration": "45-60 mins",
-                "parts": "1 part",
-            }
-        
-        # Default fallback
-        return {
-            "title": stage.stage_type.replace("_", " ").title(),
-            "description": f"Complete the {stage.stage_type.replace('_', ' ')} stage",
-            "duration": "Unknown",
-        }
+    # Removed _get_stage_configs, _get_stage_progress_map, _get_stage_details
+    # These used incorrect ORM models. Now using raw SQL in get_home and get_assessments.

@@ -94,8 +94,10 @@ export function TechnicalAssessmentFlow({ onSignOut, onExit, onCompletion }: Tec
   }, [currentStep]);
   const [mockTimer, setMockTimer] = useState(60);
 
-  // Assessment session states
-  const [inAssessmentSession, setInAssessmentSession] = useState(false);
+  // Assessment session states — restore from sessionStorage to skip pre-checks on reload
+  const [inAssessmentSession, setInAssessmentSession] = useState(() => {
+    return sessionStorage.getItem('assessment_checks_done') === 'true';
+  });
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [assessmentTimer, setAssessmentTimer] = useState(45 * 60); // 45 minutes in seconds
   const [answers, setAnswers] = useState<Record<number, string>>({});
@@ -1106,7 +1108,10 @@ export function TechnicalAssessmentFlow({ onSignOut, onExit, onCompletion }: Tec
               <Button
                 className="text-white rounded-full px-12 py-6 text-lg"
                 style={{ backgroundColor: '#6366F1' }}
-                onClick={() => setInAssessmentSession(true)}
+                onClick={() => {
+                  sessionStorage.setItem('assessment_checks_done', 'true');
+                  setInAssessmentSession(true);
+                }}
               >
                 Start Session →
               </Button>
@@ -1127,8 +1132,14 @@ export function TechnicalAssessmentFlow({ onSignOut, onExit, onCompletion }: Tec
     <div className="min-h-screen" style={{ backgroundColor: '#EDF0F8' }}>
       {inAssessmentSession ? (
         <AssessmentSession
-          onSignOut={onSignOut}
-          onComplete={onCompletion}
+          onSignOut={() => {
+            sessionStorage.removeItem('assessment_checks_done');
+            onSignOut();
+          }}
+          onComplete={() => {
+            sessionStorage.removeItem('assessment_checks_done');
+            onCompletion();
+          }}
         />
       ) : (
         <>

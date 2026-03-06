@@ -10,7 +10,8 @@ Handles the AI video interview flow:
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
+from sqlalchemy.dialects.postgresql import UUID as pgUUID
 
 from app.api.deps import CurrentCandidate, DbSession
 
@@ -96,8 +97,10 @@ async def get_interview_config(candidate: CurrentCandidate, session: DbSession):
             JOIN ai_interview_configs aic ON gps.config_id = aic.config_id
             WHERE ca.candidate_id = :cid AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
             LIMIT 1
-        """),
-        {"cid": str(candidate.candidate_id)}
+        """).bindparams(
+            bindparam("cid", type_=pgUUID(as_uuid=True)),
+        ),
+        {"cid": candidate.candidate_id}
     )
     row = result.fetchone()
     
@@ -165,8 +168,11 @@ async def start_interview_session(
                 AND aic.config_id = :config_id
                 AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
             LIMIT 1
-        """),
-        {"cid": str(candidate.candidate_id), "config_id": request.config_id}
+        """).bindparams(
+            bindparam("cid", type_=pgUUID(as_uuid=True)),
+            bindparam("config_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"cid": candidate.candidate_id, "config_id": UUID(request.config_id)}
     )
     row = result.fetchone()
     
@@ -187,12 +193,17 @@ async def start_interview_session(
                 :sid, :config_id, :app_id,
                 :org_id, :itype, 'in_progress', NOW()
             )
-        """),
+        """).bindparams(
+            bindparam("sid", type_=pgUUID(as_uuid=True)),
+            bindparam("config_id", type_=pgUUID(as_uuid=True)),
+            bindparam("app_id", type_=pgUUID(as_uuid=True)),
+            bindparam("org_id", type_=pgUUID(as_uuid=True)),
+        ),
         {
-            "sid": session_id,
-            "config_id": request.config_id,
-            "app_id": application_id,
-            "org_id": organization_id,
+            "sid": UUID(session_id),
+            "config_id": UUID(request.config_id),
+            "app_id": UUID(application_id),
+            "org_id": UUID(organization_id),
             "itype": interview_type,
         }
     )
@@ -230,7 +241,10 @@ async def submit_video_response(
             FROM ongoing_interviews oi
             JOIN candidate_applications ca ON oi.application_id = ca.application_id
             WHERE oi.session_id = :session_id AND ca.candidate_id = :candidate_id
-        """),
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            bindparam("candidate_id", type_=pgUUID(as_uuid=True)),
+        ),
         {"session_id": session_id, "candidate_id": candidate.candidate_id}
     )
     if not result.scalar():
@@ -271,9 +285,12 @@ async def submit_video_response(
                 :response_id, :session_id, :question_id, :question_order,
                 :question_text, :video_url, 1, NOW(), 'pending'
             )
-        """),
+        """).bindparams(
+            bindparam("response_id", type_=pgUUID(as_uuid=True)),
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
         {
-            "response_id": response_id,
+            "response_id": UUID(response_id),
             "session_id": session_id,
             "question_id": question_id,
             "question_order": int(question_id.replace("q", "")) if question_id.startswith("q") else 0,
@@ -322,8 +339,10 @@ async def get_processing_status(
             FROM interview_responses
             WHERE session_id = :sid
             ORDER BY question_order
-        """),
-        {"sid": session_id}
+        """).bindparams(
+            bindparam("sid", type_=pgUUID(as_uuid=True)),
+        ),
+        {"sid": UUID(session_id)}
     )
     rows = result.fetchall()
     
@@ -377,21 +396,33 @@ async def complete_interview_session(
     """
     Mark an interview session as completed.
     
-    Updates the ongoing_interviews status to 'completed' and sets completed_at timestamp.
+    Updates the ongoing_interviews status to 'completed', sets completed_at timestamp,
+    and unlocks the next pipeline stage.
     """
+    from uuid import uuid4
+    from sqlalchemy import bindparam
+    from sqlalchemy.dialects.postgresql import UUID as pgUUID
+    
     # Verify the session belongs to this candidate
     result = await session.execute(
         text("""
-            SELECT oi.session_id
+            SELECT oi.session_id, ca.application_id, ca.group_id
             FROM ongoing_interviews oi
             JOIN candidate_applications ca ON oi.application_id = ca.application_id
             WHERE oi.session_id = :sid AND ca.candidate_id = :cid
-        """),
-        {"sid": request.session_id, "cid": str(candidate.candidate_id)}
+        """).bindparams(
+            bindparam("sid", type_=pgUUID(as_uuid=True)),
+            bindparam("cid", type_=pgUUID(as_uuid=True)),
+        ),
+        {"sid": UUID(request.session_id), "cid": candidate.candidate_id}
     )
+    row = result.mappings().first()
     
-    if not result.fetchone():
+    if not row:
         raise HTTPException(status_code=404, detail="Session not found or doesn't belong to candidate")
+    
+    application_id = row["application_id"]
+    group_id = row["group_id"]
     
     # Update session status
     await session.execute(
@@ -399,8 +430,10 @@ async def complete_interview_session(
             UPDATE ongoing_interviews
             SET status = 'completed', completed_at = NOW()
             WHERE session_id = :sid
-        """),
-        {"sid": request.session_id}
+        """).bindparams(
+            bindparam("sid", type_=pgUUID(as_uuid=True)),
+        ),
+        {"sid": UUID(request.session_id)}
     )
     
     # Update candidate pipeline progress for this stage
@@ -418,8 +451,10 @@ async def complete_interview_session(
             WHERE oi.session_id = :sid
               AND cpp.application_id = ca.application_id
               AND cpp.stage_id = gps.stage_id
-        """),
-        {"sid": request.session_id}
+        """).bindparams(
+            bindparam("sid", type_=pgUUID(as_uuid=True)),
+        ),
+        {"sid": UUID(request.session_id)}
     )
     
     # --- Trigger Recruiter Notification ---

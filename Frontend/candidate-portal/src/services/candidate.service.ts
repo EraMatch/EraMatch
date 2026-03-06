@@ -3,5 +3,60 @@ import { fetchAPI } from './client';
 export const candidateService = {
     getHome: async () => fetchAPI('/candidate/home'),
     getAssessments: async () => fetchAPI('/candidate/assessments'),
-    getProfile: async () => fetchAPI('/candidate/profile')
+    getProfile: async () => fetchAPI('/candidate/profile'),
+
+    // Assessment endpoints
+    getAssessmentConfig: async () => fetchAPI('/assessment/config'),
+    startAssessment: async (data: { assessment_id: string; stage_id: string }) =>
+        fetchAPI('/assessment/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }),
+    saveAnswer: async (data: {
+        session_id: string;
+        question_id: string;
+        answer_data: Record<string, unknown>;
+        time_spent_seconds?: number;
+    }) =>
+        fetchAPI('/assessment/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }),
+    runCode: async (data: { code: string; language: string; stdin?: string }) =>
+        fetchAPI('/assessment/run-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }),
+    runTests: async (data: { session_id: string; question_id: string; code: string; language: string }) =>
+        fetchAPI('/assessment/run-tests', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }),
+    submitAssessment: async (data: { session_id: string }) =>
+        fetchAPI('/assessment/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }),
+
+    // Interview endpoints
+    getInterviewConfig: async () => fetchAPI('/interview/config'),
+    startInterview: async (data: { config_id: string }) =>
+        fetchAPI('/interview/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }),
+    getInterviewStatus: async (sessionId: string) =>
+        fetchAPI(`/interview/status/${sessionId}`),
+    completeInterview: async (data: { session_id: string }) =>
+        fetchAPI('/interview/complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }),
 };
