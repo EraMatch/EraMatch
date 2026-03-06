@@ -393,14 +393,12 @@ class RecruiterService:
                     ).group_by(GroupStageConfig.stage_type)
 
 
-                    res_apps, res_groups, res_hires, res_hire_count, res_scores, res_stages = await asyncio.gather(
-                        self.session.execute(q_apps),
-                        self.session.execute(q_groups),
-                        self.session.execute(q_hires),
-                        self.session.execute(q_hire_count),
-                        self.session.execute(q_scores),
-                        self.session.execute(q_stages)
-                    )
+                    res_apps = await self.session.execute(q_apps)
+                    res_groups = await self.session.execute(q_groups)
+                    res_hires = await self.session.execute(q_hires)
+                    res_hire_count = await self.session.execute(q_hire_count)
+                    res_scores = await self.session.execute(q_scores)
+                    res_stages = await self.session.execute(q_stages)
                     
                     app_count = res_apps.scalar() or 0
                     group_count = res_groups.scalar() or 0
@@ -1001,10 +999,8 @@ class RecruiterService:
                 q_ops = q_ops.where(Position.assigned_hr_id == self.current_user.id)
                 q_pos_ids = q_pos_ids.where(Position.assigned_hr_id == self.current_user.id)
             
-            res_ops, res_pos_ids = await asyncio.gather(
-                self.session.execute(q_ops),
-                self.session.execute(q_pos_ids)
-            )
+            res_ops = await self.session.execute(q_ops)
+            res_pos_ids = await self.session.execute(q_pos_ids)
             
             open_positions = res_ops.scalar() or 0
             pos_ids = res_pos_ids.scalars().all()
@@ -1029,11 +1025,9 @@ class RecruiterService:
                     Hire.position_id.in_(pos_ids)
                 )
                 
-                res_apps, res_groups, res_hires = await asyncio.gather(
-                    self.session.execute(q_apps),
-                    self.session.execute(q_groups),
-                    self.session.execute(q_hires)
-                )
+                res_apps = await self.session.execute(q_apps)
+                res_groups = await self.session.execute(q_groups)
+                res_hires = await self.session.execute(q_hires)
                 
                 total_applicants = res_apps.scalar() or 0
                 sub_groups = res_groups.scalar() or 0
@@ -1356,20 +1350,18 @@ class RecruiterService:
             result = []
             for g in groups:
                 gid = g.id
-                res_count, res_flags = await asyncio.gather(
-                    self.session.execute(
-                        select(func.count()).where(
-                            CandidateApplication.group_id == gid,
-                            CandidateApplication.is_deleted == False
-                        )
-                    ),
-                    self.session.execute(
-                        select(func.count(ProctoringFlag.id)).join(
-                            CandidateApplication, ProctoringFlag.application_id == CandidateApplication.id
-                        ).where(
-                            CandidateApplication.group_id == gid,
-                            CandidateApplication.is_deleted == False
-                        )
+                res_count = await self.session.execute(
+                    select(func.count()).where(
+                        CandidateApplication.group_id == gid,
+                        CandidateApplication.is_deleted == False
+                    )
+                )
+                res_flags = await self.session.execute(
+                    select(func.count(ProctoringFlag.id)).join(
+                        CandidateApplication, ProctoringFlag.application_id == CandidateApplication.id
+                    ).where(
+                        CandidateApplication.group_id == gid,
+                        CandidateApplication.is_deleted == False
                     )
                 )
                 count = res_count.scalar() or 0
@@ -1617,18 +1609,16 @@ class RecruiterService:
             q_groups = q_groups.where(Position.assigned_hr_id == self.current_user.id)
             q_candidates = q_candidates.where(Position.assigned_hr_id == self.current_user.id)
 
-        res_overview = await asyncio.gather(
-            self.session.execute(q_projects),
-            self.session.execute(q_positions),
-            self.session.execute(q_groups),
-            self.session.execute(q_candidates)
-        )
+        res_overview_0 = await self.session.execute(q_projects)
+        res_overview_1 = await self.session.execute(q_positions)
+        res_overview_2 = await self.session.execute(q_groups)
+        res_overview_3 = await self.session.execute(q_candidates)
         
         overview = OverviewStats(
-            totalProjects=res_overview[0].scalar() or 0,
-            totalPositions=res_overview[1].scalar() or 0,
-            totalGroups=res_overview[2].scalar() or 0,
-            totalCandidates=res_overview[3].scalar() or 0
+            totalProjects=res_overview_0.scalar() or 0,
+            totalPositions=res_overview_1.scalar() or 0,
+            totalGroups=res_overview_2.scalar() or 0,
+            totalCandidates=res_overview_3.scalar() or 0,
         )
         
         # 2. Groups By Status

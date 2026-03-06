@@ -86,3 +86,7 @@ backend/pyproject.toml
 COMMIT_SUMMARY.md
 backend/uv.lock
 backend/uv.lock
+
+
+# testing reports
+tests/recruiter-view/unit_testing/logs/reports
