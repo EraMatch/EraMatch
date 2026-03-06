@@ -24,7 +24,6 @@ class TestAdminRequestsE2E:
         # Ensure we are on the Requests page
         admin_driver.get(f"{FRONTEND_URL}/admin/requests")
         
-        # Assuming there are tabs or buttons to filter states
         try:
             approved_tab = WebDriverWait(admin_driver, 30).until(
                 EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Approved') or contains(text(), 'Resolved')]"))
@@ -34,4 +33,3 @@ class TestAdminRequestsE2E:
         except:
             # If standard tabs don't exist, ignore or log
             pytest.skip("Filter tabs not strictly matching generic naming found on UI.")
-```
