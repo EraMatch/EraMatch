@@ -120,12 +120,10 @@ class AdminService:
                 Project.is_deleted == False
             )
             
-            # Execute counts in parallel
-            res_pos, res_proj, res_apps = await asyncio.gather(
-                self.session.execute(q_pos),
-                self.session.execute(q_proj),
-                self.session.execute(q_apps)
-            )
+            # Execute counts sequentially to avoid sqlite locking
+            res_pos = await self.session.execute(q_pos)
+            res_proj = await self.session.execute(q_proj)
+            res_apps = await self.session.execute(q_apps)
             
             open_positions = res_pos.scalar() or 0
             active_projects = res_proj.scalar() or 0
@@ -1138,12 +1136,10 @@ CandidateStageProgress.completed_at.isnot(None),
                 Hire.position_id == position_id
             )
             
-            res_pos, res_app_ids, res_groups, res_hire = await asyncio.gather(
-                self.session.execute(q_pos),
-                self.session.execute(q_app_ids),
-                self.session.execute(q_groups),
-                self.session.execute(q_hire)
-            )
+            res_pos = await self.session.execute(q_pos)
+            res_app_ids = await self.session.execute(q_app_ids)
+            res_groups = await self.session.execute(q_groups)
+            res_hire = await self.session.execute(q_hire)
             
             pos = res_pos.scalar_one_or_none()
             if not pos:
@@ -1584,10 +1580,8 @@ CandidateStageProgress.completed_at.isnot(None),
                 CandidateApplication.is_deleted == False
             )
             
-            res_pos, res_apps = await asyncio.gather(
-                self.session.execute(q_pos),
-                self.session.execute(q_apps)
-            )
+            res_pos = await self.session.execute(q_pos)
+            res_apps = await self.session.execute(q_apps)
             
             active_positions = res_pos.scalar() or 0
             total_apps = res_apps.scalar() or 0
@@ -1729,10 +1723,8 @@ CandidateStageProgress.completed_at.isnot(None),
                     CandidateApplication.is_deleted == False
                 )
                 
-                res_count, res_flags = await asyncio.gather(
-                    self.session.execute(q_count),
-                    self.session.execute(q_flags)
-                )
+                res_count = await self.session.execute(q_count)
+                res_flags = await self.session.execute(q_flags)
                 
                 count = res_count.scalar() or 0
                 flags = res_flags.scalar() or 0

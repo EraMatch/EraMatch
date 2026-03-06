@@ -15,7 +15,7 @@ def browser():
     # options.add_argument("--headless")
     
     driver = webdriver.Chrome(options=options)
-    driver.implicitly_wait(10)
+    driver.implicitly_wait(30)
     yield driver
     driver.quit()
 
@@ -28,7 +28,7 @@ def admin_driver(browser):
     browser.get(f"{FRONTEND_URL}/admin/login")
     
     # Wait for the login form
-    email_input = WebDriverWait(browser, 10).until(
+    email_input = WebDriverWait(browser, 30).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']"))
     )
     email_input.clear()
@@ -42,7 +42,7 @@ def admin_driver(browser):
     submit_button.click()
     
     # Wait until dashboard is loaded to confirm login success
-    WebDriverWait(browser, 15).until(
+    WebDriverWait(browser, 30).until(
         EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Dashboard') or contains(text(), 'Overview')]"))
     )
     

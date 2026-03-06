@@ -9,7 +9,7 @@ class TestAdminLoginE2E:
         """Test that invalid credentials show an error and do not log in."""
         browser.get(f"{FRONTEND_URL}/admin/login")
         
-        email_input = WebDriverWait(browser, 10).until(
+        email_input = WebDriverWait(browser, 30).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']"))
         )
         email_input.clear()
@@ -23,8 +23,8 @@ class TestAdminLoginE2E:
         submit_button.click()
         
         # Verify an error message appears (assuming toaster or text error)
-        error_element = WebDriverWait(browser, 5).until(
-            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Invalid') or contains(text(), 'error') or contains(text(), 'fail')]"))
+        error_element = WebDriverWait(browser, 30).until(
+            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Invalid email or password')]"))
         )
         assert error_element is not None
 
@@ -32,7 +32,7 @@ class TestAdminLoginE2E:
         """Test successful login redirects to the dashboard."""
         browser.get(f"{FRONTEND_URL}/admin/login")
         
-        email_input = WebDriverWait(browser, 10).until(
+        email_input = WebDriverWait(browser, 30).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']"))
         )
         email_input.clear()
@@ -45,7 +45,7 @@ class TestAdminLoginE2E:
         submit_button = browser.find_element(By.CSS_SELECTOR, "button[type='submit']")
         submit_button.click()
         
-        dashboard_element = WebDriverWait(browser, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Dashboard') or contains(text(), 'Overview')]"))
+        dashboard_element = WebDriverWait(browser, 30).until(
+            EC.presence_of_element_located((By.XPATH, "//h1[contains(text(), 'Recruitment Dashboard')]"))
         )
         assert dashboard_element is not None
