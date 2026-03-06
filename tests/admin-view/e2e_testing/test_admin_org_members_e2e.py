@@ -33,6 +33,4 @@ class TestAdminOrgMembersE2E:
         search_input.clear()
         search_input.send_keys("recruiter")
         
-        # Note: In a real scenario, we might assert that the table filters down.
-        # This asserts simply that the input was found and didn't crash.
         assert search_input.get_attribute("value") == "recruiter"
