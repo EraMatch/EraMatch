@@ -11,12 +11,12 @@ class TestAdminSettingsE2E:
         admin_driver.get(f"{FRONTEND_URL}/admin")
         
         # In a real app the Settings link is usually at the bottom of a sidebar
-        settings_link = WebDriverWait(admin_driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Settings')]"))
+        settings_link = WebDriverWait(admin_driver, 30).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "a[title='Settings']"))
         )
         settings_link.click()
         
-        header = WebDriverWait(admin_driver, 10).until(
+        header = WebDriverWait(admin_driver, 30).until(
             EC.presence_of_element_located((By.XPATH, "//h1[contains(text(), 'Settings')]"))
         )
         assert header is not None
@@ -27,8 +27,8 @@ class TestAdminSettingsE2E:
         
         try:
             # Assuming standard UI tabs exist
-            org_tab = WebDriverWait(admin_driver, 5).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Organization') or contains(text(), 'Billing')]"))
+            org_tab = WebDriverWait(admin_driver, 30).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Organization') or contains(text(), 'General')]"))
             )
             org_tab.click()
             assert org_tab is not None

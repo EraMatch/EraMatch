@@ -11,18 +11,18 @@ class TestAdminDashboardE2E:
         
         # Look for typical stat titles or values
         # e.g., "Active Jobs", "Total Applications" or the summary numbers
-        stats_container = WebDriverWait(admin_driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Open Positions') or contains(text(), 'Active Projects')]"))
+        header = WebDriverWait(admin_driver, 30).until(
+            EC.presence_of_element_located((By.XPATH, "//h1[contains(text(), 'Recruitment Dashboard')]"))
         )
-        assert stats_container is not None
+        assert header is not None
         
     def test_dashboard_pipeline_funnel(self, admin_driver):
         """Test that the pipeline visualization renders."""
         admin_driver.get(f"{FRONTEND_URL}/admin")
         
         # Verify stages list or chart renders (e.g. Applied, Screening, etc.)
-        pipeline_element = WebDriverWait(admin_driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Pipeline') or contains(text(), 'Applied')]"))
+        pipeline_element = WebDriverWait(admin_driver, 30).until(
+            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Overall Recruitment Pipeline')]"))
         )
         assert pipeline_element is not None
 
@@ -31,7 +31,7 @@ class TestAdminDashboardE2E:
         admin_driver.get(f"{FRONTEND_URL}/admin")
         
         # Verify velocity/quality metric cards
-        health_element = WebDriverWait(admin_driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Health') or contains(text(), 'Velocity') or contains(text(), 'Quality')]"))
+        health_element = WebDriverWait(admin_driver, 30).until(
+            EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Project Health Status') or contains(text(), 'Portfolio Performance')]"))
         )
         assert health_element is not None

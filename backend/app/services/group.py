@@ -520,14 +520,12 @@ class GroupService:
             CandidateApplication.status.in_(["in_pipeline", "screening"]),
         )
 
-        res_assess, res_ai, res_live, res_offers, res_flags, res_review = await asyncio.gather(
-            self.session.execute(q_assess),
-            self.session.execute(q_ai),
-            self.session.execute(q_live),
-            self.session.execute(q_offers),
-            self.session.execute(q_flags),
-            self.session.execute(q_review),
-        )
+        res_assess = await self.session.execute(q_assess)
+        res_ai = await self.session.execute(q_ai)
+        res_live = await self.session.execute(q_live)
+        res_offers = await self.session.execute(q_offers)
+        res_flags = await self.session.execute(q_flags)
+        res_review = await self.session.execute(q_review)
 
         assess_row = res_assess.first()
         ai_row = res_ai.first()

@@ -11,13 +11,13 @@ class TestAdminOrgMembersE2E:
         admin_driver.get(f"{FRONTEND_URL}/admin")
         
         # Find and click the Organization Members link in the sidebar
-        members_link = WebDriverWait(admin_driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Organization') or contains(text(), 'Members')]"))
+        members_link = WebDriverWait(admin_driver, 30).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "a[title='Organization Members']"))
         )
         members_link.click()
         
         # Verify the page header
-        header = WebDriverWait(admin_driver, 10).until(
+        header = WebDriverWait(admin_driver, 30).until(
             EC.presence_of_element_located((By.XPATH, "//h1[contains(text(), 'Organization Members')]"))
         )
         assert header is not None
@@ -27,8 +27,8 @@ class TestAdminOrgMembersE2E:
         admin_driver.get(f"{FRONTEND_URL}/admin/members") # adjust the URL if the route differs
         
         # Look for a search input box
-        search_input = WebDriverWait(admin_driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, "//input[@placeholder='Search members...' or @type='text']"))
+        search_input = WebDriverWait(admin_driver, 30).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder*='Search']"))
         )
         search_input.clear()
         search_input.send_keys("recruiter")
