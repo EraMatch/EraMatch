@@ -10,7 +10,6 @@ class TestAdminSettingsE2E:
         """Test navigating to the centralized Settings page."""
         admin_driver.get(f"{FRONTEND_URL}/admin")
         
-        # In a real app the Settings link is usually at the bottom of a sidebar
         settings_link = WebDriverWait(admin_driver, 30).until(
             EC.element_to_be_clickable((By.CSS_SELECTOR, "a[title='Settings']"))
         )
