@@ -24,7 +24,11 @@ import logging
 import random
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
-
+import asyncio
+import subprocess
+import tempfile
+import os
+import time as time_module
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -823,14 +827,9 @@ async def run_tests(
     session: DbSession,
 ):
     """
-    Run ALL test cases for a coding question. Counts as a trial attempt.
-    Saves the answer + test results to DB.
+    run all test cases for a coding question. counts as a trial attempt.
+    saves the answer + test results to DB.
     """
-    import asyncio
-    import subprocess
-    import tempfile
-    import os
-    import time as time_module
 
     MAX_ATTEMPTS_DEFAULT = 5
 
@@ -1064,9 +1063,7 @@ async def run_tests(
     )
 
 
-# =============================================================================
-# AUTO-GRADING HELPER
-# =============================================================================
+# auto grading
 
 async def auto_grade_answers(session_id: UUID, db_session):
     """

@@ -41,7 +41,7 @@ All 3 must be running. The AI service handles both essay grading and video inter
 
 ### Sample Test Credentials
 
-#### 🎯 Technical Assessment Testing
+#### Technical Assessment Testing
 
 These candidates are set up for the **Full Stack Developer Technical Assessment** (60 min, MCQ + Coding + Essay):
 
@@ -58,7 +58,7 @@ These candidates are set up for the **Full Stack Developer Technical Assessment*
 3. Answer MCQs, write code, submit essays
 4. Submit → verify score in monitoring dashboard
 
-#### 🎥 AI Video Interview Testing
+#### AI Video Interview Testing
 
 These candidates are set up for the recorded video interview pipeline:
 
@@ -74,7 +74,7 @@ These candidates are set up for the recorded video interview pipeline:
 3. Upload completes → AI processes in background (Whisper + Gemma3)
 4. Check monitoring dashboard for transcript + score
 
-#### 🔑 Monitoring / Admin Access
+#### Monitoring / Admin Access
 
 The monitoring dashboard is at `/monitoring` and doesn't require a candidate login — access via the main recruiter panel.
 

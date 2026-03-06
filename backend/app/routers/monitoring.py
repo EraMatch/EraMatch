@@ -150,8 +150,7 @@ async def get_candidate_responses(candidate_id: str, session: DbSession):
 
 
 # =============================================================================
-# ASSESSMENT MONITORING
-# =============================================================================
+# monitoring for debugging in dev
 
 class AssessmentCandidateDTO(BaseModel):
     candidate_id: str
