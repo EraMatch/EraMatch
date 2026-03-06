@@ -1,0 +1,13 @@
+# Newman Reports
+
+This directory contains the results of API tests run using Newman. Each subdirectory represents a different test run, and the files within contain the test results in HTML format.
+
+## How to run the tests
+
+1. Make postman collection and environment files in the root directory of the project
+2. Install Newman if you haven't already: `npm install -g newman`
+3. Run the tests: `npx newman run "EraMatch - Candidate API Tests.postman_collection.json" -e "EraMatch Local.postman_environment.json" --timeout-request 10000 -r cli,htmlextra --reporter-htmlextra-export "./newman-reports/sprint-4/candidate-api-$(Get-Date -Format 'yyyy-MM-dd_HH-mm').html"`
+
+## How to view the reports
+
+1. Open the HTML file in your browser.

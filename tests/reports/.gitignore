@@ -1,0 +1,4 @@
+# Ignore generated reports (HTML, JSON, assets)
+*.html
+*.json
+assets/

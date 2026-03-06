@@ -1,0 +1,1017 @@
+{
+  "info": {
+    "_postman_id": "b0898c2e-8ace-415f-8038-ae67eaff61f0",
+    "name": "EraMatch – Candidate API Tests",
+    "description": "Automated API test suite for the EraMatch Candidate Portal.\nCovers: Authentication, Dashboard, Assessment (start → answer → run-code → submit), Video Interview, AI Service, Monitoring, and Security.\n\nRun with Newman:\n  newman run \"EraMatch – Candidate API Tests.postman_collection.json\" -e \"EraMatch Local.postman_environment.json\"\n\nDB: PostgreSQL 17.6.1 on Supabase (eu-west-1)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 – Auth",
+      "item": [
+        {
+          "name": "Valid Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has access_token (JWT)', () => {",
+                  "  pm.expect(json).to.have.property('access_token');",
+                  "  pm.expect(json.access_token.split('.').length).to.equal(3);",
+                  "});",
+                  "pm.test('Has refresh_token', () => pm.expect(json).to.have.property('refresh_token'));",
+                  "// Chain: save tokens for all subsequent requests",
+                  "pm.environment.set('access_token', json.access_token);",
+                  "pm.environment.set('refresh_token', json.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"{{candidate_email}}\",\"password\":\"{{candidate_password}}\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/candidate/login",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "login"]
+            },
+            "description": "Login with valid credentials. Chains access_token, refresh_token, candidate_id."
+          },
+          "response": []
+        },
+        {
+          "name": "Wrong Password (expect 4xx)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Wrong password returns 4xx', () => pm.expect(pm.response.code).to.be.oneOf([400, 401, 422]));",
+                  "pm.test('No token leaked', () => pm.expect(pm.response.json()).to.not.have.property('access_token'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"{{candidate_email}}\",\"password\":\"WRONG_PASSWORD_XYZ\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/candidate/login",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "login"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Non-existent Email (expect 4xx)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Non-existent email returns 4xx', () => pm.expect(pm.response.code).to.be.oneOf([400, 401, 404, 422]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"noexist_xyz_999@eramatch.com\",\"password\":\"candidate123\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/candidate/login",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "login"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Empty Body (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Empty body returns 422', () => pm.expect(pm.response.code).to.be.oneOf([400, 422]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {"mode": "raw", "raw": "{}", "options": {"raw": {"language": "json"}}},
+            "url": {
+              "raw": "{{base_url}}/candidate/login",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "login"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Refresh returns 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('New access_token returned', () => {",
+                  "  pm.expect(json).to.have.property('access_token');",
+                  "  pm.expect(json.access_token.split('.').length).to.equal(3);",
+                  "});",
+                  "pm.environment.set('access_token', json.access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"refresh_token\":\"{{refresh_token}}\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/candidate/refresh",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "refresh"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2 – Security",
+      "item": [
+        {
+          "name": "SQL Injection on Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Server not crashed (not 500)', () => pm.expect(pm.response.code).to.not.equal(500));",
+                  "pm.test('Injection not successful (no 200)', () => pm.expect(pm.response.code).to.not.equal(200));",
+                  "pm.test('No token leaked', () => pm.expect(pm.response.json()).to.not.have.property('access_token'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"' OR '1'='1\",\"password\":\"' OR '1'='1\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/candidate/login",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "login"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "No Token → Protected Endpoint",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Returns 401 or 403', () => pm.expect(pm.response.code).to.be.oneOf([401, 403, 422]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/candidate/home",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "home"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Invalid Token → Protected Endpoint",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Returns 401 or 403', () => pm.expect(pm.response.code).to.be.oneOf([401, 403, 422]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer this.is.a.fake.token.that.should.fail"}],
+            "url": {
+              "raw": "{{base_url}}/candidate/home",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "home"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "XSS in Login Fields",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Server not crashed', () => pm.expect(pm.response.code).to.not.equal(500));",
+                  "pm.test('XSS not executed (no 200)', () => pm.expect(pm.response.code).to.not.equal(200));",
+                  "pm.test('No token leaked on XSS input', () => pm.expect(pm.response.json()).to.not.have.property('access_token'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"<script>alert('xss')</script>\",\"password\":\"<img onerror=alert(1) src=x>\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/candidate/login",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "login"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3 – Dashboard",
+      "item": [
+        {
+          "name": "Get Profile (/me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has correct email', () => {",
+                  "  pm.expect(json).to.have.property('email');",
+                  "  pm.expect(json.email).to.equal(pm.environment.get('candidate_email'));",
+                  "});",
+                  "pm.test('Has full_name', () => pm.expect(json).to.have.property('full_name'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {
+              "raw": "{{base_url}}/candidate/me",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "me"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Home Data",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has candidate profile', () => pm.expect(json).to.have.property('profile'));",
+                  "pm.test('Has application data', () => pm.expect(json).to.have.property('application'));",
+                  "pm.test('Has position info', () => pm.expect(json).to.have.property('position'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {
+              "raw": "{{base_url}}/candidate/home",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "home"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Assessments / Stages",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Response is array of stages', () => {",
+                  "  pm.expect(json).to.be.an('array');",
+                  "});",
+                  "// Save stage info for assessment start",
+                  "const stages = Array.isArray(json) ? json : (json.stages || []);",
+                  "if (stages.length > 0) {",
+                  "  const techStage = stages.find(s => s.type === 'technical_assessment' || s.type === 'assessment');",
+                  "  if (techStage) {",
+                  "    pm.environment.set('stage_id', techStage.stage_id || techStage.id);",
+                  "    if (techStage.assessment_id) pm.environment.set('assessment_id', techStage.assessment_id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {
+              "raw": "{{base_url}}/candidate/assessments",
+              "host": ["{{base_url}}"],
+              "path": ["candidate", "assessments"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4 – Assessment Flow",
+      "item": [
+        {
+          "name": "Get Assessment Config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Assessment config may 404 if candidate's pipeline has no assessment stage",
+                  "pm.test('Returns 200 or 404', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('Has assessment_id', () => pm.expect(json).to.have.property('assessment_id'));",
+                  "  pm.test('Has duration_minutes', () => {",
+                  "    pm.expect(json).to.have.property('duration_minutes');",
+                  "    pm.expect(json.duration_minutes).to.be.a('number').and.to.be.above(0);",
+                  "  });",
+                  "  pm.test('Has sections array', () => {",
+                  "    pm.expect(json).to.have.property('sections');",
+                  "    pm.expect(json.sections).to.be.an('array').with.length.greaterThan(0);",
+                  "  });",
+                  "  pm.environment.set('assessment_id', json.assessment_id);",
+                  "  if (json.stage_id) pm.environment.set('stage_id', json.stage_id);",
+                  "  pm.environment.set('assessment_available', 'true');",
+                  "} else {",
+                  "  pm.environment.set('assessment_available', 'false');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {
+              "raw": "{{base_url}}/assessment/config",
+              "host": ["{{base_url}}"],
+              "path": ["assessment", "config"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start Assessment Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.environment.get('assessment_available') !== 'true') { pm.test.skip('No assessment in pipeline'); return; }",
+                  "pm.test('Status 200 or 400', () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('Has session_id', () => {",
+                  "    pm.expect(json).to.have.property('session_id');",
+                  "    pm.expect(json.session_id).to.be.a('string').with.length.greaterThan(10);",
+                  "  });",
+                  "  pm.test('Has questions array', () => {",
+                  "    pm.expect(json).to.have.property('questions');",
+                  "    pm.expect(json.questions).to.be.an('array').with.length.greaterThan(0);",
+                  "  });",
+                  "  pm.test('Has duration_minutes', () => pm.expect(json).to.have.property('duration_minutes'));",
+                  "  pm.test('Has started_at', () => pm.expect(json).to.have.property('started_at'));",
+                  "  pm.test('Each question has required fields', () => {",
+                  "    const q = json.questions[0];",
+                  "    pm.expect(q).to.have.property('question_id');",
+                  "    pm.expect(q).to.have.property('question_type');",
+                  "    pm.expect(q).to.have.property('question_text');",
+                  "    pm.expect(q).to.have.property('points');",
+                  "  });",
+                  "  pm.environment.set('session_id', json.session_id);",
+                  "  const mcqQ = json.questions.find(q => q.question_type === 'mcq');",
+                  "  const essayQ = json.questions.find(q => q.question_type === 'essay');",
+                  "  const codingQ = json.questions.find(q => q.question_type === 'coding');",
+                  "  if (mcqQ) {",
+                  "    pm.environment.set('mcq_question_id', mcqQ.question_id);",
+                  "    const optionCount = mcqQ.question_config && mcqQ.question_config.options ? mcqQ.question_config.options.length : 4;",
+                  "    pm.environment.set('mcq_option_count', optionCount);",
+                  "  }",
+                  "  if (essayQ) pm.environment.set('essay_question_id', essayQ.question_id);",
+                  "  if (codingQ) {",
+                  "    pm.environment.set('coding_question_id', codingQ.question_id);",
+                  "    pm.environment.set('coding_language', codingQ.question_config && codingQ.question_config.language ? codingQ.question_config.language : 'python');",
+                  "  }",
+                  "  pm.environment.set('total_questions', json.questions.length);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"assessment_id\":\"{{assessment_id}}\",\"stage_id\":\"{{stage_id}}\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/assessment/start",
+              "host": ["{{base_url}}"],
+              "path": ["assessment", "start"]
+            },
+            "description": "Start or resume session. Chains session_id, mcq_question_id, essay_question_id, coding_question_id."
+          },
+          "response": []
+        },
+        {
+          "name": "Save MCQ Answer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const sessionId = pm.environment.get('session_id');",
+                  "if (!sessionId) { pm.test.skip('No active assessment session — skipping'); return; }",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has answer_id', () => pm.expect(json).to.have.property('answer_id'));",
+                  "pm.test('MCQ is auto-graded', () => {",
+                  "  pm.expect(json).to.have.property('is_correct');",
+                  "  pm.expect(json.is_correct).to.be.a('boolean');",
+                  "});",
+                  "pm.test('Has points_earned', () => {",
+                  "  pm.expect(json).to.have.property('points_earned');",
+                  "  pm.expect(json.points_earned).to.be.a('number');",
+                  "});",
+                  "pm.test('Has message', () => pm.expect(json).to.have.property('message'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"session_id\":\"{{session_id}}\",\"question_id\":\"{{mcq_question_id}}\",\"answer_data\":{\"selected_option\":0},\"time_spent_seconds\":15}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/assessment/answer",
+              "host": ["{{base_url}}"],
+              "path": ["assessment", "answer"]
+            },
+            "description": "Save MCQ answer using dynamically extracted mcq_question_id from Start Session."
+          },
+          "response": []
+        },
+        {
+          "name": "Save Essay Answer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const essayId = pm.environment.get('essay_question_id');",
+                  "if (!essayId) { pm.test.skip('No essay question in this assessment'); return; }",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has answer_id', () => pm.expect(json).to.have.property('answer_id'));",
+                  "pm.test('Essay not auto-graded (null is_correct)', () => {",
+                  "  pm.expect(json.is_correct).to.be.null;",
+                  "});",
+                  "pm.test('Has message', () => pm.expect(json).to.have.property('message'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"session_id\":\"{{session_id}}\",\"question_id\":\"{{essay_question_id}}\",\"answer_data\":{\"text\":\"REST is a stateless architecture using HTTP methods for CRUD operations on resources identified by URIs. GraphQL is a query language that allows clients to request exactly the data they need from a single endpoint, reducing over-fetching. REST is simpler for basic CRUD while GraphQL offers more flexibility for complex data requirements.\"},\"time_spent_seconds\":120}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/assessment/answer",
+              "host": ["{{base_url}}"],
+              "path": ["assessment", "answer"]
+            },
+            "description": "Save essay answer using dynamically extracted essay_question_id. Essay is NOT auto-graded at save time."
+          },
+          "response": []
+        },
+        {
+          "name": "Run Code & Tests (Trial)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const codingId = pm.environment.get('coding_question_id');",
+                  "if (!codingId) { pm.test.skip('No coding question in this assessment'); return; }",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has status field', () => {",
+                  "  pm.expect(json).to.have.property('status');",
+                  "  pm.expect(json.status).to.be.a('string');",
+                  "});",
+                  "pm.test('Has stdout', () => pm.expect(json).to.have.property('stdout'));",
+                  "pm.test('Has stderr', () => pm.expect(json).to.have.property('stderr'));",
+                  "pm.test('Status is valid execution result', () => {",
+                  "  pm.expect(json.status).to.be.oneOf(['Accepted', 'Runtime Error', 'Time Limit Exceeded']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"session_id\":\"{{session_id}}\",\"question_id\":\"{{coding_question_id}}\",\"code\":\"def solution(n):\\n    return n * 2\",\"language\":\"python\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/assessment/run-code",
+              "host": ["{{base_url}}"],
+              "path": ["assessment", "run-code"]
+            },
+            "description": "Run code against all test cases. Counts as one trial attempt."
+          },
+          "response": []
+        },
+        {
+          "name": "Save Answer – Invalid Session (expect 4xx)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Invalid session returns 4xx', () => pm.expect(pm.response.code).to.be.oneOf([400, 404, 422]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"session_id\":\"00000000-0000-0000-0000-000000000000\",\"question_id\":\"{{mcq_question_id}}\",\"answer_data\":{\"selected_option\":0}}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/assessment/answer",
+              "host": ["{{base_url}}"],
+              "path": ["assessment", "answer"]
+            },
+            "description": "Try saving an answer with a fake session_id. Should be rejected."
+          },
+          "response": []
+        },
+        {
+          "name": "Submit Assessment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const sessionId = pm.environment.get('session_id');",
+                  "if (!sessionId) { pm.test.skip('No active assessment session — skipping'); return; }",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Has total_score', () => {",
+                  "  pm.expect(json).to.have.property('total_score');",
+                  "  pm.expect(json.total_score).to.be.a('number');",
+                  "});",
+                  "pm.test('Has max_score', () => {",
+                  "  pm.expect(json).to.have.property('max_score');",
+                  "  pm.expect(json.max_score).to.be.a('number').and.to.be.above(0);",
+                  "});",
+                  "pm.test('Has percentage (0-100)', () => {",
+                  "  pm.expect(json).to.have.property('percentage');",
+                  "  pm.expect(json.percentage).to.be.at.least(0).and.to.be.at.most(100);",
+                  "});",
+                  "pm.test('Has passed boolean', () => {",
+                  "  pm.expect(json).to.have.property('passed');",
+                  "  pm.expect(json.passed).to.be.a('boolean');",
+                  "});",
+                  "pm.test('Has message', () => pm.expect(json).to.have.property('message'));",
+                  "// Save for monitoring verification",
+                  "pm.environment.set('final_score', json.total_score);",
+                  "pm.environment.set('final_percentage', json.percentage);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"session_id\":\"{{session_id}}\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/assessment/submit",
+              "host": ["{{base_url}}"],
+              "path": ["assessment", "submit"]
+            },
+            "description": "Submit assessment. Triggers auto-grading (MCQ immediate, essay via AI service)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5 – Monitoring",
+      "item": [
+        {
+          "name": "Assessment Candidates Progress",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Is array', () => pm.expect(json).to.be.an('array'));",
+                  "if (json.length > 0) {",
+                  "  const first = json[0];",
+                  "  pm.test('Has required progress fields', () => {",
+                  "    pm.expect(first).to.have.property('candidate_id');",
+                  "    pm.expect(first).to.have.property('candidate_name');",
+                  "    pm.expect(first).to.have.property('assessment_title');",
+                  "    pm.expect(first).to.have.property('status');",
+                  "    pm.expect(first).to.have.property('answered_questions');",
+                  "    pm.expect(first).to.have.property('total_questions');",
+                  "  });",
+                  "  pm.test('No duplicate candidates (latest session only)', () => {",
+                  "    const ids = json.map(c => c.candidate_id);",
+                  "    const unique = [...new Set(ids)];",
+                  "    pm.expect(ids.length).to.equal(unique.length);",
+                  "  });",
+                  "  // Save first candidate_id for responses test",
+                  "  pm.environment.set('monitor_candidate_id', first.candidate_id);",
+                  "}",
+                  "pm.test('At least one candidate', () => pm.expect(json.length).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {
+              "raw": "{{base_url}}/interview/monitoring/assessment-candidates",
+              "host": ["{{base_url}}"],
+              "path": ["interview", "monitoring", "assessment-candidates"]
+            },
+            "description": "Get all assessment candidates progress. Verifies no duplicate candidates (fixed: scoped to latest session)."
+          },
+          "response": []
+        },
+        {
+          "name": "Assessment Responses for Candidate",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Is array of answers', () => pm.expect(json).to.be.an('array'));",
+                  "if (json.length > 0) {",
+                  "  const first = json[0];",
+                  "  pm.test('Each answer has required fields', () => {",
+                  "    pm.expect(first).to.have.property('answer_id');",
+                  "    pm.expect(first).to.have.property('question_text');",
+                  "    pm.expect(first).to.have.property('question_type');",
+                  "    pm.expect(first).to.have.property('answer_data');",
+                  "  });",
+                  "  pm.test('No duplicate question_ids (latest session scoped)', () => {",
+                  "    const qTexts = json.map(a => a.question_text);",
+                  "    const unique = [...new Set(qTexts)];",
+                  "    pm.expect(qTexts.length).to.equal(unique.length);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {
+              "raw": "{{base_url}}/interview/monitoring/assessment-responses/{{monitor_candidate_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["interview", "monitoring", "assessment-responses", "{{monitor_candidate_id}}"]
+            },
+            "description": "Get answers for a specific candidate. Verifies no duplicate questions (fixed: scoped to latest session only)."
+          },
+          "response": []
+        },
+        {
+          "name": "Interview Candidates Progress",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Is array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {
+              "raw": "{{base_url}}/interview/monitoring/candidates",
+              "host": ["{{base_url}}"],
+              "path": ["interview", "monitoring", "candidates"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "6 – Interview",
+      "item": [
+        {
+          "name": "Get Interview Config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// This may 404 if candidate's pipeline doesn't include interviews, or 500 on server error",
+                  "pm.test('Returns 200, 404, or 500', () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 500]));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('Has questions', () => pm.expect(pm.response.json()).to.have.property('questions'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "url": {
+              "raw": "{{base_url}}/interview/config",
+              "host": ["{{base_url}}"],
+              "path": ["interview", "config"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start Interview Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Returns 200, 404, 422, or 500', () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 422, 500]));",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('Has session_id', () => pm.expect(json).to.have.property('session_id'));",
+                  "  pm.environment.set('interview_session_id', json.session_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{access_token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/interview/start",
+              "host": ["{{base_url}}"],
+              "path": ["interview", "start"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "7 – AI Service",
+      "item": [
+        {
+          "name": "Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('AI service reachable', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ai_service_url}}/health",
+              "host": ["{{ai_service_url}}"],
+              "path": ["health"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Essay Grading",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// AI service may be offline — accept 200 or connection errors gracefully",
+                  "pm.test('Returns 200 or 5xx (service may be offline)', () => pm.expect(pm.response.code).to.be.oneOf([200, 500, 502, 503]));",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('Has score (number)', () => {",
+                  "    pm.expect(json).to.have.property('score');",
+                  "    pm.expect(json.score).to.be.a('number');",
+                  "  });",
+                  "  pm.test('Has points_earned', () => pm.expect(json).to.have.property('points_earned'));",
+                  "  pm.test('Has feedback', () => pm.expect(json).to.have.property('feedback'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"question_text\":\"Explain REST vs GraphQL.\",\"essay_response\":\"REST uses fixed endpoints with HTTP methods for CRUD. GraphQL uses a single endpoint with a query language allowing clients to request exactly the data they need.\",\"max_points\":10}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{ai_service_url}}/evaluate/grade-essay",
+              "host": ["{{ai_service_url}}"],
+              "path": ["evaluate", "grade-essay"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "LLM Evaluate (Interview)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Returns 200 or 5xx (service may be offline)', () => pm.expect(pm.response.code).to.be.oneOf([200, 500, 502, 503]));",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('Has score', () => pm.expect(json).to.have.property('score'));",
+                  "  pm.test('Has feedback', () => pm.expect(json).to.have.property('feedback'));",
+                  "  pm.test('Has strengths', () => pm.expect(json).to.have.property('strengths'));",
+                  "  pm.test('Has improvements', () => pm.expect(json).to.have.property('improvements'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"transcript\":\"I worked in agile teams using Scrum methodology, participating in daily standups and sprint reviews.\",\"question_text\":\"Describe your teamwork experience.\",\"reference_answer\":\"Should demonstrate collaborative communication skills.\"}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{ai_service_url}}/evaluate/",
+              "host": ["{{ai_service_url}}"],
+              "path": ["evaluate", ""]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {"key": "base_url", "value": "http://localhost:8000/api/v1", "description": "Backend API base URL"},
+    {"key": "ai_service_url", "value": "http://localhost:8001", "description": "AI microservice URL"},
+    {"key": "candidate_email", "value": "candidate8@eramatch.com", "description": "Test candidate (fresh, no prior sessions)"},
+    {"key": "candidate_password", "value": "test123", "description": "Test candidate password"}
+  ]
+}
