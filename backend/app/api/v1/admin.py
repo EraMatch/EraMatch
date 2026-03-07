@@ -142,12 +142,9 @@ async def get_member_privileges(user_id: UUID, session: DbSession, admin: AdminU
 
 @router.patch("/members/{user_id}/privileges")
 async def update_member_privileges(user_id: UUID, update: MemberPrivilegesUpdate, session: DbSession, admin: AdminUser):
-    """
-    Update permission flags for a user.
-    Requires admin role.
-    """
+    """Update member permission flags. Requires admin role."""
     service = AdminService(session, admin)
-    await service.update_member_privileges(user_id, update.permissions)
+    await service.update_member_privileges(user_id, update)
     return {"status": "success"}
 
 @router.post("/members/register", response_model=MemberRegisterResponse)

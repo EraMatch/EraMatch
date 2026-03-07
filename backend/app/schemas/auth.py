@@ -56,7 +56,9 @@ class AdminLoginResponseUser(BaseModel):
 class AdminLoginResponse(BaseModel):
     """Admin login response."""
     success: bool
-    token: str
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
     user: AdminLoginResponseUser
 
 
