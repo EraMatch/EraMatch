@@ -1,0 +1,1625 @@
+{
+  "collection": {
+    "info": {
+      "_postman_id": "b6b55dce-fe0d-4364-8978-11be958258eb",
+      "name": "EraMatch – Admin API Tests",
+      "description": "Automated API test suite for the EraMatch Admin Portal covering Authentication, Dashboard Stats, Member Management, Settings, Approval Requests, Delegation, Groups, Alerts, and Subscription management.",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+      "createdAt": "2026-03-06T21:12:21.000Z",
+      "updatedAt": "2026-03-06T21:12:22.000Z",
+      "lastUpdatedBy": "52800898",
+      "uid": "52800898-b6b55dce-fe0d-4364-8978-11be958258eb"
+    },
+    "item": [
+      {
+        "name": "Auth – Admin Login (Valid)",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Status code is 200', () => { pm.response.to.have.status(200); });",
+                "const json = pm.response.json();",
+                "pm.test('Has access_token', () => { pm.expect(json).to.have.property('access_token'); pm.expect(json.access_token.split('.').length).to.equal(3); });",
+                "pm.test('Has refresh_token', () => { pm.expect(json).to.have.property('refresh_token'); });",
+                "if (json.access_token) pm.collectionVariables.set('access_token', json.access_token);",
+                "if (json.refresh_token) pm.collectionVariables.set('refresh_token', json.refresh_token);"
+              ]
+            }
+          }
+        ],
+        "id": "2322ae2d-4a71-4d44-8590-36f174302605",
+        "request": {
+          "method": "POST",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"email\":\"{{admin_email}}\",\"password\":\"{{admin_password}}\"}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/auth/admin/login",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "auth",
+              "admin",
+              "login"
+            ]
+          },
+          "description": "Admin login with valid credentials. Stores JWT tokens as collection variables."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T22:28:20.000Z",
+        "uid": "52800898-2322ae2d-4a71-4d44-8590-36f174302605"
+      },
+      {
+        "name": "Auth – Wrong Password (401)",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Wrong password returns 4xx', () => { pm.expect(pm.response.code).to.be.oneOf([400, 401, 422]); });",
+                "pm.test('No token in response', () => { pm.expect(pm.response.json()).to.not.have.property('access_token'); });"
+              ]
+            }
+          }
+        ],
+        "id": "124b02ad-d8bf-4749-bca3-532294c64fa4",
+        "request": {
+          "method": "POST",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"email\":\"{{admin_email}}\",\"password\":\"WRONG_PASSWORD_999\"}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/auth/admin/login",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "auth",
+              "admin",
+              "login"
+            ]
+          },
+          "description": "Login attempt with wrong password. Should return 401."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T22:28:21.000Z",
+        "uid": "52800898-124b02ad-d8bf-4749-bca3-532294c64fa4"
+      },
+      {
+        "name": "Auth – Refresh Token",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Refresh returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('New access_token returned', () => { pm.expect(pm.response.json()).to.have.property('access_token'); });",
+                "const json = pm.response.json(); if (json.access_token) pm.collectionVariables.set('access_token', json.access_token);"
+              ]
+            }
+          }
+        ],
+        "id": "4855f928-af1d-4d2b-9375-0e56530315d4",
+        "request": {
+          "method": "POST",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"refresh_token\":\"{{refresh_token}}\"}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/auth/refresh",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "auth",
+              "refresh"
+            ]
+          },
+          "description": "Refresh JWT access token using refresh token."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T22:28:21.000Z",
+        "uid": "52800898-4855f928-af1d-4d2b-9375-0e56530315d4"
+      },
+      {
+        "name": "Dashboard – Global Stats",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Has stats data', () => { pm.expect(pm.response.json()).to.be.an('object'); });"
+              ]
+            }
+          }
+        ],
+        "id": "1c0b0f20-d2b5-4d0f-96a2-d974c348da68",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/stats/global",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "stats",
+              "global"
+            ]
+          },
+          "description": "Get global organization statistics. Requires admin role."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-1c0b0f20-d2b5-4d0f-96a2-d974c348da68"
+      },
+      {
+        "name": "Dashboard – Pipeline Stats",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Has pipeline data', () => { pm.expect(pm.response.json()).to.be.an('object'); });"
+              ]
+            }
+          }
+        ],
+        "id": "354bf9e6-65f7-4166-9209-be1ceff91157",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/stats/pipeline",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "stats",
+              "pipeline"
+            ]
+          },
+          "description": "Get recruitment funnel/pipeline statistics."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-354bf9e6-65f7-4166-9209-be1ceff91157"
+      },
+      {
+        "name": "Dashboard – Health Analytics",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Has analytics', () => { pm.expect(pm.response.json()).to.be.an('object'); });"
+              ]
+            }
+          }
+        ],
+        "id": "cce9624f-51f0-4bc0-a559-4393205c7773",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/stats/analytics",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "stats",
+              "analytics"
+            ]
+          },
+          "description": "Get dashboard health and analytics metrics."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-cce9624f-51f0-4bc0-a559-4393205c7773"
+      },
+      {
+        "name": "Members – List All Users",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Returns an array', () => { pm.expect(pm.response.json()).to.be.an('array'); });",
+                "const users = pm.response.json(); if (users.length > 0) pm.collectionVariables.set('user_id', users[0].id);"
+              ]
+            }
+          }
+        ],
+        "id": "f032dbf5-f013-4103-a31e-144c58b91540",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/users?skip=0&limit=50",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "users"
+            ],
+            "query": [
+              {
+                "key": "skip",
+                "value": "0"
+              },
+              {
+                "key": "limit",
+                "value": "50"
+              }
+            ]
+          },
+          "description": "List all users in the organization."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-f032dbf5-f013-4103-a31e-144c58b91540"
+      },
+      {
+        "name": "Members – Get User by ID",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Has user id', () => { pm.expect(pm.response.json()).to.have.property('id'); });"
+              ]
+            }
+          }
+        ],
+        "id": "7fc7fcbb-27d2-48b2-9fa2-55bda0db1e09",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/users/{{user_id}}",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "users",
+              "{{user_id}}"
+            ]
+          },
+          "description": "Get a specific user by their ID."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-7fc7fcbb-27d2-48b2-9fa2-55bda0db1e09"
+      },
+      {
+        "name": "Members – Stats (Active/Pending/Open Roles)",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Has member counts', () => { pm.expect(pm.response.json()).to.be.an('object'); });"
+              ]
+            }
+          }
+        ],
+        "id": "6d8640db-1a52-4119-84a9-56e4d98af8d9",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/members/stats",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "members",
+              "stats"
+            ]
+          },
+          "description": "Get counts for Active Members, Pending Requests, Open Roles."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-6d8640db-1a52-4119-84a9-56e4d98af8d9"
+      },
+      {
+        "name": "Members – Get Privileges",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200 or 404', () => { pm.expect(pm.response.code).to.be.oneOf([200, 404]); });",
+                "if (pm.response.code === 200) { pm.test('Has permissions', () => { pm.expect(pm.response.json()).to.have.property('permissions'); }); }"
+              ]
+            }
+          }
+        ],
+        "id": "6fd09896-b7e8-4abf-bc5a-c79d441d7ff5",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/members/{{user_id}}/privileges",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "members",
+              "{{user_id}}",
+              "privileges"
+            ]
+          },
+          "description": "Get permission flags for a specific user."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-6fd09896-b7e8-4abf-bc5a-c79d441d7ff5"
+      },
+      {
+        "name": "Members – Update Privileges",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200 or 404', () => { pm.expect(pm.response.code).to.be.oneOf([200, 404]); });"
+              ]
+            }
+          }
+        ],
+        "id": "d6b1af26-d611-45f9-baa1-f21fd57c5e38",
+        "request": {
+          "method": "PATCH",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"permissions\": {\"can_create_positions\": true, \"can_view_reports\": true}}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/admin/members/{{user_id}}/privileges",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "members",
+              "{{user_id}}",
+              "privileges"
+            ]
+          },
+          "description": "Update permission flags for a user."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-d6b1af26-d611-45f9-baa1-f21fd57c5e38"
+      },
+      {
+        "name": "Members – Update Role",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200 or 404', () => { pm.expect(pm.response.code).to.be.oneOf([200, 404]); });"
+              ]
+            }
+          }
+        ],
+        "id": "d92c5188-b847-4b52-a9ba-ebfd798e0a50",
+        "request": {
+          "method": "PATCH",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/users/{{user_id}}/role?role=hr",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "users",
+              "{{user_id}}",
+              "role"
+            ],
+            "query": [
+              {
+                "key": "role",
+                "value": "hr"
+              }
+            ]
+          },
+          "description": "Change a user's role (e.g. hr, technical, admin)."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-d92c5188-b847-4b52-a9ba-ebfd798e0a50"
+      },
+      {
+        "name": "Members – Update Status (Suspend/Activate)",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200 or 404', () => { pm.expect(pm.response.code).to.be.oneOf([200, 404]); });"
+              ]
+            }
+          }
+        ],
+        "id": "e1f5d7f3-8ae7-42b9-9146-8859e445f556",
+        "request": {
+          "method": "PATCH",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/members/{{user_id}}/status?status=active",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "members",
+              "{{user_id}}",
+              "status"
+            ],
+            "query": [
+              {
+                "key": "status",
+                "value": "active"
+              }
+            ]
+          },
+          "description": "Activate or suspend a member account."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-e1f5d7f3-8ae7-42b9-9146-8859e445f556"
+      },
+      {
+        "name": "Members – Register New Member",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200 or 201', () => { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+                "pm.test('Has user data', () => { pm.expect(pm.response.json()).to.be.an('object'); });"
+              ]
+            }
+          }
+        ],
+        "id": "c6c3741f-ee4d-444b-a66f-f519493ee907",
+        "request": {
+          "method": "POST",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"first_name\":\"Test\",\"last_name\":\"Member\",\"email\":\"testmember_{{$randomInt}}@eramatch.com\",\"role\":\"hr\",\"password\":\"Test@1234\"}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/admin/members/register",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "members",
+              "register"
+            ]
+          },
+          "description": "Register a new organization member. Requires admin role."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-c6c3741f-ee4d-444b-a66f-f519493ee907"
+      },
+      {
+        "name": "Settings – Get All Settings",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Has settings', () => { pm.expect(pm.response.json()).to.be.an('object'); });"
+              ]
+            }
+          }
+        ],
+        "id": "2a9ebb5d-0782-47ad-ae9a-b82a5e85531f",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/settings",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "settings"
+            ]
+          },
+          "description": "Get all admin settings (profile, org, preferences)."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-2a9ebb5d-0782-47ad-ae9a-b82a5e85531f"
+      },
+      {
+        "name": "Settings – Update Profile",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Status success', () => { pm.expect(pm.response.json().status).to.equal('success'); });"
+              ]
+            }
+          }
+        ],
+        "id": "2848e897-38e6-4185-add8-2c5a44410dbe",
+        "request": {
+          "method": "PUT",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"first_name\":\"Admin\",\"last_name\":\"User\",\"email\":\"{{admin_email}}\"}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/admin/settings/profile",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "settings",
+              "profile"
+            ]
+          },
+          "description": "Update admin user profile info."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-2848e897-38e6-4185-add8-2c5a44410dbe"
+      },
+      {
+        "name": "Settings – Update Organization",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Status success', () => { pm.expect(pm.response.json().status).to.equal('success'); });"
+              ]
+            }
+          }
+        ],
+        "id": "04c24884-4239-46f8-9653-652e91b94a38",
+        "request": {
+          "method": "PUT",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"organization_name\":\"EraMatch Corp\",\"admin_email\":\"{{admin_email}}\",\"timezone\":\"UTC\"}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/admin/settings/organization",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "settings",
+              "organization"
+            ]
+          },
+          "description": "Update organization settings."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-04c24884-4239-46f8-9653-652e91b94a38"
+      },
+      {
+        "name": "Settings – Update Preferences",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Status success', () => { pm.expect(pm.response.json().status).to.equal('success'); });"
+              ]
+            }
+          }
+        ],
+        "id": "fbb82d74-d581-4851-ac45-896156c04ca8",
+        "request": {
+          "method": "PUT",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"email_notifications\":true,\"dark_mode\":false}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/admin/settings/preferences",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "settings",
+              "preferences"
+            ]
+          },
+          "description": "Update admin preferences."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-fbb82d74-d581-4851-ac45-896156c04ca8"
+      },
+      {
+        "name": "Approval Requests – List Pending",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Returns array', () => { pm.expect(pm.response.json()).to.be.an('array'); });",
+                "const reqs = pm.response.json(); if (reqs.length > 0) pm.collectionVariables.set('request_id', reqs[0].id);"
+              ]
+            }
+          }
+        ],
+        "id": "8b119b1d-a719-4def-a99c-3737ee1fdbbe",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/requests?status=pending",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "requests"
+            ],
+            "query": [
+              {
+                "key": "status",
+                "value": "pending"
+              }
+            ]
+          },
+          "description": "List all pending approval requests."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-8b119b1d-a719-4def-a99c-3737ee1fdbbe"
+      },
+      {
+        "name": "Approval Requests – List All (approved)",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Returns array', () => { pm.expect(pm.response.json()).to.be.an('array'); });"
+              ]
+            }
+          }
+        ],
+        "id": "f6e3a7d0-7da8-4050-97c7-13d669212b53",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/requests?status=approved",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "requests"
+            ],
+            "query": [
+              {
+                "key": "status",
+                "value": "approved"
+              }
+            ]
+          },
+          "description": "List approved approval requests."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-f6e3a7d0-7da8-4050-97c7-13d669212b53"
+      },
+      {
+        "name": "Approval Requests – Approve",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200 or 404', () => { pm.expect(pm.response.code).to.be.oneOf([200, 404]); });"
+              ]
+            }
+          }
+        ],
+        "id": "ef8d160b-9efb-4118-b37d-c9143a609c84",
+        "request": {
+          "method": "PATCH",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"comments\":\"Approved via API test\"}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/admin/requests/{{request_id}}/approve",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "requests",
+              "{{request_id}}",
+              "approve"
+            ]
+          },
+          "description": "Approve an approval request by ID."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-ef8d160b-9efb-4118-b37d-c9143a609c84"
+      },
+      {
+        "name": "Approval Requests – Reject",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200 or 404', () => { pm.expect(pm.response.code).to.be.oneOf([200, 404]); });"
+              ]
+            }
+          }
+        ],
+        "id": "d94237bd-4f02-47e8-928e-37af2584072d",
+        "request": {
+          "method": "PATCH",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"comments\":\"Rejected via API test\"}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/admin/requests/{{request_id}}/reject",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "requests",
+              "{{request_id}}",
+              "reject"
+            ]
+          },
+          "description": "Reject an approval request by ID."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-d94237bd-4f02-47e8-928e-37af2584072d"
+      },
+      {
+        "name": "Delegation – List HR Recruiters",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Returns array', () => { pm.expect(pm.response.json()).to.be.an('array'); });"
+              ]
+            }
+          }
+        ],
+        "id": "9f156874-586e-4a1a-946a-e65d6be7607d",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/delegation/hr",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "delegation",
+              "hr"
+            ]
+          },
+          "description": "List all HR recruiters available for delegation."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-9f156874-586e-4a1a-946a-e65d6be7607d"
+      },
+      {
+        "name": "Delegation – List Technical Recruiters",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Returns array', () => { pm.expect(pm.response.json()).to.be.an('array'); });"
+              ]
+            }
+          }
+        ],
+        "id": "92309a36-b4b0-4b9e-ab12-d6795f5d94ba",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/delegation/technical",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "delegation",
+              "technical"
+            ]
+          },
+          "description": "List all Technical recruiters available for delegation."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-92309a36-b4b0-4b9e-ab12-d6795f5d94ba"
+      },
+      {
+        "name": "Delegation – Recent Assignments",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Has assignment data object', () => { pm.expect(pm.response.json()).to.be.an('object'); });",
+                "pm.test('Assignments is an array', () => { pm.expect(pm.response.json().assignments).to.be.an('array'); });"
+              ],
+              "type": "text/javascript"
+            }
+          }
+        ],
+        "id": "e0fa5bc3-ddc6-4295-ae1e-2a4240bc07be",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/delegation/recent",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "delegation",
+              "recent"
+            ]
+          },
+          "description": "Fetch recent recruiter assignment changes."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T23:45:19.000Z",
+        "uid": "52800898-e0fa5bc3-ddc6-4295-ae1e-2a4240bc07be"
+      },
+      {
+        "name": "Delegation – Reassign Recruiter to Position",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200 or 404 or 500', () => { pm.expect(pm.response.code).to.be.oneOf([200, 404, 500]); });"
+              ]
+            }
+          }
+        ],
+        "id": "4d9229a1-1906-4700-9d7d-d80a15cceda7",
+        "request": {
+          "method": "PATCH",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            },
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"recruiter_id\":\"{{user_id}}\",\"role\":\"hr\"}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/delegation/positions/{{position_id}}/reassign",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "delegation",
+              "positions",
+              "{{position_id}}",
+              "reassign"
+            ]
+          },
+          "description": "Reassign a recruiter to a specific position."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-4d9229a1-1906-4700-9d7d-d80a15cceda7"
+      },
+      {
+        "name": "Groups – List All Position Groups",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Returns array', () => { pm.expect(pm.response.json()).to.be.an('array'); });"
+              ]
+            }
+          }
+        ],
+        "id": "ecdfe61f-e81b-44c3-8b26-8a4479156549",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/groups",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "groups"
+            ]
+          },
+          "description": "List all position groups in the organization."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-ecdfe61f-e81b-44c3-8b26-8a4479156549"
+      },
+      {
+        "name": "Alerts – Get Notifications",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Returns array', () => { pm.expect(pm.response.json()).to.be.an('array'); });"
+              ]
+            }
+          }
+        ],
+        "id": "f54d2c54-1ad8-4e0a-9944-967469ceb08d",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/alerts?skip=0&limit=50",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "alerts"
+            ],
+            "query": [
+              {
+                "key": "skip",
+                "value": "0"
+              },
+              {
+                "key": "limit",
+                "value": "50"
+              }
+            ]
+          },
+          "description": "Get all organization alerts and notifications."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-f54d2c54-1ad8-4e0a-9944-967469ceb08d"
+      },
+      {
+        "name": "Subscription – Get Plans",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });",
+                "pm.test('Has plan data', () => { pm.expect(pm.response.json()).to.be.an('object'); });"
+              ]
+            }
+          }
+        ],
+        "id": "9d819b3e-c29f-48cb-bf99-125973606d0a",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/subscription",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "subscription"
+            ]
+          },
+          "description": "Get subscription plans and current usage."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-9d819b3e-c29f-48cb-bf99-125973606d0a"
+      },
+      {
+        "name": "Subscription – Get Payment Method",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200', () => { pm.response.to.have.status(200); });"
+              ]
+            }
+          }
+        ],
+        "id": "9a653c19-6fa5-483d-8fd1-64e4e3598d4b",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/subscription/payment",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "subscription",
+              "payment"
+            ]
+          },
+          "description": "Get payment method details for the organization."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-9a653c19-6fa5-483d-8fd1-64e4e3598d4b"
+      },
+      {
+        "name": "Positions – Backfill Assignments",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Returns 200 or 400', () => { pm.expect(pm.response.code).to.be.oneOf([200, 400]); });"
+              ]
+            }
+          }
+        ],
+        "id": "45beff03-e892-4082-a4a6-db551c1d74d0",
+        "request": {
+          "method": "PATCH",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer {{access_token}}"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/positions/backfill-assignments",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "positions",
+              "backfill-assignments"
+            ]
+          },
+          "description": "Backfill missing HR/Technical recruiter assignments for positions."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-45beff03-e892-4082-a4a6-db551c1d74d0"
+      },
+      {
+        "name": "Security – No Token (401)",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('No token returns 401/403', () => { pm.expect(pm.response.code).to.be.oneOf([401, 403, 422]); });"
+              ]
+            }
+          }
+        ],
+        "id": "74995cf0-cd92-4a06-b03c-93d5bbacc1be",
+        "request": {
+          "method": "GET",
+          "header": [],
+          "url": {
+            "raw": "{{base_url}}/admin/stats/global",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "stats",
+              "global"
+            ]
+          },
+          "description": "Access protected admin endpoint without token. Should return 401."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-74995cf0-cd92-4a06-b03c-93d5bbacc1be"
+      },
+      {
+        "name": "Security – Invalid Token (401)",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Invalid token returns 401/403', () => { pm.expect(pm.response.code).to.be.oneOf([401, 403, 422]); });"
+              ]
+            }
+          }
+        ],
+        "id": "eb680df7-d872-4b92-a78d-872d476fb6e5",
+        "request": {
+          "method": "GET",
+          "header": [
+            {
+              "key": "Authorization",
+              "value": "Bearer this.is.a.fake.admin.token"
+            }
+          ],
+          "url": {
+            "raw": "{{base_url}}/admin/stats/global",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "admin",
+              "stats",
+              "global"
+            ]
+          },
+          "description": "Access admin endpoint with a garbage JWT. Should return 401."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T21:12:22.000Z",
+        "uid": "52800898-eb680df7-d872-4b92-a78d-872d476fb6e5"
+      },
+      {
+        "name": "Security – SQL Injection on Login",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Server not crashed (not 500)', () => { pm.expect(pm.response.code).to.not.equal(500); });",
+                "pm.test('Injection not successful (not 200)', () => { pm.expect(pm.response.code).to.not.equal(200); });"
+              ]
+            }
+          }
+        ],
+        "id": "1de841fa-1cf2-4aba-a2ba-88b00a6518b5",
+        "request": {
+          "method": "POST",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\"email\":\"' OR '1'='1\",\"password\":\"' OR '1'='1\"}",
+            "options": {
+              "raw": {
+                "language": "json"
+              }
+            }
+          },
+          "url": {
+            "raw": "{{base_url}}/auth/admin/login",
+            "host": [
+              "{{base_url}}"
+            ],
+            "path": [
+              "auth",
+              "admin",
+              "login"
+            ]
+          },
+          "description": "SQL injection attempt on login. Server must not crash or grant access."
+        },
+        "response": [],
+        "createdAt": "2026-03-06T21:12:22.000Z",
+        "updatedAt": "2026-03-06T22:28:37.000Z",
+        "uid": "52800898-1de841fa-1cf2-4aba-a2ba-88b00a6518b5"
+      }
+    ],
+    "variable": [
+      {
+        "key": "base_url",
+        "value": "http://localhost:8080/api/v1",
+        "type": "string"
+      },
+      {
+        "key": "admin_email",
+        "value": "admin_1@eramatch.com",
+        "type": "string"
+      },
+      {
+        "key": "admin_password",
+        "value": "1234567890",
+        "type": "string"
+      },
+      {
+        "key": "access_token",
+        "value": "",
+        "description": "JWT access token (auto-populated on login)"
+      },
+      {
+        "key": "refresh_token",
+        "value": "",
+        "description": "JWT refresh token (auto-populated on login)"
+      },
+      {
+        "key": "user_id",
+        "value": "",
+        "description": "Test user ID (auto-populated)"
+      },
+      {
+        "key": "request_id",
+        "value": "",
+        "description": "Approval request ID (auto-populated)"
+      },
+      {
+        "key": "position_id",
+        "value": "",
+        "description": "Position ID for delegation tests"
+      }
+    ]
+  }
+}

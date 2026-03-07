@@ -80,12 +80,114 @@ class AdminService:
             print(f"Error getting user: {e}")
             return None
 
+    async def update_user_role(self, user_id: UUID, role: str) -> dict:
+        """Update user role and redistribute workload if recruiter role is removed."""
+        try:
+            from fastapi import HTTPException
+            res = await self.session.execute(
+                select(OrganizationUser).where(
+                    OrganizationUser.organization_id == self.organization_id,
+                    OrganizationUser.id == user_id,
+                    OrganizationUser.is_deleted == False
+                )
+            )
+            user = res.scalar_one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+                
+            old_role = user.role.lower() if user.role else ""
+            new_role = role.lower()
+            
+            # If turning a recruiter into something else, redistribute their workload
+            if old_role in ["hr", "technical"] and new_role not in ["hr", "technical"]:
+                await self.distribute_workload(user.id, old_role)
+                
+            user.role = new_role
+            self.session.add(user)
+            await self.session.commit()
+            
+            u_dict = user.model_dump()
+            u_dict["id"] = str(user.id)
+            u_dict["user_id"] = str(user.id)
+            return u_dict
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"Error updating user role: {e}")
+            await self.session.rollback()
+            from fastapi import HTTPException
+            raise HTTPException(status_code=500, detail=f"Failed to update user role: {str(e)}")
+
     async def create_user(self, email: str, password: str, role: str, first_name: str, last_name: str) -> User:
         pass
 
     # Organization settings
     async def get_organization(self) -> Organization:
         pass
+
+    async def list_organization_groups(self) -> list[dict]:
+        """List all position groups in the organization."""
+        try:
+            from app.models import OrganizationUser as OU
+            from sqlalchemy.orm import aliased
+            HRUser = aliased(OU)
+            TechUser = aliased(OU)
+            
+            query = select(
+                CandidateGroup, Position, HRUser, TechUser
+            ).join(
+                Position, CandidateGroup.position_id == Position.id
+            ).outerjoin(
+                HRUser, Position.assigned_hr_id == HRUser.id
+            ).outerjoin(
+                TechUser, Position.assigned_tech_id == TechUser.id
+            ).where(
+                Position.organization_id == self.organization_id,
+                Position.is_deleted == False
+            )
+            
+            result = await self.session.execute(query)
+            rows = result.all()
+            
+            group_ids = [row[0].id for row in rows]
+            counts = {}
+            if group_ids:
+                count_query = select(
+                    CandidateApplication.group_id, func.count(CandidateApplication.id)
+                ).where(
+                    CandidateApplication.group_id.in_(group_ids)
+                ).group_by(CandidateApplication.group_id)
+                count_res = await self.session.execute(count_query)
+                for g_id, c in count_res.all():
+                    counts[g_id] = c
+            
+            groups = []
+            for group, pos, hr, tech in rows:
+                cand_count = counts.get(group.id, 0)
+                groups.append({
+                    "id": group.id,
+                    "name": group.name,
+                    "candidateCount": cand_count,
+                    "status": group.status or "active",
+                    "createdDate": group.created_at,
+                    "position_id": pos.id,
+                    "progress": 0,
+                    "stage": "Initial",
+                    "assigned_hr_name": f"{hr.first_name} {hr.last_name}" if hr else None,
+                    "assigned_tech_name": f"{tech.first_name} {tech.last_name}" if tech else None,
+                    "recruiter": f"{hr.first_name} {hr.last_name}" if hr else "Unassigned",
+                    "lastUpdated": "Just now",
+                    "integrityIssues": 0,
+                    "hasAssessment": False,
+                    "hasAIInterview": False,
+                    "hasLiveInterview": False
+                })
+            return groups
+            
+        except Exception as e:
+            print(f"Error listing groups: {e}")
+            return []
 
     async def get_global_stats(self) -> GlobalStatsResponse:
         """
@@ -853,6 +955,9 @@ CandidateStageProgress.completed_at.isnot(None),
             
             return MemberRegisterResponse(success=True, userID=new_user.id)
             
+        except HTTPException:
+            await self.session.rollback()
+            raise
         except Exception as e:
             print(f"Error registering member: {e}")
             await self.session.rollback()
@@ -1218,19 +1323,19 @@ CandidateStageProgress.completed_at.isnot(None),
         try:
             # 1. Fetch User Profile
             if self.current_user.role == "admin":
-                # For admins, the session ID is actually the Org ID. 
-                # We fetch the specific OrganizationUser record for this org with role='admin'.
+                # For admins, we fetch the specific OrganizationUser record for this org with role='admin'.
+                # Use .first() in case there are multiple admins to avoid MultipleResultsFound.
                 res_user = await self.session.execute(
                     select(OrganizationUser).where(
                         OrganizationUser.organization_id == org_id,
                         OrganizationUser.role == "admin"
-                    )
+                    ).limit(1)
                 )
             else:
                 res_user = await self.session.execute(
                     select(OrganizationUser).where(OrganizationUser.id == user_id)
                 )
-            user_data = res_user.scalar_one_or_none()
+            user_data = res_user.scalars().first()
             
             # If still not found but is admin, use current_user as fallback
             if not user_data and self.current_user.role == "admin":
@@ -1292,13 +1397,13 @@ CandidateStageProgress.completed_at.isnot(None),
                     select(OrganizationUser).where(
                         OrganizationUser.organization_id == self.organization_id,
                         OrganizationUser.role == "admin"
-                    )
+                    ).limit(1)
                 )
             else:
                 res = await self.session.execute(
                     select(OrganizationUser).where(OrganizationUser.id == user_id)
                 )
-            user = res.scalar_one_or_none()
+            user = res.scalars().first()
             
             if not user:
                 return False
@@ -1346,9 +1451,9 @@ CandidateStageProgress.completed_at.isnot(None),
                     select(OrganizationUser).where(
                         OrganizationUser.organization_id == self.organization_id,
                         OrganizationUser.role == "admin"
-                    )
+                    ).limit(1)
                 )
-                user = res_user.scalar_one_or_none()
+                user = res_user.scalars().first()
                 if user:
                     user.email = email
                     self.session.add(user)
@@ -1685,10 +1790,10 @@ CandidateStageProgress.completed_at.isnot(None),
                     "action": log.action,
                     "type": "New Assignment" if "reassign" in log.action else "Change"
                 })
-            return results
+            return {"assignments": results}
         except Exception as e:
             print(f"Error fetching recent assignments: {e}")
-            return []
+            return {"assignments": []}
 
     async def list_organization_groups(self) -> list[dict]:
         """List all position groups in the organization with candidate counts."""
@@ -1707,39 +1812,62 @@ CandidateStageProgress.completed_at.isnot(None),
             res = await self.session.execute(query)
             rows = res.all()
             
+            if not rows:
+                return []
+                
+            group_ids = [group.id for group, _ in rows]
+            
+            # Count candidates and integrity flags separately for robustness
+            q_count = select(
+                CandidateApplication.group_id, 
+                func.count(CandidateApplication.id)
+            ).where(
+                CandidateApplication.group_id.in_(group_ids),
+                CandidateApplication.is_deleted == False
+            ).group_by(CandidateApplication.group_id)
+            
+            q_flags = select(
+                CandidateApplication.group_id,
+                func.count(ProctoringFlag.id)
+            ).join(
+                ProctoringFlag, ProctoringFlag.application_id == CandidateApplication.id
+            ).where(
+                CandidateApplication.group_id.in_(group_ids),
+                CandidateApplication.is_deleted == False
+            ).group_by(CandidateApplication.group_id)
+            
+            res_count = await self.session.execute(q_count)
+            res_flags = await self.session.execute(q_flags)
+            
+            count_map = {row[0]: row[1] for row in res_count.all()}
+            flags_map = {row[0]: row[1] for row in res_flags.all()}
+            
+            # Derive stage flags from GroupStageConfig (sole authoritative source)
+            stage_types_res = await self.session.execute(
+                select(GroupStageConfig.group_id, GroupStageConfig.stage_type).where(
+                    GroupStageConfig.group_id.in_(group_ids),
+                    GroupStageConfig.state != "inactive"
+                )
+            )
+            
+            stage_types_map = {}
+            for row in stage_types_res.all():
+                gid, stype = row[0], row[1].lower()
+                if gid not in stage_types_map:
+                    stage_types_map[gid] = set()
+                stage_types_map[gid].add(stype)
+
             result = []
             for group, job_title in rows:
                 gid = group.id
                 
-                # Count candidates and integrity flags separately for robustness
-                q_count = select(func.count(CandidateApplication.id)).where(
-                    CandidateApplication.group_id == gid,
-                    CandidateApplication.is_deleted == False
-                )
-                q_flags = select(func.count(ProctoringFlag.id)).join(
-                    CandidateApplication, ProctoringFlag.application_id == CandidateApplication.id
-                ).where(
-                    CandidateApplication.group_id == gid,
-                    CandidateApplication.is_deleted == False
-                )
+                count = count_map.get(gid, 0)
+                flags = flags_map.get(gid, 0)
+                stages = stage_types_map.get(gid, set())
                 
-                res_count = await self.session.execute(q_count)
-                res_flags = await self.session.execute(q_flags)
-                
-                count = res_count.scalar() or 0
-                flags = res_flags.scalar() or 0
-                
-                # Derive stage flags from GroupStageConfig (sole authoritative source)
-                stage_types_res = await self.session.execute(
-                    select(GroupStageConfig.stage_type).where(
-                        GroupStageConfig.group_id == gid,
-                        GroupStageConfig.state != "inactive"
-                    )
-                )
-                stage_types = {st.lower() for st in stage_types_res.scalars().all()}
-                has_assessment = "assessment" in stage_types
-                has_ai = "ai_interview" in stage_types
-                has_live = "live_interview" in stage_types
+                has_assessment = "assessment" in stages
+                has_ai = "ai_interview" in stages
+                has_live = "live_interview" in stages
 
                 result.append({
                     "groupID": str(gid),

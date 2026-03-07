@@ -55,7 +55,10 @@ def create_access_token(
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def create_refresh_token(subject: str | UUID) -> str:
+def create_refresh_token(
+    subject: str | UUID,
+    extra_data: dict[str, Any] | None = None,
+) -> str:
     """Create a JWT refresh token."""
     expire = datetime.now(timezone.utc) + timedelta(
         days=settings.REFRESH_TOKEN_EXPIRE_DAYS
@@ -65,6 +68,9 @@ def create_refresh_token(subject: str | UUID) -> str:
         "exp": expire,
         "type": "refresh",
     }
+    if extra_data:
+        to_encode.update(extra_data)
+    
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
