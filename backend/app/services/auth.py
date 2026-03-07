@@ -58,11 +58,12 @@ class AuthService:
         return AdminLoginResponse(
             success=True,
             access_token=access_token,
+            token=access_token,  # Support for older frontend
             refresh_token=refresh_token,
             user=AdminLoginResponseUser(
-                userID=org_id,
-                organizationID=org_id,
-                fullName=org.organization_name,
+                user_id=org_id,
+                organization_id=org_id,
+                full_name=org.organization_name,
                 role="admin"
             )
         )
@@ -114,11 +115,12 @@ class AuthService:
         return AdminLoginResponse(
             success=True,
             access_token=access_token,
+            token=access_token,  # Support for older frontend
             refresh_token=refresh_token,
             user=AdminLoginResponseUser(
-                userID=user_id,
-                organizationID=user.organization_id,
-                fullName=full_name,
+                user_id=user_id,
+                organization_id=user.organization_id,
+                full_name=full_name,
                 role=user.role
             )
         )

@@ -21,8 +21,31 @@ export const authService = {
         const data = await res.json();
 
         // Save to localStorage
-        if (data.token) {
-            localStorage.setItem('token', data.token);
+        const token = data.access_token || data.token;
+        if (token) {
+            localStorage.setItem('token', token);
+            localStorage.setItem('user', JSON.stringify(data.user));
+        }
+
+        return data;
+    },
+
+    organizationUserLogin: async (email: string, pass: string) => {
+        const res = await fetch(`${API_URL}/auth/organization-user/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password: pass })
+        });
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ detail: 'Invalid credentials' }));
+            throw new Error(errorData.detail || 'Login failed');
+        }
+        const data = await res.json();
+
+        // Save to localStorage
+        const token = data.access_token || data.token;
+        if (token) {
+            localStorage.setItem('token', token);
             localStorage.setItem('user', JSON.stringify(data.user));
         }
 

@@ -4,6 +4,7 @@ import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
 import logo from '../../../assets/image-eramatch.png';
+import { authService } from '../../../services/auth.service';
 
 interface RecruiterLoginPageProps {
   onBack: () => void;
@@ -24,25 +25,7 @@ export function RecruiterLoginPage({ onBack, onSignIn, onForgotPassword }: Recru
     setError('');
 
     try {
-      // Call the backend API
-      const response = await fetch('http://localhost:8000/api/v1/auth/organization-user/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Invalid credentials' }));
-        throw new Error(errorData.detail || 'Login failed');
-      }
-
-      const data = await response.json();
-
-      // Store token and user info in localStorage
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
+      const data = await authService.organizationUserLogin(email, password);
 
       // Route based on role
       const role = data.user.role.toLowerCase();

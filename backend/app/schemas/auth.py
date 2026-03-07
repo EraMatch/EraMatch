@@ -47,16 +47,17 @@ class UserResponse(BaseModel):
 
 class AdminLoginResponseUser(BaseModel):
     """Admin user info in login response."""
-    userID: UUID
-    organizationID: UUID
-    fullName: str
-    role: str = "Admin"
+    user_id: UUID
+    organization_id: UUID
+    full_name: str
+    role: str = "admin"
 
 
 class AdminLoginResponse(BaseModel):
     """Admin login response."""
     success: bool
     access_token: str
+    token: str | None = None  # Frontend compatibility
     refresh_token: str
     token_type: str = "bearer"
     user: AdminLoginResponseUser
