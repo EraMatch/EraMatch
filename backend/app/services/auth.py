@@ -48,14 +48,17 @@ class AuthService:
         if not verify_password(password, org.admin_password_hash or ""):
             raise UnauthorizedException("Invalid email or password")
 
-        # 4. Generate JWT
+        # 4. Generate JWTs
         org_id = org.id
-        token = create_access_token(subject=org_id, extra_data={"role": "admin", "org_id": str(org_id)})
+        extra_data = {"role": "admin", "org_id": str(org_id)}
+        access_token = create_access_token(subject=org_id, extra_data=extra_data)
+        refresh_token = create_refresh_token(subject=org_id, extra_data=extra_data)
 
         # 5. Build response
         return AdminLoginResponse(
             success=True,
-            token=token,
+            access_token=access_token,
+            refresh_token=refresh_token,
             user=AdminLoginResponseUser(
                 userID=org_id,
                 organizationID=org_id,
@@ -92,15 +95,14 @@ class AuthService:
         if not verify_password(password, user.password_hash or ""):
             raise UnauthorizedException("Invalid email or password")
 
-        # 4. Generate JWT
+        # 4. Generate JWTs
         user_id = user.id
-        token = create_access_token(
-            subject=user_id, 
-            extra_data={
-                "role": user.role, 
-                "org_id": str(user.organization_id)
-            }
-        )
+        extra_data = {
+            "role": user.role, 
+            "org_id": str(user.organization_id)
+        }
+        access_token = create_access_token(subject=user_id, extra_data=extra_data)
+        refresh_token = create_refresh_token(subject=user_id, extra_data=extra_data)
 
         # 5. Update last login timestamp
         user.last_login_at = datetime.utcnow()
@@ -111,7 +113,8 @@ class AuthService:
         full_name = f"{user.first_name} {user.last_name}".strip()
         return AdminLoginResponse(
             success=True,
-            token=token,
+            access_token=access_token,
+            refresh_token=refresh_token,
             user=AdminLoginResponseUser(
                 userID=user_id,
                 organizationID=user.organization_id,
@@ -345,8 +348,28 @@ class AuthService:
         pass
 
     async def refresh_tokens(self, refresh_token: str) -> TokenResponse:
-        # TODO: Implement token refresh
-        pass
+        """
+        Refresh tokens using a valid refresh token.
+        """
+        payload = decode_token(refresh_token)
+        if not payload or payload.get("type") != "refresh":
+            raise UnauthorizedException("Invalid or expired refresh token")
+            
+        user_id = payload.get("sub")
+        if not user_id:
+            raise UnauthorizedException("Invalid token payload")
+            
+        # Extract metadata to preserve it in new tokens
+        # Filter out JWT reserved claims
+        extra_data = {k: v for k, v in payload.items() if k not in ["sub", "exp", "iat", "nbf", "jti", "type"]}
+        
+        new_access_token = create_access_token(subject=user_id, extra_data=extra_data)
+        new_refresh_token = create_refresh_token(subject=user_id, extra_data=extra_data)
+        
+        return TokenResponse(
+            access_token=new_access_token,
+            refresh_token=new_refresh_token
+        )
 
     '''-------------- Logout -----------------------'''
 

@@ -230,7 +230,8 @@ export const adminService = {
     },
 
     getRecentAssignments: async () => {
-        return fetchAPI<any[]>('/delegation/recent');
+        const response = await fetchAPI<any>('/delegation/recent');
+        return response.assignments || [];
     },
 
     getRecruiterDelegation: async () => {

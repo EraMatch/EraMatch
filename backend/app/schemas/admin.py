@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from uuid import UUID
 from datetime import datetime
 
@@ -73,25 +73,33 @@ class MemberStatsResponse(BaseModel):
     recruitersCount: int
 
 class MemberPermissions(BaseModel):
-    managePositions: bool
-    manageUsers: bool = False
-    manageCandidates: bool
-    viewAnalytics: bool
-    exportData: bool
+    managePositions: bool = Field(default=False, alias="can_create_positions")
+    manageUsers: bool = Field(default=False, alias="can_manage_users")
+    manageCandidates: bool = Field(default=False, alias="can_manage_candidates")
+    viewAnalytics: bool = Field(default=False, alias="can_view_analytics")
+    exportData: bool = Field(default=False, alias="can_export_data")
+    model_config = ConfigDict(populate_by_name=True)
 
 class MemberPrivilegesResponse(BaseModel):
-    firstName: str
+    firstName: str = Field(alias="first_name")
     permissions: MemberPermissions
+    model_config = ConfigDict(populate_by_name=True)
 
-class MemberPrivilegesUpdate(BaseModel):
-    permissions: MemberPermissions
+class MemberPrivilegesUpdate(MemberPermissions):
+    """
+    Update schema for member privileges. 
+    Supports flat structure (from Postman) by inheriting from MemberPermissions.
+    """
+    pass
 
 class MemberRegisterRequest(BaseModel):
-    firstName: str
-    lastName: str
+    firstName: str = Field(alias="first_name")
+    lastName: str = Field(alias="last_name")
     email: str
     role: str
-    deptID: UUID | None = None
+    password: str | None = None  # Added for compatibility with register requests
+    deptID: UUID | None = Field(default=None, alias="dept_id")
+    model_config = ConfigDict(populate_by_name=True)
 
 class MemberRegisterResponse(BaseModel):
     success: bool
