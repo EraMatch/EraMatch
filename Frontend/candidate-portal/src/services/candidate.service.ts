@@ -42,6 +42,8 @@ export const candidateService = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }),
+    heartbeat: async (sessionId: string) =>
+        fetchAPI(`/assessment/heartbeat/${sessionId}`),
 
     // Interview endpoints
     getInterviewConfig: async () => fetchAPI('/interview/config'),
