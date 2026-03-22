@@ -1,13 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy import select, desc
 from typing import List, Optional
 import json
 from pathlib import Path
 
-from app.db.session import get_db
+from app.api.deps import get_db, get_current_user
 from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile
-from app.api.v1.auth import get_current_user
 
 router = APIRouter(prefix="/background-tasks", tags=["Background Tasks"])
 
@@ -16,7 +15,7 @@ DEBUG_LOG_PATH = Path("logs/video_processing_debug.json")
 @router.get("/")
 async def get_background_tasks(
     limit: int = 50,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -32,13 +31,14 @@ async def get_background_tasks(
             CandidateProfile.full_name.label("candidate_name")
         )
         .join(OngoingInterview, InterviewResponse.session_id == OngoingInterview.session_id)
-        .join(CandidateApplication, OngoingInterview.application_id == CandidateApplication.application_id)
+        .join(CandidateApplication, OngoingInterview.application_id == CandidateApplication.id)
         .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
         .order_by(desc(InterviewResponse.answered_at))
         .limit(limit)
     )
     
-    results = db.execute(query).all()
+    result = await db.execute(query)
+    results = result.all()
     
     tasks = []
     for row in results:
