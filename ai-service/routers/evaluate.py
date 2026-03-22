@@ -2,8 +2,8 @@
 Evaluation router – LLM-based scoring of candidate responses.
 
 Endpoints:
-  POST /evaluate/          – Evaluate an interview transcript   (existing)
-  POST /evaluate/grade-essay – Grade an essay answer vs reference (NEW)
+  POST /evaluate/            – Evaluate an interview transcript
+  POST /evaluate/grade-essay – Grade an essay answer vs reference
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -12,20 +12,34 @@ from services.ollama import chat_completion
 
 router = APIRouter()
 
+SYSTEM_PROMPT = """You are an expert technical interviewer and assessment evaluator with years of experience conducting technical interviews and evaluating candidate responses.
 
-# ── Existing: Transcript evaluation ──────────────────────────────────────────
+Your evaluations are:
+- OBJECTIVE: Score based on factual accuracy and relevance, not opinion
+- CONSTRUCTIVE: Provide actionable feedback that helps candidates improve
+- BALANCED: Acknowledge strengths AND areas for growth
+- SPECIFIC: Give concrete examples rather than generic statements
+
+For technical questions:
+- Verify key technical concepts are explained correctly
+- Check for practical examples and real-world application
+- Look for depth vs surface-level answers
+- Evaluate problem-solving approach, not just correctness
+
+Be fair, consistent, and focused on helping identify truly qualified candidates."""
+
+# ── Video Interview Transcript Evaluation ─────────────────────────────────
 
 class EvaluateRequest(BaseModel):
-    """Request body for transcript evaluation."""
     transcript: str
     reference_answer: str | None = None
     question_text: str | None = None
+    rubric: str | None = None
     evaluation_criteria: list[str] | None = None
 
 
 class EvaluateResponse(BaseModel):
-    """Response from transcript evaluation."""
-    score: float        # 0-100
+    score: float
     feedback: str
     strengths: list[str]
     improvements: list[str]
@@ -34,32 +48,64 @@ class EvaluateResponse(BaseModel):
 
 @router.post("/", response_model=EvaluateResponse)
 async def evaluate_transcript(request: EvaluateRequest):
-    """Evaluate an interview transcript against a reference answer."""
-    has_reference = bool(request.reference_answer and request.reference_answer.strip())
+    """Evaluate an interview transcript with rubric guidance."""
+    
+    prompt_parts = [
+        SYSTEM_PROMPT,
+        "",
+        "## Interview Question",
+        request.question_text or "Interview question",
+        "",
+    ]
+    
+    if request.rubric:
+        prompt_parts.extend([
+            "## Evaluation Rubric (REQUIRED)",
+            "You MUST evaluate based on these criteria:",
+            request.rubric,
+            "",
+        ])
+    
+    if request.reference_answer:
+        prompt_parts.extend([
+            "## Reference/Model Answer",
+            "Compare the candidate's response to this ideal answer:",
+            request.reference_answer,
+            "",
+        ])
+    
+    prompt_parts.extend([
+        "## Candidate's Transcript",
+        request.transcript,
+        "",
+        "## Evaluation Instructions",
+        "1. Score 0-100 based on how well the candidate addresses the rubric criteria",
+        "2. Focus on technical accuracy, completeness, and clarity",
+        "3. Check if key concepts from the rubric are covered",
+        "4. Provide specific examples in your feedback",
+        "",
+        "## Scoring Scale",
+        "90-100: Excellent - Fully addresses all rubric criteria with accurate, detailed explanations",
+        "70-89: Good - Addresses most criteria well, minor gaps or shallow areas",
+        "50-69: Acceptable - Addresses some criteria, significant gaps or inaccuracies",
+        "30-49: Below Average - Few criteria addressed, multiple inaccuracies",
+        "0-29: Poor - Does not address criteria or contains major misconceptions",
+        "",
+        "## Required Response Format (respond EXACTLY):",
+        "SCORE: <number between 0-100>",
+        "FEEDBACK: <3-4 sentences with specific examples from the response>",
+        "STRENGTHS: <what the candidate did well, specific points>",
+        "IMPROVEMENTS: <what could be improved, specific suggestions>",
+        "KEY_POINTS: <main technical concepts demonstrated>"
+    ])
 
-    prompt = f"""You are an expert interview evaluator.
-
-## Question
-{request.question_text or 'Interview question'}
-
-## Reference Answer
-{request.reference_answer if has_reference else 'No reference – evaluate on general quality'}
-
-## Candidate Transcript
-{request.transcript}
-
-## Scoring Scale
-90-100 Excellent | 70-89 Good | 50-69 Acceptable | 30-49 Below average | 0-29 Poor
-
-Respond EXACTLY in this format (no extra text):
-SCORE: <number 0-100>
-FEEDBACK: <2-3 sentences>
-STRENGTHS: <comma-separated list>
-IMPROVEMENTS: <comma-separated list>
-KEY_POINTS: <comma-separated list>"""
+    prompt = "\n".join(prompt_parts)
 
     try:
-        result = await chat_completion(messages=[{"role": "user", "content": prompt}])
+        result = await chat_completion(messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt}
+        ])
         content = result["content"]
 
         score = 50.0
@@ -95,20 +141,19 @@ KEY_POINTS: <comma-separated list>"""
         raise HTTPException(status_code=500, detail=f"Evaluation failed: {str(e)}")
 
 
-# ── NEW: Essay grading for assessments ───────────────────────────────────────
+# ── Essay Assessment Grading ───────────────────────────────────────────────
 
 class GradeEssayRequest(BaseModel):
-    """Grade an essay answer for the assessment module."""
     question_text: str
     essay_response: str
     reference_answer: str | None = None
+    rubric: str | None = None
     max_points: float = 10.0
 
 
 class GradeEssayResponse(BaseModel):
-    """Result of essay grading."""
-    score: float            # 0-100 percentage
-    points_earned: float    # Scaled to max_points
+    score: float
+    points_earned: float
     feedback: str
     strengths: list[str]
     improvements: list[str]
@@ -117,40 +162,68 @@ class GradeEssayResponse(BaseModel):
 @router.post("/grade-essay", response_model=GradeEssayResponse)
 async def grade_essay(request: GradeEssayRequest):
     """
-    Grade a candidate's essay answer against a reference answer using LLM.
-    Returns a score (0–100) plus qualitative feedback.
-    Called by the main backend during assessment submission.
+    Grade a candidate's essay answer with rubric-based evaluation.
+    
+    Uses rubric for structured, consistent grading across all essays.
     """
-    has_reference = bool(request.reference_answer and request.reference_answer.strip())
+    
+    prompt_parts = [
+        SYSTEM_PROMPT,
+        "",
+        "## Technical Assessment Essay Question",
+        request.question_text,
+        "",
+    ]
+    
+    if request.rubric:
+        prompt_parts.extend([
+            "## Rubric-Based Evaluation Criteria (MANDATORY)",
+            "You MUST evaluate the essay strictly against these criteria:",
+            request.rubric,
+            "",
+            "For each criterion in the rubric:",
+            "- Check if it is addressed in the essay",
+            "- Assess depth and accuracy of coverage",
+            "- Note specific examples or lack thereof",
+        ])
+    
+    if request.reference_answer:
+        prompt_parts.extend([
+            "",
+            "## Reference Model Answer",
+            "Compare essay quality against this ideal response:",
+            request.reference_answer,
+        ])
+    
+    prompt_parts.extend([
+        "",
+        "## Candidate's Essay Response",
+        request.essay_response,
+        "",
+        "## Grading Instructions",
+        f"Score out of {request.max_points} points (will be converted to 0-100 scale)",
+        "",
+        "Evaluate:",
+        "1. Technical accuracy - Are facts and concepts correct?",
+        "2. Completeness - Are all rubric criteria addressed?",
+        "3. Clarity - Is the explanation clear and organized?",
+        "4. Depth - Does it show genuine understanding vs memorization?",
+        "5. Examples - Are real-world examples provided?",
+        "",
+        "## Required Response Format:",
+        f"SCORE: <percentage 0-100>",
+        "FEEDBACK: <4-5 sentences evaluating against rubric criteria with specific examples>",
+        "STRENGTHS: <comma-separated points where essay excelled>",
+        "IMPROVEMENTS: <comma-separated suggestions for improvement>"
+    ])
 
-    prompt = f"""You are an expert technical assessment grader. Grade the following essay answer.
-
-## Question
-{request.question_text}
-
-## Reference / Model Answer
-{request.reference_answer if has_reference else 'No reference provided – grade based on technical accuracy, completeness, and clarity.'}
-
-## Candidate's Answer
-{request.essay_response}
-
-## Grading Criteria
-1. Technical accuracy and correctness
-2. Completeness – are key concepts covered?
-3. Clarity and coherence of explanation
-4. Depth of understanding demonstrated
-
-## Scoring Scale
-90-100 Excellent | 70-89 Good | 50-69 Acceptable | 30-49 Below average | 0-29 Poor
-
-Respond EXACTLY in this format (no extra text):
-SCORE: <number 0-100>
-FEEDBACK: <2-3 sentences explaining the score>
-STRENGTHS: <comma-separated list>
-IMPROVEMENTS: <comma-separated list>"""
+    prompt = "\n".join(prompt_parts)
 
     try:
-        result = await chat_completion(messages=[{"role": "user", "content": prompt}])
+        result = await chat_completion(messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt}
+        ])
         content = result["content"]
 
         score = 50.0

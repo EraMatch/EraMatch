@@ -56,21 +56,29 @@ def process_video_logic(
     video_url: str,
     question_text: str,
     reference_answer: str | None = None,
+    rubric: str | None = None,
 ) -> dict:
     """
     Core logic for video processing.
     
     Can be called directly (by BackgroundTasks) or via Celery wrapper.
     """
+    import sys
+    print(f"[VIDEO_WORKER] Starting processing for response_id={response_id}", file=sys.stderr)
+    print(f"[VIDEO_WORKER] video_url={video_url}", file=sys.stderr)
+    print(f"[VIDEO_WORKER] question_text={question_text[:50]}...", file=sys.stderr)
+    
     log_debug("task_started", {
         "response_id": response_id,
         "video_url": video_url,
-        "question_text": question_text[:100],
+        "question_text": question_text[:100] if question_text else None,
+        "has_rubric": rubric is not None,
     })
     
     try:
         # Step 0: Mark as processing
         import psycopg2
+        print(f"[VIDEO_WORKER] Connecting to database...", file=sys.stderr)
         conn = psycopg2.connect(settings.DATABASE_URL.replace("+asyncpg", ""))
         cursor = conn.cursor()
         cursor.execute(
@@ -84,7 +92,7 @@ def process_video_logic(
         # Step 1: Transcribe video
         log_debug("transcription_started", {"response_id": response_id})
         
-        with httpx.Client(timeout=120.0) as client:
+        with httpx.Client(timeout=300.0) as client:
             transcribe_response = client.post(
                 f"{AI_SERVICE_URL}/transcribe/",
                 json={"audio_url": video_url, "language": "en"},
@@ -105,15 +113,20 @@ def process_video_logic(
         })
         
         # Step 2: Evaluate with LLM
-        log_debug("evaluation_started", {"response_id": response_id})
+        log_debug("evaluation_started", {
+            "response_id": response_id,
+            "has_reference": bool(reference_answer),
+            "has_rubric": bool(rubric),
+        })
         
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=120.0) as client:
             evaluate_response = client.post(
                 f"{AI_SERVICE_URL}/llm/evaluate",
                 json={
                     "transcript": transcript,
-                    "reference_answer": reference_answer or "",
+                    "reference_answer": reference_answer,
                     "question": question_text,
+                    "rubric": rubric,
                 },
             )
             
