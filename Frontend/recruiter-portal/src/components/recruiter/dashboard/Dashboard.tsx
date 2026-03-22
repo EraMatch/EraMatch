@@ -1,5 +1,6 @@
 import { StatCard } from '../../common/StatCard';
 import { ProjectCard } from '../../common/ProjectCard';
+import LoadingSpinner from '../../common/LoadingSpinner';
 import { BarChart3, Users, Briefcase, FolderOpen, TrendingUp, Clock, Loader2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { useState, useEffect } from 'react';
@@ -37,13 +38,7 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
     fetchDashboardData();
   }, []);
 
-  if (isLoading || !analytics) {
-    return (
-      <div className="flex items-center justify-center h-full min-h-[500px]">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-      </div>
-    );
-  }
+
 
   // Use fetched analytics data
 
@@ -86,7 +81,11 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
         </div>
 
         {/* Overview Tab */}
-        {activeTab === 'overview' && (
+        {activeTab === 'overview' && (isLoading || !analytics ? (
+          <div className="flex flex-col items-center justify-center py-20 w-full h-[400px]">
+            <LoadingSpinner message="Loading overview data..." fullScreen={false} />
+          </div>
+        ) : (
           <>
             {/* Stats Grid */}
             <div className="gap-[24px] grid grid-cols-[repeat(3,_minmax(0px,_1fr))] grid-rows-[repeat(1,_minmax(0px,_1fr))] h-[172px] w-full">
@@ -151,10 +150,14 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
               </div>
             </div>
           </>
-        )}
+        ))}
 
         {/* Analytics Tab */}
-        {activeTab === 'analytics' && (
+        {activeTab === 'analytics' && (isLoading || !analytics ? (
+          <div className="flex flex-col items-center justify-center py-20 w-full h-[400px]">
+            <LoadingSpinner message="Loading analytics data..." fullScreen={false} />
+          </div>
+        ) : (
           <div className="w-full space-y-6">
             {/* Overview Metrics */}
             <div className="grid grid-cols-4 gap-6">
@@ -424,7 +427,7 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
               </div>
             </div>
           </div>
-        )}
+        ))}
       </div>
     </div>
   );

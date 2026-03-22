@@ -1,5 +1,6 @@
 import { ArrowLeft, Users, Calendar, MapPin, DollarSign, Clock, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { Button } from '../../ui/button';
+import LoadingSpinner from '../../common/LoadingSpinner';
 import { Card } from '../../ui/card';
 import { useState, useEffect } from 'react';
 import { api, Project } from '../../../services/api';
@@ -30,11 +31,7 @@ export function ProjectDetailPage({ projectTitle, onBack }: ProjectDetailPagePro
   }, [projectTitle]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-full min-h-[500px]">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-      </div>
-    );
+    return <LoadingSpinner message="Loading project details..." fullScreen={false} />;
   }
 
   if (!project) {

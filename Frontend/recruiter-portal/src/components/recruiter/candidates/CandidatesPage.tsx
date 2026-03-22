@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Search, Filter, Archive, BarChart3, Users, Calendar, TrendingUp, ChevronDown, X, Download, Clock, Loader2 } from 'lucide-react';
+import LoadingSpinner from '../../common/LoadingSpinner';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../../services/api';
 
@@ -294,11 +295,8 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
           </div>
 
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-24">
-              <Loader2 className="w-10 h-10 text-[#6366f1] animate-spin mb-4" />
-              <p className="font-['Arimo',sans-serif] text-[16px] text-[#6b7280]">
-                Loading candidates...
-              </p>
+            <div className="py-24">
+              <LoadingSpinner message="Loading candidates..." fullScreen={false} />
             </div>
           ) : filteredCandidates.length === 0 && (
             <div className="text-center py-12">

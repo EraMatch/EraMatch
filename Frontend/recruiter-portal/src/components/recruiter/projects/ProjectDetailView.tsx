@@ -1,5 +1,6 @@
 import { ChevronLeft, Plus, Pencil, Sparkles, BarChart3, Users, CheckCircle, TrendingUp, Calendar, Award, Target, Briefcase, Archive, XCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '../../ui/button';
+import LoadingSpinner from '../../common/LoadingSpinner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../../ui/dialog';
 import { Switch } from '../../ui/switch';
 import { Card } from '../../ui/card';
@@ -478,11 +479,8 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
               {/* Positions List */}
               <div className="space-y-[12px]">
                 {isLoading ? (
-                  <div className="bg-white rounded-[10px] shadow-sm h-[120px] flex flex-col items-center justify-center gap-3">
-                    <Loader2 className="w-6 h-6 text-[#6366f1] animate-spin" />
-                    <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                      Loading positions...
-                    </p>
+                  <div className="bg-white rounded-[10px] shadow-sm h-[200px] flex flex-col items-center justify-center">
+                    <LoadingSpinner message="Loading positions..." fullScreen={false} />
                   </div>
                 ) : positions.length === 0 ? (
                   <div className="bg-white rounded-[10px] shadow-sm h-[120px] flex items-center justify-center">
@@ -589,7 +587,11 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
           )}
 
           {/* Analytics Tab Content */}
-          {activeTab === 'analytics' && (() => {
+          {activeTab === 'analytics' && (isLoading ? (
+            <div className="bg-white rounded-[10px] shadow-sm h-[400px] flex flex-col items-center justify-center">
+              <LoadingSpinner message="Loading analytics..." fullScreen={false} />
+            </div>
+          ) : (() => {
             const totalApplicants = positions.reduce((sum, pos) => sum + pos.applicants, 0);
             const totalPositions = positions.length;
             const openPositions = positions.filter(p => p.isOpen).length;
@@ -812,7 +814,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
                 </div>
               </div>
             );
-          })()}
+          })())}
         </div>
       </div>
 

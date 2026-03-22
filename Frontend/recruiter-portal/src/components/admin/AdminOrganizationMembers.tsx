@@ -10,6 +10,7 @@ import { EditAccessPrivilegesModal } from '../recruiter/groups/EditAccessPrivile
 import { toast } from 'sonner';
 import { api, Member } from '../../services/api';
 import EraMatchLogo from '../../assets/image-eramatch.png';
+import LoadingSpinner from '../common/LoadingSpinner';
 
 interface AdminOrganizationMembersProps {
   onSignOut: () => void;
@@ -61,13 +62,7 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
     fetchData();
   }, []);
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-      </div>
-    );
-  }
+
 
   const handleEditPrivileges = (member: Member) => {
     setSelectedMember(member);
@@ -184,6 +179,12 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
         <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
+      {isLoading ? (
+        <div className="flex items-center justify-center min-h-[400px]">
+          <LoadingSpinner message="Loading organization members..." fullScreen={false} />
+        </div>
+      ) : (
+        <>
       {/* Stats Cards */}
       <div className="grid grid-cols-3 gap-6 mb-12">
         <div className="bg-white rounded-3xl px-8 py-9 shadow-sm">
@@ -518,6 +519,8 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
           </div>
         )}
       </Card>
+      </>
+      )}
 
       {/* Edit Access Privileges Modal */}
       {

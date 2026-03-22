@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, Network, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock } from 'lucide-react';
+import LoadingSpinner from '../../common/LoadingSpinner';
 import { KnowledgeGraph } from './KnowledgeGraph';
 import { EnhancedAssessmentReport } from '../assessments/EnhancedAssessmentReport';
 import { EnhancedAIInterviewReport } from '../interviews/EnhancedAIInterviewReport';
@@ -48,7 +49,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
   if (isLoading || !candidate) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#f9fafb]">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+        <LoadingSpinner message="Loading candidate profile..." fullScreen={false} />
       </div>
     );
   }

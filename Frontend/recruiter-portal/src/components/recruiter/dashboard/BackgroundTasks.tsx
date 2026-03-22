@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Clock, CheckCircle, XCircle, Loader2, ChevronRight, ChevronDown, RefreshCcw } from 'lucide-react';
+import LoadingSpinner from '../../common/LoadingSpinner';
 import { api } from '../../../services/api';
 
 interface TaskRecord {
@@ -127,9 +128,8 @@ export function BackgroundTasks() {
                     </div>
 
                     {loading && tasks.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-24 bg-white rounded-[16px] border border-[#e5e7eb] shadow-sm">
-                            <Loader2 size={40} className="text-[#6366f1] animate-spin mb-4" />
-                            <p className="text-[#6b7280] text-[15px]">Loading background tasks...</p>
+                        <div className="py-24 bg-white rounded-[16px] border border-[#e5e7eb] shadow-sm">
+                            <LoadingSpinner message="Loading background tasks..." fullScreen={false} />
                         </div>
                     ) : tasks.length === 0 ? (
                         <div className="text-center py-24 bg-white rounded-[16px] border border-[#e5e7eb] shadow-sm">

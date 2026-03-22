@@ -36,6 +36,7 @@ import { api, JobPosition, Project, PositionGroup } from '../../services/api';
 import EraMatchLogo from '../../assets/image-eramatch.png';
 import { AdminProjectModal } from './AdminProjectModal';
 import { AdminPositionModal } from './AdminPositionModal';
+import LoadingSpinner from '../common/LoadingSpinner';
 
 interface AdminDashboardProps {
   onSignOut: () => void;
@@ -144,13 +145,7 @@ export function AdminDashboard({ onSignOut, initialView = 'dashboard' }: AdminDa
     fetchFunnel();
   }, [selectedProject, selectedPositionForGroups]);
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-      </div>
-    );
-  }
+
 
   const openPositions = jobPositions.filter(p => p.status === 'Open').length;
   const interviewStagePositions = jobPositions.filter(p => p.status === 'Interview').length;
@@ -251,7 +246,7 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
     if (loadingAnalytics) {
       return (
         <div className="flex items-center justify-center min-h-[400px]">
-          <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+          <LoadingSpinner message="Loading group insights..." />
         </div>
       );
     }
@@ -1019,6 +1014,12 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
         <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
+      {isLoading ? (
+        <div className="flex items-center justify-center min-h-[400px]">
+          <LoadingSpinner message="Loading dashboard data..." />
+        </div>
+      ) : (
+        <>
       {/* Context-Aware Stats Cards - Hidden for 'requests' view to avoid clobbering */}
       <div className="grid grid-cols-4 gap-6 mb-12">
         {dashboardMetrics.stats.map((stat: any, index: number) => (
@@ -1936,6 +1937,9 @@ Hired,${Math.floor(position.applicantsCount * 0.16)},16%`;
           </div>
         </div>
       )}
+      </>
+      )}
+
       {/* Modals */}
       <AdminProjectModal
         isOpen={isProjectModalOpen}

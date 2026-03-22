@@ -11,6 +11,7 @@ import { FiltrationFlowConfigModal } from '../groups/FiltrationFlowConfigModal';
 import { CandidateProfile } from '../candidates/CandidateProfile';
 import { SimpleGroupCreationModal } from '../groups/SimpleGroupCreationModal';
 import { CandidateFilterSidebar, CandidateFilters } from '../candidates/CandidateFilterSidebar';
+import LoadingSpinner from '../../common/LoadingSpinner';
 
 interface Candidate {
   id: string;
@@ -314,11 +315,8 @@ export function PositionDetailView({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[#edf0f8]">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-12 h-12 text-[#6366f1] animate-spin" />
-          <p className="text-[#64748b] font-medium font-['Arimo',sans-serif]">Loading position details...</p>
-        </div>
+      <div className="flex items-center justify-center h-full min-h-screen bg-[#edf0f8]">
+        <LoadingSpinner message="Loading position details..." fullScreen={false} />
       </div>
     );
   }
