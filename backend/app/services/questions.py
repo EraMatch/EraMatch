@@ -56,6 +56,18 @@ class QuestionService:
             diff_str = diff_map.get(qb.difficulty, "Medium")
             type_str = type_map.get(qb.question_type, "Multiple Choice")
 
+            # Form specific settings from `question_config` and `correct_answer`
+            raw_options = config.get("options")
+            processed_options = []
+            if raw_options and isinstance(raw_options, list):
+                for opt in raw_options:
+                    if isinstance(opt, dict):
+                        processed_options.append(opt.get("text", str(opt)))
+                    else:
+                        processed_options.append(str(opt))
+            else:
+                processed_options = raw_options if raw_options is not None else []
+
             item = QuestionBankResponseItem(
                 id=qb.id,
                 text=qb.question_text,
@@ -69,8 +81,8 @@ class QuestionService:
                 createdBy="You" if qb.created_by_user_id == self.user.id else "System",
                 isFavorite=qb.id in favorite_ids,
 
-                # Form specific settings from `question_config` and `correct_answer`
-                options=config.get("options"),
+                # Form specific settings from processed options
+                options=processed_options,
                 correctAnswer=qb.correct_answer.get("answer") if qb.correct_answer else None,
                 multipleCorrect=config.get("multiple_correct", False),
                 explanation=config.get("explanation"),
