@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle, Sparkles, Inbox } from 'lucide-react';
 import { api } from '../../../services/api';
 import { MCQEditor } from '../../common/MCQEditor';
@@ -72,6 +72,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [showAllCategories, setShowAllCategories] = useState(false);
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
@@ -327,25 +328,60 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
 
   // --- Render Helpers ---
 
-  // Dynamically extract unique categories from questions
-  const uniqueCategories = Array.from(new Set(questions.map(q => q.category).filter(Boolean)));
-
   const categoryIcons = [BookOpen, Code, Globe, Cpu, Database];
 
-  const categories = [
-    { id: 'all', label: 'All Categories', icon: BookOpen, count: questions.length },
-    ...uniqueCategories.map((cat, index) => ({
-      id: cat,
-      label: cat,
-      icon: categoryIcons[index % categoryIcons.length],
-      count: questions.filter(q => q.category === cat).length
-    }))
-  ];
+  const normalizeCategoryLabel = (value?: string) => {
+    const cleaned = (value || '').trim();
+    if (!cleaned) return 'Uncategorized';
+    return cleaned
+      .split(/\s+/)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  };
+
+  const getCategoryIcon = (category: string, index: number) => {
+    const normalized = category.toLowerCase();
+    if (/python|javascript|typescript|java|golang|c\+\+|c#|ruby|rust/.test(normalized)) return Code;
+    if (/database|sql|postgres|mysql|mongodb/.test(normalized)) return Database;
+    if (/system|architecture|design|devops|cloud/.test(normalized)) return Cpu;
+    if (/frontend|web|react|html|css/.test(normalized)) return Globe;
+    return categoryIcons[index % categoryIcons.length];
+  };
+
+  const categories = useMemo(() => {
+    const categoryMap = questions.reduce((acc, q) => {
+      const label = normalizeCategoryLabel(q.category);
+      const key = label.toLowerCase();
+      const existing = acc.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        acc.set(key, { id: key, label, count: 1 });
+      }
+      return acc;
+    }, new Map<string, { id: string; label: string; count: number }>());
+
+    const sortedCategories = Array.from(categoryMap.values())
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+      .map((category, index) => ({
+        ...category,
+        icon: getCategoryIcon(category.label, index)
+      }));
+
+    return [
+      { id: 'all', label: 'All Categories', icon: BookOpen, count: questions.length },
+      ...sortedCategories
+    ];
+  }, [questions]);
+
+  const categoryItems = categories.filter(c => c.id !== 'all');
+  const maxCategoryCount = categoryItems[0]?.count || 1;
+  const visibleCategories = showAllCategories ? categoryItems : categoryItems.slice(0, 10);
 
   const filteredQuestions = questions.filter(q => {
     const matchesSearch = q.text.toLowerCase().includes(searchQuery.toLowerCase()) ||
       q.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesCategory = selectedCategory === 'all' || q.category === selectedCategory;
+    const matchesCategory = selectedCategory === 'all' || normalizeCategoryLabel(q.category).toLowerCase() === selectedCategory;
     const matchesDifficulty = selectedDifficulty === 'all' || q.difficulty === selectedDifficulty;
     const matchesType = selectedType === 'all' || q.type === selectedType;
 
@@ -585,7 +621,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               <div className="font-['Arimo',sans-serif] text-[14px] text-gray-600">Categories</div>
             </div>
             <div className="text-[32px] font-['Arimo',sans-serif] text-[#111827]">
-              {categories.filter(c => c.id !== 'all').length}
+              {categoryItems.length}
             </div>
           </div>
         </div>
@@ -594,10 +630,33 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
           {/* Categories Sidebar */}
           <div className="w-64 flex-shrink-0">
             <div className="bg-white border border-[#e5e7eb] rounded-[16px] p-4 shadow-sm">
-              <h3 className="font-['Arimo',sans-serif] text-[14px] font-medium text-[#111827] mb-4">Categories</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-['Arimo',sans-serif] text-[14px] font-medium text-[#111827]">Categories</h3>
+                <span className="text-[12px] text-[#6b7280] font-['Arimo',sans-serif]">{categoryItems.length}</span>
+              </div>
               <div className="space-y-1">
-                {categories.map(category => {
+                <button
+                  onClick={() => setSelectedCategory('all')}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-[8px] transition-colors font-['Arimo',sans-serif] ${selectedCategory === 'all'
+                    ? 'bg-[#f5f3ff] text-[#6366f1]'
+                    : 'text-[#374151] hover:bg-[#f9fafb]'
+                    }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <BookOpen size={18} />
+                    <span className="text-[14px]">All Categories</span>
+                  </div>
+                  <span className={`text-[12px] px-2 py-0.5 rounded-full ${selectedCategory === 'all'
+                    ? 'bg-[#ede9fe] text-[#6366f1]'
+                    : 'bg-[#f3f4f6] text-[#6b7280]'
+                    }`}>
+                    {questions.length}
+                  </span>
+                </button>
+
+                {visibleCategories.map(category => {
                   const Icon = category.icon;
+                  const percentage = Math.round((category.count / (questions.length || 1)) * 100);
                   return (
                     <button
                       key={category.id}
@@ -607,19 +666,39 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                         : 'text-[#374151] hover:bg-[#f9fafb]'
                         }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <Icon size={18} />
-                        <span className="text-[14px]">{category.label}</span>
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <Icon size={18} className="shrink-0" />
+                        <div className="min-w-0 flex-1 text-left">
+                          <div className="text-[14px] truncate">{category.label}</div>
+                          <div className="h-1.5 bg-[#f3f4f6] rounded-full mt-1.5 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${selectedCategory === category.id ? 'bg-[#6366f1]' : 'bg-[#d1d5db]'}`}
+                              style={{ width: `${Math.max(8, (category.count / maxCategoryCount) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <span className={`text-[12px] px-2 py-0.5 rounded-full ${selectedCategory === category.id
-                        ? 'bg-[#ede9fe] text-[#6366f1]'
-                        : 'bg-[#f3f4f6] text-[#6b7280]'
-                        }`}>
-                        {category.count}
-                      </span>
+                      <div className="ml-3 text-right">
+                        <div className={`text-[12px] px-2 py-0.5 rounded-full ${selectedCategory === category.id
+                          ? 'bg-[#ede9fe] text-[#6366f1]'
+                          : 'bg-[#f3f4f6] text-[#6b7280]'
+                          }`}>
+                          {category.count}
+                        </div>
+                        <div className="text-[11px] text-[#9ca3af] mt-1">{percentage}%</div>
+                      </div>
                     </button>
                   );
                 })}
+
+                {categoryItems.length > 10 && (
+                  <button
+                    onClick={() => setShowAllCategories(prev => !prev)}
+                    className="w-full mt-2 px-3 py-2 text-[13px] rounded-[8px] border border-[#e5e7eb] text-[#4f46e5] hover:bg-[#f8faff] transition-colors font-['Arimo',sans-serif]"
+                  >
+                    {showAllCategories ? 'Show Top 10' : `Show All (${categoryItems.length})`}
+                  </button>
+                )}
               </div>
             </div>
           </div>

@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # Default LLM provider: "ollama", "gemini", "groq", "openai"
     DEFAULT_LLM_PROVIDER: str = "gemini"
     DEFAULT_EMBEDDING_PROVIDER: str = "gemini"
+    
+    # Internal Services
+    AI_SERVICE_URL: str = "http://localhost:8001"
 
 
 @lru_cache

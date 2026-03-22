@@ -8,7 +8,7 @@ from app.api.deps import DbSession, RecruiterUser
 from app.schemas.questions import QuestionBankCreateRequest, QuestionBankResponseItem
 from app.services.questions import QuestionService
 
-router = APIRouter(prefix="/questions", tags=["Questions"])
+router = APIRouter(tags=["Questions"])
 
 # Temporary schemas for inline responses
 class FavoriteResponse(BaseModel):

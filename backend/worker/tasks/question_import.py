@@ -35,7 +35,8 @@ MAX_EXTRACT_CHARS = 50_000
 # ─── DB helpers (psycopg2 — sync, Celery-safe) ───────────────────────────────
 
 def get_db_conn():
-    return psycopg2.connect(DATABASE_URL)
+    sync_url = DATABASE_URL.replace("+asyncpg", "")
+    return psycopg2.connect(sync_url)
 
 
 def update_job_status(conn, job_id: str, status: str, **extra_fields):

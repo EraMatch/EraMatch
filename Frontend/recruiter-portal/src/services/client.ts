@@ -2,11 +2,15 @@ const API_URL = 'http://localhost:8000/api/v1';
 
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const token = localStorage.getItem('token');
-    const headers = {
-        'Content-Type': 'application/json',
+    const headers: Record<string, string> = {
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        ...options?.headers,
+        ...((options?.headers as Record<string, string>) || {}),
     };
+
+    // Only add JSON Content-Type if not sending FormData
+    if (!(options?.body instanceof FormData) && !headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
+    }
 
     const res = await fetch(`${API_URL}${endpoint}`, {
         ...options,
