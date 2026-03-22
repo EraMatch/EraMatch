@@ -14,7 +14,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   ArrowLeft, CheckCircle2, XCircle, AlertTriangle, Loader2,
-  ChevronDown, ChevronUp, Edit3, Save, RotateCcw
+  ChevronDown, ChevronUp, Edit3, Save, RotateCcw, Sparkles, ShieldAlert, ListChecks
 } from 'lucide-react';
 import { api } from '../../../services/api';
 
@@ -28,6 +28,8 @@ interface DraftQuestion {
   tags: string[];
   options: string[] | null;
   correct_answer: number | null;
+  evidence: string | null;
+  reference_answer: string | null;
   explanation: string | null;
   rubric: string | null;
   max_words: number | null;
@@ -59,11 +61,10 @@ interface Props {
   onApproved: () => void;
 }
 
-// ─── Helper: difficulty badge color ──────────────────────────────────────────
-const DIFF_COLORS: Record<string, string> = {
-  Easy: '#10b981',
-  Medium: '#f59e0b',
-  Hard: '#ef4444',
+const difficultyClass: Record<string, string> = {
+  Easy: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  Medium: 'bg-amber-50 text-amber-700 border-amber-200',
+  Hard: 'bg-rose-50 text-rose-700 border-rose-200',
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -150,19 +151,26 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 400, color: 'var(--text-muted, #888)' }}>
-        <Loader2 className="w-6 h-6 animate-spin" style={{ marginRight: '0.5rem' }} /> Loading draft questions…
+      <div className="min-h-[65vh] flex items-center justify-center">
+        <div className="inline-flex items-center gap-3 text-[#6b7280]">
+          <Loader2 className="w-6 h-6 animate-spin text-[#6366f1]" />
+          <span className="text-[15px] font-medium">Loading draft questions...</span>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center' }}>
-        <AlertTriangle className="w-8 h-8 mx-auto" style={{ color: '#ef4444', marginBottom: '0.5rem' }} />
-        <div style={{ color: '#ef4444', marginBottom: '1rem' }}>{error}</div>
-        <button onClick={onBack} style={{ padding: '0.5rem 1rem', borderRadius: '0.5rem', border: 'none', background: 'var(--accent-purple, #8b5cf6)', color: '#fff', cursor: 'pointer' }}>
-          Go Back
+      <div className="max-w-[720px] mx-auto mt-8 bg-white border border-rose-200 rounded-2xl p-8 shadow-sm text-center">
+        <AlertTriangle className="w-10 h-10 mx-auto text-rose-600 mb-3" />
+        <h3 className="text-[18px] font-semibold text-[#111827] mb-1">Unable To Load Draft Questions</h3>
+        <p className="text-[14px] text-rose-600 mb-6">{error}</p>
+        <button
+          onClick={onBack}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-[10px] bg-[#6366f1] text-white text-[14px] hover:bg-[#5558e3]"
+        >
+          <ArrowLeft size={15} /> Back To Question Bank
         </button>
       </div>
     );
@@ -170,10 +178,12 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
 
   if (approveResult) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 400, gap: '1rem', color: 'var(--text-primary, #fff)' }}>
-        <CheckCircle2 className="w-12 h-12" style={{ color: '#10b981' }} />
-        <h3 style={{ margin: 0 }}>{approveResult.message}</h3>
-        <p style={{ margin: 0, color: 'var(--text-muted, #888)' }}>Redirecting back to Question Bank…</p>
+      <div className="min-h-[65vh] flex items-center justify-center">
+        <div className="w-full max-w-[640px] bg-white border border-emerald-200 rounded-2xl p-8 shadow-sm text-center">
+          <CheckCircle2 className="w-12 h-12 mx-auto text-emerald-600 mb-4" />
+          <h3 className="text-[20px] font-semibold text-[#111827] mb-2">{approveResult.message}</h3>
+          <p className="text-[14px] text-[#6b7280]">Redirecting back to Question Bank...</p>
+        </div>
       </div>
     );
   }
@@ -181,172 +191,197 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
   const stats = data?.critic_stats;
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: '1rem' }}>
-
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
-        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted, #888)', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', padding: 0 }}>
-          <ArrowLeft className="w-4 h-4" /> Back
+    <div className="max-w-[1280px] mx-auto px-6 py-6">
+      <div className="mb-6">
+        <button
+          onClick={onBack}
+          className="inline-flex items-center gap-2 text-[#6b7280] hover:text-[#111827] text-[14px] mb-4"
+        >
+          <ArrowLeft size={16} /> Back To Question Bank
         </button>
-        <div style={{ flex: 1 }}>
-          <h2 style={{ margin: 0, color: 'var(--text-primary, #fff)', fontSize: '1.2rem', fontWeight: 700 }}>
-            Staging Review
-          </h2>
-          <p style={{ margin: '0.15rem 0 0', fontSize: '0.8rem', color: 'var(--text-muted, #888)' }}>
-            {data?.source_filename && <><strong>{data.source_filename}</strong> · </>}
-            {rows.length} questions generated
-          </p>
+
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+          <div>
+            <h2 className="text-[30px] font-medium text-[#111827] flex items-center gap-3">
+              <Sparkles className="text-[#6366f1]" size={30} />
+              Import Staging Review
+            </h2>
+            <p className="text-[14px] text-[#6b7280] mt-1">
+              {data?.source_filename ? `${data.source_filename} · ` : ''}
+              {rows.length} generated question{rows.length !== 1 ? 's' : ''}
+            </p>
+          </div>
+
+          <div className="bg-white border border-[#e5e7eb] rounded-xl px-4 py-3 shadow-sm min-w-[240px]">
+            <div className="text-[12px] text-[#6b7280] uppercase tracking-wide mb-1">Selection Summary</div>
+            <div className="text-[24px] font-semibold text-[#111827]">{selectedCount}/{rows.length}</div>
+            <div className="text-[13px] text-[#6b7280]">Questions selected for import</div>
+          </div>
         </div>
       </div>
 
-      {/* Critic stats bar */}
       {stats && (
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-          {[
-            { label: 'Passed', value: stats.approved, color: '#10b981' },
-            { label: 'Flagged', value: stats.flagged, color: '#f59e0b' },
-            { label: 'Rejected', value: stats.rejected, color: '#ef4444' },
-            { label: 'Total Retries', value: stats.total_retries, color: '#8b5cf6' },
-          ].map(s => (
-            <div key={s.label} style={{ padding: '0.5rem 1rem', borderRadius: '0.5rem', background: `${s.color}18`, border: `1px solid ${s.color}30`, fontSize: '0.82rem', color: s.color, fontWeight: 600 }}>
-              {s.value} {s.label}
-            </div>
-          ))}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+            <div className="text-[12px] text-emerald-700">Passed</div>
+            <div className="text-[22px] font-semibold text-emerald-700">{stats.approved}</div>
+          </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+            <div className="text-[12px] text-amber-700">Flagged</div>
+            <div className="text-[22px] font-semibold text-amber-700">{stats.flagged}</div>
+          </div>
+          <div className="bg-rose-50 border border-rose-200 rounded-xl p-3">
+            <div className="text-[12px] text-rose-700">Rejected</div>
+            <div className="text-[22px] font-semibold text-rose-700">{stats.rejected}</div>
+          </div>
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3">
+            <div className="text-[12px] text-indigo-700">Total Retries</div>
+            <div className="text-[22px] font-semibold text-indigo-700">{stats.total_retries}</div>
+          </div>
         </div>
       )}
 
-      {/* Action bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-        <button
-          onClick={toggleAll}
-          style={{ fontSize: '0.82rem', background: 'none', border: '1px solid var(--border, rgba(255,255,255,0.15))', borderRadius: '0.4rem', padding: '0.4rem 0.75rem', cursor: 'pointer', color: 'var(--text-primary, #fff)' }}
-        >
-          {rows.every(r => r.selected) ? 'Deselect All' : 'Select All'}
-        </button>
-        <span style={{ fontSize: '0.82rem', color: 'var(--text-muted, #888)' }}>
-          {selectedCount} of {rows.length} selected
-        </span>
-        <div style={{ flex: 1 }} />
-        <button
-          onClick={handleApprove}
-          disabled={selectedCount === 0 || isApproving}
-          style={{
-            padding: '0.6rem 1.25rem', borderRadius: '0.5rem', border: 'none',
-            background: selectedCount === 0 ? 'var(--border, rgba(255,255,255,0.1))' : '#10b981',
-            color: '#fff', fontWeight: 600, fontSize: '0.9rem',
-            cursor: selectedCount === 0 ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: '0.4rem',
-          }}
-        >
-          {isApproving ? <><Loader2 className="w-4 h-4 animate-spin" /> Importing…</> : <><CheckCircle2 className="w-4 h-4" /> Import {selectedCount} Question{selectedCount !== 1 ? 's' : ''}</>}
-        </button>
-      </div>
+      <div className="bg-white border border-[#e5e7eb] rounded-2xl shadow-sm">
+        <div className="px-5 py-4 border-b border-[#f3f4f6] flex flex-wrap items-center gap-3">
+          <button
+            onClick={toggleAll}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#d1d5db] text-[#374151] text-[13px] hover:bg-[#f9fafb]"
+          >
+            <ListChecks size={15} />
+            {rows.every(r => r.selected) ? 'Deselect All' : 'Select All'}
+          </button>
 
-      {/* Question cards */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <div className="text-[13px] text-[#6b7280]">{selectedCount} of {rows.length} selected</div>
+          <div className="ml-auto" />
+
+          <button
+            onClick={handleApprove}
+            disabled={selectedCount === 0 || isApproving}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-[10px] text-[13px] font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-55 disabled:cursor-not-allowed"
+          >
+            {isApproving ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+            {isApproving ? 'Importing...' : `Import ${selectedCount} Question${selectedCount !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
         {rows.map((row, i) => (
           <div
             key={i}
-            style={{
-              borderRadius: '0.75rem', overflow: 'hidden',
-              border: `1.5px solid ${row.selected ? 'var(--accent-purple, #8b5cf6)' : 'var(--border, rgba(255,255,255,0.1))'}`,
-              background: 'var(--card-bg, #1a1a2e)', transition: 'border-color 0.15s',
-            }}
+            className={`rounded-xl border transition-colors overflow-hidden ${
+              row.selected ? 'border-[#6366f1] bg-indigo-50/20' : 'border-[#e5e7eb] bg-white'
+            }`}
           >
-            {/* Card header */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.85rem 1rem' }}>
-              {/* Checkbox */}
+            <div className="px-4 py-3 flex items-start gap-3">
               <input
                 type="checkbox"
                 checked={row.selected}
                 onChange={() => toggleRow(i)}
-                style={{ flexShrink: 0, width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--accent-purple, #8b5cf6)' }}
+                className="mt-1 w-4 h-4 accent-[#6366f1]"
               />
 
-              {/* Type badge */}
-              <span style={{ padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.7rem', fontWeight: 700, background: 'rgba(139,92,246,0.15)', color: '#8b5cf6', flexShrink: 0 }}>
+              <span className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wide bg-indigo-100 text-indigo-700 border border-indigo-200">
                 {row.question.type.toUpperCase()}
               </span>
 
-              {/* Critic warning badge */}
               {row.question.needs_review && (
-                <span title={row.question.critic_feedback || 'Flagged by critic'} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.7rem', fontWeight: 700, background: 'rgba(245,158,11,0.15)', color: '#f59e0b', cursor: 'help', flexShrink: 0 }}>
-                  <AlertTriangle className="w-3 h-3" /> Needs Review
+                <span title={row.question.critic_feedback || 'Flagged by critic'} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold bg-amber-100 text-amber-700 border border-amber-200">
+                  <ShieldAlert size={13} /> Needs Review
                 </span>
               )}
 
-              {/* Question text preview */}
-              <span style={{ flex: 1, fontSize: '0.88rem', color: 'var(--text-primary, #fff)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
-                {row.question.text}
-              </span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[14px] font-medium text-[#111827] truncate mb-1">{row.question.text}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`text-[11px] px-2 py-0.5 rounded-md border ${difficultyClass[row.question.difficulty] || 'bg-gray-50 text-gray-700 border-gray-200'}`}>
+                    {row.question.difficulty}
+                  </span>
+                  <span className="text-[12px] text-[#6b7280]">Category: {row.question.category || 'Uncategorized'}</span>
+                  <span className="text-[12px] text-[#6b7280]">Critic score: {row.question.critic_score.toFixed(2)}</span>
+                </div>
+              </div>
 
-              {/* Difficulty */}
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: DIFF_COLORS[row.question.difficulty] || '#888', flexShrink: 0 }}>
-                {row.question.difficulty}
-              </span>
+              <div className="flex items-center gap-1">
+                {!row.editing ? (
+                  <button
+                    onClick={() => { startEdit(i); if (!row.expanded) toggleExpand(i); }}
+                    className="h-8 w-8 inline-flex items-center justify-center rounded-md border border-[#e5e7eb] text-[#6b7280] hover:text-[#111827] hover:bg-[#f9fafb]"
+                    title="Edit"
+                  >
+                    <Edit3 size={14} />
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => saveEdit(i)}
+                      className="h-8 w-8 inline-flex items-center justify-center rounded-md border border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                      title="Save"
+                    >
+                      <Save size={14} />
+                    </button>
+                    <button
+                      onClick={() => discardEdit(i)}
+                      className="h-8 w-8 inline-flex items-center justify-center rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50"
+                      title="Discard"
+                    >
+                      <RotateCcw size={14} />
+                    </button>
+                  </>
+                )}
 
-              {/* Edit button */}
-              {!row.editing ? (
-                <button onClick={() => { startEdit(i); if (!row.expanded) toggleExpand(i); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted, #888)', padding: '0.2rem', flexShrink: 0 }} title="Edit"><Edit3 className="w-4 h-4" /></button>
-              ) : (
-                <>
-                  <button onClick={() => saveEdit(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#10b981', padding: '0.2rem', flexShrink: 0 }} title="Save"><Save className="w-4 h-4" /></button>
-                  <button onClick={() => discardEdit(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '0.2rem', flexShrink: 0 }} title="Discard"><RotateCcw className="w-4 h-4" /></button>
-                </>
-              )}
-
-              {/* Expand toggle */}
-              <button onClick={() => toggleExpand(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted, #888)', padding: '0.2rem', flexShrink: 0 }}>
-                {row.expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
+                <button
+                  onClick={() => toggleExpand(i)}
+                  className="h-8 w-8 inline-flex items-center justify-center rounded-md border border-[#e5e7eb] text-[#6b7280] hover:text-[#111827] hover:bg-[#f9fafb]"
+                  title={row.expanded ? 'Collapse' : 'Expand'}
+                >
+                  {row.expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+              </div>
             </div>
 
-            {/* Expanded detail */}
             {row.expanded && (
-              <div style={{ padding: '0 1rem 1rem', borderTop: '1px solid var(--border, rgba(255,255,255,0.06))' }}>
-
-                {/* Full question text */}
+              <div className="px-4 pb-4 pt-3 border-t border-[#eef0f3] space-y-3">
                 {row.editing ? (
                   <textarea
                     value={row.edited.text}
                     onChange={e => updateEdited(i, 'text', e.target.value)}
                     rows={3}
-                    style={{ width: '100%', padding: '0.6rem', borderRadius: '0.4rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.88rem', resize: 'vertical', boxSizing: 'border-box', marginTop: '0.75rem' }}
+                    className="w-full p-3 rounded-[10px] border border-[#d1d5db] text-[14px] text-[#111827] resize-y focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
                   />
                 ) : (
-                  <p style={{ margin: '0.75rem 0', fontSize: '0.88rem', color: 'var(--text-primary, #fff)', lineHeight: 1.6 }}>{row.question.text}</p>
+                  <p className="text-[14px] text-[#1f2937] leading-6">{row.question.text}</p>
                 )}
 
-                {/* MCQ options */}
                 {row.question.type === 'mcq' && row.question.options && (
-                  <div style={{ marginBottom: '0.75rem' }}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted, #888)', marginBottom: '0.4rem' }}>OPTIONS</div>
+                  <div>
+                    <div className="text-[12px] font-semibold text-[#6b7280] mb-2 uppercase tracking-wide">Options</div>
                     {row.question.options.map((opt, optI) => (
-                      <div key={optI} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem', padding: '0.4rem 0.6rem', borderRadius: '0.4rem', background: optI === row.question.correct_answer ? 'rgba(16,185,129,0.12)' : 'transparent', border: optI === row.question.correct_answer ? '1px solid rgba(16,185,129,0.3)' : '1px solid transparent' }}>
-                        {optI === row.question.correct_answer ? <CheckCircle2 className="w-4 h-4" style={{ color: '#10b981', flexShrink: 0 }} /> : <XCircle className="w-4 h-4" style={{ color: 'var(--text-muted, #888)', flexShrink: 0 }} />}
-                        <span style={{ fontSize: '0.85rem', color: 'var(--text-primary, #fff)' }}>{opt}</span>
+                      <div key={optI} className={`flex items-start gap-2 p-2.5 rounded-[10px] border mb-2 ${optI === row.question.correct_answer ? 'border-emerald-300 bg-emerald-50' : 'border-[#e5e7eb] bg-white'}`}>
+                        {optI === row.question.correct_answer
+                          ? <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" />
+                          : <XCircle className="w-4 h-4 text-[#9ca3af] mt-0.5" />}
+                        <span className="text-[13px] text-[#1f2937]">{opt}</span>
                       </div>
                     ))}
                   </div>
                 )}
 
-                {/* Category + Difficulty controls in edit mode */}
                 {row.editing && (
-                  <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                    <div style={{ flex: 1, minWidth: 120 }}>
-                      <label style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.25rem' }}>CATEGORY</label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-[#6b7280] font-semibold mb-1 block">Category</label>
                       <input
                         value={row.edited.category}
                         onChange={e => updateEdited(i, 'category', e.target.value)}
-                        style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '0.4rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                        className="w-full h-[40px] px-3 rounded-[10px] border border-[#d1d5db] text-[13px] text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
                       />
                     </div>
-                    <div style={{ flex: 1, minWidth: 100 }}>
-                      <label style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.25rem' }}>DIFFICULTY</label>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-[#6b7280] font-semibold mb-1 block">Difficulty</label>
                       <select
                         value={row.edited.difficulty}
                         onChange={e => updateEdited(i, 'difficulty', e.target.value)}
-                        style={{ width: '100%', padding: '0.45rem 0.6rem', borderRadius: '0.4rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.82rem' }}
+                        className="w-full h-[40px] px-3 rounded-[10px] border border-[#d1d5db] text-[13px] text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
                       >
                         <option>Easy</option><option>Medium</option><option>Hard</option>
                       </select>
@@ -354,32 +389,95 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
                   </div>
                 )}
 
-                {/* Critic feedback */}
+                {row.editing && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-[#6b7280] font-semibold mb-1 block">Evidence</label>
+                      <textarea
+                        value={row.edited.evidence || ''}
+                        onChange={e => updateEdited(i, 'evidence', e.target.value)}
+                        rows={2}
+                        className="w-full p-3 rounded-[10px] border border-[#d1d5db] text-[13px] text-[#111827] resize-y focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                        placeholder="Material evidence supporting the expected answer"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-[#6b7280] font-semibold mb-1 block">Reference Answer</label>
+                      <textarea
+                        value={row.edited.reference_answer || ''}
+                        onChange={e => updateEdited(i, 'reference_answer', e.target.value)}
+                        rows={2}
+                        className="w-full p-3 rounded-[10px] border border-[#d1d5db] text-[13px] text-[#111827] resize-y focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                        placeholder="Model answer that recruiter can refine"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-[#6b7280] font-semibold mb-1 block">Explanation</label>
+                      <textarea
+                        value={row.edited.explanation || ''}
+                        onChange={e => updateEdited(i, 'explanation', e.target.value)}
+                        rows={2}
+                        className="w-full p-3 rounded-[10px] border border-[#d1d5db] text-[13px] text-[#111827] resize-y focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                        placeholder="Why this answer is correct"
+                      />
+                    </div>
+                    {(row.edited.type === 'essay' || row.edited.type === 'code') && (
+                      <div>
+                        <label className="text-[11px] uppercase tracking-wide text-[#6b7280] font-semibold mb-1 block">Rubric</label>
+                        <textarea
+                          value={row.edited.rubric || ''}
+                          onChange={e => updateEdited(i, 'rubric', e.target.value)}
+                          rows={3}
+                          className="w-full p-3 rounded-[10px] border border-[#d1d5db] text-[13px] text-[#111827] resize-y focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                          placeholder="Evaluation rubric"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {row.question.needs_review && row.question.critic_feedback && (
-                  <div style={{ display: 'flex', gap: '0.5rem', padding: '0.6rem 0.75rem', borderRadius: '0.4rem', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', marginTop: '0.5rem' }}>
-                    <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: '#f59e0b', marginTop: 2 }} />
-                    <div style={{ fontSize: '0.8rem', color: '#f59e0b', lineHeight: 1.5 }}>
-                      <strong>Critic feedback:</strong> {row.question.critic_feedback}
-                      {row.question.retry_count > 0 && <span style={{ marginLeft: '0.4rem', opacity: 0.7 }}>({row.question.retry_count} retries)</span>}
+                  <div className="flex gap-2 p-3 rounded-[10px] bg-amber-50 border border-amber-200">
+                    <AlertTriangle className="w-4 h-4 text-amber-700 mt-0.5" />
+                    <div className="text-[13px] text-amber-800">
+                      <span className="font-semibold">Critic feedback:</span> {row.question.critic_feedback}
+                      {row.question.retry_count > 0 && <span className="ml-1 text-amber-700">({row.question.retry_count} retries)</span>}
                     </div>
                   </div>
                 )}
 
-                {/* Explanation / Rubric */}
                 {row.question.explanation && (
-                  <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted, #888)', fontStyle: 'italic' }}>
-                    <strong>Explanation:</strong> {row.question.explanation}
+                  <div className="text-[13px] text-[#6b7280]">
+                    <span className="font-semibold text-[#4b5563]">Explanation:</span> {row.question.explanation}
+                  </div>
+                )}
+                {row.question.reference_answer && (
+                  <div className="text-[13px] text-[#6b7280]">
+                    <span className="font-semibold text-[#4b5563]">Reference answer:</span> {row.question.reference_answer}
+                  </div>
+                )}
+                {row.question.evidence && (
+                  <div className="text-[13px] text-[#6b7280]">
+                    <span className="font-semibold text-[#4b5563]">Evidence:</span> {row.question.evidence}
                   </div>
                 )}
                 {row.question.rubric && (
-                  <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted, #888)', fontStyle: 'italic' }}>
-                    <strong>Rubric:</strong> {row.question.rubric}
+                  <div className="text-[13px] text-[#6b7280]">
+                    <span className="font-semibold text-[#4b5563]">Rubric:</span> {row.question.rubric}
                   </div>
                 )}
               </div>
             )}
           </div>
         ))}
+
+          {rows.length === 0 && (
+            <div className="p-10 text-center border border-dashed border-[#d1d5db] rounded-xl bg-[#fafafa]">
+              <p className="text-[15px] font-medium text-[#374151]">No draft questions available for this import.</p>
+              <p className="text-[13px] text-[#6b7280] mt-1">Try running another import or verify AI generation settings.</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

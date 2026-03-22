@@ -18,13 +18,15 @@ from uuid import UUID
 import psycopg2
 import requests
 
+from app.core.config import settings
 from worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-AI_SERVICE_URL = os.environ.get("AI_SERVICE_URL", "http://localhost:8001")
+# Prefer shared settings so worker and API read the same .env values.
+DATABASE_URL = settings.DATABASE_URL or os.environ.get("DATABASE_URL", "")
+AI_SERVICE_URL = settings.AI_SERVICE_URL or os.environ.get("AI_SERVICE_URL", "http://localhost:8001")
 
 # File extraction limits
 MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024   # 5 MB
@@ -35,6 +37,8 @@ MAX_EXTRACT_CHARS = 50_000
 # ─── DB helpers (psycopg2 — sync, Celery-safe) ───────────────────────────────
 
 def get_db_conn():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not configured for Celery worker")
     sync_url = DATABASE_URL.replace("+asyncpg", "")
     return psycopg2.connect(sync_url)
 
@@ -130,7 +134,16 @@ def extract_text(file_bytes: bytes, filename: str) -> tuple[str, str]:
 
 # ─── AI Service callers ───────────────────────────────────────────────────────
 
-def call_ai_generate(raw_text: str, num_questions: int, context_hint: str, q_types: list) -> dict:
+def call_ai_generate(
+    raw_text: str,
+    num_questions: int,
+    context_hint: str,
+    q_types: list,
+    mcq_count: int = 0,
+    essay_count: int = 0,
+    mcq_difficulty: str = "Medium",
+    essay_difficulty: str = "Medium",
+) -> dict:
     """POST to AI Service /question-import/generate"""
     resp = requests.post(
         f"{AI_SERVICE_URL}/question-import/generate",
@@ -139,6 +152,10 @@ def call_ai_generate(raw_text: str, num_questions: int, context_hint: str, q_typ
             "num_questions": num_questions,
             "context_hint": context_hint,
             "question_types": q_types,
+            "mcq_count": mcq_count,
+            "essay_count": essay_count,
+            "mcq_difficulty": mcq_difficulty,
+            "essay_difficulty": essay_difficulty,
         },
         timeout=300,  # Generator + Critic per question can take time
     )
@@ -171,6 +188,10 @@ def run_question_import(
     num_questions: int = 10,
     context_hint: str = "",
     question_types: list | None = None,
+    mcq_count: int = 0,
+    essay_count: int = 0,
+    mcq_difficulty: str = "Medium",
+    essay_difficulty: str = "Medium",
 ):
     """
     Background task that:
@@ -211,7 +232,16 @@ def run_question_import(
 
         # ── 4. Call AI Service ─────────────────────────────────────────────
         if import_type == "generative":
-            ai_result = call_ai_generate(raw_text, num_questions, context_hint, question_types)
+            ai_result = call_ai_generate(
+                raw_text,
+                num_questions,
+                context_hint,
+                question_types,
+                mcq_count=mcq_count,
+                essay_count=essay_count,
+                mcq_difficulty=mcq_difficulty,
+                essay_difficulty=essay_difficulty,
+            )
         else:
             # Both "extraction" and "csv" go through the extract endpoint
             ai_result = call_ai_extract(raw_text)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Clock, CheckCircle, XCircle, Loader2, ChevronRight, ChevronDown, RefreshCcw, Sparkles, FileText } from 'lucide-react';
+import { Activity, Clock, CheckCircle, XCircle, Loader2, ChevronRight, ChevronDown, RefreshCcw, Sparkles, FileText, Trash2 } from 'lucide-react';
 import LoadingSpinner from '../../common/LoadingSpinner';
 import { api } from '../../../services/api';
 
@@ -30,11 +30,21 @@ export function BackgroundTasks() {
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
     const [taskLogs, setTaskLogs] = useState<Record<string, LogEntry[]>>({});
     const [autoRefresh, setAutoRefresh] = useState(true);
+    const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
+    const [deletingTaskIds, setDeletingTaskIds] = useState<string[]>([]);
+    const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+    const [isStoppingVideoTasks, setIsStoppingVideoTasks] = useState(false);
+    const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+
+    const isDeleteInFlight = deletingTaskIds.length > 0 || isBulkDeleting;
+    const isStopInFlight = isStoppingVideoTasks;
+    const isActionInFlight = isDeleteInFlight || isStopInFlight;
 
     const fetchTasks = async () => {
         try {
             const data = await api.recruiter.getBackgroundTasks();
             setTasks(data);
+            setSelectedTaskIds((prev) => prev.filter((id) => data.some((t) => t.id === id)));
         } catch (error) {
             console.error('Failed to fetch tasks:', error);
         } finally {
@@ -68,6 +78,144 @@ export function BackgroundTasks() {
         } else {
             setExpandedTaskId(taskId);
             fetchLogs(taskId);
+        }
+    };
+
+    const handleDeleteTask = async (e: React.MouseEvent, task: TaskRecord) => {
+        e.stopPropagation();
+        if (isDeleteInFlight || deletingTaskIds.includes(task.id)) return;
+
+        const isProcessing = task.status.toLowerCase() === 'processing';
+        if (isProcessing) {
+            window.alert('Cannot delete a task while it is processing. Please wait until it completes or fails.');
+            return;
+        }
+
+        const confirmed = window.confirm(
+            `Delete this ${task.type} task? This action cannot be undone.`
+        );
+        if (!confirmed) return;
+
+        try {
+            setDeletingTaskId(task.id);
+            setDeletingTaskIds((prev) => [...prev, task.id]);
+            await api.recruiter.deleteBackgroundTask(task.id, task.task_category);
+
+            setTasks((prev) => prev.filter((t) => t.id !== task.id));
+            setSelectedTaskIds((prev) => prev.filter((id) => id !== task.id));
+            setTaskLogs((prev) => {
+                const next = { ...prev };
+                delete next[task.id];
+                return next;
+            });
+            if (expandedTaskId === task.id) {
+                setExpandedTaskId(null);
+            }
+        } catch (error) {
+            console.error('Failed to delete task:', error);
+            window.alert('Failed to delete task. Please try again.');
+        } finally {
+            setDeletingTaskId(null);
+            setDeletingTaskIds((prev) => prev.filter((id) => id !== task.id));
+        }
+    };
+
+    const isSelected = (taskId: string) => selectedTaskIds.includes(taskId);
+
+    const toggleSelectTask = (taskId: string) => {
+        setSelectedTaskIds((prev) =>
+            prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]
+        );
+    };
+
+    const allSelected = tasks.length > 0 && selectedTaskIds.length === tasks.length;
+
+    const toggleSelectAll = () => {
+        if (allSelected) {
+            setSelectedTaskIds([]);
+            return;
+        }
+        setSelectedTaskIds(tasks.map((t) => t.id));
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedTaskIds.length === 0 || isActionInFlight) return;
+
+        const selectedTasks = tasks.filter((t) => selectedTaskIds.includes(t.id));
+        const deletable = selectedTasks.filter((t) => t.status.toLowerCase() !== 'processing');
+        const blocked = selectedTasks.length - deletable.length;
+
+        if (deletable.length === 0) {
+            window.alert('Selected tasks are processing and cannot be deleted right now.');
+            return;
+        }
+
+        const confirmed = window.confirm(
+            blocked > 0
+                ? `Delete ${deletable.length} selected task(s)? ${blocked} processing task(s) will be skipped.`
+                : `Delete ${deletable.length} selected task(s)? This action cannot be undone.`
+        );
+        if (!confirmed) return;
+
+        setIsBulkDeleting(true);
+        setDeletingTaskIds(deletable.map((task) => task.id));
+
+        const results = await Promise.allSettled(
+            deletable.map((task) => api.recruiter.deleteBackgroundTask(task.id, task.task_category))
+        );
+
+        const successIds = deletable
+            .filter((_, idx) => results[idx].status === 'fulfilled')
+            .map((task) => task.id);
+
+        const failedCount = deletable.length - successIds.length;
+
+        if (successIds.length > 0) {
+            setTasks((prev) => prev.filter((t) => !successIds.includes(t.id)));
+            setSelectedTaskIds((prev) => prev.filter((id) => !successIds.includes(id)));
+            setTaskLogs((prev) => {
+                const next = { ...prev };
+                successIds.forEach((id) => delete next[id]);
+                return next;
+            });
+            if (expandedTaskId && successIds.includes(expandedTaskId)) {
+                setExpandedTaskId(null);
+            }
+        }
+
+        if (failedCount > 0) {
+            window.alert(`Deleted ${successIds.length} task(s). ${failedCount} failed to delete.`);
+        }
+
+        setDeletingTaskIds([]);
+        setIsBulkDeleting(false);
+    };
+
+    const handleStopAllVideoTasks = async () => {
+        if (isActionInFlight) return;
+
+        const runningVideoTasks = tasks.filter(
+            (t) => t.task_category === 'video' && ['pending', 'processing'].includes(t.status.toLowerCase())
+        );
+        if (runningVideoTasks.length === 0) {
+            window.alert('No pending or processing video tasks to stop.');
+            return;
+        }
+
+        const confirmed = window.confirm(
+            `Stop ${runningVideoTasks.length} pending/processing video task(s)?`
+        );
+        if (!confirmed) return;
+
+        try {
+            setIsStoppingVideoTasks(true);
+            await api.recruiter.stopAllVideoTasks();
+            await fetchTasks();
+        } catch (error) {
+            console.error('Failed to stop video tasks:', error);
+            window.alert('Failed to stop video tasks. Please try again.');
+        } finally {
+            setIsStoppingVideoTasks(false);
         }
     };
 
@@ -114,11 +262,30 @@ export function BackgroundTasks() {
                 <div className="max-w-[1400px]">
                     {/* Controls */}
                     <div className="mb-6 flex items-center justify-end gap-4">
+                        <button
+                            onClick={handleStopAllVideoTasks}
+                            disabled={isActionInFlight}
+                            className="flex items-center gap-2 h-[44px] px-[16px] rounded-[10px] border border-[#fca5a5] bg-[#fff1f2] text-[#be123c] hover:bg-[#ffe4e6] transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                            title="Stop all pending/processing video tasks"
+                        >
+                            {isStoppingVideoTasks ? <Loader2 size={16} className="animate-spin" /> : <XCircle size={16} />} Stop Video Tasks
+                        </button>
+                        {selectedTaskIds.length > 0 && (
+                            <button
+                                onClick={handleBulkDelete}
+                                disabled={isActionInFlight}
+                                className="flex items-center gap-2 h-[44px] px-[16px] rounded-[10px] border border-[#fecaca] bg-[#fef2f2] text-[#b91c1c] hover:bg-[#fee2e2] transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                                title="Delete selected tasks"
+                            >
+                                {isBulkDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />} Delete Selected ({selectedTaskIds.length})
+                            </button>
+                        )}
                         <div className="flex items-center gap-2 h-[44px] px-[16px] rounded-[10px] border border-[#e5e7eb] bg-white shadow-sm">
                             <input 
                                 type="checkbox" 
                                 id="autoRefresh"
                                 checked={autoRefresh}
+                                disabled={isActionInFlight}
                                 onChange={(e) => setAutoRefresh(e.target.checked)}
                                 className="w-4 h-4 rounded border-gray-300 text-[#6366f1] focus:ring-[#6366f1]"
                             />
@@ -126,7 +293,8 @@ export function BackgroundTasks() {
                         </div>
                         <button 
                             onClick={fetchTasks}
-                            className="flex items-center justify-center h-[44px] w-[44px] text-[#6b7280] hover:text-[#6366f1] hover:bg-[#f5f3ff] rounded-[10px] border border-[#e5e7eb] bg-white transition-colors shadow-sm"
+                            disabled={isActionInFlight}
+                            className="flex items-center justify-center h-[44px] w-[44px] text-[#6b7280] hover:text-[#6366f1] hover:bg-[#f5f3ff] rounded-[10px] border border-[#e5e7eb] bg-white transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
                             title="Manual Refresh"
                         >
                             <RefreshCcw size={20} className={loading ? 'animate-spin' : ''} />
@@ -152,11 +320,21 @@ export function BackgroundTasks() {
                             <table className="w-full text-left">
                                 <thead className="bg-[#f9fafb] border-b border-[#e5e7eb]">
                                     <tr>
+                                        <th className="px-6 py-4 w-10">
+                                            <input
+                                                type="checkbox"
+                                                checked={allSelected}
+                                                disabled={isActionInFlight}
+                                                onChange={toggleSelectAll}
+                                                aria-label="Select all tasks"
+                                                className="w-4 h-4 rounded border-gray-300 text-[#6366f1] focus:ring-[#6366f1]"
+                                            />
+                                        </th>
                                         <th className="px-6 py-4 text-[13px] font-medium text-[#6b7280] uppercase tracking-wider">Status</th>
                                         <th className="px-6 py-4 text-[13px] font-medium text-[#6b7280] uppercase tracking-wider">Task Details</th>
                                         <th className="px-6 py-4 text-[13px] font-medium text-[#6b7280] uppercase tracking-wider">Candidate</th>
                                         <th className="px-6 py-4 text-[13px] font-medium text-[#6b7280] uppercase tracking-wider">Started At</th>
-                                        <th className="px-6 py-4 w-10"></th>
+                                        <th className="px-6 py-4 text-[13px] font-medium text-[#6b7280] uppercase tracking-wider text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-[#f3f4f6]">
@@ -166,6 +344,16 @@ export function BackgroundTasks() {
                                                 className={`hover:bg-[#f9fafb] transition-colors cursor-pointer group ${expandedTaskId === task.id ? 'bg-[#f5f3ff]/30' : ''}`}
                                                 onClick={() => toggleExpand(task.id)}
                                             >
+                                                <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected(task.id)}
+                                                        disabled={isActionInFlight}
+                                                        onChange={() => toggleSelectTask(task.id)}
+                                                        aria-label="Select task"
+                                                        className="w-4 h-4 rounded border-gray-300 text-[#6366f1] focus:ring-[#6366f1]"
+                                                    />
+                                                </td>
                                                 <td className="px-6 py-4">
                                                     <div className="flex items-center gap-2">
                                                         {getStatusIcon(task.status)}
@@ -211,14 +399,25 @@ export function BackgroundTasks() {
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4 text-right">
-                                                    <div className="text-[#6366f1] opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        {expandedTaskId === task.id ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => handleDeleteTask(e, task)}
+                                                            disabled={deletingTaskId === task.id || deletingTaskIds.includes(task.id) || isActionInFlight || task.status.toLowerCase() === 'processing'}
+                                                            className="h-8 w-8 inline-flex items-center justify-center rounded-md border border-[#e5e7eb] text-[#ef4444] hover:bg-[#fef2f2] disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            title={task.status.toLowerCase() === 'processing' ? 'Processing tasks cannot be deleted' : 'Delete task'}
+                                                        >
+                                                            {deletingTaskId === task.id || deletingTaskIds.includes(task.id) ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                                                        </button>
+                                                        <div className="text-[#6366f1] opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            {expandedTaskId === task.id ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                                                        </div>
                                                     </div>
                                                 </td>
                                             </tr>
                                             {expandedTaskId === task.id && (
                                                 <tr className="bg-[#f9fafb]/50">
-                                                    <td colSpan={5} className="px-10 py-8 border-t border-[#f3f4f6]">
+                                                    <td colSpan={6} className="px-10 py-8 border-t border-[#f3f4f6]">
                                                         <div className="flex flex-col gap-6">
                                                             {(task as any).task_category === 'question_import' && task.status === 'completed' && (task as any).import_job_id && (
                                                                 <div className="flex items-center justify-between p-4 bg-purple-50 border border-purple-200 rounded-[10px]">
@@ -227,7 +426,7 @@ export function BackgroundTasks() {
                                                                         <p className="text-[12px] text-purple-600 mt-0.5">Open the Question Bank to review and approve the generated questions.</p>
                                                                     </div>
                                                                     <a
-                                                                        href="#question-bank"
+                                                                        href={`/recruiter/question-bank?reviewJobId=${encodeURIComponent(String((task as any).import_job_id))}`}
                                                                         className="flex items-center gap-1.5 px-4 py-2 rounded-[8px] text-[13px] font-medium text-white"
                                                                         style={{ background: 'linear-gradient(135deg,#8b5cf6,#6366f1)' }}
                                                                     >

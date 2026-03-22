@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle, Sparkles, Inbox } from 'lucide-react';
 import { api } from '../../../services/api';
 import { MCQEditor } from '../../common/MCQEditor';
@@ -63,6 +64,7 @@ interface QuestionBankPageProps {
 }
 
 export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
   // --- State ---
   const [questions, setQuestions] = useState<Question[]>([]);
   const [viewMode, setViewMode] = useState<'list' | 'editor' | 'import-review'>('list');
@@ -120,9 +122,17 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   // Load completed import jobs for the badge
   useEffect(() => {
     api.recruiter.listImportJobs()
-      .then((jobs: any[]) => setImportJobs(jobs.filter((j: any) => j.status === 'completed')))
+      .then((jobs: any[]) => setImportJobs(jobs.filter((j: any) => j.status === 'completed' && (j.total_generated || 0) > 0)))
       .catch(() => {});
   }, []);
+
+  // Auto-open review when arriving from Background Tasks link.
+  useEffect(() => {
+    const reviewJobId = searchParams.get('reviewJobId');
+    if (!reviewJobId) return;
+    setPendingReviewJobId(reviewJobId);
+    setViewMode('import-review');
+  }, [searchParams]);
 
   // --- Data Conversion Helpers ---
 
@@ -490,7 +500,16 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               {/* Pending Review badge — shown when completed import jobs exist */}
               {importJobs.length > 0 && (
                 <button
-                  onClick={() => { setPendingReviewJobId(importJobs[0].id); setViewMode('import-review'); }}
+                  onClick={() => {
+                    const firstJob = importJobs[0];
+                    const jobId = String(firstJob?.job_id || firstJob?.id || '');
+                    if (!jobId) return;
+                    setPendingReviewJobId(jobId);
+                    setViewMode('import-review');
+                    const next = new URLSearchParams(searchParams);
+                    next.set('reviewJobId', jobId);
+                    setSearchParams(next);
+                  }}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-[10px] transition-colors font-['Arimo',sans-serif] text-[14px]"
                   style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#f59e0b' }}
                   title="You have completed import jobs awaiting review"
@@ -564,8 +583,8 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               <QuestionImportModal
                 onClose={() => setShowImportModal(false)}
                 onJobQueued={(jobId) => {
-                  setShowImportModal(false);
-                  // Refresh jobs list immediately so badge can appear when job completes
+                  // Keep modal open so user sees the Step 3 success confirmation,
+                  // but refresh jobs list shortly after queueing.
                   setTimeout(() => {
                     api.recruiter.listImportJobs()
                       .then(jobs => setImportJobs(jobs.filter((j: any) => j.status === 'completed')))

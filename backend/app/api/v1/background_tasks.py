@@ -4,6 +4,7 @@ from sqlalchemy import select, desc
 from typing import List, Optional
 import json
 from pathlib import Path
+from uuid import UUID
 
 from app.api.deps import get_db, get_current_user
 from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob
@@ -36,6 +37,7 @@ async def get_background_tasks(
             .join(OngoingInterview, InterviewResponse.session_id == OngoingInterview.session_id)
             .join(CandidateApplication, OngoingInterview.application_id == CandidateApplication.id)
             .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .where(OngoingInterview.organization_id == current_user.organization_id)
             .order_by(desc(InterviewResponse.answered_at))
             .limit(limit)
         )
@@ -117,3 +119,84 @@ async def get_task_logs(task_id: str, current_user = Depends(get_current_user)):
         return {"logs": task_logs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading logs: {str(e)}")
+
+
+@router.delete("/{task_id}")
+async def delete_background_task(
+    task_id: UUID,
+    task_category: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Delete a background task record.
+
+    task_category:
+      - video: deletes InterviewResponse row (scoped to current organization)
+      - question_import: deletes QuestionImportJob row (scoped to current organization)
+    """
+    if task_category not in {"video", "question_import"}:
+        raise HTTPException(status_code=400, detail="task_category must be 'video' or 'question_import'")
+
+    if task_category == "question_import":
+        job = await db.get(QuestionImportJob, task_id)
+        if not job or job.organization_id != current_user.organization_id:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        await db.delete(job)
+        await db.commit()
+        return {"message": "Question import task deleted"}
+
+    # video task (preferred: organization-scoped join)
+    result = await db.execute(
+        select(InterviewResponse)
+        .join(OngoingInterview, InterviewResponse.session_id == OngoingInterview.session_id)
+        .where(
+            InterviewResponse.response_id == task_id,
+            OngoingInterview.organization_id == current_user.organization_id,
+        )
+    )
+    video_task = result.scalar_one_or_none()
+
+    # Fallback for legacy/orphan rows where join chain no longer resolves.
+    # This keeps delete functional for rows already visible in the task list.
+    if not video_task:
+        video_task = await db.get(InterviewResponse, task_id)
+
+    if not video_task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    await db.delete(video_task)
+    await db.commit()
+    return {"message": "Video analysis task deleted"}
+
+
+@router.post("/stop-video")
+async def stop_all_video_tasks(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Stop all pending/processing video tasks for the current organization.
+    Sets processing_status to 'cancelled'.
+    """
+    result = await db.execute(
+        select(InterviewResponse)
+        .join(OngoingInterview, InterviewResponse.session_id == OngoingInterview.session_id)
+        .where(
+            OngoingInterview.organization_id == current_user.organization_id,
+            InterviewResponse.processing_status.in_(["pending", "processing"]),
+        )
+    )
+    tasks = result.scalars().all()
+
+    for task in tasks:
+        task.processing_status = "cancelled"
+        db.add(task)
+
+    await db.commit()
+
+    return {
+        "stopped_count": len(tasks),
+        "message": f"Stopped {len(tasks)} video task(s).",
+    }

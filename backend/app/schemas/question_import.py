@@ -37,6 +37,8 @@ class DraftQuestion(BaseModel):
     tags: list[str] = []
     options: list[str] | None = None    # MCQ only
     correct_answer: int | None = None   # MCQ: 0-based index
+    evidence: str | None = None
+    reference_answer: str | None = None
     explanation: str | None = None
     rubric: str | None = None           # Essay/code
     max_words: int | None = None        # Essay

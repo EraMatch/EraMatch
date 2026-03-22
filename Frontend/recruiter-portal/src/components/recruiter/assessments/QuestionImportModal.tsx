@@ -19,6 +19,7 @@ import { api } from '../../../services/api';
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ImportPath = 'generative' | 'extraction' | 'csv';
 type Step = 1 | 2 | 3;
+type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
 interface Props {
   onClose: () => void;
@@ -67,9 +68,11 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
   const [step, setStep] = useState<Step>(1);
   const [selectedPath, setSelectedPath] = useState<ImportPath | null>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [numQuestions, setNumQuestions] = useState(10);
+  const [mcqCount, setMcqCount] = useState(5);
+  const [essayCount, setEssayCount] = useState(5);
+  const [mcqDifficulty, setMcqDifficulty] = useState<Difficulty>('Medium');
+  const [essayDifficulty, setEssayDifficulty] = useState<Difficulty>('Medium');
   const [contextHint, setContextHint] = useState('');
-  const [questionTypes, setQuestionTypes] = useState<{ mcq: boolean; essay: boolean }>({ mcq: true, essay: true });
   const [dragOver, setDragOver] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,20 +98,37 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
 
   const handleSubmit = async () => {
     if (!file || !selectedPath) return;
+    const totalQuestions = mcqCount + essayCount;
+
+    if (selectedPath === 'generative') {
+      if (mcqCount < 0 || essayCount < 0) {
+        setError('Question counts cannot be negative.');
+        return;
+      }
+      if (totalQuestions <= 0) {
+        setError('Please request at least one generated question.');
+        return;
+      }
+    }
+
     setIsUploading(true);
     setError(null);
     try {
       const types = [
-        questionTypes.mcq ? 'mcq' : '',
-        questionTypes.essay ? 'essay' : '',
+        mcqCount > 0 ? 'mcq' : '',
+        essayCount > 0 ? 'essay' : '',
       ].filter(Boolean).join(',') || 'mcq';
 
       const result = await api.recruiter.startQuestionImport(
         file,
         selectedPath,
-        numQuestions,
+        totalQuestions,
         contextHint,
-        types
+        types,
+        mcqCount,
+        essayCount,
+        mcqDifficulty,
+        essayDifficulty,
       );
       setStep(3);
       onJobQueued(result.job_id, selectedPath);
@@ -200,17 +220,66 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
               {/* Generative-only options */}
               {selectedPath === 'generative' && (
                 <>
-                  <div>
-                    <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
-                      Questions to generate
-                    </label>
-                    <select
-                      value={numQuestions}
-                      onChange={e => setNumQuestions(Number(e.target.value))}
-                      style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
-                    >
-                      {[5, 10, 15, 20].map(n => <option key={n} value={n}>{n} questions</option>)}
-                    </select>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <div>
+                      <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
+                        MCQ count
+                      </label>
+                      <select
+                        value={mcqCount}
+                        onChange={e => setMcqCount(Number(e.target.value))}
+                        style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
+                      >
+                        {Array.from({ length: 11 }, (_, i) => i).map(n => <option key={`mcq-${n}`} value={n}>{n}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
+                        MCQ difficulty
+                      </label>
+                      <select
+                        value={mcqDifficulty}
+                        onChange={e => setMcqDifficulty(e.target.value as Difficulty)}
+                        style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
+                      >
+                        <option value="Easy">Easy</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Hard">Hard</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <div>
+                      <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
+                        Essay count
+                      </label>
+                      <select
+                        value={essayCount}
+                        onChange={e => setEssayCount(Number(e.target.value))}
+                        style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
+                      >
+                        {Array.from({ length: 11 }, (_, i) => i).map(n => <option key={`essay-${n}`} value={n}>{n}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
+                        Essay difficulty
+                      </label>
+                      <select
+                        value={essayDifficulty}
+                        onChange={e => setEssayDifficulty(e.target.value as Difficulty)}
+                        style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
+                      >
+                        <option value="Easy">Easy</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Hard">Hard</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted, #888)' }}>
+                    Total questions to generate: <strong style={{ color: 'var(--text-primary, #fff)' }}>{mcqCount + essayCount}</strong>
                   </div>
 
                   <div>
@@ -225,21 +294,6 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                     />
                   </div>
 
-                  <div>
-                    <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>Question types</label>
-                    <div style={{ display: 'flex', gap: '0.75rem' }}>
-                      {(['mcq', 'essay'] as const).map(type => (
-                        <label key={type} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.88rem', color: 'var(--text-primary, #fff)' }}>
-                          <input
-                            type="checkbox"
-                            checked={questionTypes[type]}
-                            onChange={() => setQuestionTypes(prev => ({ ...prev, [type]: !prev[type] }))}
-                          />
-                          {type === 'mcq' ? 'Multiple Choice' : 'Essay'}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
                 </>
               )}
 

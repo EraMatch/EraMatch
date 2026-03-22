@@ -34,5 +34,22 @@ class Settings(BaseSettings):
         env_file = ".env"
         extra = "ignore"
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        # Prioritize .env over inherited process environment for predictable local dev.
+        return (
+            init_settings,
+            dotenv_settings,
+            env_settings,
+            file_secret_settings,
+        )
+
 
 settings = Settings()

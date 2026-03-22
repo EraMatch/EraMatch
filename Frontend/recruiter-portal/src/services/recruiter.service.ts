@@ -456,6 +456,12 @@ export const recruiterService = {
     // Background Tasks
     getBackgroundTasks: async () => fetchAPI<any[]>('/background-tasks/'),
     getTaskLogs: async (taskId: string) => fetchAPI<any>(`/background-tasks/${taskId}/logs`),
+    stopAllVideoTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-video', { method: 'POST' }),
+    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import') =>
+        fetchAPI<{ message: string }>(
+            `/background-tasks/${taskId}?task_category=${encodeURIComponent(taskCategory)}`,
+            { method: 'DELETE' }
+        ),
 
     // ── Question Import ──────────────────────────────────────────────────────
 
@@ -463,7 +469,7 @@ export const recruiterService = {
      * Start a question import job (Celery background task).
      * @param file - The uploaded file (PDF, DOCX, CSV, XLSX, MD, TXT)
      * @param importType - "generative" | "extraction" | "csv"
-     * @param numQuestions - (generative only) number of questions to generate
+     * @param numQuestions - legacy total question count fallback
      * @param contextHint - (generative only) topic hint e.g. "Python OOP"
      * @param questionTypes - comma-separated e.g. "mcq,essay"
      */
@@ -472,7 +478,11 @@ export const recruiterService = {
         importType: 'generative' | 'extraction' | 'csv',
         numQuestions: number = 10,
         contextHint: string = '',
-        questionTypes: string = 'mcq,essay'
+        questionTypes: string = 'mcq,essay',
+        mcqCount: number = 5,
+        essayCount: number = 5,
+        mcqDifficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium',
+        essayDifficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium'
     ) => {
         const formData = new FormData();
         formData.append('file', file);
@@ -480,6 +490,10 @@ export const recruiterService = {
         formData.append('num_questions', String(numQuestions));
         formData.append('context_hint', contextHint);
         formData.append('question_types', questionTypes);
+        formData.append('mcq_count', String(mcqCount));
+        formData.append('essay_count', String(essayCount));
+        formData.append('mcq_difficulty', mcqDifficulty);
+        formData.append('essay_difficulty', essayDifficulty);
         return fetchAPI<{ job_id: string; status: string; message: string }>(
             '/questions/import',
             { method: 'POST', body: formData }

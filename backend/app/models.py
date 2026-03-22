@@ -145,6 +145,11 @@ class OrganizationUser(BaseModel, table=True):
     last_login_at: datetime | None = Field(default=None)
     is_deleted: bool = Field(default=False)
 
+    @property
+    def user_id(self) -> UUID:
+        """Backward-compatible alias for code paths that still read user_id."""
+        return self.id
+
 
 class UserPermission(BaseModel, table=True):
     __tablename__ = "user_permissions"

@@ -1,4 +1,5 @@
 from typing import List
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -102,6 +103,31 @@ from app.schemas.question_import import (
 from worker.tasks.question_import import run_question_import
 
 
+def _resolve_current_user_ids(current_user: RecruiterUser) -> tuple[UUID, UUID]:
+    """Resolve user/org IDs safely across SQLModel alias variants (id vs user_id)."""
+    dumped = {}
+    try:
+        dumped = current_user.model_dump(by_alias=True)
+    except Exception:
+        dumped = {}
+
+    user_id = (
+        dumped.get("user_id")
+        or dumped.get("id")
+        or getattr(current_user, "user_id", None)
+        or getattr(current_user, "id", None)
+    )
+    org_id = (
+        dumped.get("organization_id")
+        or getattr(current_user, "organization_id", None)
+    )
+
+    if not user_id or not org_id:
+        raise HTTPException(status_code=401, detail="Invalid authenticated user context")
+
+    return UUID(str(user_id)), UUID(str(org_id))
+
+
 @router.post("/import", status_code=202)
 async def start_question_import(
     session: DbSession,
@@ -111,6 +137,10 @@ async def start_question_import(
     num_questions: int = Form(10),
     context_hint: str = Form(""),
     question_types: str = Form("mcq,essay"),    # comma-separated
+    mcq_count: int = Form(5),
+    essay_count: int = Form(5),
+    mcq_difficulty: str = Form("Medium"),
+    essay_difficulty: str = Form("Medium"),
 ):
     """
     Upload a file and queue a background AI question import job.
@@ -130,10 +160,12 @@ async def start_question_import(
             detail=f"File too large ({len(file_bytes) // (1024*1024):.1f} MB). Maximum is 5 MB.",
         )
 
+    current_user_id, current_org_id = _resolve_current_user_ids(current_user)
+
     # Create the job record
     job = QuestionImportJob(
-        organization_id=current_user.organization_id,
-        created_by_user_id=current_user.user_id,
+        organization_id=current_org_id,
+        created_by_user_id=current_user_id,
         status="pending",
         import_type=import_type,
         source_filename=file.filename,
@@ -146,17 +178,27 @@ async def start_question_import(
     file_b64 = base64.b64encode(file_bytes).decode("utf-8")
     q_types = [t.strip() for t in question_types.split(",") if t.strip()]
 
+    if import_type == "generative":
+        total_requested = mcq_count + essay_count
+        if total_requested <= 0:
+            raise HTTPException(status_code=422, detail="At least one question must be requested")
+        num_questions = total_requested
+
     # Queue Celery task
     run_question_import.delay(
         job_id=str(job.id),
         file_b64=file_b64,
         filename=file.filename or "upload",
-        org_id=str(current_user.organization_id),
-        user_id=str(current_user.user_id),
+        org_id=str(current_org_id),
+        user_id=str(current_user_id),
         import_type=import_type,
         num_questions=num_questions,
         context_hint=context_hint,
         question_types=q_types,
+        mcq_count=mcq_count,
+        essay_count=essay_count,
+        mcq_difficulty=mcq_difficulty,
+        essay_difficulty=essay_difficulty,
     )
 
     return {"job_id": str(job.id), "status": "pending", "message": "Import job queued successfully"}
@@ -211,13 +253,38 @@ async def get_draft_questions(
         )
 
     raw_questions = job.draft_questions or []
-    questions = [DraftQuestion(**q) for q in raw_questions]
+    if isinstance(raw_questions, str):
+        try:
+            raw_questions = json.loads(raw_questions)
+        except Exception:
+            raw_questions = []
+    elif isinstance(raw_questions, dict):
+        raw_questions = raw_questions.get("questions", [])
+
+    if not isinstance(raw_questions, list):
+        raw_questions = []
+
+    questions: list[DraftQuestion] = []
+    for q in raw_questions:
+        if not isinstance(q, dict):
+            continue
+        try:
+            questions.append(DraftQuestion(**q))
+        except Exception:
+            continue
+
+    critic_stats = job.critic_stats
+    if isinstance(critic_stats, str):
+        try:
+            critic_stats = json.loads(critic_stats)
+        except Exception:
+            critic_stats = None
 
     return DraftQuestionsResponse(
         job_id=job.id,
         import_type=job.import_type,
         source_filename=job.source_filename,
-        critic_stats=job.critic_stats,
+        critic_stats=critic_stats,
         questions=questions,
     )
 
@@ -233,8 +300,10 @@ async def approve_import_questions(
     Commit recruiter-selected draft questions into the live Question Bank.
     Questions not selected are discarded.
     """
+    current_user_id, current_org_id = _resolve_current_user_ids(current_user)
+
     job = await session.get(QuestionImportJob, job_id)
-    if not job or job.organization_id != current_user.organization_id:
+    if not job or job.organization_id != current_org_id:
         raise HTTPException(status_code=404, detail="Import job not found")
 
     diff_map = {"Easy": 1, "Medium": 2, "Hard": 3}
@@ -250,16 +319,22 @@ async def approve_import_questions(
             config["options"] = dq.options or []
             config["multiple_correct"] = False
             config["explanation"] = dq.explanation
+            config["evidence"] = dq.evidence
+            config["reference_answer"] = dq.reference_answer
             if dq.correct_answer is not None:
                 correct_answer = {"answer": dq.correct_answer}
         elif q_type == "essay":
             config["max_words"] = dq.max_words or 500
             config["rubric"] = dq.rubric
+            config["evidence"] = dq.evidence
+            config["reference_answer"] = dq.reference_answer
         elif q_type == "code":
             config["language"] = "python"
+            config["evidence"] = dq.evidence
+            config["reference_answer"] = dq.reference_answer
 
         new_q = QuestionBank(
-            organization_id=current_user.organization_id,
+            organization_id=current_org_id,
             question_type=q_type,
             question_text=dq.text,
             question_config=config,
@@ -268,7 +343,7 @@ async def approve_import_questions(
             difficulty=diff_map.get(dq.difficulty, 2),
             tags=dq.tags or [],
             points=10,
-            created_by_user_id=current_user.user_id,
+            created_by_user_id=current_user_id,
             is_base_question=True,
         )
         session.add(new_q)
