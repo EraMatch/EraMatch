@@ -597,6 +597,56 @@ async def generate_questions(request: GenerateRequest):
             stats = _merge_stats(stats, extra_stats)
             topup_attempts += 1
 
+        # Final fallback: request one missing question at a time.
+        # This is slower, but increases reliability when the model ignores batch counts.
+        single_attempts = 0
+        while len(questions) < total_questions and single_attempts < 12:
+            current_counts = _count_types(questions)
+            rem_mcq = max(mcq_count - current_counts["mcq"], 0)
+            rem_essay = max(essay_count - current_counts["essay"], 0)
+            remaining_total = rem_mcq + rem_essay
+            if remaining_total <= 0:
+                break
+
+            target_type = "mcq" if rem_mcq >= rem_essay and rem_mcq > 0 else "essay"
+            single_plan = {
+                "mcq": {
+                    "count": 1 if target_type == "mcq" else 0,
+                    "difficulty": question_plan["mcq"]["difficulty"],
+                },
+                "essay": {
+                    "count": 1 if target_type == "essay" else 0,
+                    "difficulty": question_plan["essay"]["difficulty"],
+                },
+            }
+
+            single_prompt = build_generate_prompt(
+                raw_text=raw_text,
+                num_questions=1,
+                context_hint=request.context_hint,
+                question_plan=single_plan,
+            )
+            single_questions, single_stats = await generator_critic_pipeline(
+                raw_text,
+                single_prompt,
+                mode="generate",
+                num_questions=1,
+                question_types=[target_type],
+            )
+            stats = _merge_stats(stats, single_stats)
+
+            candidate = None
+            for item in single_questions:
+                if (item.type or "").strip().lower() == target_type:
+                    candidate = item
+                    break
+            if candidate is None and single_questions:
+                candidate = single_questions[0]
+            if candidate is not None:
+                questions.append(candidate)
+
+            single_attempts += 1
+
         questions = questions[:total_questions]
         if len(questions) < total_questions:
             raise HTTPException(
@@ -607,6 +657,8 @@ async def generate_questions(request: GenerateRequest):
                 ),
             )
         return ImportResponse(questions=questions, critic_stats=stats)
+    except HTTPException:
+        raise
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {str(e)}")
     except Exception as e:
