@@ -76,11 +76,9 @@ async def get_candidates_progress(session: DbSession):
                 ls.status as status,
                 ls.last_updated
             FROM latest_sessions ls
-            WHERE (
-                -- Only include candidates with actual responses or completed sessions
-                (SELECT COUNT(*) FROM interview_responses ir WHERE ir.session_id = ls.session_id) > 0
-                OR ls.status IN ('completed', 'in_progress')
-            )
+            LEFT JOIN response_stats rs ON rs.session_id = ls.session_id
+            WHERE COALESCE(rs.total_responses, 0) > 0
+               OR ls.status IN ('completed', 'in_progress', 'not_started')
             ORDER BY ls.last_updated DESC NULLS LAST
             LIMIT 50
         """)
@@ -282,7 +280,9 @@ async def get_assessment_responses(candidate_id: str, session: DbSession):
                 ans.points_earned,
                 ans.points_max,
                 ans.time_spent_seconds,
-                ans.answered_at
+                ans.answered_at,
+                qb.question_config,
+                qb.correct_answer
             FROM candidate_answers ans
             JOIN latest_session ls ON ans.session_id = ls.session_id
             JOIN question_bank qb ON ans.question_id = qb.question_id
@@ -292,17 +292,47 @@ async def get_assessment_responses(candidate_id: str, session: DbSession):
     )
     rows = result.mappings().all()
 
-    return [
-        AssessmentAnswerDTO(
+    # Build response with MCQ options and reference answers included
+    responses = []
+    for row in rows:
+        answer_data = row["answer_data"] or {}
+        q_config = row["question_config"] or {}
+        
+        # Add MCQ options to answer_data for frontend display
+        if row["question_type"] == "mcq":
+            options = q_config.get("options", [])
+            # Normalize options to array of strings
+            normalized_options = []
+            for opt in options:
+                if isinstance(opt, str):
+                    normalized_options.append(opt)
+                elif isinstance(opt, dict):
+                    normalized_options.append(opt.get("text", str(opt)))
+                else:
+                    normalized_options.append(str(opt))
+            answer_data = {**answer_data, "_mcq_options": normalized_options}
+        
+        # Add reference answer and rubric for essay questions
+        if row["question_type"] == "essay":
+            correct_answer = row["correct_answer"] or {}
+            reference = correct_answer.get("reference_answer")
+            rubric = q_config.get("rubric")  # Rubric is in question_config
+            
+            if reference:
+                answer_data = {**answer_data, "_reference_answer": reference}
+            if rubric:
+                answer_data = {**answer_data, "_rubric": rubric}
+        
+        responses.append(AssessmentAnswerDTO(
             answer_id=row["answer_id"],
             question_text=row["question_text"] or "",
             question_type=row["question_type"] or "",
-            answer_data=row["answer_data"] or {},
+            answer_data=answer_data,
             is_correct=row["is_correct"],
             points_earned=float(row["points_earned"]) if row["points_earned"] else None,
             points_max=row["points_max"] or 0,
             time_spent_seconds=row["time_spent_seconds"],
             answered_at=row["answered_at"],
-        )
-        for row in rows
-    ]
+        ))
+    
+    return responses

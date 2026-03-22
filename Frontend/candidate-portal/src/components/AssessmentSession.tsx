@@ -104,19 +104,40 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         // Map API data to component format
         const mappedQuestions: Question[] = session.questions.map((q: any) => {
           const qType = q.question_type === 'code' ? 'coding' : q.question_type;
+          
+          // Auto-detect language from starter code if not specified
+          let lang = q.question_config?.language || 'python';
+          if (!lang && q.question_config?.starter_code) {
+            const code = q.question_config.starter_code;
+            if (code.includes('def ') || code.includes('import ') || code.includes('print(')) {
+              lang = 'python';
+            } else if (code.includes('function ') || code.includes('const ') || code.includes('console.log')) {
+              lang = 'javascript';
+            }
+          }
+          
           return {
             id: q.question_id,
             type: qType as 'essay' | 'mcq' | 'coding',
             question: q.question_text,
             options: q.question_config?.options,
             starterCode: q.question_config?.starter_code,
-            language: q.question_config?.language || 'python',
+            language: lang,
             testCases: q.question_config?.test_cases,
             points: q.points || 10,
             section_title: q.section_title,
           };
         });
         setQuestions(mappedQuestions);
+        
+        // Initialize selected languages based on question defaults
+        const initialLanguages: Record<string, string> = {};
+        mappedQuestions.forEach(q => {
+          if (q.type === 'coding' && q.language) {
+            initialLanguages[q.id] = q.language;
+          }
+        });
+        setSelectedLanguages(initialLanguages);
 
         // Restore saved answers if resuming
         if (session.saved_answers) {
@@ -146,15 +167,61 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
 
   const currentQuestion = questions[currentQuestionIndex];
 
-  // Assessment timer countdown
+  // Heartbeat sync - keeps timer accurate and survives tab freezes
   useEffect(() => {
-    if (assessmentComplete) return; // Stop timer when assessment is complete
+    if (assessmentComplete || !sessionId) return;
+
+    const syncWithBackend = async () => {
+      try {
+        const status = await api.candidate.heartbeat(sessionId) as any;
+        
+        if (status.status === 'completed' || status.status === 'expired') {
+          setAssessmentTimer(0);
+          setAssessmentComplete(true);
+          return;
+        }
+        
+        // Update timer from backend (authoritative source)
+        setAssessmentTimer(status.remaining_seconds);
+        
+        // Periodic save of all current answers
+        for (const q of questions) {
+          if (answers[q.id] !== undefined) {
+            const answerData = q.type === 'mcq'
+              ? { selected_option: answers[q.id] }
+              : q.type === 'essay'
+                ? { text: answers[q.id] }
+                : { code: answers[q.id] as string, language: selectedLanguages[q.id] || q.language || 'python' };
+            
+            api.candidate.saveAnswer({
+              session_id: sessionId,
+              question_id: q.id,
+              answer_data: answerData,
+            }).catch(err => console.error('Periodic save failed:', err));
+          }
+        }
+      } catch (err) {
+        console.error('Heartbeat sync failed:', err);
+      }
+    };
+
+    // Initial sync
+    syncWithBackend();
+
+    // Sync every 30 seconds
+    const syncInterval = setInterval(syncWithBackend, 30000);
+    return () => clearInterval(syncInterval);
+  }, [assessmentComplete, sessionId]);
+
+  // Local timer countdown (supplements heartbeat for smooth display)
+  useEffect(() => {
+    if (assessmentComplete || assessmentTimer <= 0) return;
 
     const timer = setInterval(() => {
       setAssessmentTimer((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          // Auto-submit the assessment to backend before navigating away
+          // Auto-submit when timer reaches 0
           if (sessionId) {
             api.candidate.submitAssessment({ session_id: sessionId })
               .then(() => {
@@ -175,7 +242,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [onComplete, assessmentComplete, sessionId]);
+  }, [onComplete, assessmentComplete, sessionId, assessmentTimer]);
 
   // Inactivity detection
   useEffect(() => {
@@ -787,6 +854,27 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
 
               {currentQuestion.type === 'coding' && (
                 <div className="space-y-3">
+                  {/* Coding Instructions */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h4 className="font-semibold text-blue-800 text-sm mb-2 flex items-center gap-2">
+                      <Code2 className="w-4 h-4" />
+                      How to Write Your Solution
+                    </h4>
+                    <ul className="text-xs text-blue-700 space-y-1">
+                      <li>• Write a <strong>function</strong> with the exact name shown in the starter code</li>
+                      <li>• Your function will be called automatically with the test inputs when you submit</li>
+                      <li>• <strong>Run Script</strong>: Executes your code as-is (add print() to see output)</li>
+                      <li>• <strong>Submit Answer</strong>: Runs all test cases and scores your solution</li>
+                      <li>• You can submit multiple times (each submission is an attempt)</li>
+                    </ul>
+                    <div className="mt-2 pt-2 border-t border-blue-200">
+                      <p className="text-xs text-blue-600">
+                        <strong>Example:</strong> If the function is named <code className="bg-blue-100 px-1 rounded">two_sum</code>, 
+                        write <code className="bg-blue-100 px-1 rounded">def two_sum(nums, target):</code> and return the result.
+                      </p>
+                    </div>
+                  </div>
+                  
                   {/* Language Selector and Code Editor Header */}
                   <div className="flex items-center justify-between p-3 rounded-t-lg" style={{ backgroundColor: '#F9FAFB' }}>
                     <span className="text-sm text-gray-600">Code Editor</span>
@@ -798,7 +886,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
                           backgroundColor: '#FFFFFF',
                           color: '#374151'
                         }}
-                        value={selectedLanguages[currentQuestion.id] || 'javascript'}
+                        value={selectedLanguages[currentQuestion.id] || currentQuestion.language || 'python'}
                         onChange={(e) => {
                           setSelectedLanguages(prev => ({
                             ...prev,
