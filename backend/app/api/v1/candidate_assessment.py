@@ -617,8 +617,19 @@ async def save_answer(
     if q and q_type == "mcq" and q["correct_answer"]:
         correct = q["correct_answer"]
         selected = request.answer_data.get("selected_option")
-        if selected is not None:
-            is_correct = selected == correct.get("correct_index")
+        
+        # Get the correct index - handle both formats
+        # Format 1: {"correct_index": 2} (direct index)
+        # Format 2: {"correct_option": "c"} (letter option id)
+        correct_index = correct.get("correct_index")
+        if correct_index is None and correct.get("correct_option"):
+            # Convert letter to index: "a"=0, "b"=1, etc.
+            correct_option = correct.get("correct_option")
+            if isinstance(correct_option, str) and len(correct_option) == 1:
+                correct_index = ord(correct_option.lower()) - ord('a')
+        
+        if selected is not None and correct_index is not None:
+            is_correct = selected == correct_index
             points_earned = float(q_points) if is_correct else 0.0
 
     # 4. Find assignment_id if exists
@@ -720,6 +731,99 @@ async def save_answer(
         is_correct=is_correct,
         points_earned=points_earned,
         message="Answer saved successfully.",
+    )
+
+
+class HeartbeatResponse(BaseModel):
+    session_id: str
+    remaining_seconds: int
+    status: str
+    answered_count: int
+
+
+@router.get("/heartbeat/{session_id}", response_model=HeartbeatResponse)
+async def assessment_heartbeat(
+    session_id: str,
+    candidate: CurrentCandidate,
+    session: DbSession,
+):
+    """
+    Heartbeat endpoint to sync timer and get current status.
+    Called periodically by frontend to ensure timer accuracy even when tab is inactive.
+    """
+    # Verify session belongs to candidate
+    verify = await session.execute(
+        text("""
+            SELECT oa.session_id, oa.status, oa.started_at, oa.submitted_at
+            FROM ongoing_assessments oa
+            JOIN candidate_applications ca ON oa.application_id = ca.application_id
+            WHERE oa.session_id = :session_id
+              AND ca.candidate_id = :candidate_id
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            bindparam("candidate_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": UUID(session_id),
+            "candidate_id": candidate.candidate_id,
+        }
+    )
+    oa = verify.mappings().first()
+    if not oa:
+        raise HTTPException(status_code=404, detail="Assessment session not found")
+    
+    # Check if already completed
+    if oa["status"] == "completed" or oa["submitted_at"]:
+        return HeartbeatResponse(
+            session_id=session_id,
+            remaining_seconds=0,
+            status="completed",
+            answered_count=0,
+        )
+    
+    # Get duration and calculate remaining time
+    remaining_seconds = 0
+    if oa["started_at"]:
+        dur = await session.execute(
+            text("""
+                SELECT a.duration_minutes 
+                FROM ongoing_assessments oa
+                JOIN assessments a ON oa.assessment_id = a.assessment_id
+                WHERE oa.session_id = :session_id
+            """).bindparams(
+                bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            ),
+            {"session_id": UUID(session_id)}
+        )
+        dur_row = dur.mappings().first()
+        duration_minutes = dur_row["duration_minutes"] if dur_row else 60
+        
+        elapsed = (datetime.now(timezone.utc) - oa["started_at"].replace(tzinfo=timezone.utc)).total_seconds()
+        remaining_seconds = max(0, int(duration_minutes * 60 - elapsed))
+    
+    # Get answered count
+    count_result = await session.execute(
+        text("SELECT COUNT(*) as cnt FROM candidate_answers WHERE session_id = :session_id"),
+        {"session_id": UUID(session_id)}
+    )
+    answered_count = count_result.scalar() or 0
+    
+    # Check if time expired
+    if remaining_seconds <= 0:
+        # Auto-finalize the session
+        await finalize_expired_assessment_sessions(session, session_id=UUID(session_id))
+        return HeartbeatResponse(
+            session_id=session_id,
+            remaining_seconds=0,
+            status="expired",
+            answered_count=answered_count,
+        )
+    
+    return HeartbeatResponse(
+        session_id=session_id,
+        remaining_seconds=remaining_seconds,
+        status=oa["status"],
+        answered_count=answered_count,
     )
 
 
@@ -916,14 +1020,15 @@ async def run_tests(
     # 4. Run code against ALL test cases
     language = request.language.lower()
     if language in ["python", "python3"]:
-        cmd = ["python"]
         ext = ".py"
+        is_python = True
     elif language in ["javascript", "js", "node"]:
-        cmd = ["node"]
         ext = ".js"
+        is_python = False
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported language: {request.language}")
 
+    # Create the candidate's code file
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False, mode="w", encoding="utf-8") as f:
         f.write(request.code)
         temp_file_path = f.name
@@ -933,36 +1038,274 @@ async def run_tests(
     hidden_total = 0
     all_passed = True
 
+    def _extract_function_name_python(code: str) -> str | None:
+        """Extract function name from Python code (def function_name(...))."""
+        import re
+        match = re.search(r'def\s+(\w+)\s*\(', code)
+        return match.group(1) if match else None
+
+    def _extract_function_name_js(code: str) -> str | None:
+        """Extract function name from JS code (function name(...) or const name = (...) =>)."""
+        import re
+        # Try function declaration
+        match = re.search(r'function\s+(\w+)\s*\(', code)
+        if match:
+            return match.group(1)
+        # Try arrow function or const
+        match = re.search(r'(?:const|let|var)\s+(\w+)\s*=\s*(?:\([^)]*\)|[^=])\s*=>', code)
+        if match:
+            return match.group(1)
+        return None
+
+    def _run_test_case_py(candidate_code: str, func_name: str, test_input: str, expected: str) -> dict:
+        """Run a single test case for Python - executes code and calls function."""
+        import ast
+        import json
+        
+        start = time_module.perf_counter()
+        
+        # Parse the input - it's a string representation of the test input
+        # The entire test_input is passed as a single argument to the function
+        parsed_input = test_input
+        
+        # Build judge wrapper
+        judge_code = f'''
+import sys
+import json
+import ast
+
+# Candidate's code
+{candidate_code}
+
+# Parse the test input (it's passed as a string in the test case)
+try:
+    test_input = ast.literal_eval({repr(parsed_input)})
+except:
+    test_input = {repr(parsed_input)}
+
+# Get the function
+func = locals().get({repr(func_name)})
+if func is None:
+    print("ERROR:FUNCTION_NOT_FOUND", file=sys.stderr)
+    sys.exit(1)
+
+# Call the function - pass the input as-is (single argument)
+try:
+    result = func(test_input)
+    
+    # Convert result to comparable format
+    if isinstance(result, (list, dict)):
+        result_str = json.dumps(result, sort_keys=True)
+        expected_str = json.dumps(json.loads({repr(expected)}), sort_keys=True)
+        print(result_str)
+        sys.exit(0 if result_str == expected_str else 1)
+    else:
+        result_str = str(result)
+        expected_str = {repr(expected)}
+        print(result_str)
+        sys.exit(0 if result_str == expected_str else 1)
+except Exception as e:
+    print(f"ERROR:{{e}}", file=sys.stderr)
+    sys.exit(1)
+'''
+        
+        with tempfile.NamedTemporaryFile(suffix='.py', delete=False, mode='w', encoding='utf-8') as f:
+            f.write(judge_code)
+            judge_path = f.name
+        
+        try:
+            result = subprocess.run(
+                ['python', judge_path],
+                capture_output=True, text=True, timeout=10,
+            )
+            elapsed = round(time_module.perf_counter() - start, 3)
+            
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
+            
+            if 'ERROR:FUNCTION_NOT_FOUND' in stderr:
+                return {
+                    "passed": False,
+                    "actual": "Function not found in your code",
+                    "expected": expected,
+                    "error": stderr,
+                    "time": str(elapsed)
+                }
+            elif result.returncode == 0:
+                return {
+                    "passed": True,
+                    "actual": stdout,
+                    "expected": expected,
+                    "time": str(elapsed)
+                }
+            else:
+                return {
+                    "passed": False,
+                    "actual": stdout if stdout else "Wrong output",
+                    "expected": expected,
+                    "error": stderr if stderr else None,
+                    "time": str(elapsed)
+                }
+        except subprocess.TimeoutExpired:
+            return {
+                "passed": False,
+                "actual": "",
+                "expected": expected,
+                "error": "Time limit exceeded (10s)",
+                "time": "10.0"
+            }
+        finally:
+            if os.path.exists(judge_path):
+                os.remove(judge_path)
+
+    def _run_test_case_js(candidate_code: str, func_name: str, test_input: str, expected: str) -> dict:
+        """Run a single test case for JavaScript - executes code and calls function."""
+        start = time_module.perf_counter()
+        
+        # Build judge wrapper
+        # Pass the test input as a JSON string and parse it in JS
+        judge_code = f'''
+// Candidate's code
+{candidate_code}
+
+// Test input - parse from JSON string
+const test_input_str = {repr(test_input)};
+let test_input;
+try {{
+    test_input = JSON.parse(test_input_str);
+}} catch (e) {{
+    // If JSON parse fails, try evaluating as JS literal
+    try {{
+        test_input = eval(test_input_str);
+    }} catch (e2) {{
+        test_input = test_input_str;
+    }}
+}}
+
+// Get the function
+const func = eval({repr(func_name)});
+if (typeof func !== 'function') {{
+    console.error('ERROR:FUNCTION_NOT_FOUND');
+    process.exit(1);
+}}
+
+try {{
+    let result;
+    if (Array.isArray(test_input)) {{
+        result = func(...test_input);
+    }} else if (typeof test_input === 'object' && test_input !== null) {{
+        result = func({{...test_input}});
+    }} else {{
+        result = func(test_input);
+    }}
+    
+    // Convert result to comparable format
+    const resultStr = JSON.stringify(result);
+    const expectedStr = JSON.stringify(JSON.parse({repr(expected)}));
+    
+    console.log(resultStr);
+    process.exit(resultStr === expectedStr ? 0 : 1);
+}} catch (e) {{
+    console.error('ERROR:' + e.message);
+    process.exit(1);
+}}
+'''
+        
+        with tempfile.NamedTemporaryFile(suffix='.js', delete=False, mode='w', encoding='utf-8') as f:
+            f.write(judge_code)
+            judge_path = f.name
+        
+        try:
+            result = subprocess.run(
+                ['node', judge_path],
+                capture_output=True, text=True, timeout=10,
+            )
+            elapsed = round(time_module.perf_counter() - start, 3)
+            
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
+            
+            if 'ERROR:FUNCTION_NOT_FOUND' in stderr:
+                return {
+                    "passed": False,
+                    "actual": "Function not found in your code",
+                    "expected": expected,
+                    "error": stderr,
+                    "time": str(elapsed)
+                }
+            elif result.returncode == 0:
+                return {
+                    "passed": True,
+                    "actual": stdout,
+                    "expected": expected,
+                    "time": str(elapsed)
+                }
+            else:
+                return {
+                    "passed": False,
+                    "actual": stdout if stdout else "Wrong output",
+                    "expected": expected,
+                    "error": stderr if stderr else None,
+                    "time": str(elapsed)
+                }
+        except subprocess.TimeoutExpired:
+            return {
+                "passed": False,
+                "actual": "",
+                "expected": expected,
+                "error": "Time limit exceeded (10s)",
+                "time": "10.0"
+            }
+        finally:
+            if os.path.exists(judge_path):
+                os.remove(judge_path)
+
+    def _run_simple_stdin(candidate_file: str, stdin_data: str, expected: str) -> dict:
+        """Run code with stdin input (legacy support for simple I/O)."""
+        start = time_module.perf_counter()
+        try:
+            result = subprocess.run(
+                ['python' if is_python else 'node', candidate_file],
+                input=stdin_data,
+                capture_output=True, text=True, timeout=10,
+            )
+            elapsed = round(time_module.perf_counter() - start, 3)
+            return {
+                "passed": result.stdout.strip() == expected,
+                "actual": result.stdout.strip(),
+                "expected": expected,
+                "error": result.stderr if result.stderr else None,
+                "time": str(elapsed)
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "passed": False,
+                "actual": "",
+                "expected": expected,
+                "error": "Time limit exceeded",
+                "time": "10.0"
+            }
+
+    # Extract function name from candidate code
+    func_name = _extract_function_name_python(request.code) if is_python else _extract_function_name_js(request.code)
+    
     try:
         for tc in test_cases:
-            stdin_data = tc.get("input", "")
-            expected = tc.get("expected_output", "").strip()
+            test_input = tc.get("input", "")
+            expected = tc.get("expected_output", "").strip() if tc.get("expected_output") else str(tc.get("expected", "")).strip()
             is_hidden = tc.get("is_hidden", False)
 
-            def _run(stdin_val=stdin_data):
-                start = time_module.perf_counter()
-                try:
-                    result = subprocess.run(
-                        [*cmd, temp_file_path],
-                        input=stdin_val,
-                        capture_output=True, text=True, timeout=10,
-                    )
-                    elapsed = round(time_module.perf_counter() - start, 3)
-                    return {
-                        "stdout": result.stdout or "",
-                        "stderr": result.stderr or "",
-                        "returncode": result.returncode,
-                        "time": str(elapsed),
-                    }
-                except subprocess.TimeoutExpired:
-                    return {
-                        "stdout": "", "stderr": "Timed out",
-                        "returncode": -1, "time": "10.0",
-                    }
-
-            result = await asyncio.to_thread(_run)
-            actual = result["stdout"].strip() if result["returncode"] == 0 else ""
-            passed = actual == expected and result["returncode"] == 0
+            # Use function-based execution if we can extract function name
+            if func_name:
+                if is_python:
+                    test_result = await asyncio.to_thread(_run_test_case_py, request.code, func_name, test_input, expected)
+                else:
+                    test_result = await asyncio.to_thread(_run_test_case_js, request.code, func_name, test_input, expected)
+            else:
+                # Fall back to simple stdin for legacy support
+                test_result = await asyncio.to_thread(_run_simple_stdin, temp_file_path, test_input, expected)
+            
+            passed = test_result["passed"]
             if not passed:
                 all_passed = False
 
@@ -973,9 +1316,10 @@ async def run_tests(
             else:
                 visible_results.append({
                     "passed": passed,
-                    "expected": expected,
-                    "actual": actual if result["returncode"] == 0 else f"Error: {result['stderr']}",
-                    "time": result["time"],
+                    "expected": test_result["expected"],
+                    "actual": test_result["actual"],
+                    "error": test_result.get("error"),
+                    "time": test_result["time"],
                 })
     finally:
         if os.path.exists(temp_file_path):
@@ -1128,6 +1472,7 @@ async def auto_grade_answers(session_id: UUID, db_session):
                 essay_text = answer_data
 
             reference = correct_answer.get("reference_answer", "")
+            rubric = q_config.get("rubric")  # Get rubric from question_config
 
             try:
                 async with httpx.AsyncClient(timeout=30) as client:
@@ -1137,6 +1482,7 @@ async def auto_grade_answers(session_id: UUID, db_session):
                             "question_text": q_text,
                             "essay_response": essay_text,
                             "reference_answer": reference,
+                            "rubric": rubric,  # Include rubric for better grading
                             "max_points": points_max,
                         },
                     )
@@ -1172,57 +1518,190 @@ async def auto_grade_answers(session_id: UUID, db_session):
                 feedback_data = {"ai_feedback": "No test cases available – full credit for submission."}
                 logger.info(f"[auto_grade] Coding {answer_id}: no test cases, pts={points_earned}")
             else:
-                # Determine command
-                if language in ["python", "python3"]:
-                    cmd = ["python"]
-                    ext = ".py"
-                elif language in ["javascript", "js", "node"]:
-                    cmd = ["node"]
-                    ext = ".js"
-                else:
-                    cmd = ["python"]
-                    ext = ".py"
-
+                import re
+                
+                # Extract function name from candidate code
+                def _extract_py(code_str):
+                    match = re.search(r'def\s+(\w+)\s*\(', code_str)
+                    return match.group(1) if match else None
+                
+                def _extract_js(code_str):
+                    match = re.search(r'function\s+(\w+)\s*\(', code_str)
+                    if match: return match.group(1)
+                    match = re.search(r'(?:const|let|var)\s+(\w+)\s*=\s*(?:\([^)]*\)|[^=])\s*=>', code_str)
+                    return match.group(1) if match else None
+                
+                func_name = _extract_py(code) if language in ["python", "python3"] else _extract_js(code)
+                
                 passed = 0
                 total = len(test_cases)
                 test_results = []
 
-                for i, tc in enumerate(test_cases):
-                    tc_input = tc.get("input", "")
-                    expected_output = tc.get("expected_output", tc.get("output", "")).strip()
+                if language in ["python", "python3"]:
+                    ext = ".py"
+                    is_py = True
+                elif language in ["javascript", "js", "node"]:
+                    ext = ".js"
+                    is_py = False
+                else:
+                    ext = ".py"
+                    is_py = True
 
-                    with tempfile.NamedTemporaryFile(suffix=ext, delete=False, mode="w", encoding="utf-8") as f:
-                        f.write(code)
-                        temp_path = f.name
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False, mode="w", encoding="utf-8") as f:
+                    f.write(code)
+                    temp_path = f.name
 
-                    def _run(path, stdin_data):
-                        try:
-                            result = subprocess.run(
-                                [*cmd, path],
-                                input=stdin_data,
-                                capture_output=True,
-                                text=True,
-                                timeout=10,
-                            )
-                            return result.stdout.strip(), result.stderr.strip(), result.returncode
-                        except subprocess.TimeoutExpired:
-                            return "", "Timeout", -1
+                try:
+                    for i, tc in enumerate(test_cases):
+                        tc_input = tc.get("input", "")
+                        expected_output = tc.get("expected_output", tc.get("output", ""))
+                        if isinstance(expected_output, str):
+                            expected_output = expected_output.strip()
+                        else:
+                            expected_output = str(expected_output).strip()
 
-                    try:
-                        stdout, stderr, rc = await asyncio.to_thread(_run, temp_path, tc_input)
-                        tc_passed = (rc == 0 and stdout == expected_output)
+                        if func_name and is_py:
+                            # Use function-based judge for Python
+                            judge_code = f'''
+import sys
+import json
+import ast
+
+# Candidate's code
+{code}
+
+# Parse the test input
+try:
+    test_input = ast.literal_eval({repr(tc_input)})
+except:
+    test_input = {repr(tc_input)}
+
+func = locals().get({repr(func_name)})
+if func is None:
+    print("ERROR:FUNCTION_NOT_FOUND", file=sys.stderr)
+    sys.exit(1)
+
+# Call the function - pass input as single argument
+try:
+    result = func(test_input)
+    
+    if isinstance(result, (list, dict)):
+        result_str = json.dumps(result, sort_keys=True)
+        expected_str = json.dumps(json.loads({repr(expected_output)}), sort_keys=True)
+        print(result_str)
+        sys.exit(0 if result_str == expected_str else 1)
+    else:
+        result_str = str(result)
+        expected_str = {repr(expected_output)}
+        print(result_str)
+        sys.exit(0 if result_str == expected_str else 1)
+except Exception as e:
+    print(f"ERROR:{{e}}", file=sys.stderr)
+    sys.exit(1)
+'''
+                            with tempfile.NamedTemporaryFile(suffix='.py', delete=False, mode='w', encoding='utf-8') as fj:
+                                fj.write(judge_code)
+                                judge_path = fj.name
+                            
+                            try:
+                                result = subprocess.run(['python', judge_path], capture_output=True, text=True, timeout=10)
+                                stdout = result.stdout.strip()
+                                stderr = result.stderr.strip()
+                                tc_passed = result.returncode == 0
+                                error = stderr if 'ERROR:' in stderr else None
+                            finally:
+                                if os.path.exists(judge_path):
+                                    os.remove(judge_path)
+                        elif func_name and not is_py:
+                            # Use function-based judge for JavaScript
+                            judge_code = f'''
+// Candidate's code
+{code}
+
+// Test input
+const test_input_str = {repr(tc_input)};
+let test_input;
+try {{
+    test_input = JSON.parse(test_input_str);
+}} catch (e) {{
+    try {{
+        test_input = eval(test_input_str);
+    }} catch (e2) {{
+        test_input = test_input_str;
+    }}
+}}
+
+const func = eval({repr(func_name)});
+if (typeof func !== 'function') {{
+    console.error('ERROR:FUNCTION_NOT_FOUND');
+    process.exit(1);
+}}
+
+try {{
+    let result;
+    if (Array.isArray(test_input)) {{
+        result = func(...test_input);
+    }} else if (typeof test_input === 'object' && test_input !== null) {{
+        result = func({{...test_input}});
+    }} else {{
+        result = func(test_input);
+    }}
+    
+    const resultStr = JSON.stringify(result);
+    const expectedStr = JSON.stringify(JSON.parse({repr(expected_output)}));
+    
+    console.log(resultStr);
+    process.exit(resultStr === expectedStr ? 0 : 1);
+}} catch (e) {{
+    console.error('ERROR:' + e.message);
+    process.exit(1);
+}}
+'''
+                            with tempfile.NamedTemporaryFile(suffix='.js', delete=False, mode='w', encoding='utf-8') as fj:
+                                fj.write(judge_code)
+                                judge_path = fj.name
+                            
+                            try:
+                                result = subprocess.run(['node', judge_path], capture_output=True, text=True, timeout=10)
+                                stdout = result.stdout.strip()
+                                stderr = result.stderr.strip()
+                                tc_passed = result.returncode == 0
+                                error = stderr if 'ERROR:' in stderr else None
+                            finally:
+                                if os.path.exists(judge_path):
+                                    os.remove(judge_path)
+                        else:
+                            # Fall back to stdin for legacy questions
+                            def _run_stdin(path, stdin_data):
+                                try:
+                                    result = subprocess.run(
+                                        ['python' if is_py else 'node', path],
+                                        input=stdin_data,
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=10,
+                                    )
+                                    return result.stdout.strip(), result.stderr.strip(), result.returncode
+                                except subprocess.TimeoutExpired:
+                                    return "", "Timeout", -1
+                            
+                            stdout, stderr, rc = await asyncio.to_thread(_run_stdin, temp_path, tc_input)
+                            tc_passed = (rc == 0 and stdout == expected_output)
+                            error = stderr if stderr else None
+
                         if tc_passed:
                             passed += 1
                         test_results.append({
                             "test_case": i + 1,
                             "passed": tc_passed,
-                            "expected": expected_output[:100],
-                            "actual": stdout[:100],
-                            "error": stderr[:100] if stderr else None,
+                            "expected": str(expected_output)[:100],
+                            "actual": stdout[:100] if stdout else "",
+                            "error": error[:100] if error else None,
                         })
-                    finally:
-                        if os.path.exists(temp_path):
-                            os.remove(temp_path)
+
+                finally:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
 
                 ratio = passed / total if total > 0 else 0
                 points_earned = round(ratio * points_max, 2)
