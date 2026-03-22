@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck, AlertTriangle } from 'lucide-react';
+import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck, AlertTriangle, Activity } from 'lucide-react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../../../services/api';
 import { authService } from '../../../services/auth.service';
@@ -96,6 +96,13 @@ export function Sidebar() {
         {userRole === 'technical' && (
           <NavLink to="/recruiter/suspicious-activity" className={({ isActive }) => getLinkClass(isActive)} title="Suspicious Assessment">
             <AlertTriangle size={24} />
+          </NavLink>
+        )}
+
+        {/* Background Tasks - Technical Only */}
+        {userRole === 'technical' && (
+          <NavLink to="/recruiter/background-tasks" className={({ isActive }) => getLinkClass(isActive)} title="Background Tasks">
+            <Activity size={24} />
           </NavLink>
         )}
 

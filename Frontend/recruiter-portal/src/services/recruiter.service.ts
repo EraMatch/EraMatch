@@ -449,5 +449,9 @@ export const recruiterService = {
         return fetchAPI(`/recruiter/filters/templates/${templateId}`, {
             method: 'DELETE'
         });
-    }
+    },
+
+    // Background Tasks
+    getBackgroundTasks: async () => fetchAPI<any[]>('/background-tasks/'),
+    getTaskLogs: async (taskId: string) => fetchAPI<any>(`/background-tasks/${taskId}/logs`)
 };
