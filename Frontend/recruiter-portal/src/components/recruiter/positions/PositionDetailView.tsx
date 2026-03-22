@@ -12,6 +12,7 @@ import { CandidateProfile } from '../candidates/CandidateProfile';
 import { SimpleGroupCreationModal } from '../groups/SimpleGroupCreationModal';
 import { CandidateFilterSidebar, CandidateFilters } from '../candidates/CandidateFilterSidebar';
 import LoadingSpinner from '../../common/LoadingSpinner';
+import { GroupDeleteModal } from '../groups/GroupDeleteModal';
 
 interface Candidate {
   id: string;
@@ -175,6 +176,9 @@ export function PositionDetailView({
 
   // Assessment management - use savedAssessments from props
   const assessments = savedAssessments;
+
+  const [isGroupDeleteModalOpen, setIsGroupDeleteModalOpen] = useState(false);
+  const [groupToDelete, setGroupToDelete] = useState<any>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -812,23 +816,9 @@ export function PositionDetailView({
                             Rename
                           </button>
                           <button
-                            onClick={async () => {
-                              if (window.confirm('Are you sure you want to delete this group? Candidates will be unassigned.')) {
-                                try {
-                                  await api.recruiter.deleteGroup(group.id);
-                                  // Refresh groups
-                                  const updatedGroups = await api.recruiter.getPositionGroups(positionId) as any[];
-                                  setGroups(updatedGroups);
-                                  // Refresh candidates to show them as unassigned
-                                  const details = await api.recruiter.getPositionDetails(positionId) as any;
-                                  if (details && details.candidates) {
-                                    setCandidates(details.candidates);
-                                  }
-                                } catch (err) {
-                                  console.error("Failed to delete group", err);
-                                  alert("Failed to delete group");
-                                }
-                              }
+                            onClick={() => {
+                              setGroupToDelete(group);
+                              setIsGroupDeleteModalOpen(true);
                             }}
                             className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#ef4444] font-['Arimo',sans-serif] text-[13px] text-[#ef4444] transition-colors"
                           >
@@ -1572,6 +1562,39 @@ export function PositionDetailView({
             setShowFlowConfigModal(false);
             const groups = await api.recruiter.getPositionGroups(positionId) as any[];
             setGroups(groups);
+          }}
+        />
+      )}
+
+      {/* Group Delete Modal */}
+      {isGroupDeleteModalOpen && groupToDelete && (
+        <GroupDeleteModal
+          isOpen={isGroupDeleteModalOpen}
+          onClose={() => {
+            setIsGroupDeleteModalOpen(false);
+            setGroupToDelete(null);
+          }}
+          groupId={groupToDelete.id}
+          groupName={groupToDelete.name}
+          candidateCount={candidates.filter(c => groups.find(g => g.id === groupToDelete.id)?.candidate_ids?.includes(c.id)).length || groupToDelete.candidate_count || 0}
+          availableGroups={groups.filter(g => g.id !== groupToDelete.id)}
+          onConfirm={async () => {
+            setIsGroupDeleteModalOpen(false);
+            setGroupToDelete(null);
+            // Refresh data
+            try {
+              setIsLoading(true);
+              const [detailsRes] = await Promise.all([
+                api.recruiter.getPositionDetails(positionId)
+              ]);
+              const details = detailsRes as any;
+              setCandidates(details.candidates);
+              setGroups(details.groups);
+            } catch (err) {
+              console.error("Failed to refresh data after group deletion", err);
+            } finally {
+              setIsLoading(false);
+            }
           }}
         />
       )}

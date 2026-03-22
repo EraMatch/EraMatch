@@ -188,6 +188,12 @@ class GroupUpdateRequest(BaseModel):
     filtration_flow: list[str] | None = None  # e.g. ["assessment", "ai-interview", "live-interview"]
 
 
+class GroupDeleteRequest(BaseModel):
+    """Payload for group deletion with candidate handling options."""
+    action: str = Field(..., description="Action for candidates: 'release', 'reject', or 'transfer'")
+    transfer_group_id: UUID | None = Field(default=None, description="Target group ID if action is 'transfer'")
+
+
 # ─── Start Stage ──────────────────────────────────────────────────────────────
 
 class StartStageRequest(BaseModel):

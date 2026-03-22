@@ -71,6 +71,7 @@ from app.schemas.group import (
     MonitoringFlag,
     StageStatsResponse,
     ScheduleInterviewRequest,
+    GroupDeleteRequest,
 )
 
 
@@ -1091,29 +1092,53 @@ class GroupService:
             ])
         return buf.getvalue()
 
-    async def delete_group(self, group_id: UUID) -> None:
-        """Soft delete a group and release all candidates."""
-        try:
-            # Check if group exists
-            await self._get_group(group_id)
+    async def delete_group(self, group_id: UUID, request: GroupDeleteRequest) -> None:
+        """Improved group deletion with configurable candidate actions."""
+        group = await self._get_group(group_id)
+        gid_str = str(group_id)
 
-            gid_str = str(group_id)
-
-            # 1. Release candidates (unlink from group)
+        # 1. Handle candidates
+        if request.action == "reject":
+            # Reject and unlink
             await self.session.execute(
-                text(f"UPDATE candidate_applications SET group_id = NULL WHERE group_id = '{gid_str}'")
+                update(CandidateApplication)
+                .where(CandidateApplication.group_id == group_id)
+                .values(status="Rejected", group_id=None)
+            )
+        elif request.action == "transfer" and request.transfer_group_id:
+            # Move to another group
+            await self.session.execute(
+                update(CandidateApplication)
+                .where(CandidateApplication.group_id == group_id)
+                .values(group_id=request.transfer_group_id)
+            )
+        else: # "release" or default
+            # Just unassign
+            await self.session.execute(
+                update(CandidateApplication)
+                .where(CandidateApplication.group_id == group_id)
+                .values(group_id=None)
             )
 
-            # 2. Soft delete group
-            await self.session.execute(
-                text(f"UPDATE candidate_groups SET status = 'archived' WHERE group_id = '{gid_str}'")
-            )
-            
-            await self.session.commit()
-        except Exception as e:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+        # 2. Mark group as archived
+        group.status = "archived"
+        self.session.add(group)
 
+        # 3. Log the deletion action
+        log = SystemLog(
+            organization_id=self.org_id,
+            user_id=self.user.id,
+            action=f"group_deleted:{request.action}",
+            entity_type="group",
+            entity_id=group_id,
+            details={
+                "action": request.action,
+                "transfer_group_id": str(request.transfer_group_id) if request.transfer_group_id else None
+            }
+        )
+        self.session.add(log)
+        
+        await self.session.commit()
     async def rename_group(self, group_id: UUID, new_name: str) -> GroupDetailResponse:
         """Rename a group."""
         group = await self._get_group(group_id)
@@ -1664,29 +1689,53 @@ class GroupService:
 
         return group
 
-    async def delete_group(self, group_id: UUID) -> None:
-        """Soft delete a group and release all candidates."""
-        try:
-            # Check if group exists
-            await self._get_group(group_id)
+    async def delete_group(self, group_id: UUID, request: GroupDeleteRequest) -> None:
+        """Improved group deletion with configurable candidate actions."""
+        group = await self._get_group(group_id)
+        gid_str = str(group_id)
 
-            gid_str = str(group_id)
-
-            # 1. Release candidates (unlink from group)
+        # 1. Handle candidates
+        if request.action == "reject":
+            # Reject and unlink
             await self.session.execute(
-                text(f"UPDATE candidate_applications SET group_id = NULL WHERE group_id = '{gid_str}'")
+                update(CandidateApplication)
+                .where(CandidateApplication.group_id == group_id)
+                .values(status="Rejected", group_id=None)
+            )
+        elif request.action == "transfer" and request.transfer_group_id:
+            # Move to another group
+            await self.session.execute(
+                update(CandidateApplication)
+                .where(CandidateApplication.group_id == group_id)
+                .values(group_id=request.transfer_group_id)
+            )
+        else: # "release" or default
+            # Just unassign
+            await self.session.execute(
+                update(CandidateApplication)
+                .where(CandidateApplication.group_id == group_id)
+                .values(group_id=None)
             )
 
-            # 2. Soft delete group
-            await self.session.execute(
-                text(f"UPDATE candidate_groups SET status = 'archived' WHERE group_id = '{gid_str}'")
-            )
-            
-            await self.session.commit()
-        except Exception as e:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+        # 2. Mark group as archived
+        group.status = "archived"
+        self.session.add(group)
 
+        # 3. Log the deletion action
+        log = SystemLog(
+            organization_id=self.org_id,
+            user_id=self.user.id,
+            action=f"group_deleted:{request.action}",
+            entity_type="group",
+            entity_id=group_id,
+            details={
+                "action": request.action,
+                "transfer_group_id": str(request.transfer_group_id) if request.transfer_group_id else None
+            }
+        )
+        self.session.add(log)
+        
+        await self.session.commit()
     async def update_group(self, group_id: UUID, data: GroupUpdateRequest) -> GroupDetailResponse:
         """Update a group."""
         group = await self._get_group(group_id)

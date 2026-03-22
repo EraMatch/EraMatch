@@ -272,9 +272,11 @@ export const recruiterService = {
         });
     },
 
-    deleteGroup: async (groupId: string) => {
+    deleteGroup: async (groupId: string, action: 'release' | 'reject' | 'transfer' = 'release', transfer_group_id?: string) => {
         return fetchAPI(`/recruiter/groups/${groupId}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, transfer_group_id })
         });
     },
 
