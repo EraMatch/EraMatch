@@ -1979,7 +1979,6 @@ class RecruiterService:
             "two_factor_auth": settings.two_factor_auth,
             "session_timeout": settings.session_timeout,
             "ai_pipeline_config": settings.ai_pipeline_config,
-            "bypass_admin_approval": settings.bypass_admin_approval,
         }
 
     async def update_profile(self, data: dict) -> dict:
@@ -2009,6 +2008,8 @@ class RecruiterService:
             self.session.add(settings)
             
         for key, val in data.items():
+            if key == "bypass_admin_approval":
+                continue
             if val is not None and hasattr(settings, key):
                 setattr(settings, key, val)
                 
