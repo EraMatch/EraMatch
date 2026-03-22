@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from app.api.deps import get_db, get_current_user
-from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile
+from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob
 
 router = APIRouter(prefix="/background-tasks", tags=["Background Tasks"])
 
@@ -19,39 +19,81 @@ async def get_background_tasks(
     current_user = Depends(get_current_user)
 ):
     """
-    Get a list of recent background tasks (interview response processing).
+    Get a list of recent background tasks — both video analysis and question import jobs.
     """
-    # Join InterviewResponse with CandidateProfile to get candidate name
-    query = (
-        select(
-            InterviewResponse.response_id,
-            InterviewResponse.processing_status,
-            InterviewResponse.answered_at,
-            InterviewResponse.question_text,
-            CandidateProfile.full_name.label("candidate_name")
-        )
-        .join(OngoingInterview, InterviewResponse.session_id == OngoingInterview.session_id)
-        .join(CandidateApplication, OngoingInterview.application_id == CandidateApplication.id)
-        .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
-        .order_by(desc(InterviewResponse.answered_at))
-        .limit(limit)
-    )
-    
-    result = await db.execute(query)
-    results = result.all()
-    
     tasks = []
-    for row in results:
-        tasks.append({
-            "id": str(row.response_id),
-            "status": row.processing_status,
-            "type": "Video Analysis",
-            "candidate_name": row.candidate_name,
-            "question": row.question_text[:50] + "..." if row.question_text else "N/A",
-            "timestamp": row.answered_at.isoformat() if row.answered_at else None
-        })
-        
-    return tasks
+
+    # ── Video analysis tasks ──────────────────────────────────────────────────
+    try:
+        video_query = (
+            select(
+                InterviewResponse.response_id,
+                InterviewResponse.processing_status,
+                InterviewResponse.answered_at,
+                InterviewResponse.question_text,
+                CandidateProfile.full_name.label("candidate_name")
+            )
+            .join(OngoingInterview, InterviewResponse.session_id == OngoingInterview.session_id)
+            .join(CandidateApplication, OngoingInterview.application_id == CandidateApplication.id)
+            .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .order_by(desc(InterviewResponse.answered_at))
+            .limit(limit)
+        )
+        video_result = await db.execute(video_query)
+        for row in video_result.all():
+            tasks.append({
+                "id": str(row.response_id),
+                "status": row.processing_status,
+                "type": "Video Analysis",
+                "task_category": "video",
+                "candidate_name": row.candidate_name,
+                "source_filename": None,
+                "question": row.question_text[:50] + "..." if row.question_text else "N/A",
+                "timestamp": row.answered_at.isoformat() if row.answered_at else None,
+                "total_generated": None,
+                "total_flagged": None,
+                "total_approved": None,
+            })
+    except Exception:
+        pass  # Video table may not have matching rows — don't fail the whole endpoint
+
+    # ── Question import jobs ──────────────────────────────────────────────────
+    try:
+        import_query = (
+            select(QuestionImportJob)
+            .where(QuestionImportJob.organization_id == current_user.organization_id)
+            .order_by(desc(QuestionImportJob.created_at))
+            .limit(limit)
+        )
+        import_result = await db.execute(import_query)
+        for job in import_result.scalars().all():
+            type_label = {
+                "generative": "Question Import (Generative)",
+                "extraction": "Question Import (Extraction)",
+                "csv": "Question Import (CSV/Excel)",
+            }.get(job.import_type, "Question Import")
+
+            tasks.append({
+                "id": str(job.id),
+                "status": job.status,
+                "type": type_label,
+                "task_category": "question_import",
+                "candidate_name": None,
+                "source_filename": job.source_filename,
+                "question": job.source_filename or "Uploaded file",
+                "timestamp": job.created_at.isoformat() if job.created_at else None,
+                "total_generated": job.total_generated,
+                "total_flagged": job.total_flagged,
+                "total_approved": job.total_approved,
+                "import_job_id": str(job.id),
+            })
+    except Exception:
+        pass
+
+    # Sort all tasks by timestamp descending
+    tasks.sort(key=lambda t: t.get("timestamp") or "", reverse=True)
+    return tasks[:limit]
+
 
 @router.get("/{task_id}/logs")
 async def get_task_logs(task_id: str, current_user = Depends(get_current_user)):

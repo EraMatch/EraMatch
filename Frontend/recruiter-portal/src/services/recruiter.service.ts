@@ -455,5 +455,52 @@ export const recruiterService = {
 
     // Background Tasks
     getBackgroundTasks: async () => fetchAPI<any[]>('/background-tasks/'),
-    getTaskLogs: async (taskId: string) => fetchAPI<any>(`/background-tasks/${taskId}/logs`)
+    getTaskLogs: async (taskId: string) => fetchAPI<any>(`/background-tasks/${taskId}/logs`),
+
+    // ── Question Import ──────────────────────────────────────────────────────
+
+    /**
+     * Start a question import job (Celery background task).
+     * @param file - The uploaded file (PDF, DOCX, CSV, XLSX, MD, TXT)
+     * @param importType - "generative" | "extraction" | "csv"
+     * @param numQuestions - (generative only) number of questions to generate
+     * @param contextHint - (generative only) topic hint e.g. "Python OOP"
+     * @param questionTypes - comma-separated e.g. "mcq,essay"
+     */
+    startQuestionImport: async (
+        file: File,
+        importType: 'generative' | 'extraction' | 'csv',
+        numQuestions: number = 10,
+        contextHint: string = '',
+        questionTypes: string = 'mcq,essay'
+    ) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('import_type', importType);
+        formData.append('num_questions', String(numQuestions));
+        formData.append('context_hint', contextHint);
+        formData.append('question_types', questionTypes);
+        return fetchAPI<{ job_id: string; status: string; message: string }>(
+            '/questions/import',
+            { method: 'POST', body: formData }
+        );
+    },
+
+    /** List all import jobs for the current organization. */
+    listImportJobs: async () => fetchAPI<any[]>('/questions/import/jobs'),
+
+    /** Get draft questions for a completed import job (staging review). */
+    getDraftQuestions: async (jobId: string) =>
+        fetchAPI<any>(`/questions/import/jobs/${jobId}/draft`),
+
+    /** Commit approved draft questions into the live Question Bank. */
+    approveImportQuestions: async (jobId: string, questions: any[]) =>
+        fetchAPI<{ imported_count: number; skipped_count: number; message: string }>(
+            `/questions/import/jobs/${jobId}/approve`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ questions }),
+            }
+        ),
 };

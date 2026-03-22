@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Clock, CheckCircle, XCircle, Loader2, ChevronRight, ChevronDown, RefreshCcw } from 'lucide-react';
+import { Activity, Clock, CheckCircle, XCircle, Loader2, ChevronRight, ChevronDown, RefreshCcw, Sparkles, FileText } from 'lucide-react';
 import LoadingSpinner from '../../common/LoadingSpinner';
 import { api } from '../../../services/api';
 
@@ -7,9 +7,15 @@ interface TaskRecord {
     id: string;
     status: string;
     type: string;
-    candidate_name: string;
+    task_category: 'video' | 'question_import';
+    candidate_name: string | null;
     question: string;
     timestamp: string;
+    source_filename: string | null;
+    total_generated: number | null;
+    total_flagged: number | null;
+    total_approved: number | null;
+    import_job_id: string | null;
 }
 
 interface LogEntry {
@@ -169,13 +175,34 @@ export function BackgroundTasks() {
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4">
-                                                    <div className="flex flex-col">
-                                                        <span className="text-[14px] font-medium text-[#111827]">{task.type}</span>
-                                                        <span className="text-[12px] text-[#6b7280] truncate max-w-[200px]">{task.question}</span>
+                                                    <div className="flex flex-col gap-0.5">
+                                                        <div className="flex items-center gap-1.5">
+                                                            {(task as any).task_category === 'question_import'
+                                                                ? <Sparkles size={14} className="text-purple-500" />
+                                                                : <FileText size={14} className="text-blue-400" />}
+                                                            <span className="text-[14px] font-medium text-[#111827]">{task.type}</span>
+                                                        </div>
+                                                        <span className="text-[12px] text-[#6b7280] truncate max-w-[220px]">
+                                                            {(task as any).source_filename || task.question}
+                                                        </span>
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4">
-                                                    <span className="text-[14px] text-[#374151]">{task.candidate_name}</span>
+                                                    {(task as any).task_category === 'question_import' ? (
+                                                        <div className="flex gap-2 text-[12px] flex-wrap">
+                                                            {(task as any).total_generated != null && (
+                                                                <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-100">{(task as any).total_generated} gen</span>
+                                                            )}
+                                                            {(task as any).total_flagged != null && (
+                                                                <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{(task as any).total_flagged} flagged</span>
+                                                            )}
+                                                            {(task as any).total_approved != null && (
+                                                                <span className="px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-100">{(task as any).total_approved} approved</span>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-[14px] text-[#374151]">{task.candidate_name}</span>
+                                                    )}
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     <div className="flex items-center gap-1.5 text-[#6b7280] text-[13px]">
@@ -193,6 +220,21 @@ export function BackgroundTasks() {
                                                 <tr className="bg-[#f9fafb]/50">
                                                     <td colSpan={5} className="px-10 py-8 border-t border-[#f3f4f6]">
                                                         <div className="flex flex-col gap-6">
+                                                            {(task as any).task_category === 'question_import' && task.status === 'completed' && (task as any).import_job_id && (
+                                                                <div className="flex items-center justify-between p-4 bg-purple-50 border border-purple-200 rounded-[10px]">
+                                                                    <div>
+                                                                        <p className="text-[13px] font-semibold text-purple-800">Import complete — ready for review</p>
+                                                                        <p className="text-[12px] text-purple-600 mt-0.5">Open the Question Bank to review and approve the generated questions.</p>
+                                                                    </div>
+                                                                    <a
+                                                                        href="#question-bank"
+                                                                        className="flex items-center gap-1.5 px-4 py-2 rounded-[8px] text-[13px] font-medium text-white"
+                                                                        style={{ background: 'linear-gradient(135deg,#8b5cf6,#6366f1)' }}
+                                                                    >
+                                                                        <Sparkles size={14} /> Review
+                                                                    </a>
+                                                                </div>
+                                                            )}
                                                             <h4 className="text-[14px] font-semibold text-[#374151] flex items-center gap-2">
                                                                 <Activity size={16} className="text-[#6366f1]" />
                                                                 Processing Timeline

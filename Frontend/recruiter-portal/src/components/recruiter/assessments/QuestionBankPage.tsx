@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle } from 'lucide-react';
+import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle, Sparkles, Inbox } from 'lucide-react';
 import { api } from '../../../services/api';
 import { MCQEditor } from '../../common/MCQEditor';
 import { EssayEditor } from '../../common/EssayEditor';
 import { CodeEditor } from '../../common/CodeEditor';
+import { QuestionImportModal } from './QuestionImportModal';
+import { QuestionImportReview } from './QuestionImportReview';
 
 // --- Interfaces ---
 
@@ -63,7 +65,7 @@ interface QuestionBankPageProps {
 export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   // --- State ---
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [viewMode, setViewMode] = useState<'list' | 'editor'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'editor' | 'import-review'>('list');
   const [editorType, setEditorType] = useState<'mcq' | 'essay' | 'code' | null>(null);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [currentVariant, setCurrentVariant] = useState<QuestionVariant | null>(null);
@@ -79,6 +81,11 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [togglingFavorites, setTogglingFavorites] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Import state ────────────────────────────────────────────────────────
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [pendingReviewJobId, setPendingReviewJobId] = useState<string | null>(null);
+  const [importJobs, setImportJobs] = useState<any[]>([]);
 
   // --- Effects ---
 
@@ -107,6 +114,13 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     };
 
     fetchQuestions();
+  }, []);
+
+  // Load completed import jobs for the badge
+  useEffect(() => {
+    api.recruiter.listImportJobs()
+      .then((jobs: any[]) => setImportJobs(jobs.filter((j: any) => j.status === 'completed')))
+      .catch(() => {});
   }, []);
 
   // --- Data Conversion Helpers ---
@@ -357,6 +371,37 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     );
   }
 
+  if (viewMode === 'import-review' && pendingReviewJobId) {
+    return (
+      <QuestionImportReview
+        jobId={pendingReviewJobId}
+        onBack={() => { setViewMode('list'); setPendingReviewJobId(null); }}
+        onApproved={() => {
+          setViewMode('list');
+          setPendingReviewJobId(null);
+          // Refresh question list after approval
+          api.recruiter.getQuestionBank().then((rawData: unknown) => {
+            const data = rawData as any[];
+            setQuestions(data.map(q => ({
+              ...q,
+              options: q.options || [],
+              tags: q.tags || [],
+              usageCount: q.usageCount || 0,
+              avgScore: q.avgScore || 0,
+              createdAt: q.createdAt || new Date().toISOString().split('T')[0],
+              createdBy: q.createdBy || 'System',
+              isFavorite: q.isFavorite || false
+            })));
+          }).catch(() => {});
+          // Refresh import jobs badge
+          api.recruiter.listImportJobs()
+            .then(jobs => setImportJobs(jobs.filter((j: any) => j.status === 'completed')))
+            .catch(() => {});
+        }}
+      />
+    );
+  }
+
   if (viewMode === 'editor' && currentVariant) {
     // Render the specific editor
     return (
@@ -397,6 +442,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               <p className="font-['Arimo',sans-serif] text-[14px] text-gray-600">Manage and organize your assessment questions</p>
             </div>
             <div className="flex items-center gap-3 relative">
+              {/* Legacy JSON import still wired if needed */}
               <input
                 type="file"
                 ref={fileInputRef}
@@ -404,12 +450,29 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                 className="hidden"
                 accept=".json"
               />
+
+              {/* Pending Review badge — shown when completed import jobs exist */}
+              {importJobs.length > 0 && (
+                <button
+                  onClick={() => { setPendingReviewJobId(importJobs[0].id); setViewMode('import-review'); }}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-[10px] transition-colors font-['Arimo',sans-serif] text-[14px]"
+                  style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#f59e0b' }}
+                  title="You have completed import jobs awaiting review"
+                >
+                  <Inbox size={16} />
+                  <span>Review Imports</span>
+                  <span style={{ background: '#f59e0b', color: '#fff', borderRadius: '9999px', padding: '0 6px', fontSize: '0.7rem', fontWeight: 700 }}>{importJobs.length}</span>
+                </button>
+              )}
+
+              {/* AI Import button */}
               <button
-                onClick={handleImportClick}
-                className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#e5e7eb] rounded-[10px] hover:bg-[#f9fafb] transition-colors font-['Arimo',sans-serif] text-[14px] text-[#374151]"
+                onClick={() => setShowImportModal(true)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-[10px] transition-colors font-['Arimo',sans-serif] text-[14px]"
+                style={{ background: 'linear-gradient(135deg,#8b5cf6,#6366f1)', color: '#fff', border: 'none' }}
               >
-                <Upload size={18} className="text-[#6b7280]" />
-                <span>Import</span>
+                <Sparkles size={16} />
+                <span>AI Import</span>
               </button>
               <button
                 onClick={handleExport}
@@ -459,6 +522,22 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                 )}
               </div>
             </div>
+
+            {/* AI Import Modal */}
+            {showImportModal && (
+              <QuestionImportModal
+                onClose={() => setShowImportModal(false)}
+                onJobQueued={(jobId) => {
+                  setShowImportModal(false);
+                  // Refresh jobs list immediately so badge can appear when job completes
+                  setTimeout(() => {
+                    api.recruiter.listImportJobs()
+                      .then(jobs => setImportJobs(jobs.filter((j: any) => j.status === 'completed')))
+                      .catch(() => {});
+                  }, 3000);
+                }}
+              />
+            )}
           </div>
         </div>
 
