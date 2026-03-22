@@ -359,7 +359,7 @@ export function InterviewMonitoringPage() {
                                                                 {new Date(r.submitted_at).toLocaleString()}
                                                             </div>
                                                             {r.video_url && (
-                                                                <a href={r.video_url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
+                                                                <a href={`http://localhost:8000${r.video_url}`} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
                                                                     View Video
                                                                 </a>
                                                             )}
@@ -434,17 +434,120 @@ export function InterviewMonitoringPage() {
                                                             <div className="bg-gray-50 p-3 rounded-lg">
                                                                 <p className="text-xs font-medium text-gray-600 mb-1">Answer:</p>
                                                                 {a.question_type === 'mcq' ? (
-                                                                    <p className="text-sm text-gray-800">
-                                                                        Selected option: {a.answer_data.selected_option ?? '—'}
-                                                                    </p>
+                                                                    <div>
+                                                                        {a.answer_data.selected_option !== undefined && a.answer_data._mcq_options ? (
+                                                                            <div className="space-y-2">
+                                                                                <p className="text-sm text-gray-800">
+                                                                                    Selected option: <span className="font-bold text-indigo-600">
+                                                                                        {String.fromCharCode(65 + a.answer_data.selected_option)} (#{a.answer_data.selected_option})
+                                                                                    </span>
+                                                                                </p>
+                                                                                <div className="bg-white border border-gray-200 rounded-lg p-3">
+                                                                                    <p className="text-xs font-medium text-gray-500 mb-2">Selected Answer:</p>
+                                                                                    <p className="text-sm text-gray-800 font-medium">
+                                                                                        {a.answer_data._mcq_options[a.answer_data.selected_option] || 'Option not found'}
+                                                                                    </p>
+                                                                                </div>
+                                                                                <div className="space-y-1">
+                                                                                    <p className="text-xs font-medium text-gray-500">All Options:</p>
+                                                                                    {a.answer_data._mcq_options.map((opt: string, idx: number) => (
+                                                                                        <div 
+                                                                                            key={idx} 
+                                                                                            className={`text-xs p-2 rounded ${
+                                                                                                idx === a.answer_data.selected_option 
+                                                                                                    ? 'bg-indigo-50 border border-indigo-200 text-indigo-800 font-medium' 
+                                                                                                    : 'bg-gray-50 border border-gray-100 text-gray-600'
+                                                                                            }`}
+                                                                                        >
+                                                                                            <span className="font-bold">{String.fromCharCode(65 + idx)}.</span> {opt}
+                                                                                            {idx === a.answer_data.selected_option && <span className="ml-2 text-indigo-600">✓ Selected</span>}
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <p className="text-sm text-gray-800">
+                                                                                Selected option: <span className="font-bold text-indigo-600">#{a.answer_data.selected_option ?? '—'}</span>
+                                                                            </p>
+                                                                        )}
+                                                                    </div>
                                                                 ) : a.question_type === 'essay' ? (
-                                                                    <p className="text-sm text-gray-800 whitespace-pre-wrap">
-                                                                        {a.answer_data.text || '(No answer)'}
-                                                                    </p>
+                                                                    <div className="space-y-3">
+                                                                        <div>
+                                                                            <p className="text-xs font-medium text-gray-500 mb-1">Candidate's Answer:</p>
+                                                                            <p className="text-sm text-gray-800 whitespace-pre-wrap bg-white border border-gray-200 rounded-lg p-3">
+                                                                                {a.answer_data.text || '(No answer)'}
+                                                                            </p>
+                                                                        </div>
+                                                                        {a.answer_data.ai_feedback && (
+                                                                            <div>
+                                                                                <p className="text-xs font-medium text-blue-600 mb-1">AI Feedback:</p>
+                                                                                <p className="text-sm text-blue-800 whitespace-pre-wrap bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                                                                    {a.answer_data.ai_feedback}
+                                                                                </p>
+                                                                            </div>
+                                                                        )}
+                                                                        {a.answer_data._reference_answer && (
+                                                                            <div>
+                                                                                <p className="text-xs font-medium text-green-600 mb-1">Reference Answer:</p>
+                                                                                <p className="text-sm text-green-800 whitespace-pre-wrap bg-green-50 border border-green-200 rounded-lg p-3">
+                                                                                    {a.answer_data._reference_answer}
+                                                                                </p>
+                                                                            </div>
+                                                                        )}
+                                                                        {a.answer_data._rubric && (
+                                                                            <div>
+                                                                                <p className="text-xs font-medium text-purple-600 mb-1">Evaluation Rubric:</p>
+                                                                                <p className="text-sm text-purple-800 whitespace-pre-wrap bg-purple-50 border border-purple-200 rounded-lg p-3">
+                                                                                    {a.answer_data._rubric}
+                                                                                </p>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 ) : (
-                                                                    <pre className="text-xs text-gray-800 bg-gray-900 text-gray-100 p-3 rounded overflow-x-auto">
-                                                                        {a.answer_data.code || '(No code)'}
-                                                                    </pre>
+                                                                    <div>
+                                                                        <pre className="text-xs text-gray-100 bg-gray-900 p-4 rounded-lg overflow-x-auto font-mono">
+                                                                            {a.answer_data.code || '(No code)'}
+                                                                        </pre>
+                                                                        
+                                                                        {/* Test Results for Coding */}
+                                                                        {a.answer_data.test_results && a.answer_data.test_results.length > 0 && (
+                                                                            <div className="mt-3 space-y-2">
+                                                                                <p className="text-xs font-medium text-gray-600">Test Cases:</p>
+                                                                                {a.answer_data.test_results.map((tr: any, idx: number) => (
+                                                                                    <div key={idx} className={`p-2 rounded text-xs ${
+                                                                                        tr.passed ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
+                                                                                    }`}>
+                                                                                        <div className="flex items-center justify-between">
+                                                                                            <span className="font-medium">Test {idx + 1}</span>
+                                                                                            <span className={tr.passed ? 'text-green-600' : 'text-red-600'}>
+                                                                                                {tr.passed ? '✓ Passed' : '✗ Failed'}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <div className="mt-1 grid grid-cols-2 gap-2 text-gray-600">
+                                                                                            <div>
+                                                                                                <span className="font-medium">Expected:</span>
+                                                                                                <pre className="mt-0.5 text-gray-800">{tr.expected || '—'}</pre>
+                                                                                            </div>
+                                                                                            <div>
+                                                                                                <span className="font-medium">Actual:</span>
+                                                                                                <pre className="mt-0.5 text-gray-800">{tr.actual || tr.error || '(no output)'}</pre>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                        
+                                                                        {/* Hidden Test Summary */}
+                                                                        {(a.answer_data.hidden_passed !== undefined || a.answer_data.hidden_total !== undefined) && (
+                                                                            <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                                                                                <p className="text-yellow-700">
+                                                                                    Hidden tests: {a.answer_data.hidden_passed || 0}/{a.answer_data.hidden_total || 0} passed
+                                                                                </p>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 )}
                                                             </div>
                                                         )}

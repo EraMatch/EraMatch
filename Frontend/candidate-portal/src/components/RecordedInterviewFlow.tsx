@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Sparkles, Video, Clock, User, Camera, Mic, Play, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2 } from 'lucide-react';
+import { Sparkles, Video, Clock, User, Camera, Mic, Play, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { api } from '../services/api';
 
@@ -34,6 +34,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  // streamRef mirrors stream state so callbacks always see the latest stream
+  const streamRef = useRef<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
@@ -62,6 +64,10 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   const [configId, setConfigId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [questionsData, setQuestionsData] = useState<Array<{ id: string, text: string }>>([]);
+
+  // Processing status tracking
+  const [processingStatuses, setProcessingStatuses] = useState<Record<string, string>>({});
+  const [submittedResponses, setSubmittedResponses] = useState<string[]>([]);
 
   // Fetch interview questions from API
   useEffect(() => {
@@ -114,6 +120,46 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     fetchQuestions();
   }, []);
 
+  // Poll for processing status after video submission
+  useEffect(() => {
+    if (!sessionId || submittedResponses.length === 0) return;
+
+    const pollStatus = async () => {
+      try {
+        const response = await fetch(`/api/v1/interview/status/${sessionId}`, {
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const newStatuses: Record<string, string> = {};
+          let allComplete = true;
+          
+          data.responses?.forEach((r: any) => {
+            if (submittedResponses.includes(r.question_id)) {
+              newStatuses[r.question_id] = r.processing_status;
+              if (r.processing_status !== 'completed' && r.processing_status !== 'failed') {
+                allComplete = false;
+              }
+            }
+          });
+          
+          setProcessingStatuses(newStatuses);
+          
+          // If all are complete, stop polling
+          if (allComplete) {
+            console.log('All responses processed:', newStatuses);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to poll status:', err);
+      }
+    };
+
+    // Poll every 5 seconds
+    const pollInterval = setInterval(pollStatus, 5000);
+    return () => clearInterval(pollInterval);
+  }, [sessionId, submittedResponses]);
+
   // Timer countdown during recording
   useEffect(() => {
     if (questionRecording && questionTimer > 0) {
@@ -138,15 +184,17 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   useEffect(() => {
     const needsCamera = [2, 4, 8].includes(currentStep) || inInterviewSession;
 
-    if (needsCamera && !stream) {
-      // Start camera if we need it and don't have it
+    if (needsCamera && !streamRef.current) {
+      // Start camera if we need it and don't have it yet
       startCamera();
-    } else if (!needsCamera && stream) {
-      // Stop camera if we don't need it and have it
+    } else if (!needsCamera && streamRef.current) {
+      // Stop camera if we don't need it
       stopCamera();
     }
     // Keep camera running during interview session - DO NOT stop between questions
-  }, [currentStep, inInterviewSession, stream]);
+    // NOTE: `stream` is intentionally NOT in the dependency array to avoid a
+    // re-run loop (startCamera sets stream → effect re-runs → startCamera again)
+  }, [currentStep, inInterviewSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const totalQuestions = questions.length || 5;
@@ -166,55 +214,153 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   // Fetch available camera and audio devices
   useEffect(() => {
     const getDevices = async () => {
+      console.log('[DeviceDetection] Starting device enumeration...');
+      
+      // Method 1: Get camera permission first and enumerate devices.
+      // Requesting audio here can fail if the selected mic is busy and falsely
+      // look like a camera issue to the user.
       try {
-        // Request permission first to get device labels
-        await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        console.log('[DeviceDetection] Requesting media permissions...');
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        console.log('[DeviceDetection] Permissions granted');
+        
         const devices = await navigator.mediaDevices.enumerateDevices();
+        console.log('[DeviceDetection] Devices after permission:', devices);
+        
+        tempStream.getTracks().forEach(t => t.stop());
+        
         const cameras = devices.filter(d => d.kind === 'videoinput');
         const mics = devices.filter(d => d.kind === 'audioinput');
-        setCameraDevices(cameras);
-        setAudioDevices(mics);
-        if (cameras.length > 0 && !selectedCameraId) {
-          setSelectedCameraId(cameras[0].deviceId);
-        }
-        if (mics.length > 0 && !selectedAudioId) {
-          setSelectedAudioId(mics[0].deviceId);
+        
+        console.log('[DeviceDetection] Cameras:', cameras);
+        console.log('[DeviceDetection] Mics:', mics);
+        
+        if (cameras.length > 0 || mics.length > 0) {
+          setCameraDevices(cameras);
+          setAudioDevices(mics);
+          if (cameras.length > 0) setSelectedCameraId(cameras[0].deviceId);
+          if (mics.length > 0) setSelectedAudioId(mics[0].deviceId);
+        } else {
+          // Fallback: try accessing camera directly
+          throw new Error('No devices found via enumerate, trying direct access');
         }
       } catch (err) {
-        console.error('Error getting devices:', err);
+        console.log('[DeviceDetection] Permission/enumeration failed:', err);
+        
+        // Method 2: Just try to enumerate devices (may not have labels)
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const cameras = devices.filter(d => d.kind === 'videoinput');
+          const mics = devices.filter(d => d.kind === 'audioinput');
+          
+          if (cameras.length > 0) {
+            setCameraDevices(cameras);
+            setSelectedCameraId(cameras[0].deviceId);
+          }
+          if (mics.length > 0) {
+            setAudioDevices(mics);
+            setSelectedAudioId(mics[0].deviceId);
+          }
+          
+          if (cameras.length === 0 && mics.length === 0) {
+            // Method 3: Try to get user media to force device enumeration
+            try {
+              const testStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+              testStream.getTracks().forEach(t => t.stop());
+              
+              const devicesAfter = await navigator.mediaDevices.enumerateDevices();
+              const camerasAfter = devicesAfter.filter(d => d.kind === 'videoinput');
+              setCameraDevices(camerasAfter);
+              if (camerasAfter.length > 0) setSelectedCameraId(camerasAfter[0].deviceId);
+              
+              if (camerasAfter.length === 0) {
+                setCameraError('No cameras found. Please enable OBS Virtual Camera or connect a webcam.');
+              }
+            } catch (e2) {
+              console.error('[DeviceDetection] Direct access also failed:', e2);
+              setCameraError('No cameras detected. Please connect a camera or enable OBS Virtual Camera.');
+            }
+          }
+        } catch (e2) {
+          console.error('[DeviceDetection] enumerateDevices failed:', e2);
+          setCameraError('Could not enumerate devices. Please refresh and allow camera permissions.');
+        }
       }
     };
-    getDevices();
+    
+    // Small delay to ensure media APIs are ready
+    setTimeout(getDevices, 500);
   }, []);
 
-  // Start camera with selected device
-  const startCamera = async (deviceId?: string) => {
+  // Start camera — accepts explicit deviceIds to avoid stale state closure issues
+  const startCamera = async (videoDeviceId?: string, audioDeviceId?: string) => {
+    console.log('[Camera] startCamera called', { videoDeviceId, audioDeviceId });
+    
+    // Always stop current stream first using the ref (avoids stale closure)
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
     try {
-      // Stop existing stream first
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-      const constraints = {
-        video: deviceId || selectedCameraId
-          ? { deviceId: { exact: deviceId || selectedCameraId } }
-          : true,
-        audio: selectedAudioId
-          ? { deviceId: { exact: selectedAudioId } }
-          : true
+      // Use explicit args if provided, otherwise fall back to current state
+      const vid = videoDeviceId ?? selectedCameraId;
+      const aud = audioDeviceId ?? selectedAudioId;
+      
+      console.log('[Camera] Attempting with:', { vid, aud });
+      
+      // Acquire video first. Mic is attempted separately so a busy/blocked mic
+      // does not prevent camera preview.
+      const constraints: MediaStreamConstraints = {
+        video: vid ? { deviceId: { exact: vid } } : true,
+        audio: false,
       };
+      
+      console.log('[Camera] Requesting getUserMedia...');
       const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      console.log('[Camera] getUserMedia SUCCESS', mediaStream.getVideoTracks().length, 'video tracks');
+      
+      streamRef.current = mediaStream;
       setStream(mediaStream);
       setCameraError(null);
-    } catch (err) {
-      console.error('Error accessing camera:', err);
-      setCameraError('Unable to access camera. Please ensure permissions are granted.');
+      
+      // Now add audio if we have an audio device
+      if (aud) {
+        try {
+          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: aud } } });
+          audioStream.getAudioTracks().forEach(track => mediaStream.addTrack(track));
+          console.log('[Camera] Audio added');
+        } catch (audioErr) {
+          console.warn('[Camera] Could not add audio:', audioErr);
+        }
+      }
+    } catch (err: any) {
+      console.error('[Camera] Error accessing camera:', err);
+      let msg = 'Unable to access camera. Please ensure permissions are granted.';
+      const selectedCameraLabel = cameraDevices.find(d => d.deviceId === (videoDeviceId ?? selectedCameraId))?.label || '';
+      const isObsCamera = /obs/i.test(selectedCameraLabel);
+      
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        msg = 'Camera permission denied! Click the camera icon in your browser address bar and select "Always allow" for this site, then refresh.';
+      } else if (err.name === 'NotFoundError') {
+        msg = 'No camera found. Please ensure OBS Virtual Camera is running or a webcam is connected.';
+      } else if (err.name === 'NotReadableError') {
+        msg = isObsCamera
+          ? 'OBS Virtual Camera is unavailable. In OBS, click "Start Virtual Camera", then close other apps using camera and retry.'
+          : 'Camera is in use by another application. Please close other apps using the camera.';
+      } else if (err.name === 'OverconstrainedError') {
+        msg = 'Selected camera device is not available right now. Refresh devices and select it again.';
+      }
+      
+      setCameraError(msg);
     }
   };
 
-  // Stop camera
+  // Stop camera — uses ref to avoid stale closure
   const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
       setStream(null);
     }
   };
@@ -235,67 +381,51 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   }, []);
 
   const handleRecordTestClip = () => {
-    if (!stream) return;
-
-    // If currently playing, stop playback
-    if (isPlaying) {
-      setIsPlaying(false);
-    }
-
-    // Clear previous recording
-    if (recordedUrl) {
-      URL.revokeObjectURL(recordedUrl);
-      setRecordedUrl(null);
+    // Start recording using the current stream
+    if (!stream) {
+      setCameraError('No camera stream available. Please check your camera permissions.');
+      return;
     }
 
     setIsRecording(true);
+    setHasRecorded(false);
     chunksRef.current = [];
 
-    try {
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' }); // simple webm
-      mediaRecorderRef.current = mediaRecorder;
+    const mediaRecorder = new MediaRecorder(stream, {
+      mimeType: 'video/webm;codecs=vp8,opus',
+      videoBitsPerSecond: 250000  // 250kbps - ~10x smaller files, very fast upload
+    });
+    mediaRecorderRef.current = mediaRecorder;
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunksRef.current.push(e.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        setHasRecorded(true);
-        const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        setRecordedUrl(url);
-        console.log('Recorded blob size:', blob.size, 'URL created:', url);
-      };
-
-      mediaRecorder.start();
-
-      // Record for 4 seconds
-      setTimeout(() => {
-        if (mediaRecorder.state === 'recording') {
-          mediaRecorder.stop();
-          setIsRecording(false);
-        }
-      }, 4000);
-    } catch (err) {
-      console.error('Error starting recording:', err);
-      // Fallback if webm not supported
-      try {
-        const mediaRecorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = mediaRecorder;
-        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-        mediaRecorder.onstop = () => {
-          setHasRecorded(true);
-          const blob = new Blob(chunksRef.current);
-          const url = URL.createObjectURL(blob);
-          setRecordedUrl(url);
-        };
-        mediaRecorder.start();
-        setTimeout(() => { if (mediaRecorder.state === 'recording') { mediaRecorder.stop(); setIsRecording(false); } }, 4000);
-      } catch (e2) {
-        console.error("Fallback recording failed", e2);
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        chunksRef.current.push(e.data);
       }
+    };
+
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      setRecordedUrl(url);
+      setHasRecorded(true);
+      setIsRecording(false);
+      console.log('Test clip recorded, blob size:', blob.size);
+    };
+
+    mediaRecorder.start(1000);
+
+    // Auto-stop after 10 seconds for test clip
+    setTimeout(() => {
+      if (mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+      }
+    }, 10000);
+  };
+
+  const handleStopTestRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
     }
   };
 
@@ -510,20 +640,24 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
             if (xhr.status >= 200 && xhr.status < 300) {
               console.log('Response submitted successfully');
               setUploadProgress(100);
+              // Track this response for polling
+              setSubmittedResponses(prev => [...prev, questionData.id]);
               resolve();
             } else {
-              console.error('Failed to submit response:', xhr.responseText);
-              reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
+              console.error('Failed to submit response:', xhr.status, xhr.statusText, xhr.responseText);
+              reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText} - ${xhr.responseText}`));
             }
           });
 
           xhr.addEventListener('error', () => {
-            console.error('Network error during upload');
+            console.error('Network error during upload - full error:', xhr);
             reject(new Error('Network error during upload'));
           });
 
           xhr.open('POST', '/api/v1/interview/response');
           xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('access_token')}`);
+          // Don't set Content-Type - let browser set it with boundary
+          console.log('[UPLOAD] Starting upload for question:', questionData.id, 'blob size:', videoBlob.size);
           xhr.send(formData);
         });
       }
@@ -638,47 +772,88 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
               </p>
 
               {/* Device Selectors */}
-              <div className="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                    <Camera className="w-4 h-4" />
-                    Camera
-                  </label>
+              <div className="space-y-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <Camera className="w-4 h-4" />
+                  <span>Camera Source</span>
+                </div>
+                <div className="relative">
                   <select
                     value={selectedCameraId}
                     onChange={(e) => {
-                      setSelectedCameraId(e.target.value);
-                      startCamera(e.target.value);
+                      const newCamId = e.target.value;
+                      setSelectedCameraId(newCamId);
+                      startCamera(newCamId, selectedAudioId);
                     }}
-                    className="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 appearance-none cursor-pointer pr-10"
+                    style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`, backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em' }}
                   >
-                    {cameraDevices.map((device, idx) => (
-                      <option key={device.deviceId} value={device.deviceId}>
-                        {device.label || `Camera ${idx + 1}`}
-                      </option>
-                    ))}
+                    {cameraDevices.length === 0 ? (
+                      <option value="">No cameras detected</option>
+                    ) : (
+                      cameraDevices.map((device, idx) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || `Camera ${idx + 1}`}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                    <Mic className="w-4 h-4" />
-                    Microphone
-                  </label>
+
+                <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <Mic className="w-4 h-4" />
+                  <span>Microphone Source</span>
+                </div>
+                <div className="relative">
                   <select
                     value={selectedAudioId}
                     onChange={(e) => {
-                      setSelectedAudioId(e.target.value);
-                      startCamera();
+                      const newAudId = e.target.value;
+                      setSelectedAudioId(newAudId);
+                      startCamera(selectedCameraId, newAudId);
                     }}
-                    className="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 appearance-none cursor-pointer pr-10"
+                    style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`, backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em' }}
                   >
-                    {audioDevices.map((device, idx) => (
-                      <option key={device.deviceId} value={device.deviceId}>
-                        {device.label || `Microphone ${idx + 1}`}
-                      </option>
-                    ))}
+                    {audioDevices.length === 0 ? (
+                      <option value="">No microphones detected</option>
+                    ) : (
+                      audioDevices.map((device, idx) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || `Microphone ${idx + 1}`}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
+
+                {/* Refresh devices button */}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    console.log('[DeviceDetection] Refreshing devices...');
+                    setCameraError(null);
+                    try {
+                      const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                      tempStream.getTracks().forEach(t => t.stop());
+                      const devices = await navigator.mediaDevices.enumerateDevices();
+                      const cameras = devices.filter(d => d.kind === 'videoinput');
+                      const mics = devices.filter(d => d.kind === 'audioinput');
+                      setCameraDevices(cameras);
+                      setAudioDevices(mics);
+                      if (cameras.length > 0) setSelectedCameraId(cameras[0].deviceId);
+                      if (mics.length > 0) setSelectedAudioId(mics[0].deviceId);
+                      console.log('[DeviceDetection] Refreshed - Cameras:', cameras.length, 'Mics:', mics.length);
+                    } catch (err) {
+                      console.error('[DeviceDetection] Refresh failed:', err);
+                      setCameraError('Failed to refresh. Please ensure OBS Virtual Camera is running.');
+                    }
+                  }}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Refresh device list
+                </button>
               </div>
 
               {/* Video Container - Expanded View */}
@@ -732,10 +907,10 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 <Button
                   className={`text-white rounded-full transition-all duration-300 ${isRecording ? 'animate-pulse' : ''}`}
                   style={{ backgroundColor: isRecording ? '#EF4444' : '#6366F1' }}
-                  onClick={handleRecordTestClip}
-                  disabled={isRecording || isPlaying}
+                  onClick={isRecording ? handleStopTestRecording : handleRecordTestClip}
+                  disabled={!isRecording && (isPlaying || hasRecorded)}
                 >
-                  {isRecording ? 'Recording...' : hasRecorded ? 'Record Again' : 'Record Test Clip'}
+                  {isRecording ? 'Stop Recording' : hasRecorded ? 'Record Again' : 'Record Test Clip'}
                 </Button>
                 <Button
                   variant="outline"
@@ -1355,7 +1530,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
               </div>
 
               {/* Camera Preview */}
-              <div className="bg-slate-900 rounded-lg h-96 flex flex-col items-center justify-center relative overflow-hidden">
+              <div className="bg-slate-900 rounded-lg h-72 flex flex-col items-center justify-center relative overflow-hidden">
                 {stream ? (
                   <video
                     ref={videoRef}
@@ -1382,30 +1557,85 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
 
               {/* Recording Controls */}
               <div className="flex flex-col items-center gap-3">
-                <Button
-                  className="text-white rounded-full px-8"
-                  style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => {
-                    setMockRecording(!mockRecording);
-                    if (!mockRecording) {
-                      setMockRecorded(true);
-                    }
-                  }}
-                >
-                  {mockRecording ? (
-                    <>
-                      <div className="w-2 h-2 bg-white rounded-full mr-2 animate-pulse" />
-                      Recording...
-                    </>
-                  ) : (
-                    'Start Recording'
-                  )}
-                </Button>
-
-                {mockRecorded && !mockRecording && (
-                  <button className="text-gray-500 text-sm hover:text-gray-700">
-                    Retry
-                  </button>
+                {!mockRecorded ? (
+                  <Button
+                    className="text-white rounded-full px-8"
+                    style={{ backgroundColor: mockRecording ? '#EF4444' : '#6366F1' }}
+                    onClick={() => {
+                      if (!mockRecording) {
+                        // Start recording
+                        if (!stream) {
+                          setCameraError('No camera stream. Please check device setup.');
+                          return;
+                        }
+                        setMockRecording(true);
+                        setMockRecorded(false);
+                        chunksRef.current = [];
+                        
+                        const recorder = new MediaRecorder(stream, {
+                          mimeType: 'video/webm;codecs=vp8,opus',
+                          videoBitsPerSecond: 250000
+                        });
+                        mediaRecorderRef.current = recorder;
+                        
+                        recorder.ondataavailable = (e) => {
+                          if (e.data.size > 0) {
+                            chunksRef.current.push(e.data);
+                          }
+                        };
+                        
+                        recorder.onstop = () => {
+                          const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+                          const url = URL.createObjectURL(blob);
+                          setRecordedUrl(url);
+                          setMockRecorded(true);
+                          setMockRecording(false);
+                        };
+                        
+                        recorder.start(1000);
+                        
+                        // Auto-stop after mockTimer seconds (default 60s)
+                        setTimeout(() => {
+                          if (recorder.state === 'recording') {
+                            recorder.stop();
+                          }
+                        }, mockTimer * 1000);
+                      }
+                    }}
+                  >
+                    {mockRecording ? (
+                      <>
+                        <div className="w-2 h-2 bg-white rounded-full mr-2 animate-pulse" />
+                        Recording... Click to Stop
+                      </>
+                    ) : (
+                      'Start Recording'
+                    )}
+                  </Button>
+                ) : (
+                  <div className="flex items-center gap-4">
+                    <Button
+                      variant="outline"
+                      className="rounded-full"
+                      onClick={() => {
+                        setMockRecording(false);
+                        setMockRecorded(false);
+                        setRecordedUrl(null);
+                        chunksRef.current = [];
+                      }}
+                    >
+                      Retry
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="rounded-full"
+                      onClick={() => {
+                        setMockRecording(false);
+                      }}
+                    >
+                      Keep Recording
+                    </Button>
+                  </div>
                 )}
               </div>
 
@@ -1616,18 +1846,43 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
               {/* Question Progress Indicators */}
               <div className="px-12 py-6">
                 <div className="max-w-4xl mx-auto flex items-center justify-center gap-3">
-                  {Array.from({ length: totalQuestions }, (_, i) => i + 1).map((num) => (
-                    <div
-                      key={num}
-                      className="w-16 h-16 rounded-2xl flex items-center justify-center text-white transition-all"
-                      style={{
-                        backgroundColor: num < currentQuestion ? '#10B981' : num === currentQuestion ? '#10B981' : '#D1D5DB'
-                      }}
-                    >
-                      {num}
-                    </div>
-                  ))}
+                  {Array.from({ length: totalQuestions }, (_, i) => i + 1).map((num) => {
+                    const qData = questionsData[num - 1];
+                    const isSubmitted = submittedResponses.includes(qData?.id);
+                    const isProcessing = isSubmitted && processingStatuses[qData?.id] === 'processing';
+                    const isComplete = isSubmitted && processingStatuses[qData?.id] === 'completed';
+                    const isFailed = isSubmitted && processingStatuses[qData?.id] === 'failed';
+                    
+                    return (
+                      <div
+                        key={num}
+                        className="w-16 h-16 rounded-2xl flex items-center justify-center text-white transition-all relative"
+                        style={{
+                          backgroundColor: isComplete ? '#10B981' : 
+                                          isProcessing ? '#F59E0B' : 
+                                          isFailed ? '#EF4444' :
+                                          num === currentQuestion ? '#6366F1' : '#D1D5DB'
+                        }}
+                        title={isProcessing ? 'AI processing...' : isComplete ? 'Processed' : isFailed ? 'Processing failed' : ''}
+                      >
+                        {isProcessing ? (
+                          <Loader2 className="w-6 h-6 animate-spin" />
+                        ) : isComplete ? (
+                          <CheckCircle2 className="w-6 h-6" />
+                        ) : isFailed ? (
+                          <X className="w-6 h-6" />
+                        ) : (
+                          num
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
+                {submittedResponses.length > 0 && (
+                  <p className="text-center text-sm text-gray-500 mt-2">
+                    {submittedResponses.length} response{submittedResponses.length > 1 ? 's' : ''} submitted • AI processing in background
+                  </p>
+                )}
               </div>
 
               {/* Interview Question Content */}
@@ -1760,7 +2015,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                           onClick={handleNextQuestion}
                           disabled={!questionRecorded || questionRecording}
                         >
-                          Next Question
+                          {currentQuestion === totalQuestions ? 'Submit Interview' : 'Next Question'}
                         </Button>
                       </div>
                     </div>
