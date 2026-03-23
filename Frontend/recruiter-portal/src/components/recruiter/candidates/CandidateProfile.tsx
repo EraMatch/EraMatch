@@ -217,6 +217,41 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     }
   };
 
+  const githubAssessment = candidate.githubAnalysis?.assessment || {};
+  const qualityIndicators = candidate.githubAnalysis?.qualityIndicators || {};
+  const contributionBreakdown = candidate.githubAnalysis?.contributionStats?.breakdown || {};
+  const fallbackRecentActivity = Object.entries(contributionBreakdown)
+    .filter(([, value]) => Number(value) > 0)
+    .slice(0, 4)
+    .map(([key, value]) => ({
+      type: key,
+      title: `${String(value)} ${key.replace('_', ' ')} event${Number(value) === 1 ? '' : 's'}`,
+      description: 'Derived from public GitHub activity events',
+      repo: 'GitHub profile',
+      time_ago: 'Last 12 months'
+    }));
+
+  const recentGithubActivity = Array.isArray(candidate.githubAnalysis?.recentActivity) && candidate.githubAnalysis.recentActivity.length > 0
+    ? candidate.githubAnalysis.recentActivity
+    : fallbackRecentActivity;
+
+  const avgPrReviewTimeHours = qualityIndicators?.avg_pr_review_time_hours;
+  const avgPrReviewTimeText = typeof avgPrReviewTimeHours === 'number' ? `${avgPrReviewTimeHours.toFixed(1)} hrs` : 'N/A';
+  const avgPrReviewTimeNote = qualityIndicators?.avg_pr_review_time_note || 'Insufficient PR review events';
+
+  const codeDocumentationPct = Number.isFinite(Number(qualityIndicators?.code_documentation_pct))
+    ? Number(qualityIndicators.code_documentation_pct)
+    : Number(githubAssessment?.sustainability || 0);
+  const testCoveragePct = Number.isFinite(Number(qualityIndicators?.test_coverage_pct))
+    ? Number(qualityIndicators.test_coverage_pct)
+    : Number(githubAssessment?.correctness || 0);
+  const codeReviewQualityScore = Number.isFinite(Number(qualityIndicators?.code_review_quality_score))
+    ? Number(qualityIndicators.code_review_quality_score)
+    : Math.max(0, Math.min(5, Number(githubAssessment?.knowledge || 0) / 20));
+  const overallGithubScore = Number.isFinite(Number(candidate.githubAnalysis?.overallScore))
+    ? Number(candidate.githubAnalysis.overallScore)
+    : (Number.isFinite(Number(qualityIndicators?.overall_github_score)) ? Number(qualityIndicators.overall_github_score) : Number(candidate.scores.github || 0));
+
   return (
     <div className="h-full w-full overflow-auto bg-[#f9fafb]">
       <div className="max-w-[1400px] mx-auto px-[48px] py-[24px]">
@@ -957,48 +992,24 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                 {/* Recent Activity */}
                 <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
                   <h4 className="text-[#111827] text-sm font-medium mb-4">Recent Activity</h4>
-                  <div className="space-y-4">
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500 mt-2" />
-                      <div className="flex-1">
-                        <p className="text-sm text-[#111827] mb-1">
-                          Opened pull request <span className="text-[#6366f1] font-medium">#142</span> in <span className="font-medium">react-microservices-boilerplate</span>
-                        </p>
-                        <p className="text-xs text-[#6b7280]">Added health check endpoints for all services</p>
-                        <span className="text-xs text-[#9ca3af]">2 days ago</span>
-                      </div>
+                  {recentGithubActivity.length > 0 ? (
+                    <div className="space-y-4">
+                      {recentGithubActivity.slice(0, 6).map((item: any, idx: number) => (
+                        <div key={idx} className="flex items-start gap-3">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500 mt-2" />
+                          <div className="flex-1">
+                            <p className="text-sm text-[#111827] mb-1">
+                              {item?.title || 'Activity detected'} in <span className="font-medium">{item?.repo || 'GitHub'}</span>
+                            </p>
+                            <p className="text-xs text-[#6b7280]">{item?.description || 'No additional details available'}</p>
+                            <span className="text-xs text-[#9ca3af]">{item?.time_ago || 'Recently'}</span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 rounded-full bg-purple-500 mt-2" />
-                      <div className="flex-1">
-                        <p className="text-sm text-[#111827] mb-1">
-                          Merged pull request <span className="text-[#6366f1] font-medium">#138</span> in <span className="font-medium">next-auth-rbac</span>
-                        </p>
-                        <p className="text-xs text-[#6b7280]">Fix: Permission inheritance for nested roles</p>
-                        <span className="text-xs text-[#9ca3af]">5 days ago</span>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 rounded-full bg-blue-500 mt-2" />
-                      <div className="flex-1">
-                        <p className="text-sm text-[#111827] mb-1">
-                          Created repository <span className="font-medium">k8s-deployment-scripts</span>
-                        </p>
-                        <p className="text-xs text-[#6b7280]">Automated Kubernetes deployment utilities</p>
-                        <span className="text-xs text-[#9ca3af]">1 week ago</span>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 rounded-full bg-amber-500 mt-2" />
-                      <div className="flex-1">
-                        <p className="text-sm text-[#111827] mb-1">
-                          Reviewed and approved PR in <span className="font-medium">graphql-query-optimizer</span>
-                        </p>
-                        <p className="text-xs text-[#6b7280]">Performance improvements for batch queries</p>
-                        <span className="text-xs text-[#9ca3af]">2 weeks ago</span>
-                      </div>
-                    </div>
-                  </div>
+                  ) : (
+                    <p className="text-sm text-[#6b7280]">No recent GitHub activity available yet.</p>
+                  )}
                 </div>
 
                 {/* Code Quality Metrics */}
@@ -1010,32 +1021,32 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                         <span className="text-sm text-[#166534]">Avg. PR Review Time</span>
                         <CheckCircle className="w-4 h-4 text-[#16a34a]" />
                       </div>
-                      <div className="text-2xl font-semibold text-[#166534]">4.2 hrs</div>
-                      <p className="text-xs text-[#15803d] mt-1">Faster than 85% of developers</p>
+                      <div className="text-2xl font-semibold text-[#166534]">{avgPrReviewTimeText}</div>
+                      <p className="text-xs text-[#15803d] mt-1">{avgPrReviewTimeNote}</p>
                     </div>
                     <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-[#166534]">Code Documentation</span>
                         <CheckCircle className="w-4 h-4 text-[#16a34a]" />
                       </div>
-                      <div className="text-2xl font-semibold text-[#166534]">92%</div>
-                      <p className="text-xs text-[#15803d] mt-1">Excellent documentation coverage</p>
+                      <div className="text-2xl font-semibold text-[#166534]">{Math.round(codeDocumentationPct)}%</div>
+                      <p className="text-xs text-[#15803d] mt-1">Derived from sustainability and audit evidence</p>
                     </div>
                     <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-[#166534]">Test Coverage</span>
                         <CheckCircle className="w-4 h-4 text-[#16a34a]" />
                       </div>
-                      <div className="text-2xl font-semibold text-[#166534]">88%</div>
-                      <p className="text-xs text-[#15803d] mt-1">Above industry standard (75%)</p>
+                      <div className="text-2xl font-semibold text-[#166534]">{Math.round(testCoveragePct)}%</div>
+                      <p className="text-xs text-[#15803d] mt-1">Estimated from correctness and test-related findings</p>
                     </div>
                     <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-[#166534]">Code Review Quality</span>
                         <CheckCircle className="w-4 h-4 text-[#16a34a]" />
                       </div>
-                      <div className="text-2xl font-semibold text-[#166534]">4.8/5</div>
-                      <p className="text-xs text-[#15803d] mt-1">Highly valuable feedback</p>
+                      <div className="text-2xl font-semibold text-[#166534]">{codeReviewQualityScore.toFixed(1)}/5</div>
+                      <p className="text-xs text-[#15803d] mt-1">Based on review activity and technical depth indicators</p>
                     </div>
                   </div>
                 </div>
@@ -1050,7 +1061,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                       </p>
                     </div>
                     <div className="text-center">
-                      <div className="text-5xl font-bold text-indigo-600 mb-1">88</div>
+                      <div className="text-5xl font-bold text-indigo-600 mb-1">{Math.round(overallGithubScore)}</div>
                       <div className="text-sm text-indigo-700">/ 100</div>
                     </div>
                   </div>

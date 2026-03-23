@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     OLLAMA_GH_MAP_MODEL: str = "kimi-k2.5:cloud"
     OLLAMA_GH_AUDIT_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_GH_SYNTH_MODEL: str = "deepseek-v3.1:671b-cloud"
+    OLLAMA_GH_STAGE_TIMEOUT_SECONDS: int = 90
+
+    # GitHub analysis runtime controls
+    GH_ANALYSIS_HTTP_TIMEOUT_SECONDS: int = 30
+    GH_ANALYSIS_REPO_SCOUT_LIMIT: int = 4
+    GH_ANALYSIS_MAX_TREE_FILES: int = 3000
+    GH_ANALYSIS_FILE_LIST_FOR_RELEVANCE: int = 150
+    GH_ANALYSIS_FILE_LIST_FOR_KEYFILES: int = 250
     
     # whisper moded setting
     WHISPER_MODEL: str = "small"  

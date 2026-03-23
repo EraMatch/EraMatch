@@ -239,6 +239,9 @@ class CandidateService:
                         "questions": synthesis.get("questions") or analysis_data.get("questions") or [],
                         "audit": analysis_data.get("audit") or [],
                         "contributionStats": analysis_data.get("contribution_stats") if isinstance(analysis_data.get("contribution_stats"), dict) else None,
+                        "recentActivity": analysis_data.get("recent_activity") if isinstance(analysis_data.get("recent_activity"), list) else [],
+                        "qualityIndicators": analysis_data.get("quality_indicators") if isinstance(analysis_data.get("quality_indicators"), dict) else None,
+                        "overallScore": analysis_data.get("overall_github_score"),
                     }
 
                     top_repos = analysis_data.get("top_repositories") or analysis_data.get("topRepos")
