@@ -66,7 +66,7 @@ class CandidateService:
         return result.scalars().all()
 
     async def get_profile(self, candidate_id: UUID) -> CandidateResponse:
-        from app.models import CVAnalysis, CandidateStageProgress, Position, Project, Assessment, AIInterviewConfig, CandidateGroup
+        from app.models import CVAnalysis, GitHubAnalysis, CandidateStageProgress, Position, Project, Assessment, AIInterviewConfig, CandidateGroup
         from sqlalchemy import func
 
         # 1. Fetch base profile
@@ -102,6 +102,33 @@ class CandidateService:
         }
         assessment_data = None
         interview_data = None
+        github_stats = {
+            "publicRepos": 0,
+            "totalStars": 0,
+            "followers": 0,
+            "contributionsLastYear": 0,
+            "languages": [],
+            "topRepos": [],
+        }
+        github_analysis = {
+            "summary": "",
+            "archetypes": [],
+            "assessment": None,
+            "questions": [],
+            "audit": [],
+            "contributionStats": None,
+        }
+        github_personalization = {
+            "source": "none",
+            "keywords": [],
+            "matched_topics": [],
+        }
+
+        def _to_int(value, default: int = 0) -> int:
+            try:
+                return int(value)
+            except Exception:
+                return default
         
         # New: Detailed scores
         scores = {
@@ -126,6 +153,35 @@ class CandidateService:
                 cv_data = cv
                 scores["github"] = float(cv.match_score or 0.0) # Using match score as proxy for GH for now
                 parsed = cv.parsed_data or {}
+                github_profile = cv.github_profile or parsed.get("github_profile") or {}
+
+                profile_part = github_profile.get("profile") if isinstance(github_profile, dict) else {}
+                stats_part = github_profile.get("stats") if isinstance(github_profile, dict) else {}
+                repos_part = github_profile.get("top_repos") if isinstance(github_profile, dict) else []
+                langs_part = github_profile.get("languages") if isinstance(github_profile, dict) else []
+
+                if isinstance(profile_part, dict):
+                    github_stats["publicRepos"] = _to_int(profile_part.get("public_repos") or profile_part.get("publicRepos") or github_stats["publicRepos"], github_stats["publicRepos"])
+                    github_stats["followers"] = _to_int(profile_part.get("followers") or github_stats["followers"], github_stats["followers"])
+
+                if isinstance(stats_part, dict):
+                    github_stats["totalStars"] = _to_int(stats_part.get("total_stars") or stats_part.get("totalStars") or github_stats["totalStars"], github_stats["totalStars"])
+                    github_stats["contributionsLastYear"] = _to_int(stats_part.get("contributions_last_year") or stats_part.get("contributionsLastYear") or github_stats["contributionsLastYear"], github_stats["contributionsLastYear"])
+
+                if isinstance(langs_part, list):
+                    github_stats["languages"] = langs_part
+
+                if isinstance(repos_part, list):
+                    github_stats["topRepos"] = repos_part
+
+                if isinstance(github_profile, dict):
+                    extracted_keywords = github_profile.get("keywords") or []
+                    matched_topics = github_profile.get("matched_topics") or []
+                    github_personalization = {
+                        "source": "cv_analysis.github_profile",
+                        "keywords": extracted_keywords if isinstance(extracted_keywords, list) else [],
+                        "matched_topics": matched_topics if isinstance(matched_topics, list) else [],
+                    }
                 
                 # Extract Title
                 exp_list = parsed.get("work_experience", [])
@@ -153,6 +209,52 @@ class CandidateService:
                             school=str(edu.get("institution") or edu.get("university") or edu.get("school") or "Unknown School"),
                             year=str(edu.get("year") or edu.get("dates") or "N/A")
                         ))
+
+            gh_query = select(GitHubAnalysis).where(
+                GitHubAnalysis.candidate_id == candidate_id,
+                GitHubAnalysis.organization_id == self.organization_id,
+            )
+            gh_res = await self.session.execute(gh_query)
+            gh = gh_res.scalar_one_or_none()
+            if gh:
+                if gh.repo_count is not None:
+                    github_stats["publicRepos"] = _to_int(gh.repo_count, github_stats["publicRepos"])
+
+                if gh.top_languages and isinstance(gh.top_languages, dict):
+                    total = sum(float(v or 0) for v in gh.top_languages.values()) or 1.0
+                    language_rows = []
+                    palette = ["#3178c6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#14b8a6"]
+                    for idx, (name, value) in enumerate(sorted(gh.top_languages.items(), key=lambda item: float(item[1] or 0), reverse=True)[:6]):
+                        pct = round((float(value or 0) / total) * 100, 1)
+                        language_rows.append({"name": name, "percentage": pct, "color": palette[idx % len(palette)]})
+                    github_stats["languages"] = language_rows
+
+                analysis_data = gh.analysis_data or {}
+                if isinstance(analysis_data, dict):
+                    synthesis = analysis_data.get("synthesis") if isinstance(analysis_data.get("synthesis"), dict) else {}
+                    github_analysis = {
+                        "summary": synthesis.get("executive_summary") or analysis_data.get("summary") or "",
+                        "archetypes": synthesis.get("archetypes") or analysis_data.get("archetypes") or [],
+                        "assessment": synthesis.get("assessment") or analysis_data.get("assessment") or None,
+                        "questions": synthesis.get("questions") or analysis_data.get("questions") or [],
+                        "audit": analysis_data.get("audit") or [],
+                        "contributionStats": analysis_data.get("contribution_stats") if isinstance(analysis_data.get("contribution_stats"), dict) else None,
+                    }
+
+                    top_repos = analysis_data.get("top_repositories") or analysis_data.get("topRepos")
+                    if isinstance(top_repos, list):
+                        github_stats["topRepos"] = top_repos
+
+                    profile_obj = analysis_data.get("profile") or {}
+                    if isinstance(profile_obj, dict):
+                        github_stats["followers"] = _to_int(profile_obj.get("followers") or github_stats["followers"], github_stats["followers"])
+                        github_stats["publicRepos"] = _to_int(profile_obj.get("public_repos") or profile_obj.get("publicRepos") or github_stats["publicRepos"], github_stats["publicRepos"])
+
+                github_personalization = {
+                    "source": "github_analysis",
+                    "keywords": github_personalization.get("keywords", []),
+                    "matched_topics": github_personalization.get("matched_topics", []),
+                }
 
             # Fetch pipeline stage names from GroupStageConfig (filtration_flow removed from model)
             filtration_flow = None
@@ -231,6 +333,9 @@ class CandidateService:
         response.pipelineStatus = pipeline_status
         response.assessmentData = assessment_data
         response.interviewData = interview_data
+        response.githubStats = github_stats
+        response.githubAnalysis = github_analysis
+        response.githubPersonalization = github_personalization
         
         return response
 

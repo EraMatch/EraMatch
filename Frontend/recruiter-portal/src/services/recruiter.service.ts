@@ -106,6 +106,12 @@ export const recruiterService = {
     getGroupCandidates: async () => fetchAPI('/groups/candidates/all'),
 
     getCandidate: async (candidateId: string) => fetchAPI<any>(`/candidates/${candidateId}`),
+    startCandidateGithubAnalysis: async (candidateId: string, githubToken?: string) =>
+        fetchAPI<{ job_id: string; status: string; message: string }>(`/candidates/${candidateId}/github-analysis/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ github_token: githubToken || '' })
+        }),
 
     getSuspectReview: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/suspect-review`),
 
@@ -458,11 +464,14 @@ export const recruiterService = {
     getTaskLogs: async (taskId: string) => fetchAPI<any>(`/background-tasks/${taskId}/logs`),
     stopAllVideoTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-video', { method: 'POST' }),
     stopAllQuestionImportTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-question-import', { method: 'POST' }),
+    stopAllGithubAnalysisTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-github-analysis', { method: 'POST' }),
     stopVideoTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-video/${taskId}`, { method: 'POST' }),
     stopQuestionImportTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-question-import/${taskId}`, { method: 'POST' }),
-    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import') =>
+    stopGithubAnalysisTask: async (taskId: string) =>
+        fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-github-analysis/${taskId}`, { method: 'POST' }),
+    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import' | 'github_analysis') =>
         fetchAPI<{ message: string }>(
             `/background-tasks/${taskId}?task_category=${encodeURIComponent(taskCategory)}`,
             { method: 'DELETE' }

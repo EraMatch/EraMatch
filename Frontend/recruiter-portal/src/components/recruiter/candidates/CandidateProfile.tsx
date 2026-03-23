@@ -29,6 +29,8 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
 
   const [candidate, setCandidate] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRunningGithubAnalysis, setIsRunningGithubAnalysis] = useState(false);
+  const [githubTokenInput, setGithubTokenInput] = useState(() => window.localStorage.getItem('eramatch.githubToken') || '');
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -629,7 +631,40 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
 
             {activeTab === 'github' && (
               <div className="space-y-6">
-                <h3 className="text-[#111827] mb-4">GitHub Profile Analysis</h3>
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-[#111827] mb-4">GitHub Profile Analysis</h3>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="password"
+                      value={githubTokenInput}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setGithubTokenInput(value);
+                        window.localStorage.setItem('eramatch.githubToken', value);
+                      }}
+                      placeholder="GitHub token (optional)"
+                      className="h-[36px] w-[220px] px-3 rounded-[10px] border border-[#d1d5db] text-[13px]"
+                    />
+                    <button
+                      onClick={async () => {
+                        try {
+                          setIsRunningGithubAnalysis(true);
+                          const res = await api.recruiter.startCandidateGithubAnalysis(candidateId, githubTokenInput.trim() || undefined);
+                          window.alert((res as any)?.message || 'GitHub analysis queued. Check Background Tasks.');
+                        } catch (error) {
+                          console.error('Failed to queue GitHub analysis', error);
+                          window.alert('Failed to queue GitHub analysis.');
+                        } finally {
+                          setIsRunningGithubAnalysis(false);
+                        }
+                      }}
+                      disabled={isRunningGithubAnalysis}
+                      className="h-[36px] px-4 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] text-[#1d4ed8] text-[13px] font-medium disabled:opacity-60"
+                    >
+                      {isRunningGithubAnalysis ? 'Queuing...' : 'Run GitHub Analysis'}
+                    </button>
+                  </div>
+                </div>
 
                 {/* GitHub Stats Overview */}
                 <div className="grid grid-cols-4 gap-4">
@@ -661,6 +696,57 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                     </div>
                     <div className="text-2xl font-semibold text-[#111827]">{candidate.githubStats?.contributionsLastYear}</div>
                   </div>
+                </div>
+
+                {/* Contribution Data Quality */}
+                <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-[#111827] text-sm font-medium">Contribution Data Quality</h4>
+                    <span className="text-[11px] px-2 py-1 rounded-full border border-[#e5e7eb] bg-[#f8fafc] text-[#475569]">
+                      Source: {candidate.githubAnalysis?.contributionStats?.source || 'unknown'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Reliability</div>
+                      <div className="text-sm font-semibold text-[#111827]">
+                        {candidate.githubAnalysis?.contributionStats?.estimated ? 'Estimated' : 'Authoritative'}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Window</div>
+                      <div className="text-sm font-semibold text-[#111827]">
+                        {candidate.githubAnalysis?.contributionStats?.window_days || 365} days
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Count Method</div>
+                      <div className="text-sm font-semibold text-[#111827]">
+                        {candidate.githubAnalysis?.contributionStats?.source === 'graphql' ? 'GitHub GraphQL' : 'Public Events'}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Last Year</div>
+                      <div className="text-sm font-semibold text-[#111827]">
+                        {candidate.githubStats?.contributionsLastYear ?? 0}
+                      </div>
+                    </div>
+                  </div>
+
+                  {candidate.githubAnalysis?.contributionStats?.breakdown && (
+                    <div>
+                      <div className="text-[11px] text-[#6b7280] mb-2">Event Breakdown</div>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                        {Object.entries(candidate.githubAnalysis.contributionStats.breakdown).map(([key, value]) => (
+                          <div key={key} className="rounded-md border border-[#e5e7eb] px-2 py-1.5 bg-white">
+                            <div className="text-[10px] uppercase tracking-wide text-[#6b7280]">{key.replace('_', ' ')}</div>
+                            <div className="text-sm font-medium text-[#111827]">{Number(value || 0)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Contribution Activity Graph */}
@@ -797,6 +883,75 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                         <div className="text-sm text-[#6b7280]">No repositories available</div>
                       )}
                   </div>
+                </div>
+
+                {/* Analysis Summary */}
+                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
+                  <h4 className="text-[#111827] text-sm font-medium mb-3">Analysis Summary</h4>
+                  {candidate.githubAnalysis?.summary ? (
+                    <p className="text-sm text-[#374151] leading-6 whitespace-pre-wrap">{candidate.githubAnalysis.summary}</p>
+                  ) : (
+                    <p className="text-sm text-[#6b7280]">No GitHub analysis summary available.</p>
+                  )}
+
+                  {Array.isArray(candidate.githubAnalysis?.archetypes) && candidate.githubAnalysis.archetypes.length > 0 && (
+                    <div className="mt-4">
+                      <h5 className="text-xs text-[#6b7280] mb-2 uppercase tracking-wide">Candidate Archetypes</h5>
+                      <div className="flex flex-wrap gap-2">
+                        {candidate.githubAnalysis.archetypes.map((item: any, idx: number) => (
+                          <div key={idx} className="px-3 py-2 rounded-[10px] border border-[#e5e7eb] bg-[#f8fafc]">
+                            <div className="text-[13px] text-[#111827] font-medium">{item?.name || 'Archetype'}</div>
+                            <div className="text-[12px] text-[#6b7280]">Score: {item?.score ?? 'N/A'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(Array.isArray(candidate.githubPersonalization?.keywords) && candidate.githubPersonalization.keywords.length > 0) && (
+                    <div className="mt-4">
+                      <h5 className="text-xs text-[#6b7280] mb-2 uppercase tracking-wide">Personalization Signals</h5>
+                      <div className="text-xs text-[#64748b] mb-2">Source: {candidate.githubPersonalization?.source || 'none'}</div>
+                      <div className="flex flex-wrap gap-2">
+                        {candidate.githubPersonalization.keywords.slice(0, 20).map((kw: string, idx: number) => (
+                          <span key={idx} className="px-2 py-1 rounded-full bg-[#eef2ff] border border-[#c7d2fe] text-[#4338ca] text-[11px]">
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Suggested Questions by GitHub Analysis */}
+                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
+                  <h4 className="text-[#111827] text-sm font-medium mb-4">Suggested Questions (Based on GitHub Analysis)</h4>
+                  {Array.isArray(candidate.githubAnalysis?.questions) && candidate.githubAnalysis.questions.length > 0 ? (
+                    <div className="space-y-3">
+                      {candidate.githubAnalysis.questions.map((q: any, idx: number) => (
+                        <div key={idx} className="rounded-[10px] border border-[#e5e7eb] p-4 bg-[#fafafa]">
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <div className="text-[13px] font-medium text-[#111827]">Question {idx + 1}</div>
+                            <span className="px-2 py-0.5 rounded-full text-[11px] border border-[#dbeafe] bg-[#eff6ff] text-[#1d4ed8] capitalize">
+                              {q?.difficulty || 'intermediate'}
+                            </span>
+                          </div>
+                          <p className="text-sm text-[#111827] mb-2">{q?.question || 'N/A'}</p>
+                          {q?.selection_reason && (
+                            <p className="text-xs text-[#64748b] mb-1"><span className="font-medium">Selection reason:</span> {q.selection_reason}</p>
+                          )}
+                          {q?.jd_relation && (
+                            <p className="text-xs text-[#64748b] mb-1"><span className="font-medium">JD relation:</span> {q.jd_relation}</p>
+                          )}
+                          {q?.source_file && (
+                            <p className="text-xs text-[#64748b]"><span className="font-medium">Source file:</span> {q.source_file}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-[#6b7280]">No generated recommendations available from GitHub analysis.</p>
+                  )}
                 </div>
 
                 {/* Recent Activity */}

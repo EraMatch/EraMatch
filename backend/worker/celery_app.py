@@ -9,7 +9,7 @@ celery_app = Celery(
     "eramatch",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["worker.tasks.video", "worker.tasks.question_import"],
+    include=["worker.tasks.video", "worker.tasks.question_import", "worker.tasks.github_analysis"],
 )
 
 # Celery configuration

@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 from app.api.deps import get_db, get_current_user
-from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob
+from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob, GitHubAnalysisJob
 
 router = APIRouter(prefix="/background-tasks", tags=["Background Tasks"])
 
@@ -92,6 +92,33 @@ async def get_background_tasks(
     except Exception:
         pass
 
+    # ── GitHub analysis jobs ──────────────────────────────────────────────────
+    try:
+        gh_query = (
+            select(GitHubAnalysisJob, CandidateProfile.full_name.label("candidate_name"))
+            .join(CandidateProfile, GitHubAnalysisJob.candidate_id == CandidateProfile.id)
+            .where(GitHubAnalysisJob.organization_id == current_user.organization_id)
+            .order_by(desc(GitHubAnalysisJob.created_at))
+            .limit(limit)
+        )
+        gh_result = await db.execute(gh_query)
+        for job, candidate_name in gh_result.all():
+            tasks.append({
+                "id": str(job.id),
+                "status": job.status,
+                "type": "GitHub Analysis & Question Generation",
+                "task_category": "github_analysis",
+                "candidate_name": candidate_name,
+                "source_filename": job.github_url,
+                "question": candidate_name or "Candidate",
+                "timestamp": job.created_at.isoformat() if job.created_at else None,
+                "total_generated": job.total_generated,
+                "total_flagged": None,
+                "total_approved": None,
+            })
+    except Exception:
+        pass
+
     # Sort all tasks by timestamp descending
     tasks.sort(key=lambda t: t.get("timestamp") or "", reverse=True)
     return tasks[:limit]
@@ -135,8 +162,8 @@ async def delete_background_task(
       - video: deletes InterviewResponse row (scoped to current organization)
       - question_import: deletes QuestionImportJob row (scoped to current organization)
     """
-    if task_category not in {"video", "question_import"}:
-        raise HTTPException(status_code=400, detail="task_category must be 'video' or 'question_import'")
+    if task_category not in {"video", "question_import", "github_analysis"}:
+        raise HTTPException(status_code=400, detail="task_category must be 'video', 'question_import', or 'github_analysis'")
 
     if task_category == "question_import":
         job = await db.get(QuestionImportJob, task_id)
@@ -146,6 +173,15 @@ async def delete_background_task(
         await db.delete(job)
         await db.commit()
         return {"message": "Question import task deleted"}
+
+    if task_category == "github_analysis":
+        job = await db.get(GitHubAnalysisJob, task_id)
+        if not job or job.organization_id != current_user.organization_id:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        await db.delete(job)
+        await db.commit()
+        return {"message": "GitHub analysis task deleted"}
 
     # video task (preferred: organization-scoped join)
     result = await db.execute(
@@ -232,6 +268,33 @@ async def stop_all_question_import_tasks(
     }
 
 
+@router.post("/stop-github-analysis")
+async def stop_all_github_analysis_tasks(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Stop all pending/processing GitHub analysis tasks for the current organization."""
+    result = await db.execute(
+        select(GitHubAnalysisJob)
+        .where(
+            GitHubAnalysisJob.organization_id == current_user.organization_id,
+            GitHubAnalysisJob.status.in_(["pending", "processing"]),
+        )
+    )
+    tasks = result.scalars().all()
+
+    for task in tasks:
+        task.status = "cancelled"
+        db.add(task)
+
+    await db.commit()
+
+    return {
+        "stopped_count": len(tasks),
+        "message": f"Stopped {len(tasks)} GitHub analysis task(s).",
+    }
+
+
 @router.post("/stop-video/{task_id}")
 async def stop_video_task(
     task_id: UUID,
@@ -293,6 +356,32 @@ async def stop_question_import_task(
 
     return {
         "message": "Question import task stopped",
+        "task_id": str(task.id),
+        "status": task.status,
+    }
+
+
+@router.post("/stop-github-analysis/{task_id}")
+async def stop_github_analysis_task(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Stop a single pending/processing GitHub analysis task for the current organization."""
+    task = await db.get(GitHubAnalysisJob, task_id)
+
+    if not task or task.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="GitHub analysis task not found")
+
+    if task.status not in ["pending", "processing"]:
+        raise HTTPException(status_code=400, detail="Only pending or processing tasks can be stopped")
+
+    task.status = "cancelled"
+    db.add(task)
+    await db.commit()
+
+    return {
+        "message": "GitHub analysis task stopped",
         "task_id": str(task.id),
         "status": task.status,
     }

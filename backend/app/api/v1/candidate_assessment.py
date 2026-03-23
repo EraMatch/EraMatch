@@ -162,6 +162,76 @@ PISTON_LANGUAGES = {
 
 PISTON_API_URL = "https://emkc.org/api/v2/piston"
 
+
+def _collect_candidate_keywords(
+    cv_skills: list | None,
+    cv_parsed_data: dict | None,
+    cv_github_profile: dict | None,
+    gh_top_languages: dict | None,
+    gh_analysis_data: dict | None,
+) -> list[str]:
+    keywords: set[str] = set()
+
+    for item in cv_skills or []:
+        text = str(item or "").strip().lower()
+        if text:
+            keywords.add(text)
+
+    if isinstance(gh_top_languages, dict):
+        for lang in gh_top_languages.keys():
+            text = str(lang or "").strip().lower()
+            if text:
+                keywords.add(text)
+
+    for payload in [cv_parsed_data, cv_github_profile, gh_analysis_data]:
+        if isinstance(payload, dict):
+            for field in ["skills", "keywords", "matched_topics", "topics", "archetypes"]:
+                value = payload.get(field)
+                if isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict):
+                            for nested_key in ["name", "title", "pillar_name"]:
+                                if nested_key in item:
+                                    text = str(item.get(nested_key) or "").strip().lower()
+                                    if text:
+                                        keywords.add(text)
+                        else:
+                            text = str(item or "").strip().lower()
+                            if text:
+                                keywords.add(text)
+
+    return sorted([kw for kw in keywords if len(kw) >= 2])
+
+
+def _score_question_for_candidate(question: dict, candidate_keywords: list[str]) -> tuple[int, list[str]]:
+    if not candidate_keywords:
+        return 0, []
+
+    text_blob = " ".join([
+        str(question.get("question_text") or ""),
+        str(question.get("question_type") or ""),
+        str(question.get("question_config") or ""),
+    ]).lower()
+
+    tags = []
+    qcfg = question.get("question_config")
+    if isinstance(qcfg, dict):
+        raw_tags = qcfg.get("tags")
+        if isinstance(raw_tags, list):
+            tags = [str(t or "").strip().lower() for t in raw_tags if str(t or "").strip()]
+
+    matched: list[str] = []
+    score = 0
+    for kw in candidate_keywords:
+        if kw in text_blob:
+            matched.append(kw)
+            score += 2
+        elif any(kw == tag or kw in tag for tag in tags):
+            matched.append(kw)
+            score += 3
+
+    return score, sorted(set(matched))
+
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -321,6 +391,63 @@ async def _start_assessment_session_impl(
     application_id = progress["application_id"]  # keep as UUID from asyncpg
     org_id = progress["organization_id"]            # keep as UUID from asyncpg
 
+    # Pull candidate GitHub/CV signals to personalize question assignment.
+    candidate_profile_result = await session.execute(
+        text(
+            """
+            SELECT candidate_id
+            FROM candidate_applications
+            WHERE application_id = :application_id
+            LIMIT 1
+            """
+        ).bindparams(
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"application_id": application_id},
+    )
+    candidate_profile_row = candidate_profile_result.mappings().first()
+    candidate_profile_id = candidate_profile_row["candidate_id"] if candidate_profile_row else candidate.candidate_id
+
+    cv_signal_result = await session.execute(
+        text(
+            """
+            SELECT skills, parsed_data, github_profile
+            FROM cv_analysis
+            WHERE application_id = :application_id
+            LIMIT 1
+            """
+        ).bindparams(
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"application_id": application_id},
+    )
+    cv_signal_row = cv_signal_result.mappings().first()
+
+    gh_signal_result = await session.execute(
+        text(
+            """
+            SELECT top_languages, analysis_data
+            FROM github_analysis
+            WHERE candidate_id = :candidate_id
+              AND organization_id = :organization_id
+            LIMIT 1
+            """
+        ).bindparams(
+            bindparam("candidate_id", type_=pgUUID(as_uuid=True)),
+            bindparam("organization_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"candidate_id": candidate_profile_id, "organization_id": org_id},
+    )
+    gh_signal_row = gh_signal_result.mappings().first()
+
+    candidate_keywords = _collect_candidate_keywords(
+        cv_signal_row.get("skills") if cv_signal_row else None,
+        cv_signal_row.get("parsed_data") if cv_signal_row else None,
+        cv_signal_row.get("github_profile") if cv_signal_row else None,
+        gh_signal_row.get("top_languages") if gh_signal_row else None,
+        gh_signal_row.get("analysis_data") if gh_signal_row else None,
+    )
+
     # 2. Resume existing session?
     if progress["status"] == "in_progress":
         existing = await session.execute(
@@ -441,10 +568,26 @@ async def _start_assessment_session_impl(
 
         # Select questions based on strategy
         variants_to_select = sec["variants_to_select"] or len(pool)
-        if sec["selection_strategy"] == "random" and len(pool) > variants_to_select:
-            selected = random.sample(list(pool), variants_to_select)
+        selection_strategy = (sec["selection_strategy"] or "").lower()
+
+        if selection_strategy == "random" and len(pool) > variants_to_select:
+            if candidate_keywords:
+                scored_pool = []
+                for q in list(pool):
+                    relevance_score, matched_keywords = _score_question_for_candidate(q, candidate_keywords)
+                    scored_pool.append((q, relevance_score, matched_keywords))
+
+                # Prefer profile-relevant questions first, then keep randomization among ties.
+                random.shuffle(scored_pool)
+                scored_pool.sort(key=lambda item: item[1], reverse=True)
+                selected = [item[0] for item in scored_pool[:variants_to_select]]
+                selection_matches = {str(item[0]["question_id"]): item[2] for item in scored_pool}
+            else:
+                selected = random.sample(list(pool), variants_to_select)
+                selection_matches = {}
         else:
             selected = list(pool)[:variants_to_select]
+            selection_matches = {}
 
         for q in selected:
             display_order += 1
@@ -458,6 +601,11 @@ async def _start_assessment_session_impl(
                 "question_config": q["question_config"] or {},
                 "correct_answer": q["correct_answer"] or {},
                 "points": q_points,
+                "assignment_context": {
+                    "selection_strategy": selection_strategy,
+                    "candidate_keywords": candidate_keywords[:20],
+                    "matched_keywords": selection_matches.get(str(q["question_id"]), []),
+                },
             }
 
             assignment_id = uuid4()

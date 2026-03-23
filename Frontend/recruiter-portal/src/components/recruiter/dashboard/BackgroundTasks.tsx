@@ -25,7 +25,7 @@ interface TaskRecord {
     id: string;
     status: string;
     type: string;
-    task_category: 'video' | 'question_import';
+    task_category: 'video' | 'question_import' | 'github_analysis';
     candidate_name: string | null;
     question: string;
     timestamp: string;
@@ -129,18 +129,18 @@ const isAntiCheatingTask = (task: TaskRecord) =>
     includesAny(normalizedTaskText(task), ['anti cheat', 'anti-cheat', 'cheat', 'proctor', 'suspicious', 'anomaly']);
 
 const isCvTask = (task: TaskRecord) =>
-    task.task_category === 'question_import' &&
+    (task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
     includesAny(normalizedTaskText(task), ['cv', 'resume', 'curriculum vitae', '.pdf', '.doc', '.docx']);
 
 const isGithubTask = (task: TaskRecord) =>
-    task.task_category === 'question_import' &&
+    (task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
     includesAny(normalizedTaskText(task), ['github', 'repository', 'repo', 'pull request', 'commit']);
 
 const isGenerationTask = (task: TaskRecord) =>
-    task.task_category === 'question_import' && normalizedTaskText(task).includes('generative');
+    (task.task_category === 'question_import' || task.task_category === 'github_analysis') && normalizedTaskText(task).includes('generative');
 
 const isExtractionTask = (task: TaskRecord) =>
-    task.task_category === 'question_import' &&
+    (task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
     (normalizedTaskText(task).includes('extraction') || normalizedTaskText(task).includes('csv'));
 
 const formatStatusLabel = (status: string) => status.charAt(0).toUpperCase() + status.slice(1);
@@ -316,7 +316,10 @@ export function BackgroundTasks() {
     }, [autoRefresh]);
 
     const videoTasks = useMemo(() => tasks.filter((task) => task.task_category === 'video'), [tasks]);
-    const questionImportTasks = useMemo(() => tasks.filter((task) => task.task_category === 'question_import'), [tasks]);
+    const questionImportTasks = useMemo(
+        () => tasks.filter((task) => task.task_category === 'question_import' || task.task_category === 'github_analysis'),
+        [tasks]
+    );
 
     const categorized = useMemo(() => {
         const recorded = videoTasks.filter((task) => !isAntiCheatingTask(task) && !isLiveVideoTask(task));
@@ -560,7 +563,9 @@ export function BackgroundTasks() {
             stoppable.map((task) =>
                 task.task_category === 'question_import'
                     ? api.recruiter.stopQuestionImportTask(task.id)
-                    : api.recruiter.stopVideoTask(task.id)
+                    : task.task_category === 'github_analysis'
+                        ? api.recruiter.stopGithubAnalysisTask(task.id)
+                        : api.recruiter.stopVideoTask(task.id)
             )
         );
         const successIds = stoppable
@@ -583,7 +588,10 @@ export function BackgroundTasks() {
         const runningImportCount = tasks.filter(
             (task) => task.task_category === 'question_import' && ['pending', 'processing'].includes(task.status.toLowerCase())
         ).length;
-        const totalRunning = runningVideoCount + runningImportCount;
+        const runningGithubAnalysisCount = tasks.filter(
+            (task) => task.task_category === 'github_analysis' && ['pending', 'processing'].includes(task.status.toLowerCase())
+        ).length;
+        const totalRunning = runningVideoCount + runningImportCount + runningGithubAnalysisCount;
 
         if (totalRunning === 0) {
             window.alert('No pending or processing tasks to stop.');
@@ -591,7 +599,7 @@ export function BackgroundTasks() {
         }
 
         const confirmed = window.confirm(
-            `Stop ${totalRunning} running task(s)? (${runningVideoCount} video, ${runningImportCount} question import)`
+            `Stop ${totalRunning} running task(s)? (${runningVideoCount} video, ${runningImportCount} question import, ${runningGithubAnalysisCount} GitHub analysis)`
         );
         if (!confirmed) return;
 
@@ -601,6 +609,7 @@ export function BackgroundTasks() {
             await Promise.all([
                 runningVideoCount > 0 ? api.recruiter.stopAllVideoTasks() : Promise.resolve(null),
                 runningImportCount > 0 ? api.recruiter.stopAllQuestionImportTasks() : Promise.resolve(null),
+                runningGithubAnalysisCount > 0 ? api.recruiter.stopAllGithubAnalysisTasks() : Promise.resolve(null),
             ]);
 
             setTasks((prev) =>

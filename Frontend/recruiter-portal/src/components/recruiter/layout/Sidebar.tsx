@@ -10,7 +10,7 @@ type SidebarTask = {
   type?: string;
   question?: string;
   source_filename?: string | null;
-  task_category: 'video' | 'question_import' | string;
+  task_category: 'video' | 'question_import' | 'github_analysis' | string;
 };
 
 const includesAny = (value: string, terms: string[]) => terms.some((term) => value.includes(term));
@@ -22,10 +22,10 @@ const isAntiCheatingTask = (task: SidebarTask) =>
   includesAny(normalizedTaskText(task), ['anti cheat', 'anti-cheat', 'cheat', 'proctor', 'suspicious', 'anomaly']);
 
 const isGenerationTask = (task: SidebarTask) =>
-  task.task_category === 'question_import' && normalizedTaskText(task).includes('generative');
+  (task.task_category === 'question_import' || task.task_category === 'github_analysis') && normalizedTaskText(task).includes('generative');
 
 const isExtractionTask = (task: SidebarTask) =>
-  task.task_category === 'question_import' &&
+  (task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
   (normalizedTaskText(task).includes('extraction') || normalizedTaskText(task).includes('csv'));
 
 export function Sidebar() {
@@ -105,7 +105,7 @@ export function Sidebar() {
 
   const runningTaskCounts = useMemo(() => {
     const videoTasks = runningTasks.filter((task) => task.task_category === 'video');
-    const questionImportTasks = runningTasks.filter((task) => task.task_category === 'question_import');
+    const questionImportTasks = runningTasks.filter((task) => task.task_category === 'question_import' || task.task_category === 'github_analysis');
 
     const profileTasks = questionImportTasks.filter((task) => !isGenerationTask(task) && !isExtractionTask(task));
     const questionGenerationAndExtraction = questionImportTasks.filter((task) => isGenerationTask(task) || isExtractionTask(task));

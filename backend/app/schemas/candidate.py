@@ -77,6 +77,9 @@ class CandidateResponse(BaseModel):
     assessmentQuestions: list[dict] = []
     videoInterviewQuestions: list[dict] = []
     liveInterviewData: dict | None = None
+    githubStats: dict | None = None
+    githubAnalysis: dict | None = None
+    githubPersonalization: dict | None = None
     offerStatus: str | None = "not_sent"
     offerAcceptedDate: str | None = None
     filtrationFlow: list[str] | None = None
