@@ -75,11 +75,18 @@ class GenerateRequest(BaseModel):
     raw_text: str                  # Extracted text from uploaded file
     num_questions: int = 10        # Legacy fallback when no per-type counts are provided
     context_hint: str = ""         # Optional: "Python programming" or "Data Structures"
+    recruiter_instructions: str = ""  # Optional recruiter constraints for generation
     question_types: list[str] = ["mcq", "essay"]  # Types to include
     mcq_count: int | None = None
     essay_count: int | None = None
     mcq_difficulty: str = "Medium"
     essay_difficulty: str = "Medium"
+    mcq_easy_count: int = 0
+    mcq_medium_count: int = 0
+    mcq_hard_count: int = 0
+    essay_easy_count: int = 0
+    essay_medium_count: int = 0
+    essay_hard_count: int = 0
 
 
 class ExtractRequest(BaseModel):
@@ -136,23 +143,45 @@ class RefineQuestionResponse(BaseModel):
 
 # ─── Generator Prompts ───────────────────────────────────────────────────────
 
-def build_generate_prompt(raw_text: str, num_questions: int, context_hint: str, question_plan: dict[str, dict]) -> str:
+def build_generate_prompt(
+    raw_text: str,
+    num_questions: int,
+    context_hint: str,
+    recruiter_instructions: str,
+    question_plan: dict[str, dict],
+) -> str:
     plan_lines: list[str] = []
     for q_type in ["mcq", "essay"]:
         cfg = question_plan.get(q_type, {})
         count = int(cfg.get("count", 0))
         if count <= 0:
             continue
-        difficulty = str(cfg.get("difficulty", "Medium"))
-        plan_lines.append(f"- {q_type.upper()}: exactly {count} question(s), difficulty={difficulty}")
+        split = cfg.get("by_difficulty", {})
+        easy = int(split.get("Easy", 0))
+        medium = int(split.get("Medium", 0))
+        hard = int(split.get("Hard", 0))
+        if easy + medium + hard > 0:
+            plan_lines.append(
+                f"- {q_type.upper()}: exactly {count} question(s) with difficulty split Easy={easy}, Medium={medium}, Hard={hard}"
+            )
+        else:
+            difficulty = str(cfg.get("difficulty", "Medium"))
+            plan_lines.append(f"- {q_type.upper()}: exactly {count} question(s), difficulty={difficulty}")
 
     if not plan_lines:
         plan_lines.append(f"- MIXED: exactly {num_questions} questions (MCQ and Essay)")
+
+    extra_instructions = recruiter_instructions.strip()
+    recruiter_instructions_block = (
+        f"\nRECRUITER INSTRUCTIONS (must follow):\n{extra_instructions}\n"
+        if extra_instructions else ""
+    )
 
     return f"""You are an expert assessment designer. Create {num_questions} high-quality assessment questions from the material below.
 {f'Context: {context_hint}' if context_hint else ''}
 REQUIRED DISTRIBUTION:
 {chr(10).join(plan_lines)}
+{recruiter_instructions_block}
 
 MATERIAL:
 {raw_text[:40000]}
@@ -876,9 +905,41 @@ async def generate_questions(request: GenerateRequest):
                 counts[q_type] += 1
         return counts
 
+    def _count_type_difficulty(items: list[DraftQuestion]) -> dict[str, dict[str, int]]:
+        counts = {
+            "mcq": {"Easy": 0, "Medium": 0, "Hard": 0},
+            "essay": {"Easy": 0, "Medium": 0, "Hard": 0},
+        }
+        for item in items:
+            q_type = (item.type or "").strip().lower()
+            if q_type not in counts:
+                continue
+            difficulty = _normalize_diff(item.difficulty or "Medium")
+            counts[q_type][difficulty] += 1
+        return counts
+
     # Build an explicit per-type generation plan.
+    mcq_split = {
+        "Easy": max(request.mcq_easy_count or 0, 0),
+        "Medium": max(request.mcq_medium_count or 0, 0),
+        "Hard": max(request.mcq_hard_count or 0, 0),
+    }
+    essay_split = {
+        "Easy": max(request.essay_easy_count or 0, 0),
+        "Medium": max(request.essay_medium_count or 0, 0),
+        "Hard": max(request.essay_hard_count or 0, 0),
+    }
+
+    mcq_split_total = sum(mcq_split.values())
+    essay_split_total = sum(essay_split.values())
+
     mcq_count = request.mcq_count if request.mcq_count is not None else 0
     essay_count = request.essay_count if request.essay_count is not None else 0
+
+    if mcq_split_total > 0:
+        mcq_count = mcq_split_total
+    if essay_split_total > 0:
+        essay_count = essay_split_total
 
     if mcq_count == 0 and essay_count == 0:
         enabled_types = [t for t in request.question_types if t in {"mcq", "essay"}] or ["mcq", "essay"]
@@ -899,8 +960,16 @@ async def generate_questions(request: GenerateRequest):
         raise HTTPException(status_code=422, detail="At least one question must be requested")
 
     question_plan = {
-        "mcq": {"count": mcq_count, "difficulty": _normalize_diff(request.mcq_difficulty)},
-        "essay": {"count": essay_count, "difficulty": _normalize_diff(request.essay_difficulty)},
+        "mcq": {
+            "count": mcq_count,
+            "difficulty": _normalize_diff(request.mcq_difficulty),
+            "by_difficulty": mcq_split,
+        },
+        "essay": {
+            "count": essay_count,
+            "difficulty": _normalize_diff(request.essay_difficulty),
+            "by_difficulty": essay_split,
+        },
     }
 
     try:
@@ -908,6 +977,7 @@ async def generate_questions(request: GenerateRequest):
             raw_text=raw_text,
             num_questions=total_questions,
             context_hint=request.context_hint,
+            recruiter_instructions=request.recruiter_instructions,
             question_plan=question_plan,
         )
         questions, stats = await generator_critic_pipeline(
@@ -930,14 +1000,31 @@ async def generate_questions(request: GenerateRequest):
                 break
 
             remaining_plan = {
-                "mcq": {"count": rem_mcq, "difficulty": question_plan["mcq"]["difficulty"]},
-                "essay": {"count": rem_essay, "difficulty": question_plan["essay"]["difficulty"]},
+                "mcq": {
+                    "count": rem_mcq,
+                    "difficulty": question_plan["mcq"]["difficulty"],
+                    "by_difficulty": {"Easy": 0, "Medium": 0, "Hard": 0},
+                },
+                "essay": {
+                    "count": rem_essay,
+                    "difficulty": question_plan["essay"]["difficulty"],
+                    "by_difficulty": {"Easy": 0, "Medium": 0, "Hard": 0},
+                },
             }
+
+            current_diff_counts = _count_type_difficulty(questions)
+            for q_type in ["mcq", "essay"]:
+                target_split = question_plan[q_type].get("by_difficulty", {})
+                for diff in ["Easy", "Medium", "Hard"]:
+                    target = int(target_split.get(diff, 0))
+                    produced = int(current_diff_counts[q_type].get(diff, 0))
+                    remaining_plan[q_type]["by_difficulty"][diff] = max(target - produced, 0)
 
             topup_prompt = build_generate_prompt(
                 raw_text=raw_text,
                 num_questions=remaining_total,
                 context_hint=request.context_hint,
+                recruiter_instructions=request.recruiter_instructions,
                 question_plan=remaining_plan,
             )
             extra_questions, extra_stats = await generator_critic_pipeline(
@@ -963,14 +1050,34 @@ async def generate_questions(request: GenerateRequest):
                 break
 
             target_type = "mcq" if rem_mcq >= rem_essay and rem_mcq > 0 else "essay"
+            target_diff = question_plan[target_type]["difficulty"]
+            current_diff_counts = _count_type_difficulty(questions)
+            remaining_split = question_plan[target_type].get("by_difficulty", {})
+            diff_candidates = [
+                diff for diff in ["Easy", "Medium", "Hard"]
+                if int(remaining_split.get(diff, 0)) - int(current_diff_counts[target_type].get(diff, 0)) > 0
+            ]
+            if diff_candidates:
+                target_diff = diff_candidates[0]
+
             single_plan = {
                 "mcq": {
                     "count": 1 if target_type == "mcq" else 0,
                     "difficulty": question_plan["mcq"]["difficulty"],
+                    "by_difficulty": {
+                        "Easy": 1 if target_type == "mcq" and target_diff == "Easy" else 0,
+                        "Medium": 1 if target_type == "mcq" and target_diff == "Medium" else 0,
+                        "Hard": 1 if target_type == "mcq" and target_diff == "Hard" else 0,
+                    },
                 },
                 "essay": {
                     "count": 1 if target_type == "essay" else 0,
                     "difficulty": question_plan["essay"]["difficulty"],
+                    "by_difficulty": {
+                        "Easy": 1 if target_type == "essay" and target_diff == "Easy" else 0,
+                        "Medium": 1 if target_type == "essay" and target_diff == "Medium" else 0,
+                        "Hard": 1 if target_type == "essay" and target_diff == "Hard" else 0,
+                    },
                 },
             }
 
@@ -978,6 +1085,7 @@ async def generate_questions(request: GenerateRequest):
                 raw_text=raw_text,
                 num_questions=1,
                 context_hint=request.context_hint,
+                recruiter_instructions=request.recruiter_instructions,
                 question_plan=single_plan,
             )
             single_questions, single_stats = await generator_critic_pipeline(

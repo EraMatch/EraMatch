@@ -33,6 +33,18 @@ interface Question {
   explanation?: string;
   expectedKeywords?: string[];
   rubric?: string;
+  evidence?: string;
+  referenceAnswer?: string;
+  rubricYesNoChecks?: { id?: number; check?: string; weight?: number }[];
+  needsReview?: boolean;
+  criticScore?: number;
+  criticWeightedScore?: number;
+  criticFeedback?: string;
+  criticChecks?: { criterion?: string; verdict?: string; reason?: string; weight?: number }[];
+  retryCount?: number;
+  importType?: string;
+  importJobId?: string;
+  sourceFilename?: string;
 }
 
 // Interface used by the shared editors
@@ -51,6 +63,19 @@ interface QuestionVariant {
   expectedKeywords?: string[];
   maxWords?: number;
   rubric?: string;
+  // Imported metadata
+  evidence?: string;
+  referenceAnswer?: string;
+  rubricYesNoChecks?: { id?: number; check?: string; weight?: number }[];
+  needsReview?: boolean;
+  criticScore?: number;
+  criticWeightedScore?: number;
+  criticFeedback?: string;
+  criticChecks?: { criterion?: string; verdict?: string; reason?: string; weight?: number }[];
+  retryCount?: number;
+  importType?: string;
+  importJobId?: string;
+  sourceFilename?: string;
   // Code
   codeTemplate?: string;
   testCases?: any[];
@@ -182,7 +207,20 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       // Essay
       maxWords: q.maxWords,
       expectedKeywords: q.expectedKeywords,
-      rubric: q.rubric
+      rubric: q.rubric,
+      // Imported metadata
+      evidence: q.evidence,
+      referenceAnswer: q.referenceAnswer,
+      rubricYesNoChecks: q.rubricYesNoChecks,
+      needsReview: q.needsReview,
+      criticScore: q.criticScore,
+      criticWeightedScore: q.criticWeightedScore,
+      criticFeedback: q.criticFeedback,
+      criticChecks: q.criticChecks,
+      retryCount: q.retryCount,
+      importType: q.importType,
+      importJobId: q.importJobId,
+      sourceFilename: q.sourceFilename
     };
   };
 
@@ -215,7 +253,19 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       testCases: v.testCases,
       maxWords: v.maxWords,
       expectedKeywords: v.expectedKeywords,
-      rubric: v.rubric
+      rubric: v.rubric,
+      evidence: v.evidence,
+      referenceAnswer: v.referenceAnswer,
+      rubricYesNoChecks: v.rubricYesNoChecks,
+      needsReview: v.needsReview,
+      criticScore: v.criticScore,
+      criticWeightedScore: v.criticWeightedScore,
+      criticFeedback: v.criticFeedback,
+      criticChecks: v.criticChecks,
+      retryCount: v.retryCount,
+      importType: v.importType,
+      importJobId: v.importJobId,
+      sourceFilename: v.sourceFilename
     };
   };
 
@@ -1074,6 +1124,63 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                       <span className="text-[#9ca3af]">{question.createdAt}</span>
                     </div>
                   </div>
+
+                  {(question.importJobId || question.evidence || question.referenceAnswer || question.criticFeedback || (question.criticChecks?.length || 0) > 0) && (
+                    <div className="mt-4 rounded-[12px] border border-[#e5e7eb] bg-[#f8fafc] p-4">
+                      <div className="flex flex-wrap items-center gap-2 mb-3">
+                        <span className="px-2.5 py-1 text-[12px] rounded-full bg-white text-[#334155] border border-[#cbd5e1]">
+                          Imported Metadata
+                        </span>
+                        {question.importType && (
+                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 capitalize">
+                            {question.importType}
+                          </span>
+                        )}
+                        {typeof question.criticWeightedScore === 'number' && (
+                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Critic Score {(question.criticWeightedScore * 100).toFixed(1)}%
+                          </span>
+                        )}
+                        {question.needsReview && (
+                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                            Needs Review
+                          </span>
+                        )}
+                        {typeof question.retryCount === 'number' && question.retryCount > 0 && (
+                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-white text-[#475569] border border-[#cbd5e1]">
+                            Retry {question.retryCount}
+                          </span>
+                        )}
+                      </div>
+
+                      {question.referenceAnswer && (
+                        <div className="mb-3">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Reference Answer</div>
+                          <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap line-clamp-3">{question.referenceAnswer}</p>
+                        </div>
+                      )}
+
+                      {question.evidence && (
+                        <div className="mb-3">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Evidence</div>
+                          <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap line-clamp-3">{question.evidence}</p>
+                        </div>
+                      )}
+
+                      {question.criticFeedback && (
+                        <div className="mb-3">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Critic Feedback</div>
+                          <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap line-clamp-3">{question.criticFeedback}</p>
+                        </div>
+                      )}
+
+                      {(question.criticChecks?.length || 0) > 0 && (
+                        <div className="text-[13px] text-[#334155]">
+                          {question.criticChecks!.filter(c => String(c.verdict || '').toUpperCase() === 'NO').length} failed checklist item(s) out of {question.criticChecks!.length}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

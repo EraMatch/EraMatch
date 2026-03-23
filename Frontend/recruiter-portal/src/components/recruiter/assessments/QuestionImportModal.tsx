@@ -19,7 +19,6 @@ import { api } from '../../../services/api';
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ImportPath = 'generative' | 'extraction' | 'csv';
 type Step = 1 | 2 | 3;
-type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
 interface ImportPreflightInfo {
   is_pdf: boolean;
@@ -80,9 +79,14 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [mcqCount, setMcqCount] = useState(5);
   const [essayCount, setEssayCount] = useState(5);
-  const [mcqDifficulty, setMcqDifficulty] = useState<Difficulty>('Medium');
-  const [essayDifficulty, setEssayDifficulty] = useState<Difficulty>('Medium');
+  const [mcqEasyCount, setMcqEasyCount] = useState(1);
+  const [mcqMediumCount, setMcqMediumCount] = useState(3);
+  const [mcqHardCount, setMcqHardCount] = useState(1);
+  const [essayEasyCount, setEssayEasyCount] = useState(1);
+  const [essayMediumCount, setEssayMediumCount] = useState(3);
+  const [essayHardCount, setEssayHardCount] = useState(1);
   const [contextHint, setContextHint] = useState('');
+  const [recruiterInstructions, setRecruiterInstructions] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isPreflighting, setIsPreflighting] = useState(false);
@@ -143,14 +147,28 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
   const handleSubmit = async () => {
     if (!file || !selectedPath) return;
     const totalQuestions = mcqCount + essayCount;
+    const mcqDifficultySum = mcqEasyCount + mcqMediumCount + mcqHardCount;
+    const essayDifficultySum = essayEasyCount + essayMediumCount + essayHardCount;
 
     if (selectedPath === 'generative') {
-      if (mcqCount < 0 || essayCount < 0) {
+      if (
+        mcqCount < 0 || essayCount < 0 ||
+        mcqEasyCount < 0 || mcqMediumCount < 0 || mcqHardCount < 0 ||
+        essayEasyCount < 0 || essayMediumCount < 0 || essayHardCount < 0
+      ) {
         setError('Question counts cannot be negative.');
         return;
       }
       if (totalQuestions <= 0) {
         setError('Please request at least one generated question.');
+        return;
+      }
+      if (mcqDifficultySum !== mcqCount) {
+        setError('MCQ difficulty counts must add up to MCQ total count.');
+        return;
+      }
+      if (essayDifficultySum !== essayCount) {
+        setError('Essay difficulty counts must add up to Essay total count.');
         return;
       }
     }
@@ -173,11 +191,18 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
         selectedPath,
         totalQuestions,
         contextHint,
+        recruiterInstructions,
         types,
         mcqCount,
         essayCount,
-        mcqDifficulty,
-        essayDifficulty,
+        'Medium',
+        'Medium',
+        mcqEasyCount,
+        mcqMediumCount,
+        mcqHardCount,
+        essayEasyCount,
+        essayMediumCount,
+        essayHardCount,
         Boolean(preflight?.requires_chunking),
         chunkPageSize,
       );
@@ -287,56 +312,54 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                       <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
                         MCQ count
                       </label>
-                      <select
+                      <input
+                        type="number"
+                        min={0}
                         value={mcqCount}
-                        onChange={e => setMcqCount(Number(e.target.value))}
+                        onChange={e => setMcqCount(Math.max(0, Number(e.target.value) || 0))}
                         style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
-                      >
-                        {Array.from({ length: 11 }, (_, i) => i).map(n => <option key={`mcq-${n}`} value={n}>{n}</option>)}
-                      </select>
+                      />
                     </div>
                     <div>
                       <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
-                        MCQ difficulty
+                        Essay count
                       </label>
-                      <select
-                        value={mcqDifficulty}
-                        onChange={e => setMcqDifficulty(e.target.value as Difficulty)}
+                      <input
+                        type="number"
+                        min={0}
+                        value={essayCount}
+                        onChange={e => setEssayCount(Math.max(0, Number(e.target.value) || 0))}
                         style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
-                      >
-                        <option value="Easy">Easy</option>
-                        <option value="Medium">Medium</option>
-                        <option value="Hard">Hard</option>
-                      </select>
+                      />
                     </div>
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                     <div>
-                      <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
-                        Essay count
+                      <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.35rem' }}>
+                        MCQ difficulty split (Easy / Medium / Hard)
                       </label>
-                      <select
-                        value={essayCount}
-                        onChange={e => setEssayCount(Number(e.target.value))}
-                        style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
-                      >
-                        {Array.from({ length: 11 }, (_, i) => i).map(n => <option key={`essay-${n}`} value={n}>{n}</option>)}
-                      </select>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+                        <input type="number" min={0} value={mcqEasyCount} onChange={e => setMcqEasyCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Easy" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
+                        <input type="number" min={0} value={mcqMediumCount} onChange={e => setMcqMediumCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Medium" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
+                        <input type="number" min={0} value={mcqHardCount} onChange={e => setMcqHardCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Hard" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: (mcqEasyCount + mcqMediumCount + mcqHardCount) === mcqCount ? '#10b981' : '#f59e0b', marginTop: '0.3rem' }}>
+                        Split total: {mcqEasyCount + mcqMediumCount + mcqHardCount} / {mcqCount}
+                      </div>
                     </div>
                     <div>
-                      <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
-                        Essay difficulty
+                      <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.35rem' }}>
+                        Essay difficulty split (Easy / Medium / Hard)
                       </label>
-                      <select
-                        value={essayDifficulty}
-                        onChange={e => setEssayDifficulty(e.target.value as Difficulty)}
-                        style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
-                      >
-                        <option value="Easy">Easy</option>
-                        <option value="Medium">Medium</option>
-                        <option value="Hard">Hard</option>
-                      </select>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+                        <input type="number" min={0} value={essayEasyCount} onChange={e => setEssayEasyCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Easy" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
+                        <input type="number" min={0} value={essayMediumCount} onChange={e => setEssayMediumCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Medium" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
+                        <input type="number" min={0} value={essayHardCount} onChange={e => setEssayHardCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Hard" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: (essayEasyCount + essayMediumCount + essayHardCount) === essayCount ? '#10b981' : '#f59e0b', marginTop: '0.3rem' }}>
+                        Split total: {essayEasyCount + essayMediumCount + essayHardCount} / {essayCount}
+                      </div>
                     </div>
                   </div>
 
@@ -353,6 +376,19 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                       value={contextHint}
                       onChange={e => setContextHint(e.target.value)}
                       style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
+                      Recruiter instructions <span style={{ fontWeight: 400 }}>(optional)</span>
+                    </label>
+                    <textarea
+                      placeholder="e.g. Focus on practical scenarios, avoid trick questions, keep wording concise."
+                      value={recruiterInstructions}
+                      onChange={e => setRecruiterInstructions(e.target.value)}
+                      rows={3}
+                      style={{ width: '100%', padding: '0.65rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem', boxSizing: 'border-box', resize: 'vertical' }}
                     />
                   </div>
 

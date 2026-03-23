@@ -319,11 +319,18 @@ async def start_question_import(
     import_type: str = Form("generative"),      # generative | extraction | csv
     num_questions: int = Form(10),
     context_hint: str = Form(""),
+    recruiter_instructions: str = Form(""),
     question_types: str = Form("mcq,essay"),    # comma-separated
     mcq_count: int = Form(5),
     essay_count: int = Form(5),
     mcq_difficulty: str = Form("Medium"),
     essay_difficulty: str = Form("Medium"),
+    mcq_easy_count: int = Form(0),
+    mcq_medium_count: int = Form(0),
+    mcq_hard_count: int = Form(0),
+    essay_easy_count: int = Form(0),
+    essay_medium_count: int = Form(0),
+    essay_hard_count: int = Form(0),
     process_in_chunks: bool = Form(False),
     chunk_page_size: int = Form(MAX_PDF_PAGES),
 ):
@@ -357,6 +364,25 @@ async def start_question_import(
     q_types = [t.strip() for t in question_types.split(",") if t.strip()]
 
     if import_type == "generative":
+        if any(v < 0 for v in [
+            mcq_count,
+            essay_count,
+            mcq_easy_count,
+            mcq_medium_count,
+            mcq_hard_count,
+            essay_easy_count,
+            essay_medium_count,
+            essay_hard_count,
+        ]):
+            raise HTTPException(status_code=422, detail="Question counts cannot be negative")
+
+        mcq_split_total = mcq_easy_count + mcq_medium_count + mcq_hard_count
+        essay_split_total = essay_easy_count + essay_medium_count + essay_hard_count
+
+        if mcq_split_total > 0 or essay_split_total > 0:
+            mcq_count = mcq_split_total
+            essay_count = essay_split_total
+
         total_requested = mcq_count + essay_count
         if total_requested <= 0:
             raise HTTPException(status_code=422, detail="At least one question must be requested")
@@ -414,11 +440,18 @@ async def start_question_import(
             import_type=import_type,
             num_questions=num_questions,
             context_hint=context_hint,
+            recruiter_instructions=recruiter_instructions,
             question_types=q_types,
             mcq_count=mcq_count,
             essay_count=essay_count,
             mcq_difficulty=mcq_difficulty,
             essay_difficulty=essay_difficulty,
+            mcq_easy_count=mcq_easy_count,
+            mcq_medium_count=mcq_medium_count,
+            mcq_hard_count=mcq_hard_count,
+            essay_easy_count=essay_easy_count,
+            essay_medium_count=essay_medium_count,
+            essay_hard_count=essay_hard_count,
             page_start=start_page,
             page_end=end_page,
             chunk_index=(idx + 1) if len(chunks) > 1 else None,
@@ -627,26 +660,33 @@ async def approve_import_questions(
     imported = 0
     for dq in request.questions:
         q_type = type_map.get(dq.type, "essay")
-        config: dict = {}
+        config: dict = {
+            "evidence": dq.evidence,
+            "reference_answer": dq.reference_answer,
+            "explanation": dq.explanation,
+            "rubric": dq.rubric,
+            "rubric_yes_no_checks": dq.rubric_yes_no_checks,
+            "critic_score": dq.critic_score,
+            "critic_weighted_score": dq.critic_weighted_score,
+            "critic_feedback": dq.critic_feedback,
+            "critic_checks": dq.critic_checks,
+            "retry_count": dq.retry_count,
+            "needs_review": dq.needs_review,
+            "import_type": job.import_type,
+            "import_job_id": str(job.id),
+            "source_filename": job.source_filename,
+        }
         correct_answer = None
 
         if q_type == "mcq":
             config["options"] = dq.options or []
             config["multiple_correct"] = False
-            config["explanation"] = dq.explanation
-            config["evidence"] = dq.evidence
-            config["reference_answer"] = dq.reference_answer
             if dq.correct_answer is not None:
                 correct_answer = {"answer": dq.correct_answer}
         elif q_type == "essay":
             config["max_words"] = dq.max_words or 500
-            config["rubric"] = dq.rubric
-            config["evidence"] = dq.evidence
-            config["reference_answer"] = dq.reference_answer
         elif q_type == "code":
             config["language"] = "python"
-            config["evidence"] = dq.evidence
-            config["reference_answer"] = dq.reference_answer
 
         new_q = QuestionBank(
             organization_id=current_org_id,

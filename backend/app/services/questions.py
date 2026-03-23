@@ -93,7 +93,19 @@ class QuestionService:
                 memoryLimit=config.get("memory_limit"),
                 maxWords=config.get("max_words"),
                 expectedKeywords=config.get("expected_keywords"),
-                rubric=config.get("rubric")
+                rubric=config.get("rubric"),
+                evidence=config.get("evidence"),
+                referenceAnswer=config.get("reference_answer"),
+                rubricYesNoChecks=config.get("rubric_yes_no_checks"),
+                needsReview=config.get("needs_review"),
+                criticScore=config.get("critic_score"),
+                criticWeightedScore=config.get("critic_weighted_score"),
+                criticFeedback=config.get("critic_feedback"),
+                criticChecks=config.get("critic_checks"),
+                retryCount=config.get("retry_count"),
+                importType=config.get("import_type"),
+                importJobId=config.get("import_job_id"),
+                sourceFilename=config.get("source_filename")
             )
             response_items.append(item)
         
@@ -179,7 +191,19 @@ class QuestionService:
             memoryLimit=data.memoryLimit,
             maxWords=data.maxWords,
             expectedKeywords=data.expectedKeywords,
-            rubric=data.rubric
+            rubric=data.rubric,
+            evidence=None,
+            referenceAnswer=None,
+            rubricYesNoChecks=None,
+            needsReview=None,
+            criticScore=None,
+            criticWeightedScore=None,
+            criticFeedback=None,
+            criticChecks=None,
+            retryCount=None,
+            importType=None,
+            importJobId=None,
+            sourceFilename=None
         )
 
     async def toggle_favorite(self, question_id: UUID) -> bool:

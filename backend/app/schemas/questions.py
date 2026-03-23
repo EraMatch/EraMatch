@@ -61,5 +61,18 @@ class QuestionBankResponseItem(BaseModel):
     maxWords: int | None = None
     expectedKeywords: list[str] | None = None
     rubric: str | None = None
+    # Imported metadata / reviewer signals
+    evidence: str | None = None
+    referenceAnswer: str | None = None
+    rubricYesNoChecks: list[dict] | None = None
+    needsReview: bool | None = None
+    criticScore: float | None = None
+    criticWeightedScore: float | None = None
+    criticFeedback: str | None = None
+    criticChecks: list[dict] | None = None
+    retryCount: int | None = None
+    importType: str | None = None
+    importJobId: str | None = None
+    sourceFilename: str | None = None
 
     model_config = ConfigDict(from_attributes=True)

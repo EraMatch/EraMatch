@@ -483,11 +483,18 @@ export const recruiterService = {
         importType: 'generative' | 'extraction' | 'csv',
         numQuestions: number = 10,
         contextHint: string = '',
+        recruiterInstructions: string = '',
         questionTypes: string = 'mcq,essay',
         mcqCount: number = 5,
         essayCount: number = 5,
         mcqDifficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium',
         essayDifficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium',
+        mcqEasyCount: number = 0,
+        mcqMediumCount: number = 0,
+        mcqHardCount: number = 0,
+        essayEasyCount: number = 0,
+        essayMediumCount: number = 0,
+        essayHardCount: number = 0,
         processInChunks: boolean = false,
         chunkPageSize: number = 20
     ) => {
@@ -496,11 +503,18 @@ export const recruiterService = {
         formData.append('import_type', importType);
         formData.append('num_questions', String(numQuestions));
         formData.append('context_hint', contextHint);
+        formData.append('recruiter_instructions', recruiterInstructions);
         formData.append('question_types', questionTypes);
         formData.append('mcq_count', String(mcqCount));
         formData.append('essay_count', String(essayCount));
         formData.append('mcq_difficulty', mcqDifficulty);
         formData.append('essay_difficulty', essayDifficulty);
+        formData.append('mcq_easy_count', String(mcqEasyCount));
+        formData.append('mcq_medium_count', String(mcqMediumCount));
+        formData.append('mcq_hard_count', String(mcqHardCount));
+        formData.append('essay_easy_count', String(essayEasyCount));
+        formData.append('essay_medium_count', String(essayMediumCount));
+        formData.append('essay_hard_count', String(essayHardCount));
         formData.append('process_in_chunks', processInChunks ? 'true' : 'false');
         formData.append('chunk_page_size', String(chunkPageSize));
         return fetchAPI<{ job_id: string; status: string; message: string; chunked?: boolean; chunk_count?: number; job_ids?: string[] }>(
