@@ -14,6 +14,7 @@ Two endpoints:
 """
 import json
 import re
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from config import settings
@@ -23,6 +24,25 @@ from services.ollama import chat_completion
 router = APIRouter()
 
 QUESTION_IMPORT_MODEL = settings.OLLAMA_QUESTION_IMPORT_MODEL or settings.OLLAMA_MODEL
+PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts" / "question_import"
+
+
+def _load_prompt_template(template_name: str) -> str:
+    template_path = PROMPTS_DIR / template_name
+    try:
+        return template_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prompt template load failed: {template_path}",
+        ) from exc
+
+
+def _render_prompt_template(template_name: str, replacements: dict[str, str]) -> str:
+    content = _load_prompt_template(template_name)
+    for key, value in replacements.items():
+        content = content.replace(f"{{{{{key}}}}}", value)
+    return content
 
 
 def _raise_mapped_llm_error(exc: Exception) -> None:
@@ -49,7 +69,7 @@ def _raise_mapped_llm_error(exc: Exception) -> None:
 # ─── QAG Critic Tests (HD-Eval Boolean test cases) ───────────────────────────
 CRITIC_TESTS = [
     "Is the question text unambiguous and clearly written?",
-    "Is the question fully self-contained, without referring to external context like 'the code above' or 'the provided snippet'?",
+    "Is the question fully self-contained as a standalone item, with no references to missing context (e.g., 'code above', 'provided snippet', 'following passage', 'in this repository')?",
     "Can the correct answer be definitively verified from the provided options or rubric?",
     "Is the difficulty label appropriate for the complexity of the question?",
     "Are the wrong options (distractors) plausible but clearly distinguishable from the correct answer?",
@@ -177,77 +197,25 @@ def build_generate_prompt(
         if extra_instructions else ""
     )
 
-    return f"""You are an expert assessment designer. Create {num_questions} high-quality assessment questions from the material below.
-{f'Context: {context_hint}' if context_hint else ''}
-REQUIRED DISTRIBUTION:
-{chr(10).join(plan_lines)}
-{recruiter_instructions_block}
-
-MATERIAL:
-{raw_text[:40000]}
-
-INSTRUCTIONS:
-- Return EXACTLY {num_questions} questions.
-- For MCQ: 4 options, exactly one correct, plausible distractors
-- For Essay: include a reference_answer and grading rubric
-- Difficulty: Easy (recall), Medium (application), Hard (analysis/synthesis)
-- Questions must be directly answerable from the material
-- Each question must be fully self-contained. A candidate should answer using only the question text and options/rubric.
-- Never use vague references such as "the code above", "the provided snippet", "the given algorithm", "in the context", or similar.
-- Never use "all of the above" or "none of the above"
-- Do NOT use fabricated source phrases such as "as mentioned in the PDF", "in the provided YAML", "in the lecture", or similar unless that wording appears verbatim in MATERIAL.
-- If the material does not explicitly mention a specific artifact (like YAML/file/lecture), avoid naming it.
-- Evidence must be a short verbatim quote or close paraphrase grounded in MATERIAL only.
-
-Respond ONLY with a valid JSON array. Each element must exactly match this schema:
-{{
-  "type": "mcq" | "essay",
-  "text": "<question text>",
-  "difficulty": "Easy" | "Medium" | "Hard",
-  "category": "<inferred topic category>",
-  "tags": ["<tag1>", "<tag2>"],
-  "options": ["<opt A>", "<opt B>", "<opt C>", "<opt D>"] or null,
-  "correct_answer": <0-based index> or null,
-    "evidence": "<short evidence snippet from material supporting the answer>" or null,
-    "reference_answer": "<short model answer for recruiter review>" or null,
-  "explanation": "<why this is correct>",
-  "rubric": "<grading rubric for essay>" or null,
-  "max_words": <integer> or null
-}}
-
-Output ONLY the JSON array. No preamble, no commentary."""
+    return _render_prompt_template(
+        "generate.md",
+        {
+            "NUM_QUESTIONS": str(num_questions),
+            "CONTEXT_HINT": f"Context: {context_hint}" if context_hint else "",
+            "PLAN_LINES": "\n".join(plan_lines),
+            "RECRUITER_INSTRUCTIONS_BLOCK": recruiter_instructions_block.strip(),
+            "RAW_TEXT": raw_text[:40000],
+        },
+    )
 
 
 def build_extract_prompt(raw_text: str) -> str:
-    return f"""You are a parsing assistant. The following text contains assessment questions (possibly from an exam paper, interview guide, or study document).
-
-Extract EVERY question you can find. For each question:
-- Determine its type: mcq | essay | code
-- If multiple choice, extract all options
-- If the correct answer is indicated, extract it (as 0-based index)
-- Infer difficulty from complexity
-- Infer a category/topic from the question
-
-TEXT:
-{raw_text[:40000]}
-
-Respond ONLY with a valid JSON array using the same schema:
-{{
-  "type": "mcq" | "essay" | "code",
-  "text": "<question text>",
-  "difficulty": "Easy" | "Medium" | "Hard",
-  "category": "<topic>",
-  "tags": [],
-  "options": ["<opt A>", ...] or null,
-  "correct_answer": <0-based index> or null,
-    "evidence": null,
-    "reference_answer": null,
-  "explanation": null,
-  "rubric": null,
-  "max_words": null
-}}
-
-Output ONLY the JSON array. No preamble, no commentary."""
+    return _render_prompt_template(
+        "extract.md",
+        {
+            "RAW_TEXT": raw_text[:40000],
+        },
+    )
 
 
 def build_regen_prompt(
@@ -255,18 +223,14 @@ def build_regen_prompt(
     original_question: dict,
     critic_feedback: str,
 ) -> str:
-    return f"""You are an expert assessment designer. A question you generated was rejected by a quality critic.
-
-ORIGINAL QUESTION:
-{json.dumps(original_question, indent=2)}
-
-CRITIC FEEDBACK:
-{critic_feedback}
-
-MATERIAL (for reference):
-{raw_text[:20000]}
-
-Rewrite the question to address all critic concerns. Return ONLY the single improved question as a JSON object (same schema). No commentary."""
+    return _render_prompt_template(
+        "regen.md",
+        {
+            "ORIGINAL_QUESTION": json.dumps(original_question, indent=2),
+            "CRITIC_FEEDBACK": critic_feedback,
+            "RAW_TEXT": raw_text[:20000],
+        },
+    )
 
 
 def build_refine_question_prompt(
@@ -276,77 +240,28 @@ def build_refine_question_prompt(
     failed_criteria: list[str],
 ) -> str:
     failed_text = "\n".join(f"- {c}" for c in failed_criteria) if failed_criteria else "- No explicit failed criteria provided"
-    return f"""You are an expert assessment designer refining a generated question package.
-
-TASK:
-- Refine the FULL question payload using critic failures.
-- Handle all question types (mcq, essay, code).
-- Keep the question fully self-contained: no references like "the code above", "the provided snippet", "the given algorithm", or "in the context".
-- If the question is essay/code, improve rubric quality if needed.
-- If the question includes rubric-based yes/no checks, ensure they remain coherent with the refined rubric.
-- Ground all content in the provided material only.
-
-QUESTION TO REFINE:
-{json.dumps(question, indent=2)}
-
-CRITIC FEEDBACK:
-{critic_feedback or 'N/A'}
-
-FAILED CRITERIA:
-{failed_text}
-
-MATERIAL:
-{raw_text[:20000]}
-
-Return ONLY JSON as a single question object using this schema:
-{{
-  "type": "mcq" | "essay" | "code",
-  "text": "<question text>",
-  "difficulty": "Easy" | "Medium" | "Hard",
-  "category": "<topic>",
-  "tags": ["<tag1>", "<tag2>"],
-  "options": ["<opt A>", "<opt B>", "<opt C>", "<opt D>"] or null,
-  "correct_answer": <0-based index> or null,
-  "evidence": "<evidence>" or null,
-  "reference_answer": "<reference answer>" or null,
-  "explanation": "<explanation>" or null,
-  "rubric": "<rubric>" or null,
-  "max_words": <integer> or null
-}}"""
+    return _render_prompt_template(
+        "refine_question.md",
+        {
+            "QUESTION": json.dumps(question, indent=2),
+            "CRITIC_FEEDBACK": critic_feedback or "N/A",
+            "FAILED_CRITERIA": failed_text,
+            "RAW_TEXT": raw_text[:20000],
+        },
+    )
 
 
 # ─── Critic Agent ────────────────────────────────────────────────────────────
 
 def build_critic_prompt(question: dict) -> str:
-    return f"""You are an expert assessment quality auditor (HD-Eval + QAG framework).
-Evaluate the following question against each criterion.
-
-QUESTION:
-{json.dumps(question, indent=2)}
-
-CRITERIA (HD-Eval Boolean QAG Tests):
-{chr(10).join(f'{i+1}. {test}' for i, test in enumerate(CRITIC_TESTS))}
-
-For each criterion, assign:
-  1.0 = Fully passes
-  0.5 = Partially passes (needs minor edit)
-  0.0 = Fails
-
-Then compute: OVERALL_SCORE = average of all scores
-
-Respond EXACTLY in this format (no extra text):
-CRITERION_1: YES|NO
-CRITERION_2: YES|NO
-CRITERION_3: YES|NO
-CRITERION_4: YES|NO
-CRITERION_5: YES|NO
-CRITERION_6: YES|NO
-CRITERION_7: YES|NO
-CRITERION_8: YES|NO
-CRITERION_9: YES|NO
-CRITERION_10: YES|NO
-OVERALL_SCORE: <yes_count/10 as decimal between 0.0 and 1.0>
-FEEDBACK: <1-2 sentences explaining what to fix, or "Approved" if all passed>"""
+    criteria_lines = "\n".join(f"{i+1}. {test}" for i, test in enumerate(CRITIC_TESTS))
+    return _render_prompt_template(
+        "critic.md",
+        {
+            "QUESTION": json.dumps(question, indent=2),
+            "CRITERIA_LINES": criteria_lines,
+        },
+    )
 
 
 async def run_critic(question: dict) -> tuple[float, str, list[dict]]:
@@ -465,18 +380,12 @@ def parse_questions_json(content: str) -> list[dict]:
 
 async def repair_questions_json(content: str) -> list[dict]:
     """Ask the model to repair malformed JSON into a valid question array."""
-    repair_prompt = f"""You are a strict JSON repair assistant.
-The following content should represent a JSON array of question objects but is malformed.
-Fix it and return ONLY a valid JSON array.
-
-CONTENT TO REPAIR:
-{content}
-
-RULES:
-- Return only JSON
-- Top-level must be an array
-- Preserve original meaning as much as possible
-- Do not add markdown fences"""
+    repair_prompt = _render_prompt_template(
+        "repair_json.md",
+        {
+            "CONTENT": content,
+        },
+    )
 
     repaired = await chat_completion(
         messages=[{"role": "user", "content": repair_prompt}],
@@ -487,28 +396,12 @@ RULES:
 
 
 def build_rubric_decomposition_prompt(question: dict) -> str:
-    return f"""You are a strict rubric decomposition assistant.
-Given the question package below, produce exactly 10 binary YES/NO checks that a reviewer can use to grade a student's answer.
-
-QUESTION PACKAGE:
-{json.dumps(question, indent=2)}
-
-RULES:
-- Checks must be derived from the rubric/reference answer/evidence.
-- Each check must be clear, atomic, and answerable with YES or NO.
-- Avoid overlap and avoid vague wording.
-- Do not invent external facts.
-- Return exactly 10 checks.
-- Weights must sum to 1.0.
-
-Return ONLY valid JSON in this exact shape:
-{{
-  "checks": [
-    {{"id": 1, "check": "...", "weight": 0.10}},
-    ...,
-    {{"id": 10, "check": "...", "weight": 0.10}}
-  ]
-}}"""
+    return _render_prompt_template(
+        "rubric_decomposition.md",
+        {
+            "QUESTION": json.dumps(question, indent=2),
+        },
+    )
 
 
 def _fallback_rubric_checks(question: dict) -> list[dict]:

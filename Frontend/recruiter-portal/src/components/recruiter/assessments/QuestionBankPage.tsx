@@ -108,6 +108,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const [loading, setLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [togglingFavorites, setTogglingFavorites] = useState<Record<string, boolean>>({});
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Import state ────────────────────────────────────────────────────────
@@ -178,6 +179,11 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       setViewMode('import-review-list');
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    const validIds = new Set(questions.map(q => q.id));
+    setSelectedQuestionIds(prev => prev.filter(id => validIds.has(id)));
+  }, [questions]);
 
   // --- Data Conversion Helpers ---
 
@@ -327,6 +333,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
         setIsActionLoading(true);
         await api.recruiter.deleteQuestionBank(id);
         setQuestions(questions.filter(q => q.id !== id));
+        setSelectedQuestionIds(prev => prev.filter(qId => qId !== id));
       } catch (err) {
         console.error("Failed to delete question:", err);
         alert("Failed to delete question.");
@@ -467,6 +474,56 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
 
     return matchesSearch && matchesCategory && matchesDifficulty && matchesType;
   });
+
+  const filteredQuestionIds = filteredQuestions.map(q => q.id);
+  const allFilteredSelected = filteredQuestionIds.length > 0 && filteredQuestionIds.every(id => selectedQuestionIds.includes(id));
+
+  const toggleSelectQuestion = (id: string) => {
+    setSelectedQuestionIds(prev => prev.includes(id) ? prev.filter(qId => qId !== id) : [...prev, id]);
+  };
+
+  const toggleSelectAllFilteredQuestions = () => {
+    if (allFilteredSelected) {
+      setSelectedQuestionIds(prev => prev.filter(id => !filteredQuestionIds.includes(id)));
+      return;
+    }
+
+    setSelectedQuestionIds(prev => {
+      const merged = new Set([...prev, ...filteredQuestionIds]);
+      return Array.from(merged);
+    });
+  };
+
+  const handleDeleteSelectedQuestions = async () => {
+    if (selectedQuestionIds.length === 0) return;
+
+    const confirmed = window.confirm(`Delete ${selectedQuestionIds.length} selected question(s)? This action cannot be undone.`);
+    if (!confirmed) return;
+
+    try {
+      setIsActionLoading(true);
+      const results = await Promise.allSettled(
+        selectedQuestionIds.map((id) => api.recruiter.deleteQuestionBank(id))
+      );
+
+      const successIds = selectedQuestionIds.filter((_, idx) => results[idx].status === 'fulfilled');
+      const failedCount = selectedQuestionIds.length - successIds.length;
+
+      if (successIds.length > 0) {
+        setQuestions(prev => prev.filter(q => !successIds.includes(q.id)));
+        setSelectedQuestionIds(prev => prev.filter(id => !successIds.includes(id)));
+      }
+
+      if (failedCount > 0) {
+        alert(`Deleted ${successIds.length} question(s). ${failedCount} failed to delete.`);
+      }
+    } catch (err) {
+      console.error('Failed to delete selected questions:', err);
+      alert('Failed to delete selected questions.');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
@@ -1043,6 +1100,28 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               <p className="text-sm text-gray-600">
                 Showing <span className="font-medium text-gray-900">{filteredQuestions.length}</span> questions
               </p>
+              <div className="flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#e5e7eb] bg-white text-[13px] text-[#374151]">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleSelectAllFilteredQuestions}
+                    disabled={filteredQuestions.length === 0 || isActionLoading}
+                    className="w-4 h-4 rounded border-gray-300"
+                  />
+                  <span>Select all shown</span>
+                </label>
+                {selectedQuestionIds.length > 0 && (
+                  <button
+                    onClick={handleDeleteSelectedQuestions}
+                    disabled={isActionLoading}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-rose-200 bg-rose-50 text-rose-700 text-[13px] font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 size={14} />
+                    {isActionLoading ? 'Deleting...' : `Delete Selected (${selectedQuestionIds.length})`}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Questions List */}
@@ -1055,6 +1134,15 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedQuestionIds.includes(question.id)}
+                          onChange={() => toggleSelectQuestion(question.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          disabled={isActionLoading}
+                          aria-label="Select question"
+                          className="w-4 h-4 rounded border-gray-300"
+                        />
                         <h3 className="text-[16px] font-medium font-['Arimo',sans-serif] text-[#111827]">{question.text}</h3>
                         <button
                           onClick={() => handleToggleFavorite(question.id)}
