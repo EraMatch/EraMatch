@@ -89,6 +89,9 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const [showImportModal, setShowImportModal] = useState(false);
   const [pendingReviewJobId, setPendingReviewJobId] = useState<string | null>(null);
   const [importJobs, setImportJobs] = useState<any[]>([]);
+  const [selectedImportJobIds, setSelectedImportJobIds] = useState<string[]>([]);
+  const [deletingImportJobIds, setDeletingImportJobIds] = useState<string[]>([]);
+  const [isDeletingImportJobs, setIsDeletingImportJobs] = useState(false);
 
   const filterPendingReviewJobs = (jobs: any[]) => {
     return (jobs || []).filter((j: any) => {
@@ -482,6 +485,48 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       const bTime = new Date(b?.created_at || 0).getTime();
       return bTime - aTime;
     });
+    const sortedJobIds = sortedJobs.map((j: any) => String(j?.job_id || j?.id || '')).filter(Boolean);
+    const allSelected = sortedJobIds.length > 0 && sortedJobIds.every((id: string) => selectedImportJobIds.includes(id));
+
+    const toggleSelectAllImports = () => {
+      if (allSelected) {
+        setSelectedImportJobIds([]);
+        return;
+      }
+      setSelectedImportJobIds(sortedJobIds);
+    };
+
+    const toggleSelectImport = (jobId: string) => {
+      setSelectedImportJobIds(prev => prev.includes(jobId) ? prev.filter(id => id !== jobId) : [...prev, jobId]);
+    };
+
+    const handleDeleteSelectedImports = async () => {
+      if (selectedImportJobIds.length === 0 || isDeletingImportJobs) return;
+      const confirmed = window.confirm(`Delete ${selectedImportJobIds.length} selected import review job(s)? This action cannot be undone.`);
+      if (!confirmed) return;
+
+      setIsDeletingImportJobs(true);
+      setDeletingImportJobIds(selectedImportJobIds);
+
+      const results = await Promise.allSettled(
+        selectedImportJobIds.map((jobId) => api.recruiter.deleteBackgroundTask(jobId, 'question_import'))
+      );
+
+      const successIds = selectedImportJobIds.filter((_, idx) => results[idx].status === 'fulfilled');
+      const failedCount = selectedImportJobIds.length - successIds.length;
+
+      if (successIds.length > 0) {
+        setImportJobs(prev => prev.filter((job: any) => !successIds.includes(String(job?.job_id || job?.id || ''))));
+        setSelectedImportJobIds(prev => prev.filter(id => !successIds.includes(id)));
+      }
+
+      if (failedCount > 0) {
+        window.alert(`Deleted ${successIds.length} import job(s). ${failedCount} failed to delete.`);
+      }
+
+      setDeletingImportJobIds([]);
+      setIsDeletingImportJobs(false);
+    };
 
     return (
       <div className="min-h-screen p-8">
@@ -505,9 +550,21 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               <h1 className="text-[#111827] mb-2 text-[30px] font-['Arimo',sans-serif]">Review Imports</h1>
               <p className="text-[14px] text-gray-600">All pending review imports are listed below.</p>
             </div>
-            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-amber-200 bg-amber-50 text-amber-700 text-[13px] font-medium">
-              <Inbox size={16} />
-              {sortedJobs.length} Pending
+            <div className="flex items-center gap-3">
+              {selectedImportJobIds.length > 0 && (
+                <button
+                  onClick={handleDeleteSelectedImports}
+                  disabled={isDeletingImportJobs}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-rose-200 bg-rose-50 text-rose-700 text-[13px] font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <Trash2 size={16} />
+                  {isDeletingImportJobs ? 'Deleting...' : `Delete Selected (${selectedImportJobIds.length})`}
+                </button>
+              )}
+              <div className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-amber-200 bg-amber-50 text-amber-700 text-[13px] font-medium">
+                <Inbox size={16} />
+                {sortedJobs.length} Pending
+              </div>
             </div>
           </div>
 
@@ -522,6 +579,16 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               <table className="w-full text-left">
                 <thead className="bg-[#f9fafb] border-b border-[#e5e7eb]">
                   <tr>
+                    <th className="px-5 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleSelectAllImports}
+                        disabled={isDeletingImportJobs}
+                        aria-label="Select all import jobs"
+                        className="w-4 h-4 rounded border-gray-300"
+                      />
+                    </th>
                     <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Source</th>
                     <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Import Type</th>
                     <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Created</th>
@@ -539,6 +606,16 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                     const pending = Math.max(0, generated - approved);
                     return (
                       <tr key={jobId} className="hover:bg-[#fafafa] transition-colors">
+                        <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedImportJobIds.includes(jobId)}
+                            onChange={() => toggleSelectImport(jobId)}
+                            disabled={isDeletingImportJobs || deletingImportJobIds.includes(jobId)}
+                            aria-label="Select import job"
+                            className="w-4 h-4 rounded border-gray-300"
+                          />
+                        </td>
                         <td className="px-5 py-4 text-[14px] text-[#111827]">{job?.source_filename || 'Uploaded file'}</td>
                         <td className="px-5 py-4 text-[13px] text-[#374151] capitalize">{String(job?.import_type || 'unknown')}</td>
                         <td className="px-5 py-4 text-[13px] text-[#6b7280]">{job?.created_at ? new Date(job.created_at).toLocaleString() : 'N/A'}</td>

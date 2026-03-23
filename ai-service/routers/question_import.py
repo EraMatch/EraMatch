@@ -16,24 +16,51 @@ import json
 import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from config import settings
 
 from services.ollama import chat_completion
 
 router = APIRouter()
 
+QUESTION_IMPORT_MODEL = settings.OLLAMA_QUESTION_IMPORT_MODEL or settings.OLLAMA_MODEL
+
+
+def _raise_mapped_llm_error(exc: Exception) -> None:
+    message = str(exc)
+    lowered = message.lower()
+
+    if "status code: 401" in lowered or "unauthorized" in lowered:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Ollama Cloud unauthorized. Set a valid OLLAMA_API_KEY in ai-service/.env "
+                "for the selected cloud model."
+            ),
+        )
+
+    if "status code: 404" in lowered and "model" in lowered:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Configured model '{QUESTION_IMPORT_MODEL}' was not found on Ollama Cloud.",
+        )
+
+    raise HTTPException(status_code=502, detail=f"LLM provider error: {message}")
+
 # ─── QAG Critic Tests (HD-Eval Boolean test cases) ───────────────────────────
 CRITIC_TESTS = [
     "Is the question text unambiguous and clearly written?",
+    "Is the question fully self-contained, without referring to external context like 'the code above' or 'the provided snippet'?",
     "Can the correct answer be definitively verified from the provided options or rubric?",
     "Is the difficulty label appropriate for the complexity of the question?",
     "Are the wrong options (distractors) plausible but clearly distinguishable from the correct answer?",
     "Is the question free from cultural bias, trick phrasing, or double negatives?",
     "Is the question aligned with the source material and topic context?",
     "Is the language level suitable for the stated difficulty?",
-    "Does the question avoid redundant wording and unnecessary complexity?",
     "For essay/code questions, is the rubric specific enough for consistent grading?",
     "Does the question avoid requiring external knowledge not present in the material?",
 ]
+
+CRITIC_WEIGHTS = [0.10] * len(CRITIC_TESTS)
 
 # Partial credit thresholds
 CRITIC_PASS_THRESHOLD = 0.7    # Score >= 0.7 → approved
@@ -74,10 +101,13 @@ class DraftQuestion(BaseModel):
     explanation: str | None = None
     rubric: str | None = None          # Essay/code only
     max_words: int | None = None       # Essay only
+    rubric_yes_no_checks: list[dict] | None = None
     # Critic metadata
     needs_review: bool = False
     critic_score: float = 1.0
+    critic_weighted_score: float = 1.0
     critic_feedback: str | None = None
+    critic_checks: list[dict] | None = None
     retry_count: int = 0
 
 
@@ -91,6 +121,17 @@ class CriticStats(BaseModel):
 class ImportResponse(BaseModel):
     questions: list[DraftQuestion]
     critic_stats: CriticStats
+
+
+class RefineQuestionRequest(BaseModel):
+    raw_text: str
+    question: dict
+    critic_feedback: str | None = None
+    failed_criteria: list[str] = []
+
+
+class RefineQuestionResponse(BaseModel):
+    question: DraftQuestion
 
 
 # ─── Generator Prompts ───────────────────────────────────────────────────────
@@ -122,7 +163,12 @@ INSTRUCTIONS:
 - For Essay: include a reference_answer and grading rubric
 - Difficulty: Easy (recall), Medium (application), Hard (analysis/synthesis)
 - Questions must be directly answerable from the material
+- Each question must be fully self-contained. A candidate should answer using only the question text and options/rubric.
+- Never use vague references such as "the code above", "the provided snippet", "the given algorithm", "in the context", or similar.
 - Never use "all of the above" or "none of the above"
+- Do NOT use fabricated source phrases such as "as mentioned in the PDF", "in the provided YAML", "in the lecture", or similar unless that wording appears verbatim in MATERIAL.
+- If the material does not explicitly mention a specific artifact (like YAML/file/lecture), avoid naming it.
+- Evidence must be a short verbatim quote or close paraphrase grounded in MATERIAL only.
 
 Respond ONLY with a valid JSON array. Each element must exactly match this schema:
 {{
@@ -194,6 +240,52 @@ MATERIAL (for reference):
 Rewrite the question to address all critic concerns. Return ONLY the single improved question as a JSON object (same schema). No commentary."""
 
 
+def build_refine_question_prompt(
+    raw_text: str,
+    question: dict,
+    critic_feedback: str,
+    failed_criteria: list[str],
+) -> str:
+    failed_text = "\n".join(f"- {c}" for c in failed_criteria) if failed_criteria else "- No explicit failed criteria provided"
+    return f"""You are an expert assessment designer refining a generated question package.
+
+TASK:
+- Refine the FULL question payload using critic failures.
+- Handle all question types (mcq, essay, code).
+- Keep the question fully self-contained: no references like "the code above", "the provided snippet", "the given algorithm", or "in the context".
+- If the question is essay/code, improve rubric quality if needed.
+- If the question includes rubric-based yes/no checks, ensure they remain coherent with the refined rubric.
+- Ground all content in the provided material only.
+
+QUESTION TO REFINE:
+{json.dumps(question, indent=2)}
+
+CRITIC FEEDBACK:
+{critic_feedback or 'N/A'}
+
+FAILED CRITERIA:
+{failed_text}
+
+MATERIAL:
+{raw_text[:20000]}
+
+Return ONLY JSON as a single question object using this schema:
+{{
+  "type": "mcq" | "essay" | "code",
+  "text": "<question text>",
+  "difficulty": "Easy" | "Medium" | "Hard",
+  "category": "<topic>",
+  "tags": ["<tag1>", "<tag2>"],
+  "options": ["<opt A>", "<opt B>", "<opt C>", "<opt D>"] or null,
+  "correct_answer": <0-based index> or null,
+  "evidence": "<evidence>" or null,
+  "reference_answer": "<reference answer>" or null,
+  "explanation": "<explanation>" or null,
+  "rubric": "<rubric>" or null,
+  "max_words": <integer> or null
+}}"""
+
+
 # ─── Critic Agent ────────────────────────────────────────────────────────────
 
 def build_critic_prompt(question: dict) -> str:
@@ -228,26 +320,33 @@ OVERALL_SCORE: <yes_count/10 as decimal between 0.0 and 1.0>
 FEEDBACK: <1-2 sentences explaining what to fix, or "Approved" if all passed>"""
 
 
-async def run_critic(question: dict) -> tuple[float, str]:
-    """Run the Critic Agent on a single question. Returns (score, feedback)."""
+async def run_critic(question: dict) -> tuple[float, str, list[dict]]:
+    """Run the Critic Agent on a single question. Returns (score, feedback, checks)."""
     prompt = build_critic_prompt(question)
     try:
-        result = await chat_completion(messages=[{"role": "user", "content": prompt}])
+        result = await chat_completion(messages=[{"role": "user", "content": prompt}], model=QUESTION_IMPORT_MODEL)
         content = result["content"]
 
         score = 0.5  # Default uncertain
         feedback = "Unable to parse critic response"
         yes_count = 0
         parsed_count = 0
+        verdicts: dict[int, bool] = {}
 
         for line in content.strip().splitlines():
             line = line.strip()
             if line.startswith("CRITERION_"):
-                verdict = line.split(":", 1)[1].strip().upper()
-                if verdict in {"YES", "NO"}:
-                    parsed_count += 1
-                    if verdict == "YES":
-                        yes_count += 1
+                try:
+                    prefix, raw_verdict = line.split(":", 1)
+                    idx = int(prefix.split("_")[1]) - 1
+                    verdict = raw_verdict.strip().upper()
+                    if idx >= 0 and verdict in {"YES", "NO"}:
+                        verdicts[idx] = verdict == "YES"
+                        parsed_count += 1
+                        if verdict == "YES":
+                            yes_count += 1
+                except Exception:
+                    pass
             if line.startswith("OVERALL_SCORE:"):
                 try:
                     score = float(line.split(":", 1)[1].strip())
@@ -260,9 +359,38 @@ async def run_critic(question: dict) -> tuple[float, str]:
         if parsed_count == len(CRITIC_TESTS):
             score = round(yes_count / len(CRITIC_TESTS), 2)
 
-        return score, feedback
+        checks: list[dict] = []
+        weighted_total = 0.0
+        for idx, criterion in enumerate(CRITIC_TESTS):
+            weight = CRITIC_WEIGHTS[idx] if idx < len(CRITIC_WEIGHTS) else 0.0
+            passed = verdicts.get(idx, False)
+            weighted_value = weight if passed else 0.0
+            weighted_total += weighted_value
+            checks.append(
+                {
+                    "id": idx + 1,
+                    "criterion": criterion,
+                    "verdict": "YES" if passed else "NO",
+                    "weight": round(weight, 3),
+                    "weighted_value": round(weighted_value, 3),
+                }
+            )
+
+        score = round(max(score, weighted_total), 2)
+
+        return score, feedback, checks
     except Exception as e:
-        return 0.5, f"Critic error: {str(e)}"
+        fallback_checks = [
+            {
+                "id": idx + 1,
+                "criterion": criterion,
+                "verdict": "NO",
+                "weight": round(CRITIC_WEIGHTS[idx], 3),
+                "weighted_value": 0.0,
+            }
+            for idx, criterion in enumerate(CRITIC_TESTS)
+        ]
+        return 0.5, f"Critic error: {str(e)}", fallback_checks
 
 
 def parse_questions_json(content: str) -> list[dict]:
@@ -321,8 +449,205 @@ RULES:
 - Preserve original meaning as much as possible
 - Do not add markdown fences"""
 
-    repaired = await chat_completion(messages=[{"role": "user", "content": repair_prompt}], response_format="json")
+    repaired = await chat_completion(
+        messages=[{"role": "user", "content": repair_prompt}],
+        response_format="json",
+        model=QUESTION_IMPORT_MODEL,
+    )
     return parse_questions_json(repaired["content"])
+
+
+def build_rubric_decomposition_prompt(question: dict) -> str:
+    return f"""You are a strict rubric decomposition assistant.
+Given the question package below, produce exactly 10 binary YES/NO checks that a reviewer can use to grade a student's answer.
+
+QUESTION PACKAGE:
+{json.dumps(question, indent=2)}
+
+RULES:
+- Checks must be derived from the rubric/reference answer/evidence.
+- Each check must be clear, atomic, and answerable with YES or NO.
+- Avoid overlap and avoid vague wording.
+- Do not invent external facts.
+- Return exactly 10 checks.
+- Weights must sum to 1.0.
+
+Return ONLY valid JSON in this exact shape:
+{{
+  "checks": [
+    {{"id": 1, "check": "...", "weight": 0.10}},
+    ...,
+    {{"id": 10, "check": "...", "weight": 0.10}}
+  ]
+}}"""
+
+
+def _fallback_rubric_checks(question: dict) -> list[dict]:
+    base_parts: list[str] = []
+    for key in ["rubric", "reference_answer", "evidence"]:
+        value = question.get(key)
+        if value:
+            base_parts.append(str(value))
+
+    base_text = " ".join(base_parts).strip()
+    if not base_text:
+        base_text = "Correctness, completeness, and alignment with expected answer"
+
+    chunks = [
+        c.strip(" -:;,.\n\t")
+        for c in re.split(r"[\n\r\.;:]+", base_text)
+        if c and c.strip()
+    ]
+
+    derived: list[str] = []
+    for chunk in chunks:
+        if len(chunk) < 12:
+            continue
+        lowered = chunk.lower()
+        if lowered.startswith("excellent") or lowered.startswith("good") or lowered.startswith("satisfactory") or lowered.startswith("poor"):
+            continue
+        sentence = chunk[0].lower() + chunk[1:] if len(chunk) > 1 else chunk.lower()
+        derived.append(f"Does the answer {sentence}?")
+        if len(derived) == 10:
+            break
+
+    while len(derived) < 10:
+        idx = len(derived) + 1
+        derived.append(f"Does the answer satisfy rubric criterion {idx} with clear, relevant support?")
+
+    checks: list[dict] = []
+    for i in range(10):
+        checks.append(
+            {
+                "id": i + 1,
+                "check": derived[i],
+                "weight": 0.10,
+            }
+        )
+    return checks
+
+
+def _normalize_rubric_checks(payload: object, question: dict) -> list[dict]:
+    if isinstance(payload, dict):
+        raw_checks = payload.get("checks", [])
+    elif isinstance(payload, list):
+        raw_checks = payload
+    else:
+        raw_checks = []
+
+    normalized: list[dict] = []
+    for idx, item in enumerate(raw_checks):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("check") or "").strip()
+        if not text:
+            continue
+        weight = item.get("weight", 0.10)
+        try:
+            weight_value = float(weight)
+        except Exception:
+            weight_value = 0.10
+        normalized.append(
+            {
+                "id": idx + 1,
+                "check": text,
+                "weight": round(max(0.0, min(1.0, weight_value)), 3),
+            }
+        )
+
+    if len(normalized) != 10:
+        return _fallback_rubric_checks(question)
+
+    total = sum(c["weight"] for c in normalized)
+    if total <= 0:
+        return _fallback_rubric_checks(question)
+
+    # Normalize weights to sum to 1.0 for consistency.
+    normalized = [
+        {**c, "weight": round(c["weight"] / total, 3)}
+        for c in normalized
+    ]
+
+    # Adjust rounding residue on final item.
+    residue = round(1.0 - sum(c["weight"] for c in normalized), 3)
+    normalized[-1]["weight"] = round(max(0.0, normalized[-1]["weight"] + residue), 3)
+    return normalized
+
+
+async def generate_rubric_yes_no_checks(question: dict) -> list[dict]:
+    try:
+        prompt = build_rubric_decomposition_prompt(question)
+        result = await chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            response_format="json",
+            model=QUESTION_IMPORT_MODEL,
+        )
+        try:
+            payload = json.loads(result["content"])
+        except Exception:
+            payload = parse_questions_json(result["content"])
+        return _normalize_rubric_checks(payload, question)
+    except Exception:
+        return _fallback_rubric_checks(question)
+
+
+def _extract_labeled_sections(raw_text: str) -> tuple[str, dict[str, str]]:
+    """Extract trailing labeled sections and keep question stem clean."""
+    if not raw_text:
+        return "", {}
+
+    label_map = {
+        "reference answer": "reference_answer",
+        "evidence": "evidence",
+        "rubric": "rubric",
+        "explanation": "explanation",
+    }
+    header_re = re.compile(
+        r"^\s*(?:[-*]\s*)?(?:\*\*)?(Reference\s*Answer|Evidence|Rubric|Explanation)(?:\*\*)?\s*:\s*(.*)$",
+        flags=re.IGNORECASE,
+    )
+
+    sections: dict[str, list[str]] = {v: [] for v in label_map.values()}
+    stem_lines: list[str] = []
+    current_section: str | None = None
+
+    for line in raw_text.splitlines():
+        m = header_re.match(line)
+        if m:
+            current_section = label_map[m.group(1).strip().lower().replace("  ", " ")]
+            first_chunk = (m.group(2) or "").strip()
+            if first_chunk:
+                sections[current_section].append(first_chunk)
+            continue
+
+        if current_section:
+            sections[current_section].append(line.strip())
+        else:
+            stem_lines.append(line)
+
+    stem = "\n".join(stem_lines).strip()
+    collapsed_sections = {
+        key: "\n".join([p for p in parts if p]).strip()
+        for key, parts in sections.items()
+        if any(p for p in parts)
+    }
+
+    # Fallback for inline label style where headers are not line-start anchored.
+    if not collapsed_sections:
+        inline_split = re.split(
+            r"(?i)\b(reference\s*answer|evidence|rubric|explanation)\s*:\s*",
+            raw_text,
+        )
+        if len(inline_split) > 1:
+            stem = inline_split[0].strip()
+            for idx in range(1, len(inline_split), 2):
+                label_raw = inline_split[idx].strip().lower()
+                value = inline_split[idx + 1].strip() if idx + 1 < len(inline_split) else ""
+                mapped = label_map.get(label_raw)
+                if mapped and value:
+                    collapsed_sections[mapped] = value
+
+    return stem, collapsed_sections
 
 
 def normalize_question_payload(q: dict) -> dict:
@@ -331,6 +656,13 @@ def normalize_question_payload(q: dict) -> dict:
         return {}
 
     out = dict(q)
+
+    raw_text = str(out.get("text") or "")
+    stem_text, extracted_sections = _extract_labeled_sections(raw_text)
+    if stem_text:
+        out["text"] = stem_text
+    else:
+        out["text"] = raw_text.strip()
 
     # Tags should be list[str]
     tags = out.get("tags", [])
@@ -359,26 +691,36 @@ def normalize_question_payload(q: dict) -> dict:
 
     # Reference answer should be string or None
     evidence = out.get("evidence")
-    if evidence is None:
+    if evidence is None and extracted_sections.get("evidence"):
+        out["evidence"] = extracted_sections.get("evidence")
+    elif evidence is None:
         out["evidence"] = None
     else:
         out["evidence"] = str(evidence)
 
     # Reference answer should be string or None
     ref = out.get("reference_answer")
-    if ref is None:
+    if ref is None and extracted_sections.get("reference_answer"):
+        out["reference_answer"] = extracted_sections.get("reference_answer")
+    elif ref is None:
         out["reference_answer"] = None
     else:
         out["reference_answer"] = str(ref)
 
     # Rubric should be string or None
     rubric = out.get("rubric")
-    if rubric is None:
+    if rubric is None and extracted_sections.get("rubric"):
+        out["rubric"] = extracted_sections.get("rubric")
+    elif rubric is None:
         out["rubric"] = None
     elif isinstance(rubric, str):
         out["rubric"] = rubric
     else:
         out["rubric"] = json.dumps(rubric, ensure_ascii=False)
+
+    explanation = out.get("explanation")
+    if explanation is None and extracted_sections.get("explanation"):
+        out["explanation"] = extracted_sections.get("explanation")
 
     # Max words should be int or None
     mw = out.get("max_words")
@@ -409,7 +751,11 @@ async def generator_critic_pipeline(
     For regeneration, individual questions are re-prompted with critic feedback.
     """
     # Step 1: Generate all questions at once
-    gen_result = await chat_completion(messages=[{"role": "user", "content": prompt}], response_format="json")
+    gen_result = await chat_completion(
+        messages=[{"role": "user", "content": prompt}],
+        response_format="json",
+        model=QUESTION_IMPORT_MODEL,
+    )
     try:
         raw_questions = parse_questions_json(gen_result["content"])
     except Exception:
@@ -424,9 +770,10 @@ async def generator_critic_pipeline(
         current_q = normalize_question_payload(q)
         critic_score = 0.0
         critic_feedback = ""
+        critic_checks: list[dict] = []
 
         while trial <= MAX_TRIALS:
-            critic_score, critic_feedback = await run_critic(current_q)
+            critic_score, critic_feedback, critic_checks = await run_critic(current_q)
 
             if critic_score >= CRITIC_PASS_THRESHOLD:
                 # Approved
@@ -438,6 +785,7 @@ async def generator_critic_pipeline(
                     regen_result = await chat_completion(
                         messages=[{"role": "user", "content": regen_prompt}],
                         response_format="json",
+                        model=QUESTION_IMPORT_MODEL,
                     )
                     regen_content = regen_result["content"].strip()
                     # Parse single object
@@ -456,6 +804,9 @@ async def generator_critic_pipeline(
 
         # Build DraftQuestion
         needs_review = critic_score < CRITIC_PASS_THRESHOLD
+        normalized_type = str(current_q.get("type", "essay")).strip().lower()
+        rubric_checks = await generate_rubric_yes_no_checks(current_q) if normalized_type == "essay" else None
+
         dq = DraftQuestion(
             type=current_q.get("type", "essay"),
             text=current_q.get("text", ""),
@@ -469,9 +820,12 @@ async def generator_critic_pipeline(
             explanation=current_q.get("explanation"),
             rubric=current_q.get("rubric"),
             max_words=current_q.get("max_words"),
+            rubric_yes_no_checks=rubric_checks,
             needs_review=needs_review,
             critic_score=round(critic_score, 2),
+            critic_weighted_score=round(critic_score, 2),
             critic_feedback=critic_feedback if needs_review else None,
+            critic_checks=critic_checks,
             retry_count=retry_count,
         )
         approved.append(dq)
@@ -662,7 +1016,7 @@ async def generate_questions(request: GenerateRequest):
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+        _raise_mapped_llm_error(e)
 
 
 @router.post("/extract", response_model=ImportResponse)
@@ -690,4 +1044,68 @@ async def extract_questions(request: ExtractRequest):
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+        _raise_mapped_llm_error(e)
+
+
+@router.post("/refine-question", response_model=RefineQuestionResponse)
+async def refine_question(request: RefineQuestionRequest):
+    if not request.raw_text.strip():
+        raise HTTPException(status_code=422, detail="raw_text must not be empty")
+
+    question = normalize_question_payload(request.question)
+
+    try:
+        prompt = build_refine_question_prompt(
+            raw_text=request.raw_text,
+            question=question,
+            critic_feedback=request.critic_feedback or "",
+            failed_criteria=request.failed_criteria or [],
+        )
+        result = await chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            response_format="json",
+            model=QUESTION_IMPORT_MODEL,
+        )
+        content = result.get("content", "").strip()
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
+        obj_start = content.find("{")
+        obj_end = content.rfind("}") + 1
+        if obj_start == -1 or obj_end <= 0:
+            raise HTTPException(status_code=502, detail="Model did not return a valid question object")
+
+        refined = normalize_question_payload(json.loads(content[obj_start:obj_end]))
+
+        critic_score, critic_feedback, critic_checks = await run_critic(refined)
+        normalized_type = str(refined.get("type", "essay")).strip().lower()
+        rubric_checks = await generate_rubric_yes_no_checks(refined) if normalized_type == "essay" else None
+        needs_review = critic_score < CRITIC_PASS_THRESHOLD
+
+        refined_question = DraftQuestion(
+            type=refined.get("type", "essay"),
+            text=refined.get("text", ""),
+            difficulty=refined.get("difficulty", "Medium"),
+            category=refined.get("category", "General"),
+            tags=refined.get("tags", []),
+            options=refined.get("options"),
+            correct_answer=refined.get("correct_answer"),
+            evidence=refined.get("evidence"),
+            reference_answer=refined.get("reference_answer"),
+            explanation=refined.get("explanation"),
+            rubric=refined.get("rubric"),
+            max_words=refined.get("max_words"),
+            rubric_yes_no_checks=rubric_checks,
+            needs_review=needs_review,
+            critic_score=round(critic_score, 2),
+            critic_weighted_score=round(critic_score, 2),
+            critic_feedback=critic_feedback if needs_review else None,
+            critic_checks=critic_checks,
+            retry_count=int(question.get("retry_count") or 0) + 1,
+        )
+        return RefineQuestionResponse(question=refined_question)
+    except HTTPException:
+        raise
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="Model returned invalid JSON for refinement")
+    except Exception as e:
+        _raise_mapped_llm_error(e)

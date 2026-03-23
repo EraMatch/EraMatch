@@ -21,6 +21,16 @@ type ImportPath = 'generative' | 'extraction' | 'csv';
 type Step = 1 | 2 | 3;
 type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
+interface ImportPreflightInfo {
+  is_pdf: boolean;
+  total_pages: number | null;
+  max_pages_without_chunking: number;
+  requires_chunking: boolean;
+  chunk_page_size: number;
+  chunk_count: number;
+  message: string;
+}
+
 interface Props {
   onClose: () => void;
   onJobQueued: (jobId: string, importType: ImportPath) => void;
@@ -75,25 +85,59 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
   const [contextHint, setContextHint] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isPreflighting, setIsPreflighting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preflight, setPreflight] = useState<ImportPreflightInfo | null>(null);
+  const [chunkPageSize, setChunkPageSize] = useState(20);
+  const [approveChunking, setApproveChunking] = useState(false);
+  const [queuedSummary, setQueuedSummary] = useState<{ chunked: boolean; chunkCount: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
-  const handleFileChange = (f: File) => {
+  const isPdfFile = (f: File) => /\.pdf$/i.test(f.name);
+
+  const runPreflight = async (f: File, selectedChunkPageSize: number) => {
+    setIsPreflighting(true);
+    try {
+      const info = await api.recruiter.preflightQuestionImport(f, selectedChunkPageSize);
+      setPreflight(info);
+      if (info.requires_chunking) {
+        setApproveChunking(false);
+      }
+      setError(null);
+    } catch (err: any) {
+      setPreflight(null);
+      setError(err.message || 'Failed to inspect the file. Please try again.');
+    } finally {
+      setIsPreflighting(false);
+    }
+  };
+
+  const handleFileChange = async (f: File) => {
     if (f.size > 5 * 1024 * 1024) {
       setError('File exceeds the 5 MB limit. Please upload a smaller file.');
       return;
     }
     setError(null);
     setFile(f);
+    setQueuedSummary(null);
+
+    if (isPdfFile(f)) {
+      await runPreflight(f, chunkPageSize);
+    } else {
+      setPreflight(null);
+      setApproveChunking(false);
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
     const dropped = e.dataTransfer.files[0];
-    if (dropped) handleFileChange(dropped);
+    if (dropped) {
+      void handleFileChange(dropped);
+    }
   };
 
   const handleSubmit = async () => {
@@ -109,6 +153,11 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
         setError('Please request at least one generated question.');
         return;
       }
+    }
+
+    if (preflight?.requires_chunking && !approveChunking) {
+      setError('This PDF exceeds the page limit. Approve chunking to continue.');
+      return;
     }
 
     setIsUploading(true);
@@ -129,7 +178,13 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
         essayCount,
         mcqDifficulty,
         essayDifficulty,
+        Boolean(preflight?.requires_chunking),
+        chunkPageSize,
       );
+      setQueuedSummary({
+        chunked: Boolean(result.chunked),
+        chunkCount: Number(result.chunk_count || 1),
+      });
       setStep(3);
       onJobQueued(result.job_id, selectedPath);
     } catch (err: any) {
@@ -211,7 +266,14 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
 
               {/* Back button */}
               <button
-                onClick={() => { setStep(1); setFile(null); setError(null); }}
+                onClick={() => {
+                  setStep(1);
+                  setFile(null);
+                  setError(null);
+                  setPreflight(null);
+                  setApproveChunking(false);
+                  setQueuedSummary(null);
+                }}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted, #888)', fontSize: '0.82rem', padding: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
               >
                 ← Back
@@ -332,10 +394,85 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                     type="file"
                     accept={ACCEPT[selectedPath]}
                     style={{ display: 'none' }}
-                    onChange={e => { const f = e.target.files?.[0]; if (f) handleFileChange(f); }}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) void handleFileChange(f); }}
                   />
                 </div>
               </div>
+
+              {file && isPreflighting && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '0.5rem',
+                  padding: '0.75rem', borderRadius: '0.5rem',
+                  background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)',
+                  color: '#60a5fa', fontSize: '0.82rem'
+                }}>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Checking document pages...
+                </div>
+              )}
+
+              {file && preflight?.is_pdf && (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.75rem',
+                  padding: '0.9rem',
+                  borderRadius: '0.7rem',
+                  border: `1px solid ${preflight.requires_chunking ? 'rgba(245,158,11,0.35)' : 'rgba(16,185,129,0.35)'}`,
+                  background: preflight.requires_chunking ? 'rgba(245,158,11,0.08)' : 'rgba(16,185,129,0.08)',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', color: preflight.requires_chunking ? '#f59e0b' : '#10b981', fontSize: '0.83rem' }}>
+                    {preflight.requires_chunking ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                    <div>
+                      <div style={{ fontWeight: 600 }}>PDF pages: {preflight.total_pages}</div>
+                      <div>{preflight.message}</div>
+                    </div>
+                  </div>
+
+                  {preflight.requires_chunking && (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                        <div>
+                          <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.35rem' }}>
+                            Pages per chunk
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={preflight.max_pages_without_chunking}
+                            value={chunkPageSize}
+                            onChange={async (e) => {
+                              const nextValue = Math.max(1, Math.min(preflight.max_pages_without_chunking, Number(e.target.value) || 1));
+                              setChunkPageSize(nextValue);
+                              if (file && isPdfFile(file)) {
+                                await runPreflight(file, nextValue);
+                              }
+                            }}
+                            style={{ width: '100%', padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem', boxSizing: 'border-box' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.35rem' }}>
+                            Estimated chunks
+                          </label>
+                          <div style={{ height: '38px', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', display: 'flex', alignItems: 'center', padding: '0 0.7rem', color: 'var(--text-primary, #fff)', fontWeight: 700, fontSize: '0.95rem' }}>
+                            {preflight.chunk_count}
+                          </div>
+                        </div>
+                      </div>
+
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--text-primary, #fff)' }}>
+                        <input
+                          type="checkbox"
+                          checked={approveChunking}
+                          onChange={(e) => setApproveChunking(e.target.checked)}
+                          style={{ marginTop: '2px' }}
+                        />
+                        I approve processing this oversized PDF in {preflight.chunk_count} chunk(s) and start extracting all chunks.
+                      </label>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* Error */}
               {error && (
@@ -348,16 +485,22 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
               {/* Submit */}
               <button
                 onClick={handleSubmit}
-                disabled={!file || isUploading}
+                disabled={!file || isUploading || isPreflighting || (preflight?.requires_chunking && !approveChunking)}
                 style={{
                   padding: '0.75rem', borderRadius: '0.6rem', border: 'none',
-                  background: !file || isUploading ? 'var(--border, rgba(255,255,255,0.1))' : 'var(--accent-purple, #8b5cf6)',
+                  background: !file || isUploading || isPreflighting || (preflight?.requires_chunking && !approveChunking)
+                    ? 'var(--border, rgba(255,255,255,0.1))'
+                    : 'var(--accent-purple, #8b5cf6)',
                   color: '#fff', fontWeight: 600, fontSize: '0.95rem', cursor: !file || isUploading ? 'not-allowed' : 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', transition: 'background 0.15s',
                 }}
               >
                 {isUploading ? (
                   <><Loader2 className="w-4 h-4 animate-spin" /> Uploading…</>
+                ) : isPreflighting ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Checking…</>
+                ) : preflight?.requires_chunking && !approveChunking ? (
+                  <>Approve Chunking to Continue</>
                 ) : (
                   <><Upload className="w-4 h-4" /> Start Import</>
                 )}
@@ -373,7 +516,10 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
               </div>
               <h3 style={{ margin: '0 0 0.5rem', color: 'var(--text-primary, #fff)', fontWeight: 700 }}>Import Job Queued!</h3>
               <p style={{ margin: '0 0 1.5rem', color: 'var(--text-muted, #888)', fontSize: '0.88rem', lineHeight: 1.5 }}>
-                Your file is being processed in the background. You can track progress in <strong>Background Tasks</strong>.
+                {queuedSummary?.chunked
+                  ? `Your file was split into ${queuedSummary.chunkCount} chunk(s) and all chunks are now processing in the background.`
+                  : 'Your file is being processed in the background.'}
+                {' '}You can track progress in <strong>Background Tasks</strong>.
                 Once complete, a <strong>Pending Review</strong> badge will appear in the Question Bank.
               </p>
               <button

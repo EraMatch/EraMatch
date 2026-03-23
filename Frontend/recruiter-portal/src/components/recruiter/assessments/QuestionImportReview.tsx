@@ -11,11 +11,12 @@
  * - Bulk select / deselect all
  * - "Import N Questions" commits selected to the live Question Bank
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   ArrowLeft, CheckCircle2, XCircle, AlertTriangle, Loader2,
   ChevronDown, ChevronUp, Edit3, Save, RotateCcw, Sparkles, ShieldAlert, ListChecks
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../../../services/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -33,9 +34,22 @@ interface DraftQuestion {
   explanation: string | null;
   rubric: string | null;
   max_words: number | null;
+  rubric_yes_no_checks?: Array<{
+    id: number;
+    check: string;
+    weight: number;
+  }> | null;
   needs_review: boolean;
   critic_score: number;
+  critic_weighted_score?: number;
   critic_feedback: string | null;
+  critic_checks?: Array<{
+    id: number;
+    criterion: string;
+    verdict: 'YES' | 'NO';
+    weight: number;
+    weighted_value: number;
+  }> | null;
   retry_count: number;
 }
 
@@ -53,6 +67,8 @@ interface ReviewState {
   expanded: boolean;
   editing: boolean;
   edited: DraftQuestion;
+  rubricCheckErrors?: string[];
+  rubricFormError?: string | null;
 }
 
 interface Props {
@@ -61,20 +77,49 @@ interface Props {
   onApproved: () => void;
 }
 
+type ReviewSubPage = 'mcq' | 'essay';
+
 const difficultyClass: Record<string, string> = {
   Easy: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   Medium: 'bg-amber-50 text-amber-700 border-amber-200',
   Hard: 'bg-rose-50 text-rose-700 border-rose-200',
 };
 
+const HIERARCHICAL_CHECK_TEMPLATES = [
+  'Does the answer identify the primary concept correctly?',
+  'Does the answer include key supporting evidence from the source?',
+  'Does the answer avoid factual contradictions?',
+  'Does the answer address all parts of the question prompt?',
+  'Is the reasoning logically consistent from start to end?',
+  'Does the answer use relevant terminology accurately?',
+  'Is the explanation concise and free of unnecessary details?',
+  'Does the answer avoid unsupported assumptions?',
+  'Does the answer clearly differentiate similar concepts when needed?',
+  'Does the final conclusion align with the provided evidence?',
+];
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<DraftReviewData | null>(null);
   const [rows, setRows] = useState<ReviewState[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isApproving, setIsApproving] = useState(false);
   const [approveResult, setApproveResult] = useState<{ imported_count: number; message: string } | null>(null);
+  const [refiningQuestionIndex, setRefiningQuestionIndex] = useState<number | null>(null);
+  const [refineError, setRefineError] = useState<string | null>(null);
+
+  const reviewPage: ReviewSubPage = useMemo(() => {
+    const tab = searchParams.get('reviewType')?.toLowerCase();
+    return tab === 'essay' ? 'essay' : 'mcq';
+  }, [searchParams]);
+
+  const setReviewPage = (nextPage: ReviewSubPage) => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('reviewType', nextPage);
+    setSearchParams(nextParams);
+  };
 
   // ── Load draft questions ──────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -90,6 +135,8 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
           expanded: false,
           editing: false,
           edited: { ...q },
+          rubricCheckErrors: [],
+          rubricFormError: null,
         }))
       );
     } catch (err: any) {
@@ -102,11 +149,6 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
   useEffect(() => { load(); }, [load]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
-  const toggleAll = () => {
-    const allSelected = rows.every(r => r.selected);
-    setRows(prev => prev.map(r => ({ ...r, selected: !allSelected })));
-  };
-
   const toggleRow = (i: number) => {
     setRows(prev => prev.map((r, idx) => idx === i ? { ...r, selected: !r.selected } : r));
   };
@@ -116,19 +158,222 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
   };
 
   const startEdit = (i: number) => {
-    setRows(prev => prev.map((r, idx) => idx === i ? { ...r, editing: true, edited: { ...r.question } } : r));
+    setRows(prev => prev.map((r, idx) => idx === i ? {
+      ...r,
+      editing: true,
+      edited: { ...r.question },
+      rubricCheckErrors: [],
+      rubricFormError: null,
+    } : r));
   };
 
   const saveEdit = (i: number) => {
-    setRows(prev => prev.map((r, idx) => idx === i ? { ...r, editing: false, question: { ...r.edited } } : r));
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+
+      const isEssay = (r.edited.type || '').toLowerCase() === 'essay';
+      const checks = r.edited.rubric_yes_no_checks || [];
+
+      if (isEssay) {
+        const errors = checks.map((check) => {
+          if (!(check.check || '').trim()) return 'Question text is required';
+          if (!Number.isFinite(check.weight)) return 'Weight must be a number';
+          if (check.weight < 0 || check.weight > 1) return 'Weight must be between 0 and 1';
+          return '';
+        });
+
+        const totalWeight = checks.reduce((sum, check) => sum + (Number.isFinite(check.weight) ? check.weight : 0), 0);
+        const hasRowErrors = errors.some(Boolean);
+        const weightMismatch = Math.abs(totalWeight - 1) > 0.001;
+
+        if (hasRowErrors || weightMismatch) {
+          return {
+            ...r,
+            rubricCheckErrors: errors,
+            rubricFormError: weightMismatch
+              ? `Total weight must equal 1.00 (current: ${totalWeight.toFixed(2)}).`
+              : 'Please fix invalid checklist rows before saving.',
+          };
+        }
+      }
+
+      return {
+        ...r,
+        editing: false,
+        question: { ...r.edited },
+        rubricCheckErrors: [],
+        rubricFormError: null,
+      };
+    }));
   };
 
   const discardEdit = (i: number) => {
-    setRows(prev => prev.map((r, idx) => idx === i ? { ...r, editing: false, edited: { ...r.question } } : r));
+    setRows(prev => prev.map((r, idx) => idx === i ? {
+      ...r,
+      editing: false,
+      edited: { ...r.question },
+      rubricCheckErrors: [],
+      rubricFormError: null,
+    } : r));
   };
 
   const updateEdited = (i: number, field: keyof DraftQuestion, value: any) => {
     setRows(prev => prev.map((r, idx) => idx === i ? { ...r, edited: { ...r.edited, [field]: value } } : r));
+  };
+
+  const updateRubricCheckText = (i: number, checkIndex: number, value: string) => {
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+      const checks = [...(r.edited.rubric_yes_no_checks || [])];
+      if (!checks[checkIndex]) return r;
+      checks[checkIndex] = { ...checks[checkIndex], check: value };
+      const errors = [...(r.rubricCheckErrors || [])];
+      errors[checkIndex] = value.trim() ? '' : 'Question text is required';
+      return {
+        ...r,
+        edited: { ...r.edited, rubric_yes_no_checks: checks },
+        rubricCheckErrors: errors,
+      };
+    }));
+  };
+
+  const updateRubricCheckWeight = (i: number, checkIndex: number, rawValue: string) => {
+    const parsed = Number(rawValue);
+    const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0;
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+      const checks = [...(r.edited.rubric_yes_no_checks || [])];
+      if (!checks[checkIndex]) return r;
+      checks[checkIndex] = { ...checks[checkIndex], weight: clamped };
+      const errors = [...(r.rubricCheckErrors || [])];
+      errors[checkIndex] = '';
+      return {
+        ...r,
+        edited: { ...r.edited, rubric_yes_no_checks: checks },
+        rubricCheckErrors: errors,
+      };
+    }));
+  };
+
+  const addRubricCheck = (i: number) => {
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+      const checks = [...(r.edited.rubric_yes_no_checks || [])];
+      const maxId = checks.reduce((m, c) => Math.max(m, c.id || 0), 0);
+      checks.push({ id: maxId + 1, check: '', weight: 0.1 });
+      return {
+        ...r,
+        edited: { ...r.edited, rubric_yes_no_checks: checks },
+        rubricCheckErrors: [...(r.rubricCheckErrors || []), 'Question text is required'],
+      };
+    }));
+  };
+
+  const removeRubricCheck = (i: number, checkIndex: number) => {
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+      const checks = [...(r.edited.rubric_yes_no_checks || [])]
+        .filter((_, currentIndex) => currentIndex !== checkIndex)
+        .map((check, currentIndex) => ({ ...check, id: currentIndex + 1 }));
+      const errors = [...(r.rubricCheckErrors || [])].filter((_, currentIndex) => currentIndex !== checkIndex);
+      return {
+        ...r,
+        edited: { ...r.edited, rubric_yes_no_checks: checks },
+        rubricCheckErrors: errors,
+      };
+    }));
+  };
+
+  const moveRubricCheck = (i: number, checkIndex: number, direction: 'up' | 'down') => {
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+      const checks = [...(r.edited.rubric_yes_no_checks || [])];
+      const errors = [...(r.rubricCheckErrors || [])];
+      const nextIndex = direction === 'up' ? checkIndex - 1 : checkIndex + 1;
+      if (!checks[checkIndex] || !checks[nextIndex]) return r;
+
+      [checks[checkIndex], checks[nextIndex]] = [checks[nextIndex], checks[checkIndex]];
+      [errors[checkIndex], errors[nextIndex]] = [errors[nextIndex], errors[checkIndex]];
+
+      const normalizedChecks = checks.map((check, currentIndex) => ({ ...check, id: currentIndex + 1 }));
+      return {
+        ...r,
+        edited: { ...r.edited, rubric_yes_no_checks: normalizedChecks },
+        rubricCheckErrors: errors,
+      };
+    }));
+  };
+
+  const duplicateRubricCheck = (i: number, checkIndex: number) => {
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+      const checks = [...(r.edited.rubric_yes_no_checks || [])];
+      if (!checks[checkIndex]) return r;
+      checks.splice(checkIndex + 1, 0, { ...checks[checkIndex], id: checks[checkIndex].id + 1 });
+      const normalizedChecks = checks.map((check, currentIndex) => ({ ...check, id: currentIndex + 1 }));
+      const errors = [...(r.rubricCheckErrors || [])];
+      errors.splice(checkIndex + 1, 0, '');
+      return {
+        ...r,
+        edited: { ...r.edited, rubric_yes_no_checks: normalizedChecks },
+        rubricCheckErrors: errors,
+      };
+    }));
+  };
+
+  const normalizeRubricWeights = (i: number) => {
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+      const checks = [...(r.edited.rubric_yes_no_checks || [])];
+      if (checks.length === 0) return r;
+
+      const baseWeight = Number((1 / checks.length).toFixed(2));
+      const normalized = checks.map((check, currentIndex) => ({
+        ...check,
+        id: currentIndex + 1,
+        weight: currentIndex === checks.length - 1
+          ? Number((1 - baseWeight * (checks.length - 1)).toFixed(2))
+          : baseWeight,
+      }));
+
+      return {
+        ...r,
+        edited: { ...r.edited, rubric_yes_no_checks: normalized },
+      };
+    }));
+  };
+
+  const resetRubricChecksToAiDefault = (i: number) => {
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+      const base = (r.question.rubric_yes_no_checks || []).map((check, currentIndex) => ({
+        ...check,
+        id: currentIndex + 1,
+      }));
+      return {
+        ...r,
+        edited: { ...r.edited, rubric_yes_no_checks: base },
+        rubricCheckErrors: [],
+        rubricFormError: null,
+      };
+    }));
+  };
+
+  const applyRubricTemplateChecks = (i: number) => {
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+      const checks = HIERARCHICAL_CHECK_TEMPLATES.map((check, currentIndex) => ({
+        id: currentIndex + 1,
+        check,
+        weight: 0.1,
+      }));
+      return {
+        ...r,
+        edited: { ...r.edited, rubric_yes_no_checks: checks },
+        rubricCheckErrors: Array.from({ length: checks.length }, () => ''),
+        rubricFormError: null,
+      };
+    }));
   };
 
   const handleApprove = async () => {
@@ -146,8 +391,58 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
     }
   };
 
+  const handleRefineQuestion = async (rowIndex: number) => {
+    setRefiningQuestionIndex(rowIndex);
+    setRefineError(null);
+    try {
+      const result = await api.recruiter.refineImportQuestion(jobId, rowIndex);
+      const refined = result?.refined_question;
+      if (!refined || typeof refined !== 'object') {
+        throw new Error('AI returned an invalid refined question payload');
+      }
+
+      setRows(prev => prev.map((r, idx) => {
+        if (idx !== rowIndex) return r;
+        return {
+          ...r,
+          question: { ...refined },
+          edited: { ...refined },
+          rubricCheckErrors: [],
+          rubricFormError: null,
+          editing: false,
+        };
+      }));
+    } catch (err: any) {
+      setRefineError(err?.message || 'Failed to refine question from critic feedback');
+    } finally {
+      setRefiningQuestionIndex(null);
+    }
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
+  const getNormalizedType = (type?: string) => (type || '').trim().toLowerCase();
+  const isMcqQuestion = (type?: string) => getNormalizedType(type) === 'mcq';
+
+  const mcqCount = rows.filter(r => isMcqQuestion(r.question.type)).length;
+  const essayCount = rows.length - mcqCount;
+
+  const visibleRows = rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => reviewPage === 'mcq' ? isMcqQuestion(row.question.type) : !isMcqQuestion(row.question.type));
+
+  const visibleCount = visibleRows.length;
+  const visibleSelectedCount = visibleRows.filter(({ row }) => row.selected).length;
+  const allVisibleSelected = visibleCount > 0 && visibleRows.every(({ row }) => row.selected);
   const selectedCount = rows.filter(r => r.selected).length;
+
+  const toggleVisibleRows = () => {
+    if (visibleRows.length === 0) return;
+    setRows(prev => prev.map((r, idx) => {
+      const isVisible = visibleRows.some(vr => vr.index === idx);
+      if (!isVisible) return r;
+      return { ...r, selected: !allVisibleSelected };
+    }));
+  };
 
   if (loading) {
     return (
@@ -204,7 +499,7 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
           <div>
             <h2 className="text-[30px] font-medium text-[#111827] flex items-center gap-3">
               <Sparkles className="text-[#6366f1]" size={30} />
-              Import Staging Review
+              Import Staging Review · {reviewPage === 'mcq' ? 'MCQ' : 'Essay'}
             </h2>
             <p className="text-[14px] text-[#6b7280] mt-1">
               {data?.source_filename ? `${data.source_filename} · ` : ''}
@@ -214,9 +509,40 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
 
           <div className="bg-white border border-[#e5e7eb] rounded-xl px-4 py-3 shadow-sm min-w-[240px]">
             <div className="text-[12px] text-[#6b7280] uppercase tracking-wide mb-1">Selection Summary</div>
-            <div className="text-[24px] font-semibold text-[#111827]">{selectedCount}/{rows.length}</div>
-            <div className="text-[13px] text-[#6b7280]">Questions selected for import</div>
+            <div className="text-[24px] font-semibold text-[#111827]">{visibleSelectedCount}/{visibleCount}</div>
+            <div className="text-[13px] text-[#6b7280]">Selected in this review page</div>
+            <div className="text-[12px] text-[#9ca3af] mt-1">Overall selected: {selectedCount}/{rows.length}</div>
           </div>
+        </div>
+      </div>
+
+      <div className="mb-5 rounded-2xl border border-[#e5e7eb] bg-white p-2 shadow-sm">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => setReviewPage('mcq')}
+            className={`rounded-xl px-4 py-3 text-left border transition-colors ${
+              reviewPage === 'mcq'
+                ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                : 'border-transparent bg-[#f8fafc] text-[#4b5563] hover:bg-[#eef2ff]'
+            }`}
+          >
+            <div className="text-[12px] uppercase tracking-wide font-semibold">MCQ Review Page</div>
+            <div className="text-[20px] font-semibold mt-1">{mcqCount}</div>
+            <div className="text-[12px] opacity-80">Multiple choice draft questions</div>
+          </button>
+
+          <button
+            onClick={() => setReviewPage('essay')}
+            className={`rounded-xl px-4 py-3 text-left border transition-colors ${
+              reviewPage === 'essay'
+                ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                : 'border-transparent bg-[#f8fafc] text-[#4b5563] hover:bg-[#eef2ff]'
+            }`}
+          >
+            <div className="text-[12px] uppercase tracking-wide font-semibold">Essay Review Page</div>
+            <div className="text-[20px] font-semibold mt-1">{essayCount}</div>
+            <div className="text-[12px] opacity-80">Essay and open-ended draft questions</div>
+          </button>
         </div>
       </div>
 
@@ -244,14 +570,17 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
       <div className="bg-white border border-[#e5e7eb] rounded-2xl shadow-sm">
         <div className="px-5 py-4 border-b border-[#f3f4f6] flex flex-wrap items-center gap-3">
           <button
-            onClick={toggleAll}
+            onClick={toggleVisibleRows}
+            disabled={visibleCount === 0}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#d1d5db] text-[#374151] text-[13px] hover:bg-[#f9fafb]"
           >
             <ListChecks size={15} />
-            {rows.every(r => r.selected) ? 'Deselect All' : 'Select All'}
+            {allVisibleSelected ? 'Deselect Visible' : 'Select Visible'}
           </button>
 
-          <div className="text-[13px] text-[#6b7280]">{selectedCount} of {rows.length} selected</div>
+          <div className="text-[13px] text-[#6b7280]">
+            {visibleSelectedCount} of {visibleCount} selected in {reviewPage === 'mcq' ? 'MCQ' : 'Essay'} page
+          </div>
           <div className="ml-auto" />
 
           <button
@@ -265,7 +594,12 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
         </div>
 
         <div className="p-4 space-y-3">
-        {rows.map((row, i) => (
+        {refineError && (
+          <div className="rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-800">
+            {refineError}
+          </div>
+        )}
+        {visibleRows.map(({ row, index: i }) => (
           <div
             key={i}
             className={`rounded-xl border transition-colors overflow-hidden ${
@@ -298,6 +632,9 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
                   </span>
                   <span className="text-[12px] text-[#6b7280]">Category: {row.question.category || 'Uncategorized'}</span>
                   <span className="text-[12px] text-[#6b7280]">Critic score: {row.question.critic_score.toFixed(2)}</span>
+                  {typeof row.question.critic_weighted_score === 'number' && (
+                    <span className="text-[12px] text-[#6b7280]">Weighted: {row.question.critic_weighted_score.toFixed(2)}</span>
+                  )}
                 </div>
               </div>
 
@@ -352,17 +689,120 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
                   <p className="text-[14px] text-[#1f2937] leading-6">{row.question.text}</p>
                 )}
 
-                {row.question.type === 'mcq' && row.question.options && (
+                {row.question.type === 'mcq' && (row.editing ? row.edited.options : row.question.options) && (
                   <div>
                     <div className="text-[12px] font-semibold text-[#6b7280] mb-2 uppercase tracking-wide">Options</div>
-                    {row.question.options.map((opt, optI) => (
-                      <div key={optI} className={`flex items-start gap-2 p-2.5 rounded-[10px] border mb-2 ${optI === row.question.correct_answer ? 'border-emerald-300 bg-emerald-50' : 'border-[#e5e7eb] bg-white'}`}>
-                        {optI === row.question.correct_answer
+                    {(row.editing ? row.edited.options : row.question.options)?.map((opt, optI) => (
+                      <div key={optI} className={`flex items-start gap-2 p-2.5 rounded-[10px] border mb-2 ${optI === (row.editing ? row.edited.correct_answer : row.question.correct_answer) ? 'border-emerald-300 bg-emerald-50' : 'border-[#e5e7eb] bg-white'}`}>
+                        {optI === (row.editing ? row.edited.correct_answer : row.question.correct_answer)
                           ? <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" />
                           : <XCircle className="w-4 h-4 text-[#9ca3af] mt-0.5" />}
                         <span className="text-[13px] text-[#1f2937]">{opt}</span>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {!!row.question.rubric && (
+                  <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-3">
+                    <div className="text-[12px] font-semibold text-[#6b7280] mb-1 uppercase tracking-wide">Rubric</div>
+                    <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap leading-6">{row.question.rubric}</p>
+                  </div>
+                )}
+
+                {!!row.question.reference_answer && (
+                  <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-3">
+                    <div className="text-[12px] font-semibold text-[#6b7280] mb-1 uppercase tracking-wide">Reference Answer</div>
+                    <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap leading-6">{row.question.reference_answer}</p>
+                  </div>
+                )}
+
+                {!!row.question.evidence && (
+                  <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-3">
+                    <div className="text-[12px] font-semibold text-[#6b7280] mb-1 uppercase tracking-wide">Evidence</div>
+                    <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap leading-6">{row.question.evidence}</p>
+                  </div>
+                )}
+
+                {(!!row.question.critic_checks?.length || (row.question.type?.toLowerCase() === 'essay' && !!row.question.rubric_yes_no_checks?.length)) && (
+                  <div
+                    className={`grid grid-cols-1 gap-3 items-start ${
+                      row.question.type?.toLowerCase() === 'essay' && !!row.question.rubric_yes_no_checks?.length
+                        ? 'md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]'
+                        : 'md:grid-cols-1'
+                    }`}
+                  >
+                    {row.question.type?.toLowerCase() === 'essay' && !!row.question.rubric_yes_no_checks?.length && (
+                      <div className="rounded-[10px] border border-indigo-200 bg-indigo-50/40 p-3 h-full">
+                        <div className="text-[12px] font-semibold text-indigo-800 mb-2 uppercase tracking-wide">Hierarchical Rubric YES/NO Checks (10)</div>
+                        <p className="text-[12px] text-indigo-700 mb-2">
+                          Recruiter can use these binary checks to evaluate answers with lower scoring variance.
+                        </p>
+                        <div className="space-y-2">
+                          {row.question.rubric_yes_no_checks.map((check) => (
+                            <div key={check.id} className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_96px] items-start gap-2 rounded-md border border-indigo-100 bg-white px-3 py-2">
+                              <div className="text-[12px] text-[#1f2937] leading-5 min-w-0">
+                                {check.id}. {check.check}
+                              </div>
+                              <div className="md:text-right text-left shrink-0">
+                                <span className="inline-flex text-[11px] font-semibold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
+                                w={check.weight.toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {!!row.question.critic_checks?.length && (
+                      <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-3 h-full">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="text-[12px] font-semibold text-[#6b7280] uppercase tracking-wide">Critic Checklist (10 Tests)</div>
+                          <button
+                            type="button"
+                            onClick={() => handleRefineQuestion(i)}
+                            disabled={refiningQuestionIndex === i || row.editing || !row.question.critic_checks.some(c => c.verdict === 'NO')}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-indigo-200 text-indigo-700 text-[11px] font-medium hover:bg-indigo-50 disabled:opacity-50"
+                            title="Refine question from failed critic checks"
+                          >
+                            {refiningQuestionIndex === i ? <Loader2 size={12} className="animate-spin" /> : null}
+                            Refine Failed ({row.question.critic_checks.filter(c => c.verdict === 'NO').length})
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {row.question.critic_checks.map((check) => {
+                            const passed = check.verdict === 'YES';
+                            return (
+                              <div key={check.id} className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_96px_110px] items-start gap-2 rounded-md border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2">
+                                <div className="min-w-0">
+                                  <div className="text-[12px] text-[#374151] font-medium leading-5">{check.id}. {check.criterion}</div>
+                                </div>
+                                <div className="md:text-center text-left">
+                                  <div className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px] font-semibold">w={check.weight.toFixed(2)}</div>
+                                </div>
+                                <div className="md:text-right text-left shrink-0">
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${passed ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                    {check.verdict}
+                                  </span>
+                                  <div className="text-[11px] text-[#6b7280] mt-1">Score: {check.weighted_value.toFixed(2)}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {row.question.type?.toLowerCase() === 'essay' && !row.question.critic_checks?.length && !row.question.rubric_yes_no_checks?.length && (
+                  <div className="rounded-[10px] border border-amber-200 bg-amber-50 p-3">
+                    <div className="text-[12px] font-semibold text-amber-800 mb-1 uppercase tracking-wide">Critic Checklist Unavailable</div>
+                    <p className="text-[13px] text-amber-700 leading-6">
+                      This question was generated from a legacy import job that did not store the 10 YES/NO critic checks.
+                      Re-run the import to get the full weighted checklist.
+                    </p>
                   </div>
                 )}
 
@@ -433,6 +873,125 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
                         />
                       </div>
                     )}
+
+                    {row.edited.type === 'essay' && (
+                      <div className="rounded-[10px] border border-indigo-200 bg-indigo-50/40 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                          <div className="text-[12px] font-semibold text-indigo-800 uppercase tracking-wide">Edit Hierarchical Rubric YES/NO Checks</div>
+                          <div className="inline-flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => addRubricCheck(i)}
+                              className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-indigo-300 text-indigo-700 text-[12px] font-medium hover:bg-indigo-100"
+                            >
+                              + Add Check
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => normalizeRubricWeights(i)}
+                              disabled={(row.edited.rubric_yes_no_checks || []).length === 0}
+                              className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-indigo-300 text-indigo-700 text-[12px] font-medium hover:bg-indigo-100 disabled:opacity-50"
+                            >
+                              Normalize Weights
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => resetRubricChecksToAiDefault(i)}
+                              className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-[#d1d5db] text-[#374151] text-[12px] font-medium hover:bg-white"
+                            >
+                              Reset To AI Default
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => applyRubricTemplateChecks(i)}
+                              disabled={(row.edited.rubric_yes_no_checks || []).length > 0}
+                              className="inline-flex items-center px-2.5 py-1.5 rounded-md border border-indigo-300 text-indigo-700 text-[12px] font-medium hover:bg-indigo-100 disabled:opacity-50"
+                            >
+                              Add 10-Template Checks
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="mb-2 text-[12px] text-indigo-700">
+                          Total Weight: <span className="font-semibold">{(row.edited.rubric_yes_no_checks || []).reduce((sum, check) => sum + (Number.isFinite(check.weight) ? check.weight : 0), 0).toFixed(2)}</span>
+                          {Math.abs((row.edited.rubric_yes_no_checks || []).reduce((sum, check) => sum + (Number.isFinite(check.weight) ? check.weight : 0), 0) - 1) > 0.001 && (
+                            <span className="ml-2 text-amber-700 font-medium">Target is 1.00</span>
+                          )}
+                        </div>
+
+                        {!!row.rubricFormError && (
+                          <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                            {row.rubricFormError}
+                          </div>
+                        )}
+
+                        <div className="space-y-2">
+                          {(row.edited.rubric_yes_no_checks || []).map((check, checkIndex) => (
+                            <div key={`${check.id}-${checkIndex}`} className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_120px_92px] items-start gap-2 rounded-md border border-indigo-100 bg-white px-3 py-2">
+                              <div>
+                                <input
+                                  value={check.check}
+                                  onChange={e => updateRubricCheckText(i, checkIndex, e.target.value)}
+                                  className="w-full h-[36px] px-2.5 rounded-md border border-[#d1d5db] text-[12px] text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                                  placeholder={`Check ${checkIndex + 1} question`}
+                                />
+                                {!!row.rubricCheckErrors?.[checkIndex] && (
+                                  <div className="text-[11px] text-rose-600 mt-1">{row.rubricCheckErrors[checkIndex]}</div>
+                                )}
+                              </div>
+                              <input
+                                type="number"
+                                min={0}
+                                max={1}
+                                step={0.01}
+                                value={check.weight}
+                                onChange={e => updateRubricCheckWeight(i, checkIndex, e.target.value)}
+                                className="w-full h-[36px] px-2.5 rounded-md border border-[#d1d5db] text-[12px] text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+                                placeholder="Weight"
+                              />
+                              <div className="grid grid-cols-4 gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => moveRubricCheck(i, checkIndex, 'up')}
+                                  disabled={checkIndex === 0}
+                                  className="h-[36px] rounded-md border border-[#d1d5db] text-[#374151] text-[11px] font-medium hover:bg-[#f8fafc] disabled:opacity-40"
+                                >
+                                  Up
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => moveRubricCheck(i, checkIndex, 'down')}
+                                  disabled={checkIndex === (row.edited.rubric_yes_no_checks || []).length - 1}
+                                  className="h-[36px] rounded-md border border-[#d1d5db] text-[#374151] text-[11px] font-medium hover:bg-[#f8fafc] disabled:opacity-40"
+                                >
+                                  Down
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => duplicateRubricCheck(i, checkIndex)}
+                                  className="h-[36px] rounded-md border border-indigo-200 text-indigo-700 text-[11px] font-medium hover:bg-indigo-50"
+                                >
+                                  Duplicate
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeRubricCheck(i, checkIndex)}
+                                  className="h-[36px] rounded-md border border-rose-200 text-rose-700 text-[11px] font-medium hover:bg-rose-50"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+
+                          {(row.edited.rubric_yes_no_checks || []).length === 0 && (
+                            <div className="rounded-md border border-dashed border-indigo-200 bg-white/70 px-3 py-3 text-[12px] text-indigo-700">
+                              No rubric checks yet. Add checks and weights, then click Save.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -447,23 +1006,9 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
                 )}
 
                 {row.question.explanation && (
-                  <div className="text-[13px] text-[#6b7280]">
-                    <span className="font-semibold text-[#4b5563]">Explanation:</span> {row.question.explanation}
-                  </div>
-                )}
-                {row.question.reference_answer && (
-                  <div className="text-[13px] text-[#6b7280]">
-                    <span className="font-semibold text-[#4b5563]">Reference answer:</span> {row.question.reference_answer}
-                  </div>
-                )}
-                {row.question.evidence && (
-                  <div className="text-[13px] text-[#6b7280]">
-                    <span className="font-semibold text-[#4b5563]">Evidence:</span> {row.question.evidence}
-                  </div>
-                )}
-                {row.question.rubric && (
-                  <div className="text-[13px] text-[#6b7280]">
-                    <span className="font-semibold text-[#4b5563]">Rubric:</span> {row.question.rubric}
+                  <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-3">
+                    <div className="text-[12px] font-semibold text-[#6b7280] mb-1 uppercase tracking-wide">Explanation</div>
+                    <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap leading-6">{row.question.explanation}</p>
                   </div>
                 )}
               </div>
@@ -471,10 +1016,14 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
           </div>
         ))}
 
-          {rows.length === 0 && (
+          {visibleRows.length === 0 && (
             <div className="p-10 text-center border border-dashed border-[#d1d5db] rounded-xl bg-[#fafafa]">
-              <p className="text-[15px] font-medium text-[#374151]">No draft questions available for this import.</p>
-              <p className="text-[13px] text-[#6b7280] mt-1">Try running another import or verify AI generation settings.</p>
+              <p className="text-[15px] font-medium text-[#374151]">
+                No {reviewPage === 'mcq' ? 'MCQ' : 'Essay'} draft questions available in this import.
+              </p>
+              <p className="text-[13px] text-[#6b7280] mt-1">
+                Switch to the other review page or run another import with mixed question types.
+              </p>
             </div>
           )}
         </div>

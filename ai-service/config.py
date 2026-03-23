@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     # Ollama Cloud settings
     OLLAMA_HOST: str = "https://ollama.com"
     OLLAMA_API_KEY: str = ""
-    OLLAMA_MODEL: str = "llama3.2"
+    OLLAMA_MODEL: str = "deepseek-v3.1:671b-cloud"
+    OLLAMA_QUESTION_IMPORT_MODEL: str = "deepseek-v3.1:671b-cloud"
     
     # whisper moded setting
     WHISPER_MODEL: str = "small"  

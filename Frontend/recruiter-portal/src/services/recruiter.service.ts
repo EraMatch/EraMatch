@@ -487,7 +487,9 @@ export const recruiterService = {
         mcqCount: number = 5,
         essayCount: number = 5,
         mcqDifficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium',
-        essayDifficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium'
+        essayDifficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium',
+        processInChunks: boolean = false,
+        chunkPageSize: number = 20
     ) => {
         const formData = new FormData();
         formData.append('file', file);
@@ -499,10 +501,27 @@ export const recruiterService = {
         formData.append('essay_count', String(essayCount));
         formData.append('mcq_difficulty', mcqDifficulty);
         formData.append('essay_difficulty', essayDifficulty);
-        return fetchAPI<{ job_id: string; status: string; message: string }>(
+        formData.append('process_in_chunks', processInChunks ? 'true' : 'false');
+        formData.append('chunk_page_size', String(chunkPageSize));
+        return fetchAPI<{ job_id: string; status: string; message: string; chunked?: boolean; chunk_count?: number; job_ids?: string[] }>(
             '/questions/import',
             { method: 'POST', body: formData }
         );
+    },
+
+    preflightQuestionImport: async (file: File, chunkPageSize: number = 20) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('chunk_page_size', String(chunkPageSize));
+        return fetchAPI<{
+            is_pdf: boolean;
+            total_pages: number | null;
+            max_pages_without_chunking: number;
+            requires_chunking: boolean;
+            chunk_page_size: number;
+            chunk_count: number;
+            message: string;
+        }>('/questions/import/preflight', { method: 'POST', body: formData });
     },
 
     /** List all import jobs for the current organization. */
@@ -520,6 +539,16 @@ export const recruiterService = {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ questions }),
+            }
+        ),
+
+    refineImportQuestion: async (jobId: string, questionIndex: number) =>
+        fetchAPI<{ question_index: number; refined_question: any; message: string }>(
+            `/questions/import/jobs/${jobId}/draft/refine`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question_index: questionIndex }),
             }
         ),
 };

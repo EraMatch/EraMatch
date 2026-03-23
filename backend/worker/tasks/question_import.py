@@ -61,14 +61,37 @@ def update_job_status(conn, job_id: str, status: str, **extra_fields):
 
 # ─── Text extraction helpers ──────────────────────────────────────────────────
 
-def extract_text_from_pdf(file_bytes: bytes) -> tuple[str, int]:
-    """Extract text from a PDF. Returns (text, page_count)."""
+def extract_text_from_pdf(
+    file_bytes: bytes,
+    page_start: int | None = None,
+    page_end: int | None = None,
+) -> tuple[str, int]:
+    """Extract text from a PDF. Returns (text, total_page_count)."""
     try:
         import pdfplumber
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             page_count = len(pdf.pages)
+            if page_start is None or page_end is None:
+                if page_count > MAX_PDF_PAGES:
+                    raise ValueError(
+                        f"PDF has {page_count} pages (max {MAX_PDF_PAGES}). "
+                        "Please upload a shorter document or select a page range."
+                    )
+                page_start = 1
+                page_end = page_count
+
+            if page_start < 1 or page_end < page_start or page_end > page_count:
+                raise ValueError(
+                    f"Invalid page range {page_start}-{page_end} for PDF with {page_count} pages."
+                )
+
+            if (page_end - page_start + 1) > MAX_PDF_PAGES:
+                raise ValueError(
+                    f"Selected page range {page_start}-{page_end} exceeds max {MAX_PDF_PAGES} pages per chunk."
+                )
+
             text_parts = []
-            for page in pdf.pages[:MAX_PDF_PAGES]:
+            for page in pdf.pages[page_start - 1:page_end]:
                 t = page.extract_text()
                 if t:
                     text_parts.append(t)
@@ -107,19 +130,19 @@ def extract_text_from_csv_xlsx(file_bytes: bytes, filename: str) -> str:
         raise RuntimeError("pandas/openpyxl not installed. Run: pip install pandas openpyxl")
 
 
-def extract_text(file_bytes: bytes, filename: str) -> tuple[str, str]:
+def extract_text(
+    file_bytes: bytes,
+    filename: str,
+    page_start: int | None = None,
+    page_end: int | None = None,
+) -> tuple[str, str]:
     """
     Auto-detect file type and extract raw text.
     Returns (raw_text, detected_type).
     """
     fname = filename.lower()
     if fname.endswith(".pdf"):
-        text, pages = extract_text_from_pdf(file_bytes)
-        if pages > MAX_PDF_PAGES:
-            raise ValueError(
-                f"PDF has {pages} pages (max {MAX_PDF_PAGES}). "
-                "Please upload a shorter document or select a page range."
-            )
+        text, pages = extract_text_from_pdf(file_bytes, page_start=page_start, page_end=page_end)
         return text, "pdf"
     elif fname.endswith(".docx") or fname.endswith(".doc"):
         return extract_text_from_docx(file_bytes), "docx"
@@ -192,6 +215,10 @@ def run_question_import(
     essay_count: int = 0,
     mcq_difficulty: str = "Medium",
     essay_difficulty: str = "Medium",
+    page_start: int | None = None,
+    page_end: int | None = None,
+    chunk_index: int | None = None,
+    chunk_count: int | None = None,
 ):
     """
     Background task that:
@@ -205,7 +232,11 @@ def run_question_import(
     if question_types is None:
         question_types = ["mcq", "essay"]
 
-    logger.info(f"[QuestionImport] Starting job {job_id} | type={import_type} | file={filename}")
+    chunk_meta = ""
+    if chunk_index and chunk_count and page_start and page_end:
+        chunk_meta = f" | chunk={chunk_index}/{chunk_count} pages={page_start}-{page_end}"
+
+    logger.info(f"[QuestionImport] Starting job {job_id} | type={import_type} | file={filename}{chunk_meta}")
 
     conn = None
     try:
@@ -222,7 +253,12 @@ def run_question_import(
             )
 
         # ── 3. Extract text ───────────────────────────────────────────────
-        raw_text, detected_type = extract_text(file_bytes, filename)
+        raw_text, detected_type = extract_text(
+            file_bytes,
+            filename,
+            page_start=page_start,
+            page_end=page_end,
+        )
 
         if len(raw_text) < 50:
             raise ValueError("Extracted text is too short. Please upload a richer document.")
@@ -283,6 +319,8 @@ def run_question_import(
                 )
             except Exception:
                 pass
+        if isinstance(exc, ValueError):
+            raise
         raise self.retry(exc=exc)
     finally:
         if conn:

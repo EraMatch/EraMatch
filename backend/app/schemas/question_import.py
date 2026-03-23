@@ -42,10 +42,13 @@ class DraftQuestion(BaseModel):
     explanation: str | None = None
     rubric: str | None = None           # Essay/code
     max_words: int | None = None        # Essay
+    rubric_yes_no_checks: list[dict] | None = None
     # Critic metadata (read-only in the UI)
     needs_review: bool = False
     critic_score: float = 1.0
+    critic_weighted_score: float = 1.0
     critic_feedback: str | None = None
+    critic_checks: list[dict] | None = None
     retry_count: int = 0
 
 
