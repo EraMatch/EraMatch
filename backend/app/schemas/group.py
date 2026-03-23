@@ -133,6 +133,7 @@ class GroupDetailResponse(BaseModel):
     pipeline_stages: list[PipelineStage] = Field(default_factory=list, alias="pipelineStages")
     assessments: list[GroupAssessmentItem] = []
     interviews: list[GroupInterviewItem] = []
+    github_questions_count: int = 10
 
     class Config:
         populate_by_name = True
@@ -186,6 +187,7 @@ class GroupUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     status: str | None = None
     filtration_flow: list[str] | None = None  # e.g. ["assessment", "ai-interview", "live-interview"]
+    github_questions_count: int | None = Field(default=None, ge=1, le=30)
 
 
 class GroupDeleteRequest(BaseModel):

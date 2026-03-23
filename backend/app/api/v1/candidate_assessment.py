@@ -232,6 +232,59 @@ def _score_question_for_candidate(question: dict, candidate_keywords: list[str])
 
     return score, sorted(set(matched))
 
+
+def _normalize_github_question(raw: dict, order: int) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    q_text = str(raw.get("question") or raw.get("question_text") or "").strip()
+    if not q_text:
+        return None
+
+    q_type = str(raw.get("type") or raw.get("question_type") or "essay").strip().lower()
+    if q_type not in {"mcq", "essay", "coding"}:
+        q_type = "essay"
+
+    options = raw.get("options") if isinstance(raw.get("options"), list) else []
+    points = int(raw.get("points") or 10)
+
+    question_config = {
+        "source": "github_analysis",
+        "difficulty": raw.get("difficulty") or "Medium",
+        "selection_reason": raw.get("selection_reason") or "Generated from GitHub profile analysis",
+        "source_file": raw.get("source_file") or "",
+    }
+    if options:
+        question_config["options"] = options
+
+    rubric_checks = raw.get("rubric_yes_no_checks") if isinstance(raw.get("rubric_yes_no_checks"), list) else []
+    if q_type == "essay":
+        if not rubric_checks:
+            rubric_checks = [
+                "Answer is technically accurate and coherent",
+                "Includes practical reasoning or trade-offs",
+                "Covers edge cases or failure handling",
+                "Shows maintainability considerations",
+                "Demonstrates performance/security awareness",
+            ]
+        question_config["rubric_yes_no_checks"] = rubric_checks
+
+    correct_answer = {}
+    ideal_answer = str(raw.get("ideal_answer") or raw.get("expected_answer") or "").strip()
+    if ideal_answer:
+        correct_answer["ideal_answer"] = ideal_answer
+    if q_type == "mcq" and raw.get("correct_option") is not None:
+        correct_answer["correct_option"] = raw.get("correct_option")
+
+    return {
+        "question_id": str(uuid4()),
+        "question_type": q_type,
+        "question_text": q_text,
+        "question_config": question_config,
+        "correct_answer": correct_answer,
+        "points": points,
+        "order": order,
+    }
+
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -448,6 +501,28 @@ async def _start_assessment_session_impl(
         gh_signal_row.get("analysis_data") if gh_signal_row else None,
     )
 
+    stage_cfg = await session.execute(
+        text(
+            """
+            SELECT acceptance_criteria
+            FROM group_pipeline_stages
+            WHERE stage_id = :stage_id
+            LIMIT 1
+            """
+        ).bindparams(
+            bindparam("stage_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"stage_id": UUID(request.stage_id)},
+    )
+    stage_cfg_row = stage_cfg.mappings().first()
+    github_questions_count = 0
+    if stage_cfg_row and isinstance(stage_cfg_row.get("acceptance_criteria"), dict):
+        try:
+            github_questions_count = int((stage_cfg_row.get("acceptance_criteria") or {}).get("github_questions_count") or 0)
+        except Exception:
+            github_questions_count = 0
+    github_questions_count = max(0, min(github_questions_count, 30))
+
     # 2. Resume existing session?
     if progress["status"] == "in_progress":
         existing = await session.execute(
@@ -653,6 +728,79 @@ async def _start_assessment_session_impl(
 
             assigned_questions.append(q_data)
             max_points += q_points
+
+    if github_questions_count > 0 and gh_signal_row and isinstance(gh_signal_row.get("analysis_data"), dict):
+        gh_questions = (((gh_signal_row.get("analysis_data") or {}).get("synthesis") or {}).get("questions") or [])
+        selected_gh: list[dict] = []
+        for raw_q in gh_questions:
+            normalized = _normalize_github_question(raw_q, display_order + len(selected_gh) + 1)
+            if normalized:
+                selected_gh.append(normalized)
+            if len(selected_gh) >= github_questions_count:
+                break
+
+        if selected_gh:
+            target_section_id = sections[0]["section_id"] if sections else uuid4()
+            for gh_q in selected_gh:
+                display_order += 1
+                assignment_id = uuid4()
+                q_points = int(gh_q.get("points") or 10)
+
+                snapshot = {
+                    "question_id": gh_q["question_id"],
+                    "question_type": gh_q["question_type"],
+                    "question_text": gh_q["question_text"],
+                    "question_config": gh_q.get("question_config") or {},
+                    "correct_answer": gh_q.get("correct_answer") or {},
+                    "points": q_points,
+                    "assignment_context": {
+                        "selection_strategy": "github_analysis",
+                        "candidate_keywords": candidate_keywords[:20],
+                        "matched_keywords": [],
+                    },
+                }
+
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO candidate_assigned_questions
+                        (assignment_id, session_id, section_id, pool_entry_id,
+                         question_snapshot, display_order, assigned_at)
+                        VALUES (
+                            :assignment_id, :session_id, :section_id, :pool_entry_id,
+                            :question_snapshot, :display_order, NOW()
+                        )
+                        """
+                    ).bindparams(
+                        bindparam("assignment_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("session_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("section_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("pool_entry_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("question_snapshot", type_=JSONB),
+                    ),
+                    {
+                        "assignment_id": assignment_id,
+                        "session_id": session_id,
+                        "section_id": target_section_id,
+                        "pool_entry_id": uuid4(),
+                        "question_snapshot": snapshot,
+                        "display_order": display_order,
+                    },
+                )
+
+                assigned_questions.append(
+                    {
+                        "question_id": gh_q["question_id"],
+                        "assignment_id": str(assignment_id),
+                        "section_title": "GitHub Profile Questions",
+                        "question_type": gh_q["question_type"],
+                        "question_text": gh_q["question_text"],
+                        "question_config": gh_q.get("question_config") or {},
+                        "points": q_points,
+                        "order": display_order,
+                    }
+                )
+                max_points += q_points
 
     # 5. Create ongoing_assessments record
     await session.execute(

@@ -39,7 +39,10 @@ from app.models import (
     EmailLog,
     LiveInterviewConfig,
     LiveInterviewSession,
+    CVAnalysis,
+    GitHubAnalysisJob,
 )
+from worker.tasks.github_analysis import run_github_analysis
 from app.schemas.group import (
     AcceptanceCriteriaResponse,
     AcceptanceCriteriaUpdate,
@@ -312,6 +315,7 @@ class GroupService:
 
         # Acceptance criteria — merge from all stage configs
         criteria = AcceptanceCriteriaResponse()
+        github_questions_count = 10
         for sc in stage_configs:
             if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
                 if "min_technical_score" in sc.acceptance_criteria:
@@ -320,6 +324,11 @@ class GroupService:
                     criteria.allowed_integrity_risk = sc.acceptance_criteria["allowed_integrity_risk"]
                 if "required_verdict" in sc.acceptance_criteria:
                     criteria.required_verdict = sc.acceptance_criteria["required_verdict"]
+                if sc.stage_type == "assessment" and "github_questions_count" in sc.acceptance_criteria:
+                    try:
+                        github_questions_count = int(sc.acceptance_criteria.get("github_questions_count") or 10)
+                    except Exception:
+                        github_questions_count = 10
 
         # Fetch detailed candidates
         candidates = await self._get_candidates_progress_data(group_id)
@@ -458,7 +467,8 @@ class GroupService:
             candidates=candidates,
             pipeline_stages=pipeline_stages,
             assessments=assessments_data,
-            interviews=interviews_data
+            interviews=interviews_data,
+            github_questions_count=github_questions_count,
         )
 
     # ── 2. GET /recruiter/groups/{groupId}/stats ──────────────────────────────
@@ -1745,13 +1755,19 @@ class GroupService:
             group.status = data.status
         if data.filtration_flow is not None:
             # GroupStageConfig is the sole source of truth — sync rows directly
-            await self._sync_stage_configs(group, data.filtration_flow)
+            github_questions_count = data.github_questions_count if data.github_questions_count is not None else 10
+            await self._sync_stage_configs(group, data.filtration_flow, github_questions_count)
 
         self.session.add(group)
         await self.session.commit()
+
+        if data.filtration_flow is not None and self.user.role == "technical":
+            github_questions_count = data.github_questions_count if data.github_questions_count is not None else 10
+            await self._queue_group_github_analysis_jobs(group, github_questions_count)
+
         return await self.get_group_details(group_id)
 
-    async def _sync_stage_configs(self, group: CandidateGroup, stage_names: list[str]) -> None:
+    async def _sync_stage_configs(self, group: CandidateGroup, stage_names: list[str], github_questions_count: int = 10) -> None:
         """Synchronise GroupStageConfig rows with a list of stage names."""
         group_id = group.id
         
@@ -1797,6 +1813,10 @@ class GroupService:
                 conf.stage_name = stage_name
                 if conf.state == 'inactive':
                     conf.state = 'not_started'
+                if conf.stage_type == "assessment":
+                    criteria = conf.acceptance_criteria or {}
+                    criteria["github_questions_count"] = int(github_questions_count)
+                    conf.acceptance_criteria = criteria
                 self.session.add(conf)
                 used_stage_ids.add(conf.stage_id)
                 # Remove from by_type so it's not reused (in case of duplicate stage_names in input)
@@ -1809,7 +1829,8 @@ class GroupService:
                     stage_type=stage_type,
                     stage_order=idx,
                     stage_name=stage_name,
-                    state="not_started"
+                    state="not_started",
+                    acceptance_criteria={"github_questions_count": int(github_questions_count)} if stage_type == "assessment" else None,
                 )
                 self.session.add(new_conf)
         
@@ -1828,6 +1849,75 @@ class GroupService:
         await self.session.commit()
         self.session.add(group)
         await self.session.commit()
+
+    async def _queue_group_github_analysis_jobs(self, group: CandidateGroup, github_questions_count: int) -> int:
+        """Queue GitHub analysis jobs for all candidates in a group after technical flow configuration."""
+        app_res = await self.session.execute(
+            select(CandidateApplication, CandidateProfile, Position)
+            .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .join(Position, CandidateApplication.position_id == Position.id)
+            .where(
+                CandidateApplication.group_id == group.id,
+                CandidateApplication.organization_id == self.org_id,
+                CandidateApplication.is_deleted == False,
+            )
+            .order_by(CandidateApplication.applied_at.desc())
+        )
+        rows = app_res.all()
+        if not rows:
+            return 0
+
+        queued_jobs: list[tuple[UUID, UUID, str, str]] = []
+
+        for app, profile, position in rows:
+            github_url = profile.github_url
+            if not github_url:
+                cv_res = await self.session.execute(select(CVAnalysis).where(CVAnalysis.application_id == app.id))
+                cv = cv_res.scalars().first()
+                if cv and isinstance(cv.github_profile, dict):
+                    profile_obj = cv.github_profile.get("profile")
+                    if isinstance(profile_obj, dict):
+                        github_url = profile_obj.get("html_url")
+            if not github_url:
+                continue
+
+            existing_res = await self.session.execute(
+                select(GitHubAnalysisJob).where(
+                    GitHubAnalysisJob.organization_id == self.org_id,
+                    GitHubAnalysisJob.candidate_id == profile.id,
+                    GitHubAnalysisJob.status.in_(["pending", "processing"]),
+                )
+            )
+            existing_job = existing_res.scalars().first()
+            if existing_job:
+                continue
+
+            job = GitHubAnalysisJob(
+                organization_id=self.org_id,
+                candidate_id=profile.id,
+                created_by_user_id=self.user.id,
+                status="pending",
+                github_url=github_url,
+            )
+            self.session.add(job)
+            await self.session.flush()
+            jd_text = str(position.job_description or position.description or "")
+            queued_jobs.append((job.id, profile.id, github_url, jd_text))
+
+        await self.session.commit()
+
+        for job_id, candidate_id, github_url, jd_text in queued_jobs:
+            run_github_analysis.delay(
+                str(job_id),
+                str(candidate_id),
+                str(self.org_id),
+                github_url,
+                jd_text,
+                "",
+                int(github_questions_count),
+            )
+
+        return len(queued_jobs)
 
     async def bulk_progress(self, group_id: UUID, application_ids: list[UUID], action: str, current_stage_type: str | None = None, reason: str | None = None) -> None:
         """Progress, reject, or hold candidates in bulk."""

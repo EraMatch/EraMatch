@@ -24,6 +24,7 @@ router = APIRouter(prefix="/candidates", tags=["Candidates"])
 
 class GitHubAnalysisStartRequest(BaseModel):
     github_token: str | None = None
+    questions_to_generate: int | None = None
 
 
 @router.post("", response_model=CandidateResponse, status_code=201)
@@ -179,6 +180,8 @@ async def start_github_analysis(
         raise HTTPException(status_code=422, detail="Candidate has no GitHub URL to analyze")
 
     github_token = (payload.github_token or "").strip() if payload else ""
+    questions_to_generate = int(payload.questions_to_generate or 10) if payload else 10
+    questions_to_generate = max(1, min(questions_to_generate, 30))
 
     current_user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
     if not current_user_id:
@@ -209,6 +212,7 @@ async def start_github_analysis(
         github_url,
         jd_text,
         github_token,
+        questions_to_generate,
     )
 
     return {

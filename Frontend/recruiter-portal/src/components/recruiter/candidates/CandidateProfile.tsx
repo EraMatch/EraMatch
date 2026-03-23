@@ -252,8 +252,27 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     ? Number(candidate.githubAnalysis.overallScore)
     : (Number.isFinite(Number(qualityIndicators?.overall_github_score)) ? Number(qualityIndicators.overall_github_score) : Number(candidate.scores.github || 0));
 
+  const hasGithubProfile = Boolean(candidate.github_url);
+  const githubAnalysisReady = Boolean(candidate.githubAnalysis?.summary)
+    || Number.isFinite(Number(candidate.githubAnalysis?.overallScore))
+    || Number(candidate.githubStats?.contributionsLastYear || 0) > 0;
+  const showGithubProfileLock = hasGithubProfile && !githubAnalysisReady;
+
+  const triggerGithubAnalysis = async () => {
+    try {
+      setIsRunningGithubAnalysis(true);
+      const res = await api.recruiter.startCandidateGithubAnalysis(candidateId, githubTokenInput.trim() || undefined);
+      window.alert((res as any)?.message || 'GitHub analysis queued. Check Background Tasks.');
+    } catch (error) {
+      console.error('Failed to queue GitHub analysis', error);
+      window.alert('Failed to queue GitHub analysis.');
+    } finally {
+      setIsRunningGithubAnalysis(false);
+    }
+  };
+
   return (
-    <div className="h-full w-full overflow-auto bg-[#f9fafb]">
+    <div className="h-full w-full overflow-auto bg-[#f9fafb] relative">
       <div className="max-w-[1400px] mx-auto px-[48px] py-[24px]">
         {/* Header */}
         <button
@@ -681,23 +700,28 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                       className="h-[36px] w-[220px] px-3 rounded-[10px] border border-[#d1d5db] text-[13px]"
                     />
                     <button
-                      onClick={async () => {
-                        try {
-                          setIsRunningGithubAnalysis(true);
-                          const res = await api.recruiter.startCandidateGithubAnalysis(candidateId, githubTokenInput.trim() || undefined);
-                          window.alert((res as any)?.message || 'GitHub analysis queued. Check Background Tasks.');
-                        } catch (error) {
-                          console.error('Failed to queue GitHub analysis', error);
-                          window.alert('Failed to queue GitHub analysis.');
-                        } finally {
-                          setIsRunningGithubAnalysis(false);
-                        }
-                      }}
+                      onClick={triggerGithubAnalysis}
                       disabled={isRunningGithubAnalysis}
                       className="h-[36px] px-4 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] text-[#1d4ed8] text-[13px] font-medium disabled:opacity-60"
                     >
                       {isRunningGithubAnalysis ? 'Queuing...' : 'Run GitHub Analysis'}
                     </button>
+                  </div>
+                </div>
+
+                {/* Overall GitHub Score */}
+                <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-indigo-900 font-semibold mb-2">Overall GitHub Score</h4>
+                      <p className="text-sm text-indigo-700">
+                        Based on code quality, contribution frequency, community engagement, and project impact
+                      </p>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-5xl font-bold text-indigo-600 mb-1">{Math.round(overallGithubScore)}</div>
+                      <div className="text-sm text-indigo-700">/ 100</div>
+                    </div>
                   </div>
                 </div>
 
@@ -958,37 +982,6 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                   )}
                 </div>
 
-                {/* Suggested Questions by GitHub Analysis */}
-                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
-                  <h4 className="text-[#111827] text-sm font-medium mb-4">Suggested Questions (Based on GitHub Analysis)</h4>
-                  {Array.isArray(candidate.githubAnalysis?.questions) && candidate.githubAnalysis.questions.length > 0 ? (
-                    <div className="space-y-3">
-                      {candidate.githubAnalysis.questions.map((q: any, idx: number) => (
-                        <div key={idx} className="rounded-[10px] border border-[#e5e7eb] p-4 bg-[#fafafa]">
-                          <div className="flex items-center justify-between gap-3 mb-2">
-                            <div className="text-[13px] font-medium text-[#111827]">Question {idx + 1}</div>
-                            <span className="px-2 py-0.5 rounded-full text-[11px] border border-[#dbeafe] bg-[#eff6ff] text-[#1d4ed8] capitalize">
-                              {q?.difficulty || 'intermediate'}
-                            </span>
-                          </div>
-                          <p className="text-sm text-[#111827] mb-2">{q?.question || 'N/A'}</p>
-                          {q?.selection_reason && (
-                            <p className="text-xs text-[#64748b] mb-1"><span className="font-medium">Selection reason:</span> {q.selection_reason}</p>
-                          )}
-                          {q?.jd_relation && (
-                            <p className="text-xs text-[#64748b] mb-1"><span className="font-medium">JD relation:</span> {q.jd_relation}</p>
-                          )}
-                          {q?.source_file && (
-                            <p className="text-xs text-[#64748b]"><span className="font-medium">Source file:</span> {q.source_file}</p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-[#6b7280]">No generated recommendations available from GitHub analysis.</p>
-                  )}
-                </div>
-
                 {/* Recent Activity */}
                 <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
                   <h4 className="text-[#111827] text-sm font-medium mb-4">Recent Activity</h4>
@@ -1051,21 +1044,6 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                   </div>
                 </div>
 
-                {/* Overall GitHub Score */}
-                <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-indigo-900 font-semibold mb-2">Overall GitHub Score</h4>
-                      <p className="text-sm text-indigo-700">
-                        Based on code quality, contribution frequency, community engagement, and project impact
-                      </p>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-5xl font-bold text-indigo-600 mb-1">{Math.round(overallGithubScore)}</div>
-                      <div className="text-sm text-indigo-700">/ 100</div>
-                    </div>
-                  </div>
-                </div>
               </div>
             )}
 
@@ -1697,6 +1675,39 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
           </DialogContent>
         </Dialog>
       </div>
+
+      {showGithubProfileLock && (
+        <div className="fixed inset-0 z-40 bg-black/35 backdrop-blur-[1px] flex items-center justify-center px-4">
+          <div className="w-full max-w-[620px] rounded-2xl border border-[#e5e7eb] bg-white shadow-2xl p-8 text-center">
+            <div className="mx-auto mb-4 w-14 h-14 rounded-full bg-[#eef2ff] flex items-center justify-center">
+              {isRunningGithubAnalysis ? (
+                <Loader2 size={24} className="text-[#4f46e5] animate-spin" />
+              ) : (
+                <Lock size={24} className="text-[#4f46e5]" />
+              )}
+            </div>
+            <h3 className="text-[#111827] text-[20px] font-['Arimo',sans-serif] mb-2">GitHub Analysis In Progress</h3>
+            <p className="text-[#6b7280] text-[14px] font-['Arimo',sans-serif] mb-6">
+              This candidate profile is locked until GitHub analysis finishes. Generated questions will be routed into the technical assessment.
+            </p>
+            <div className="flex items-center justify-center gap-3">
+              <button
+                onClick={triggerGithubAnalysis}
+                disabled={isRunningGithubAnalysis}
+                className="h-[40px] px-5 rounded-[10px] bg-[#4f46e5] hover:bg-[#4338ca] text-white text-[13px] font-medium disabled:opacity-60"
+              >
+                {isRunningGithubAnalysis ? 'Queuing...' : 'Run GitHub Analysis'}
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="h-[40px] px-5 rounded-[10px] border border-[#d1d5db] bg-white hover:bg-[#f9fafb] text-[13px]"
+              >
+                Refresh Status
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

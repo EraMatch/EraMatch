@@ -147,6 +147,7 @@ def run_github_analysis(
     github_url: str,
     jd_text: str = "",
     github_token: str = "",
+    questions_to_generate: int = 10,
 ):
     logger.info("[GitHubAnalysis] Starting job %s candidate=%s", job_id, candidate_id)
     conn = None
@@ -166,10 +167,75 @@ def run_github_analysis(
         resp.raise_for_status()
         payload = resp.json()
 
+        all_generated_questions = ((payload.get("analysis_data") or {}).get("synthesis") or {}).get("questions") or []
+        target_count = max(1, min(int(questions_to_generate or 10), 30))
+        generated_questions = list(all_generated_questions)[:target_count]
+
+        analysis_data = payload.get("analysis_data") or {}
+        if isinstance(analysis_data, dict):
+            synthesis = analysis_data.get("synthesis") or {}
+            if isinstance(synthesis, dict):
+                synthesis["questions"] = generated_questions
+                analysis_data["synthesis"] = synthesis
+            payload["analysis_data"] = analysis_data
+
         _upsert_github_analysis(conn, candidate_id, org_id, github_url, payload)
         _update_cv_analysis_profile(conn, candidate_id, org_id, payload)
 
-        generated_questions = ((payload.get("analysis_data") or {}).get("synthesis") or {}).get("questions") or []
+        normalized_questions = []
+        for idx, q in enumerate(generated_questions):
+            if not isinstance(q, dict):
+                continue
+            q_text = str(q.get("question") or q.get("question_text") or "").strip()
+            if not q_text:
+                continue
+            q_type = str(q.get("type") or q.get("question_type") or "essay").strip().lower()
+            if q_type not in {"mcq", "essay", "coding"}:
+                q_type = "essay"
+            normalized_questions.append(
+                {
+                    "type": q_type,
+                    "question": q_text,
+                    "question_text": q_text,
+                    "difficulty": q.get("difficulty") or "Medium",
+                    "points": int(q.get("points") or 10),
+                    "options": q.get("options") if isinstance(q.get("options"), list) else [],
+                    "ideal_answer": q.get("ideal_answer") or q.get("expected_answer") or "",
+                    "selection_reason": q.get("selection_reason") or "Generated from GitHub profile analysis",
+                    "rubric_yes_no_checks": q.get("rubric_yes_no_checks") if isinstance(q.get("rubric_yes_no_checks"), list) else [],
+                    "source": "github_analysis",
+                    "source_file": q.get("source_file") or "",
+                }
+            )
+
+        created_by_user_id = None
+        with conn.cursor() as cur:
+            cur.execute("SELECT created_by_user_id FROM github_analysis_jobs WHERE job_id = %s", (job_id,))
+            row = cur.fetchone()
+            if row:
+                created_by_user_id = row[0]
+
+        if created_by_user_id and normalized_questions:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO question_import_jobs
+                    (job_id, organization_id, created_by_user_id, status, import_type, source_filename,
+                     draft_questions, critic_stats, total_generated, total_flagged, total_approved, completed_at)
+                    VALUES
+                    (gen_random_uuid(), %s, %s, 'completed', 'generative', %s,
+                     %s::jsonb, %s::jsonb, %s, 0, 0, NOW())
+                    """,
+                    (
+                        org_id,
+                        created_by_user_id,
+                        f"GitHub generated questions: {github_url}",
+                        json.dumps(normalized_questions),
+                        json.dumps({"source": "github_analysis", "note": "Auto-ingested from GitHub analysis job"}),
+                        len(normalized_questions),
+                    ),
+                )
+            conn.commit()
 
         update_job_status(
             conn,
