@@ -200,3 +200,99 @@ async def stop_all_video_tasks(
         "stopped_count": len(tasks),
         "message": f"Stopped {len(tasks)} video task(s).",
     }
+
+
+@router.post("/stop-question-import")
+async def stop_all_question_import_tasks(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Stop all pending/processing question import tasks for the current organization.
+    Sets status to 'cancelled'.
+    """
+    result = await db.execute(
+        select(QuestionImportJob)
+        .where(
+            QuestionImportJob.organization_id == current_user.organization_id,
+            QuestionImportJob.status.in_(["pending", "processing"]),
+        )
+    )
+    tasks = result.scalars().all()
+
+    for task in tasks:
+        task.status = "cancelled"
+        db.add(task)
+
+    await db.commit()
+
+    return {
+        "stopped_count": len(tasks),
+        "message": f"Stopped {len(tasks)} question import task(s).",
+    }
+
+
+@router.post("/stop-video/{task_id}")
+async def stop_video_task(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Stop a single pending/processing video task for the current organization.
+    Sets processing_status to 'cancelled'.
+    """
+    result = await db.execute(
+        select(InterviewResponse)
+        .join(OngoingInterview, InterviewResponse.session_id == OngoingInterview.session_id)
+        .where(
+            OngoingInterview.organization_id == current_user.organization_id,
+            InterviewResponse.response_id == task_id,
+        )
+    )
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Video task not found")
+
+    if task.processing_status not in ["pending", "processing"]:
+        raise HTTPException(status_code=400, detail="Only pending or processing tasks can be stopped")
+
+    task.processing_status = "cancelled"
+    db.add(task)
+    await db.commit()
+
+    return {
+        "message": "Video task stopped",
+        "task_id": str(task.response_id),
+        "status": task.processing_status,
+    }
+
+
+@router.post("/stop-question-import/{task_id}")
+async def stop_question_import_task(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Stop a single pending/processing question import task for the current organization.
+    Sets status to 'cancelled'.
+    """
+    task = await db.get(QuestionImportJob, task_id)
+
+    if not task or task.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Question import task not found")
+
+    if task.status not in ["pending", "processing"]:
+        raise HTTPException(status_code=400, detail="Only pending or processing tasks can be stopped")
+
+    task.status = "cancelled"
+    db.add(task)
+    await db.commit()
+
+    return {
+        "message": "Question import task stopped",
+        "task_id": str(task.id),
+        "status": task.status,
+    }

@@ -509,6 +509,16 @@ export const router = createBrowserRouter([
         element: (
             <RecruiterProtectedRoute>
                 <RecruiterLayout>
+                    <Navigate to="/recruiter/background-tasks/dashboard" replace />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        )
+    },
+    {
+        path: "/recruiter/background-tasks/:view",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
                     <BackgroundTasks />
                 </RecruiterLayout>
             </RecruiterProtectedRoute>

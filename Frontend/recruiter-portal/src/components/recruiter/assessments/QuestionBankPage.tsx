@@ -67,7 +67,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   // --- State ---
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [viewMode, setViewMode] = useState<'list' | 'editor' | 'import-review'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'editor' | 'import-review' | 'import-review-list'>('list');
   const [editorType, setEditorType] = useState<'mcq' | 'essay' | 'code' | null>(null);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [currentVariant, setCurrentVariant] = useState<QuestionVariant | null>(null);
@@ -89,6 +89,14 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const [showImportModal, setShowImportModal] = useState(false);
   const [pendingReviewJobId, setPendingReviewJobId] = useState<string | null>(null);
   const [importJobs, setImportJobs] = useState<any[]>([]);
+
+  const filterPendingReviewJobs = (jobs: any[]) => {
+    return (jobs || []).filter((j: any) => {
+      const generated = Number(j?.total_generated || 0);
+      const approved = Number(j?.total_approved || 0);
+      return j?.status === 'completed' && generated > 0 && approved < generated;
+    });
+  };
 
   // --- Effects ---
 
@@ -122,16 +130,25 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   // Load completed import jobs for the badge
   useEffect(() => {
     api.recruiter.listImportJobs()
-      .then((jobs: any[]) => setImportJobs(jobs.filter((j: any) => j.status === 'completed' && (j.total_generated || 0) > 0)))
+      .then((jobs: any[]) => setImportJobs(filterPendingReviewJobs(jobs)))
       .catch(() => {});
   }, []);
 
   // Auto-open review when arriving from Background Tasks link.
   useEffect(() => {
     const reviewJobId = searchParams.get('reviewJobId');
-    if (!reviewJobId) return;
-    setPendingReviewJobId(reviewJobId);
-    setViewMode('import-review');
+    const reviewImports = searchParams.get('reviewImports');
+
+    if (reviewJobId) {
+      setPendingReviewJobId(reviewJobId);
+      setViewMode('import-review');
+      return;
+    }
+
+    if (reviewImports === '1') {
+      setPendingReviewJobId(null);
+      setViewMode('import-review-list');
+    }
   }, [searchParams]);
 
   // --- Data Conversion Helpers ---
@@ -421,10 +438,21 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     return (
       <QuestionImportReview
         jobId={pendingReviewJobId}
-        onBack={() => { setViewMode('list'); setPendingReviewJobId(null); }}
-        onApproved={() => {
-          setViewMode('list');
+        onBack={() => {
+          setViewMode('import-review-list');
           setPendingReviewJobId(null);
+          const next = new URLSearchParams(searchParams);
+          next.delete('reviewJobId');
+          next.set('reviewImports', '1');
+          setSearchParams(next);
+        }}
+        onApproved={() => {
+          setViewMode('import-review-list');
+          setPendingReviewJobId(null);
+          const next = new URLSearchParams(searchParams);
+          next.delete('reviewJobId');
+          next.set('reviewImports', '1');
+          setSearchParams(next);
           // Refresh question list after approval
           api.recruiter.getQuestionBank().then((rawData: unknown) => {
             const data = rawData as any[];
@@ -441,10 +469,107 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
           }).catch(() => {});
           // Refresh import jobs badge
           api.recruiter.listImportJobs()
-            .then(jobs => setImportJobs(jobs.filter((j: any) => j.status === 'completed')))
+            .then(jobs => setImportJobs(filterPendingReviewJobs(jobs)))
             .catch(() => {});
         }}
       />
+    );
+  }
+
+  if (viewMode === 'import-review-list') {
+    const sortedJobs = [...importJobs].sort((a: any, b: any) => {
+      const aTime = new Date(a?.created_at || 0).getTime();
+      const bTime = new Date(b?.created_at || 0).getTime();
+      return bTime - aTime;
+    });
+
+    return (
+      <div className="min-h-screen p-8">
+        <div className="max-w-[1200px] mx-auto">
+          <button
+            onClick={() => {
+              setViewMode('list');
+              const next = new URLSearchParams(searchParams);
+              next.delete('reviewJobId');
+              next.delete('reviewImports');
+              setSearchParams(next);
+            }}
+            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-5 transition-colors"
+          >
+            <ArrowLeft size={18} />
+            <span className="text-sm">Back to Question Bank</span>
+          </button>
+
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h1 className="text-[#111827] mb-2 text-[30px] font-['Arimo',sans-serif]">Review Imports</h1>
+              <p className="text-[14px] text-gray-600">All pending review imports are listed below.</p>
+            </div>
+            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-amber-200 bg-amber-50 text-amber-700 text-[13px] font-medium">
+              <Inbox size={16} />
+              {sortedJobs.length} Pending
+            </div>
+          </div>
+
+          {sortedJobs.length === 0 ? (
+            <div className="bg-white border border-[#e5e7eb] rounded-[16px] p-10 text-center shadow-sm">
+              <CheckCircle size={32} className="mx-auto text-emerald-600 mb-3" />
+              <h3 className="text-[18px] text-[#111827] font-medium mb-2">No Pending Imports</h3>
+              <p className="text-[14px] text-gray-600">All imported questions are already reviewed.</p>
+            </div>
+          ) : (
+            <div className="bg-white border border-[#e5e7eb] rounded-[16px] shadow-sm overflow-hidden">
+              <table className="w-full text-left">
+                <thead className="bg-[#f9fafb] border-b border-[#e5e7eb]">
+                  <tr>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Source</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Import Type</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Created</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Generated</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Approved</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Pending</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#f3f4f6]">
+                  {sortedJobs.map((job: any) => {
+                    const jobId = String(job?.job_id || job?.id || '');
+                    const generated = Number(job?.total_generated || 0);
+                    const approved = Number(job?.total_approved || 0);
+                    const pending = Math.max(0, generated - approved);
+                    return (
+                      <tr key={jobId} className="hover:bg-[#fafafa] transition-colors">
+                        <td className="px-5 py-4 text-[14px] text-[#111827]">{job?.source_filename || 'Uploaded file'}</td>
+                        <td className="px-5 py-4 text-[13px] text-[#374151] capitalize">{String(job?.import_type || 'unknown')}</td>
+                        <td className="px-5 py-4 text-[13px] text-[#6b7280]">{job?.created_at ? new Date(job.created_at).toLocaleString() : 'N/A'}</td>
+                        <td className="px-5 py-4 text-[13px] text-[#374151]">{generated}</td>
+                        <td className="px-5 py-4 text-[13px] text-emerald-700">{approved}</td>
+                        <td className="px-5 py-4 text-[13px] text-amber-700 font-medium">{pending}</td>
+                        <td className="px-5 py-4 text-right">
+                          <button
+                            onClick={() => {
+                              if (!jobId) return;
+                              setPendingReviewJobId(jobId);
+                              setViewMode('import-review');
+                              const next = new URLSearchParams(searchParams);
+                              next.set('reviewJobId', jobId);
+                              next.set('reviewImports', '1');
+                              setSearchParams(next);
+                            }}
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] bg-indigo-600 text-white text-[13px] hover:bg-indigo-700"
+                          >
+                            <Sparkles size={14} /> Review
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -501,13 +626,11 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               {importJobs.length > 0 && (
                 <button
                   onClick={() => {
-                    const firstJob = importJobs[0];
-                    const jobId = String(firstJob?.job_id || firstJob?.id || '');
-                    if (!jobId) return;
-                    setPendingReviewJobId(jobId);
-                    setViewMode('import-review');
+                    setPendingReviewJobId(null);
+                    setViewMode('import-review-list');
                     const next = new URLSearchParams(searchParams);
-                    next.set('reviewJobId', jobId);
+                    next.delete('reviewJobId');
+                    next.set('reviewImports', '1');
                     setSearchParams(next);
                   }}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-[10px] transition-colors font-['Arimo',sans-serif] text-[14px]"
@@ -587,7 +710,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                   // but refresh jobs list shortly after queueing.
                   setTimeout(() => {
                     api.recruiter.listImportJobs()
-                      .then(jobs => setImportJobs(jobs.filter((j: any) => j.status === 'completed')))
+                      .then(jobs => setImportJobs(filterPendingReviewJobs(jobs)))
                       .catch(() => {});
                   }, 3000);
                 }}
