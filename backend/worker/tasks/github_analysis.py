@@ -152,6 +152,12 @@ def run_github_analysis(
     logger.info("[GitHubAnalysis] Starting job %s candidate=%s", job_id, candidate_id)
     conn = None
     try:
+        effective_github_token = (
+            (github_token or "").strip()
+            or (settings.GITHUB_TOKEN or "").strip()
+            or (os.environ.get("GITHUB_TOKEN", "") or "").strip()
+        )
+
         conn = get_db_conn()
         update_job_status(conn, job_id, "processing")
 
@@ -160,7 +166,7 @@ def run_github_analysis(
             json={
                 "github_url": github_url,
                 "jd_text": jd_text,
-                "github_token": github_token,
+                "github_token": effective_github_token,
             },
             timeout=420,
         )

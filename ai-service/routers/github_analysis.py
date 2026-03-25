@@ -664,10 +664,11 @@ async def _llm_json(prompt: str, model: str, stage: str = "unknown") -> Any:
 async def analyze_github_profile(request: GitHubAnalysisRequest):
     total_started = time.perf_counter()
     username = _parse_github_username(request.github_url)
+    effective_github_token = (request.github_token or settings.GITHUB_TOKEN or "").strip()
     logger.info("github_analysis start username=%s", username)
 
-    profile = await _fetch_profile(username, request.github_token)
-    repos = await _fetch_repos(username, request.github_token)
+    profile = await _fetch_profile(username, effective_github_token)
+    repos = await _fetch_repos(username, effective_github_token)
     logger.info("github_analysis fetched profile_repos=%s", len(repos))
 
     # Phase 1: fast heuristic pre-filter before pillar extraction.
@@ -717,7 +718,7 @@ async def analyze_github_profile(request: GitHubAnalysisRequest):
         )
         results = await asyncio.gather(
             *[
-                _evaluate_repo_relevance(username, repo, request.jd_text, request.github_token)
+                _evaluate_repo_relevance(username, repo, request.jd_text, effective_github_token)
                 for repo in batch
             ]
         )
@@ -744,7 +745,7 @@ async def analyze_github_profile(request: GitHubAnalysisRequest):
     }
 
     if best_repo:
-        tree_files = best_repo_tree or await _fetch_repo_tree(username, best_repo.name, best_repo.default_branch, request.github_token)
+        tree_files = best_repo_tree or await _fetch_repo_tree(username, best_repo.name, best_repo.default_branch, effective_github_token)
 
         # Stage 3: key file selection (mapper model)
         key_files_prompt = _load_prompt(
@@ -767,7 +768,7 @@ async def analyze_github_profile(request: GitHubAnalysisRequest):
 
         code_chunks: list[str] = []
         for file_path in selected_files:
-            snippet = await _fetch_file_content(username, best_repo.name, file_path, request.github_token)
+            snippet = await _fetch_file_content(username, best_repo.name, file_path, effective_github_token)
             if snippet:
                 code_chunks.append(f"FILE: {file_path}\n{snippet}")
 
@@ -798,7 +799,7 @@ async def analyze_github_profile(request: GitHubAnalysisRequest):
         except Exception as exc:
             logger.warning("github_analysis synthesis_failed username=%s repo=%s error=%s", username, best_repo.name, exc)
 
-    contribution_stats = await _fetch_contribution_stats(username, request.github_token)
+    contribution_stats = await _fetch_contribution_stats(username, effective_github_token)
 
     # Aggregate language usage from repo metadata
     lang_counter: dict[str, int] = defaultdict(int)

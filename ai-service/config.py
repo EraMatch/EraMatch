@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     GH_ANALYSIS_MAX_TREE_FILES: int = 3000
     GH_ANALYSIS_FILE_LIST_FOR_RELEVANCE: int = 150
     GH_ANALYSIS_FILE_LIST_FOR_KEYFILES: int = 250
+    GITHUB_TOKEN: str = ""
     
     # whisper moded setting
     WHISPER_MODEL: str = "small"  

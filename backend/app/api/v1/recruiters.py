@@ -4,6 +4,7 @@ Recruiter endpoints - projects, positions, applications.
 from uuid import UUID
 
 from fastapi import APIRouter
+from sqlmodel import select
 
 from app.api.deps import DbSession, RecruiterUser
 from app.services import RecruiterService
@@ -34,6 +35,8 @@ from app.schemas import (
     AIRefineQuestionRequest,
 )
 from app.services import CandidateService, GroupService
+from app.models import CandidateApplication, CandidateProfile, CVAnalysis, Position, GitHubAnalysisJob
+from worker.tasks.github_analysis import run_github_analysis
 
 router = APIRouter(prefix="/recruiter", tags=["Recruiters"])
 
@@ -370,7 +373,86 @@ async def upload_candidates_zip(
     
     # Use CandidateService
     service = CandidateService(session, current_user.organization_id)
-    return await service.process_zip_upload(content, position_id)
+    result = await service.process_zip_upload(content, position_id)
+
+    queued_jobs: list[tuple[str, str, str, str]] = []
+    for created in result.created_candidates:
+        profile_res = await session.execute(
+            select(CandidateProfile).where(
+                CandidateProfile.id == created.id,
+                CandidateProfile.organization_id == current_user.organization_id,
+                CandidateProfile.is_deleted == False,
+            )
+        )
+        profile = profile_res.scalar_one_or_none()
+        if not profile:
+            continue
+
+        app_res = await session.execute(
+            select(CandidateApplication)
+            .where(
+                CandidateApplication.candidate_id == profile.id,
+                CandidateApplication.organization_id == current_user.organization_id,
+                CandidateApplication.is_deleted == False,
+            )
+            .order_by(CandidateApplication.applied_at.desc())
+            .limit(1)
+        )
+        application = app_res.scalar_one_or_none()
+        if not application:
+            continue
+
+        github_url = (profile.github_url or "").strip()
+        if not github_url:
+            cv_res = await session.execute(select(CVAnalysis).where(CVAnalysis.application_id == application.id))
+            cv = cv_res.scalar_one_or_none()
+            if cv and isinstance(cv.github_profile, dict):
+                profile_obj = cv.github_profile.get("profile")
+                if isinstance(profile_obj, dict):
+                    github_url = str(profile_obj.get("html_url") or "").strip()
+
+        if not github_url:
+            continue
+
+        existing_job_res = await session.execute(
+            select(GitHubAnalysisJob).where(
+                GitHubAnalysisJob.organization_id == current_user.organization_id,
+                GitHubAnalysisJob.candidate_id == profile.id,
+                GitHubAnalysisJob.status.in_(["pending", "processing"]),
+            )
+        )
+        if existing_job_res.scalar_one_or_none():
+            continue
+
+        position_res = await session.execute(select(Position).where(Position.id == application.position_id))
+        position = position_res.scalar_one_or_none()
+        jd_text = str((position.job_description or position.description or "") if position else "")
+
+        job = GitHubAnalysisJob(
+            organization_id=current_user.organization_id,
+            candidate_id=profile.id,
+            created_by_user_id=current_user.id,
+            status="pending",
+            github_url=github_url,
+        )
+        session.add(job)
+        await session.flush()
+        queued_jobs.append((str(job.id), str(profile.id), github_url, jd_text))
+
+    await session.commit()
+
+    for job_id, candidate_id, github_url, jd_text in queued_jobs:
+        run_github_analysis.delay(
+            job_id,
+            candidate_id,
+            str(current_user.organization_id),
+            github_url,
+            jd_text,
+            "",
+            10,
+        )
+
+    return result
 
 
 @router.post("/positions/{position_id}/groups", response_model=GroupDetailResponse)

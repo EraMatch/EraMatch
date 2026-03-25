@@ -106,11 +106,9 @@ export const recruiterService = {
     getGroupCandidates: async () => fetchAPI('/groups/candidates/all'),
 
     getCandidate: async (candidateId: string) => fetchAPI<any>(`/candidates/${candidateId}`),
-    startCandidateGithubAnalysis: async (candidateId: string, githubToken?: string) =>
+    startCandidateGithubAnalysis: async (candidateId: string) =>
         fetchAPI<{ job_id: string; status: string; message: string }>(`/candidates/${candidateId}/github-analysis/start`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ github_token: githubToken || '' })
+            method: 'POST'
         }),
 
     getSuspectReview: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/suspect-review`),

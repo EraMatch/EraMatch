@@ -140,7 +140,14 @@ OLLAMA_API_KEY=your-ollama-key
 
 # Celery
 CELERY_BROKER_URL=redis://localhost:6379/0
+
+# GitHub (used by background analysis jobs)
+GITHUB_TOKEN=ghp_xxx
 ```
+
+GitHub analysis workers read `GITHUB_TOKEN` from backend environment. Make sure the same `.env` is available to:
+- FastAPI backend process
+- Celery worker process
 
 ---
 

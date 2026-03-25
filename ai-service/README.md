@@ -292,8 +292,11 @@ async def process_item(data: str, background_tasks: BackgroundTasks):
 USE_MOCK=false
 OLLAMA_HOST=https://your-ollama-instance.com
 OLLAMA_API_KEY=prod-key
+GITHUB_TOKEN=ghp_xxx
 DEBUG=false
 ```
+
+Set `GITHUB_TOKEN` in the AI service environment to improve GitHub API reliability and reduce rate-limit failures during analysis.
 
 ### Docker (Future)
 ```dockerfile

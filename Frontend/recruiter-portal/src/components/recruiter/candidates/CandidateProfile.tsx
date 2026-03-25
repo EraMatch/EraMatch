@@ -29,8 +29,6 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
 
   const [candidate, setCandidate] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isRunningGithubAnalysis, setIsRunningGithubAnalysis] = useState(false);
-  const [githubTokenInput, setGithubTokenInput] = useState(() => window.localStorage.getItem('eramatch.githubToken') || '');
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -257,19 +255,6 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     || Number.isFinite(Number(candidate.githubAnalysis?.overallScore))
     || Number(candidate.githubStats?.contributionsLastYear || 0) > 0;
   const showGithubProfileLock = hasGithubProfile && !githubAnalysisReady;
-
-  const triggerGithubAnalysis = async () => {
-    try {
-      setIsRunningGithubAnalysis(true);
-      const res = await api.recruiter.startCandidateGithubAnalysis(candidateId, githubTokenInput.trim() || undefined);
-      window.alert((res as any)?.message || 'GitHub analysis queued. Check Background Tasks.');
-    } catch (error) {
-      console.error('Failed to queue GitHub analysis', error);
-      window.alert('Failed to queue GitHub analysis.');
-    } finally {
-      setIsRunningGithubAnalysis(false);
-    }
-  };
 
   return (
     <div className="h-full w-full overflow-auto bg-[#f9fafb] relative">
@@ -687,26 +672,6 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
               <div className="space-y-6">
                 <div className="flex items-center justify-between gap-3">
                   <h3 className="text-[#111827] mb-4">GitHub Profile Analysis</h3>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="password"
-                      value={githubTokenInput}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setGithubTokenInput(value);
-                        window.localStorage.setItem('eramatch.githubToken', value);
-                      }}
-                      placeholder="GitHub token (optional)"
-                      className="h-[36px] w-[220px] px-3 rounded-[10px] border border-[#d1d5db] text-[13px]"
-                    />
-                    <button
-                      onClick={triggerGithubAnalysis}
-                      disabled={isRunningGithubAnalysis}
-                      className="h-[36px] px-4 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] text-[#1d4ed8] text-[13px] font-medium disabled:opacity-60"
-                    >
-                      {isRunningGithubAnalysis ? 'Queuing...' : 'Run GitHub Analysis'}
-                    </button>
-                  </div>
                 </div>
 
                 {/* Overall GitHub Score */}
@@ -1680,24 +1645,13 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
         <div className="fixed inset-0 z-40 bg-black/35 backdrop-blur-[1px] flex items-center justify-center px-4">
           <div className="w-full max-w-[620px] rounded-2xl border border-[#e5e7eb] bg-white shadow-2xl p-8 text-center">
             <div className="mx-auto mb-4 w-14 h-14 rounded-full bg-[#eef2ff] flex items-center justify-center">
-              {isRunningGithubAnalysis ? (
-                <Loader2 size={24} className="text-[#4f46e5] animate-spin" />
-              ) : (
-                <Lock size={24} className="text-[#4f46e5]" />
-              )}
+              <Lock size={24} className="text-[#4f46e5]" />
             </div>
             <h3 className="text-[#111827] text-[20px] font-['Arimo',sans-serif] mb-2">GitHub Analysis In Progress</h3>
             <p className="text-[#6b7280] text-[14px] font-['Arimo',sans-serif] mb-6">
               This candidate profile is locked until GitHub analysis finishes. Generated questions will be routed into the technical assessment.
             </p>
-            <div className="flex items-center justify-center gap-3">
-              <button
-                onClick={triggerGithubAnalysis}
-                disabled={isRunningGithubAnalysis}
-                className="h-[40px] px-5 rounded-[10px] bg-[#4f46e5] hover:bg-[#4338ca] text-white text-[13px] font-medium disabled:opacity-60"
-              >
-                {isRunningGithubAnalysis ? 'Queuing...' : 'Run GitHub Analysis'}
-              </button>
+            <div className="flex items-center justify-center">
               <button
                 onClick={() => window.location.reload()}
                 className="h-[40px] px-5 rounded-[10px] border border-[#d1d5db] bg-white hover:bg-[#f9fafb] text-[13px]"
