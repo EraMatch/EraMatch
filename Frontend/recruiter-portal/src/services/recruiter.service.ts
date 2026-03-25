@@ -422,11 +422,15 @@ export const recruiterService = {
     },
 
     // AI Features
-    generateAIQuestion: async (data: { question_type: string, topic: string, difficulty: string, context?: string }) => {
+    generateAIQuestion: async (
+        data: { question_type: string, topic: string, difficulty: string, context?: string },
+        signal?: AbortSignal
+    ) => {
         return fetchAPI<any>('/recruiter/ai/generate-question', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            body: JSON.stringify(data),
+            signal
         });
     },
 
