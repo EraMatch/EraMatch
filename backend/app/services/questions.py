@@ -131,6 +131,17 @@ class QuestionService:
         config = {}
         correct_answer = None
 
+        # Shared metadata fields used by review/approval workflows.
+        config["evidence"] = data.evidence
+        config["reference_answer"] = data.referenceAnswer
+        config["rubric_yes_no_checks"] = data.rubricYesNoChecks
+        config["needs_review"] = data.needsReview
+        config["critic_score"] = data.criticScore
+        config["critic_weighted_score"] = data.criticWeightedScore
+        config["critic_feedback"] = data.criticFeedback
+        config["critic_checks"] = data.criticChecks
+        config["retry_count"] = data.retryCount
+
         if q_type == "mcq":
             config["options"] = data.options
             config["multiple_correct"] = data.multipleCorrect
@@ -192,15 +203,15 @@ class QuestionService:
             maxWords=data.maxWords,
             expectedKeywords=data.expectedKeywords,
             rubric=data.rubric,
-            evidence=None,
-            referenceAnswer=None,
-            rubricYesNoChecks=None,
-            needsReview=None,
-            criticScore=None,
-            criticWeightedScore=None,
-            criticFeedback=None,
-            criticChecks=None,
-            retryCount=None,
+            evidence=data.evidence,
+            referenceAnswer=data.referenceAnswer,
+            rubricYesNoChecks=data.rubricYesNoChecks,
+            needsReview=data.needsReview,
+            criticScore=data.criticScore,
+            criticWeightedScore=data.criticWeightedScore,
+            criticFeedback=data.criticFeedback,
+            criticChecks=data.criticChecks,
+            retryCount=data.retryCount,
             importType=None,
             importJobId=None,
             sourceFilename=None

@@ -2082,10 +2082,35 @@ class RecruiterService:
     async def generate_ai_question(self, question_type: str, topic: str, difficulty: str, context: str = "") -> dict:
         """Generate a technical or interview question using Ollama."""
         llm = get_llm("ollama")
+
+        def _derive_yes_no_checks(payload: dict) -> list[dict]:
+            rubric = str(payload.get("rubric") or "").strip()
+            reference = str(payload.get("referenceAnswer") or "").strip()
+            evidence = str(payload.get("evidence") or "").strip()
+            seed_text = "\n".join([part for part in [rubric, reference, evidence] if part]).strip()
+            if not seed_text:
+                seed_text = "correctly answer the question with clear supporting rationale"
+
+            candidates: list[str] = []
+            for piece in [p.strip(" -:;,.\n\t") for p in seed_text.replace("\r", "\n").split("\n") if p.strip()]:
+                if len(piece) < 8:
+                    continue
+                if len(candidates) >= 10:
+                    break
+                normalized = piece[0].lower() + piece[1:] if len(piece) > 1 else piece.lower()
+                candidates.append(f"Does the answer {normalized}?")
+
+            while len(candidates) < 10:
+                candidates.append(f"Does the answer satisfy rubric criterion {len(candidates) + 1}?")
+
+            return [
+                {"id": idx + 1, "check": check, "weight": 0.10}
+                for idx, check in enumerate(candidates[:10])
+            ]
         
         prompts = {
-            "mcq": f"Generate a multiple-choice question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, options (array of 4), correctAnswer (index 0-3), explanation, difficulty.",
-            "essay": f"Generate an essay or theoretical question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, maxWords, rubric, expectedKeywords (array), difficulty.",
+            "mcq": f"Generate a multiple-choice question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, options (array of 4), correctAnswer (index 0-3), explanation, evidence, referenceAnswer, difficulty.",
+            "essay": f"Generate an essay or theoretical question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, maxWords, rubric, expectedKeywords (array), evidence, referenceAnswer, rubricYesNoChecks (array of 10 items with id/check/weight), difficulty.",
             "code": f"Generate a coding problem about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText (requirements), language, codeTemplate (with a TODO), testCases (array of {{input, expectedOutput, isHidden, points}}), difficulty.",
             "interview": f"Generate 2 interview questions about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with a 'questions' key containing an array of {{question, criteria (array), keyPoints (array), difficulty}}."
         }
@@ -2101,11 +2126,98 @@ class RecruiterService:
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0].strip()
                 
-            return json.loads(content)
+            payload = json.loads(content)
+
+            if not isinstance(payload, dict):
+                return {"questionText": f"Stub: {topic} ({difficulty})", "type": question_type, "difficulty": difficulty}
+
+            if question_type in {"mcq", "essay", "code"}:
+                payload.setdefault("type", question_type)
+                payload.setdefault("difficulty", difficulty)
+                payload.setdefault("questionText", f"{topic} question")
+                payload.setdefault("evidence", "")
+                payload.setdefault("referenceAnswer", payload.get("explanation") or "")
+                payload.setdefault("needsReview", False)
+                payload.setdefault("criticScore", 1.0)
+                payload.setdefault("criticWeightedScore", 1.0)
+                payload.setdefault("criticFeedback", "")
+                payload.setdefault("criticChecks", [])
+                payload.setdefault("retryCount", 0)
+
+            if question_type == "mcq":
+                options = payload.get("options") if isinstance(payload.get("options"), list) else []
+                payload["options"] = [str(o) for o in options][:4]
+                while len(payload["options"]) < 4:
+                    payload["options"].append(f"Option {len(payload['options']) + 1}")
+                if not isinstance(payload.get("correctAnswer"), int):
+                    payload["correctAnswer"] = 0
+
+            if question_type == "essay":
+                if not isinstance(payload.get("expectedKeywords"), list):
+                    payload["expectedKeywords"] = []
+                if not isinstance(payload.get("maxWords"), int):
+                    payload["maxWords"] = 500
+                checks = payload.get("rubricYesNoChecks")
+                if not isinstance(checks, list) or len(checks) == 0:
+                    payload["rubricYesNoChecks"] = _derive_yes_no_checks(payload)
+                else:
+                    normalized_checks = []
+                    for idx, check in enumerate(checks[:10]):
+                        if not isinstance(check, dict):
+                            continue
+                        normalized_checks.append(
+                            {
+                                "id": idx + 1,
+                                "check": str(check.get("check") or "").strip() or f"Does the answer satisfy rubric criterion {idx + 1}?",
+                                "weight": float(check.get("weight") or 0.1),
+                            }
+                        )
+                    while len(normalized_checks) < 10:
+                        normalized_checks.append(
+                            {
+                                "id": len(normalized_checks) + 1,
+                                "check": f"Does the answer satisfy rubric criterion {len(normalized_checks) + 1}?",
+                                "weight": 0.1,
+                            }
+                        )
+                    payload["rubricYesNoChecks"] = normalized_checks
+
+            return payload
         except Exception as e:
             print(f"Ollama generation failed: {e}")
             # Fallback mock for safety
-            return {"questionText": f"Stub: {topic} ({difficulty})", "error": str(e)}
+            fallback: dict = {
+                "questionText": f"Stub: {topic} ({difficulty})",
+                "type": question_type,
+                "difficulty": difficulty,
+                "evidence": "",
+                "referenceAnswer": "",
+                "needsReview": False,
+                "criticScore": 1.0,
+                "criticWeightedScore": 1.0,
+                "criticFeedback": "",
+                "criticChecks": [],
+                "retryCount": 0,
+                "error": str(e),
+            }
+            if question_type == "mcq":
+                fallback.update(
+                    {
+                        "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+                        "correctAnswer": 0,
+                        "explanation": "",
+                    }
+                )
+            if question_type == "essay":
+                fallback.update(
+                    {
+                        "maxWords": 500,
+                        "rubric": "",
+                        "expectedKeywords": [],
+                        "rubricYesNoChecks": _derive_yes_no_checks(fallback),
+                    }
+                )
+            return fallback
 
     async def refine_question_with_ai(self, question_text: str) -> str:
         """Refine or polish a question text using Ollama."""

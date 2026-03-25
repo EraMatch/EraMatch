@@ -11,6 +11,15 @@ interface QuestionVariant {
   maxWords?: number;
   rubric?: string;
   explanation?: string;
+  evidence?: string;
+  referenceAnswer?: string;
+  rubricYesNoChecks?: Array<{ id: number; check: string; weight: number }>;
+  needsReview?: boolean;
+  criticScore?: number;
+  criticWeightedScore?: number;
+  criticFeedback?: string;
+  criticChecks?: Array<{ id?: number; criterion: string; verdict: 'YES' | 'NO'; weight?: number; weighted_value?: number }>;
+  retryCount?: number;
   category?: string;
   difficulty?: 'Easy' | 'Medium' | 'Hard';
   tags?: string[];
@@ -27,6 +36,7 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
     ...variant,
     expectedKeywords: variant.expectedKeywords || [],
     maxWords: variant.maxWords || 500,
+    rubricYesNoChecks: variant.rubricYesNoChecks || [],
     difficulty: variant.difficulty || 'Medium',
     category: variant.category || '',
     tags: variant.tags || []
@@ -37,6 +47,38 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
 
   const [showQuestionRefiner, setShowQuestionRefiner] = useState(false);
   const [showRubricRefiner, setShowRubricRefiner] = useState(false);
+
+  const addRubricCheck = () => {
+    const checks = [...(questionData.rubricYesNoChecks || [])];
+    checks.push({ id: checks.length + 1, check: '', weight: Number((1 / Math.max(1, checks.length + 1)).toFixed(2)) });
+    setQuestionData({ ...questionData, rubricYesNoChecks: checks });
+  };
+
+  const removeRubricCheck = (index: number) => {
+    const checks = (questionData.rubricYesNoChecks || [])
+      .filter((_, currentIndex) => currentIndex !== index)
+      .map((check, currentIndex) => ({ ...check, id: currentIndex + 1 }));
+    setQuestionData({ ...questionData, rubricYesNoChecks: checks });
+  };
+
+  const updateRubricCheck = (index: number, patch: Partial<{ check: string; weight: number }>) => {
+    const checks = [...(questionData.rubricYesNoChecks || [])];
+    if (!checks[index]) return;
+    checks[index] = { ...checks[index], ...patch };
+    setQuestionData({ ...questionData, rubricYesNoChecks: checks });
+  };
+
+  const normalizeRubricWeights = () => {
+    const checks = [...(questionData.rubricYesNoChecks || [])];
+    if (checks.length === 0) return;
+    const base = Number((1 / checks.length).toFixed(2));
+    const normalized = checks.map((check, idx) => ({
+      ...check,
+      id: idx + 1,
+      weight: idx === checks.length - 1 ? Number((1 - base * (checks.length - 1)).toFixed(2)) : base,
+    }));
+    setQuestionData({ ...questionData, rubricYesNoChecks: normalized });
+  };
 
   const handleAddKeyword = () => {
     if (newKeyword.trim() && !questionData.expectedKeywords?.includes(newKeyword.trim())) {
@@ -186,6 +228,111 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
                   context="rubric"
                 />
               )}
+            </div>
+
+            <div className="rounded-[8px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151]">
+                  Rubric YES/NO Checks
+                </label>
+                <div className="flex items-center gap-2">
+                  <Button onClick={addRubricCheck} variant="outline" className="h-[32px] px-3 text-[12px]">Add Check</Button>
+                  <Button onClick={normalizeRubricWeights} variant="outline" className="h-[32px] px-3 text-[12px]">Normalize</Button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {(questionData.rubricYesNoChecks || []).map((check, idx) => (
+                  <div key={`${check.id}-${idx}`} className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_110px_88px] gap-2">
+                    <input
+                      type="text"
+                      value={check.check}
+                      onChange={(e) => updateRubricCheck(idx, { check: e.target.value })}
+                      placeholder={`Check ${idx + 1}`}
+                      className="h-[40px] px-3 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px]"
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={check.weight}
+                      onChange={(e) => updateRubricCheck(idx, { weight: Number(e.target.value || 0) })}
+                      className="h-[40px] px-3 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px]"
+                    />
+                    <Button onClick={() => removeRubricCheck(idx)} variant="outline" className="h-[40px] text-[12px] text-red-600 border-red-200">Remove</Button>
+                  </div>
+                ))}
+                {(questionData.rubricYesNoChecks || []).length === 0 && (
+                  <div className="text-[12px] text-[#6b7280]">No checks yet. Add checks to enforce consistent review criteria.</div>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Evidence (Optional)
+              </label>
+              <textarea
+                value={questionData.evidence || ''}
+                onChange={(e) => setQuestionData({ ...questionData, evidence: e.target.value })}
+                placeholder="Source evidence supporting this question and rubric"
+                rows={3}
+                className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
+              />
+            </div>
+
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Reference Answer (Optional)
+              </label>
+              <textarea
+                value={questionData.referenceAnswer || ''}
+                onChange={(e) => setQuestionData({ ...questionData, referenceAnswer: e.target.value })}
+                placeholder="Ground-truth answer notes for reviewers"
+                rows={3}
+                className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
+              />
+            </div>
+
+            <div className="rounded-[8px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
+              <div className="font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-3">Critic Signals (Optional)</div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  value={questionData.criticScore ?? ''}
+                  onChange={(e) => setQuestionData({ ...questionData, criticScore: e.target.value === '' ? undefined : Number(e.target.value) })}
+                  placeholder="Critic Score (0-1)"
+                  className="h-[40px] px-3 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px]"
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  value={questionData.criticWeightedScore ?? ''}
+                  onChange={(e) => setQuestionData({ ...questionData, criticWeightedScore: e.target.value === '' ? undefined : Number(e.target.value) })}
+                  placeholder="Weighted Score (0-1)"
+                  className="h-[40px] px-3 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px]"
+                />
+                <label className="flex items-center gap-2 h-[40px] px-3 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px] text-[#374151]">
+                  <input
+                    type="checkbox"
+                    checked={!!questionData.needsReview}
+                    onChange={(e) => setQuestionData({ ...questionData, needsReview: e.target.checked })}
+                  />
+                  Needs Review
+                </label>
+              </div>
+              <textarea
+                value={questionData.criticFeedback || ''}
+                onChange={(e) => setQuestionData({ ...questionData, criticFeedback: e.target.value })}
+                placeholder="Critic feedback"
+                rows={2}
+                className="w-full px-3 py-2 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px] resize-none"
+              />
             </div>
 
             {/* Expected Keywords */}

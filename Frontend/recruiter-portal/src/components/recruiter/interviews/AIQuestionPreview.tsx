@@ -138,6 +138,22 @@ export function AIQuestionPreview({
                     </p>
                   </div>
                 )}
+                {(question.evidence || question.referenceAnswer) && (
+                  <div className="space-y-3">
+                    {question.evidence && (
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-[8px]">
+                        <h4 className="font-['Arimo',sans-serif] text-[13px] text-slate-900 font-semibold mb-2">Evidence</h4>
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-slate-800 whitespace-pre-wrap">{question.evidence}</p>
+                      </div>
+                    )}
+                    {question.referenceAnswer && (
+                      <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-[8px]">
+                        <h4 className="font-['Arimo',sans-serif] text-[13px] text-indigo-900 font-semibold mb-2">Reference Answer</h4>
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-indigo-800 whitespace-pre-wrap">{question.referenceAnswer}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -171,6 +187,33 @@ export function AIQuestionPreview({
                         </span>
                       ))}
                     </div>
+                  </div>
+                )}
+                {question.rubricYesNoChecks && question.rubricYesNoChecks.length > 0 && (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-[8px]">
+                    <h4 className="font-['Arimo',sans-serif] text-[13px] text-slate-900 font-semibold mb-2">Rubric YES/NO Checks</h4>
+                    <div className="space-y-1">
+                      {question.rubricYesNoChecks.slice(0, 10).map((check: any, idx: number) => (
+                        <div key={`${check.id || idx}-${idx}`} className="flex items-center justify-between text-[12px] text-slate-700">
+                          <span>{idx + 1}. {check.check}</span>
+                          <span>{Number(check.weight || 0).toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(typeof question.criticScore === 'number' || question.criticFeedback) && (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-[8px]">
+                    <h4 className="font-['Arimo',sans-serif] text-[13px] text-amber-900 font-semibold mb-2">Critic Signals</h4>
+                    <div className="text-[12px] text-amber-900">
+                      Score: {typeof question.criticScore === 'number' ? question.criticScore.toFixed(2) : 'N/A'}
+                      {typeof question.criticWeightedScore === 'number' && (
+                        <span className="ml-3">Weighted: {question.criticWeightedScore.toFixed(2)}</span>
+                      )}
+                    </div>
+                    {question.criticFeedback && (
+                      <p className="mt-2 font-['Arimo',sans-serif] text-[13px] text-amber-900 whitespace-pre-wrap">{question.criticFeedback}</p>
+                    )}
                   </div>
                 )}
               </div>

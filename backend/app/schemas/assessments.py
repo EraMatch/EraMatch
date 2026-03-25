@@ -35,6 +35,17 @@ class QuestionCreate(BaseModel):
     difficulty: Optional[str] = "Medium"
     tags: Optional[List[str]] = None
 
+    # Reviewer/ground-truth metadata
+    evidence: Optional[str] = None
+    referenceAnswer: Optional[str] = None
+    rubricYesNoChecks: Optional[List[Dict[str, Any]]] = None
+    needsReview: Optional[bool] = None
+    criticScore: Optional[float] = None
+    criticWeightedScore: Optional[float] = None
+    criticFeedback: Optional[str] = None
+    criticChecks: Optional[List[Dict[str, Any]]] = None
+    retryCount: Optional[int] = None
+
 # =============================================================================
 # SECTION SCHEMAS
 # =============================================================================

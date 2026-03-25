@@ -3,6 +3,7 @@ import { X, Wand2, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { AIQuestionPreview } from './AIQuestionPreview';
 import { recruiterService } from '../../../services/recruiter.service';
+import { toast } from 'sonner';
 
 interface QuestionVariant {
   id: string;
@@ -23,6 +24,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
   const [difficulty, setDifficulty] = useState<'Easy' | 'Medium' | 'Hard'>('Medium');
   const [context, setContext] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const [generatedQuestion, setGeneratedQuestion] = useState<QuestionVariant | null>(null);
   const [showPreview, setShowPreview] = useState(false);
 
@@ -32,6 +34,8 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
       return;
     }
 
+    setIsGenerating(true);
+    setGenerationError(null);
     try {
       const question = await recruiterService.generateAIQuestion({
         question_type: effectiveType,
@@ -40,11 +44,12 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
         context
       });
 
+      toast.success('AI question generated successfully. Opening preview...');
       setGeneratedQuestion(question);
       setShowPreview(true);
     } catch (error) {
       console.error('Failed to generate AI question:', error);
-      alert('Failed to generate AI question. Please try again.');
+      setGenerationError('Failed to generate AI question. Please try again.');
     } finally {
       setIsGenerating(false);
     }
@@ -104,6 +109,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
             </div>
             <button
               onClick={onClose}
+              disabled={isGenerating}
               className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
             >
               <X size={20} className="text-[#6b7280]" />
@@ -123,6 +129,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
                 type="text"
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
+                disabled={isGenerating}
                 placeholder="e.g., React Hooks, Database Normalization, Binary Search..."
                 className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
               />
@@ -138,6 +145,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
                   <button
                     key={level}
                     onClick={() => setDifficulty(level)}
+                    disabled={isGenerating}
                     className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${difficulty === level
                       ? level === 'Easy'
                         ? 'border-green-500 bg-green-50 text-green-700'
@@ -161,6 +169,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
               <textarea
                 value={context}
                 onChange={(e) => setContext(e.target.value)}
+                disabled={isGenerating}
                 placeholder="Provide any specific requirements, focus areas, or constraints..."
                 rows={3}
                 className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
@@ -211,6 +220,23 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
                 </div>
               </div>
             </div>
+
+            {isGenerating && (
+              <div className="p-4 border border-indigo-200 bg-indigo-50 rounded-[12px]">
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                  <p className="font-['Arimo',sans-serif] text-[13px] text-indigo-900">
+                    Generating question with Ollama. This may take a few seconds.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {generationError && (
+              <div className="p-3 border border-red-200 bg-red-50 rounded-[8px]">
+                <p className="font-['Arimo',sans-serif] text-[13px] text-red-700">{generationError}</p>
+              </div>
+            )}
           </div>
         </div>
 

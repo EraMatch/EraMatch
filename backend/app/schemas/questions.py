@@ -32,6 +32,16 @@ class QuestionBankCreateRequest(BaseModel):
     maxWords: int | None = None
     expectedKeywords: list[str] | None = None
     rubric: str | None = None
+    # Reviewer metadata
+    evidence: str | None = None
+    referenceAnswer: str | None = None
+    rubricYesNoChecks: list[dict] | None = None
+    needsReview: bool | None = None
+    criticScore: float | None = None
+    criticWeightedScore: float | None = None
+    criticFeedback: str | None = None
+    criticChecks: list[dict] | None = None
+    retryCount: int | None = None
 
 class QuestionBankResponseItem(BaseModel):
     id: UUID
