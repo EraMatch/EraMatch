@@ -927,7 +927,7 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
 
                         <div className="space-y-2">
                           {(row.edited.rubric_yes_no_checks || []).map((check, checkIndex) => (
-                            <div key={`${check.id}-${checkIndex}`} className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_120px_92px] items-start gap-2 rounded-md border border-indigo-100 bg-white px-3 py-2">
+                            <div key={`${check.id}-${checkIndex}`} className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_120px] xl:grid-cols-[minmax(0,1fr)_120px_280px] items-start gap-2 rounded-md border border-indigo-100 bg-white px-3 py-2">
                               <div>
                                 <input
                                   value={check.check}
@@ -949,12 +949,12 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
                                 className="w-full h-[36px] px-2.5 rounded-md border border-[#d1d5db] text-[12px] text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
                                 placeholder="Weight"
                               />
-                              <div className="grid grid-cols-4 gap-1">
+                              <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-4 gap-1 md:col-span-2 xl:col-span-1">
                                 <button
                                   type="button"
                                   onClick={() => moveRubricCheck(i, checkIndex, 'up')}
                                   disabled={checkIndex === 0}
-                                  className="h-[36px] rounded-md border border-[#d1d5db] text-[#374151] text-[11px] font-medium hover:bg-[#f8fafc] disabled:opacity-40"
+                                  className="h-[36px] w-full rounded-md border border-[#d1d5db] text-[#374151] text-[11px] font-medium hover:bg-[#f8fafc] disabled:opacity-40"
                                 >
                                   Up
                                 </button>
@@ -962,21 +962,21 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
                                   type="button"
                                   onClick={() => moveRubricCheck(i, checkIndex, 'down')}
                                   disabled={checkIndex === (row.edited.rubric_yes_no_checks || []).length - 1}
-                                  className="h-[36px] rounded-md border border-[#d1d5db] text-[#374151] text-[11px] font-medium hover:bg-[#f8fafc] disabled:opacity-40"
+                                  className="h-[36px] w-full rounded-md border border-[#d1d5db] text-[#374151] text-[11px] font-medium hover:bg-[#f8fafc] disabled:opacity-40"
                                 >
                                   Down
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => duplicateRubricCheck(i, checkIndex)}
-                                  className="h-[36px] rounded-md border border-indigo-200 text-indigo-700 text-[11px] font-medium hover:bg-indigo-50"
+                                  className="h-[36px] w-full rounded-md border border-indigo-200 text-indigo-700 text-[11px] font-medium hover:bg-indigo-50"
                                 >
                                   Duplicate
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => removeRubricCheck(i, checkIndex)}
-                                  className="h-[36px] rounded-md border border-rose-200 text-rose-700 text-[11px] font-medium hover:bg-rose-50"
+                                  className="h-[36px] w-full rounded-md border border-rose-200 text-rose-700 text-[11px] font-medium hover:bg-rose-50"
                                 >
                                   Remove
                                 </button>
