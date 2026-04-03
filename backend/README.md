@@ -8,11 +8,26 @@ FastAPI backend for the EraMatch recruitment platform.
 # Install dependencies
 pip install -e .
 
+# Install Redis (Ubuntu/Debian)
+sudo apt update
+sudo apt install -y redis-server
+
+# Start and enable Redis
+sudo systemctl enable redis-server
+sudo systemctl start redis-server
+
+# Verify Redis is running
+redis-cli ping
+# Expected: PONG
+
 # Run dev server
 uvicorn app.main:app --reload
 
 # Run Celery worker
 celery -A worker.celery_app worker --loglevel=info
+
+# If celery is not in PATH
+conda run --no-capture-output -n base celery -A worker.celery_app worker --loglevel=info
 ```
 
 ---
