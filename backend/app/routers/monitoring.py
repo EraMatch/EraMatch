@@ -47,7 +47,7 @@ class CandidateProgressDTO(BaseModel):
 @router.get("/candidates", response_model=List[CandidateProgressDTO])
 async def get_candidates_progress(session: DbSession):
     """Get only candidates who have actual interview responses - real data only."""
-    
+
     result = await session.execute(
         text("""
             WITH latest_sessions AS (
@@ -64,34 +64,45 @@ async def get_candidates_progress(session: DbSession):
                 WHERE (cp.is_deleted = false OR cp.is_deleted IS NULL)
                 ORDER BY cp.candidate_id, COALESCE(oi.completed_at, oi.started_at) DESC NULLS LAST
             )
-            SELECT 
+            SELECT
                 ls.candidate_id::text,
                 ls.full_name,
                 ls.email,
-                (SELECT COUNT(*) FROM interview_responses ir 
+                (SELECT COUNT(*) FROM interview_responses ir
                  WHERE ir.session_id = ls.session_id) as completed_questions,
-                3 as total_questions,
-                (SELECT AVG(ir.ai_score) FROM interview_responses ir 
+                (SELECT CASE
+                    WHEN jsonb_typeof(aic.questions) = 'array' THEN jsonb_array_length(aic.questions)
+                    WHEN jsonb_typeof(aic.questions->'questions') = 'array' THEN jsonb_array_length(aic.questions->'questions')
+                    ELSE 5
+                 END
+                 FROM ai_interview_configs aic
+                 WHERE aic.config_id = (
+                     SELECT gps.config_id FROM group_pipeline_stages gps
+                     JOIN candidate_applications ca2 ON ca2.group_id = gps.group_id
+                     WHERE ca2.candidate_id = ls.candidate_id
+                       AND gps.stage_type = 'ai_interview'
+                     LIMIT 1
+                 )) as total_questions,
+                (SELECT AVG(ir.ai_score) FROM interview_responses ir
                  WHERE ir.session_id = ls.session_id AND ir.ai_score IS NOT NULL) as average_score,
                 ls.status as status,
                 ls.last_updated
             FROM latest_sessions ls
-            LEFT JOIN response_stats rs ON rs.session_id = ls.session_id
-            WHERE COALESCE(rs.total_responses, 0) > 0
-               OR ls.status IN ('completed', 'in_progress', 'not_started')
+            WHERE ls.status IN ('completed', 'in_progress', 'not_started')
+               OR (SELECT COUNT(*) FROM interview_responses ir WHERE ir.session_id = ls.session_id) > 0
             ORDER BY ls.last_updated DESC NULLS LAST
             LIMIT 50
         """)
     )
     rows = result.fetchall()
-    
+
     return [
         CandidateProgressDTO(
             candidate_id=str(row[0]),
             candidate_name=row[1] or "Unknown",
             candidate_email=row[2] or "",
             completed_questions=row[3] or 0,
-            total_questions=row[4],
+            total_questions=max(row[4] or 3, 1),  # fallback to 3, ensure >= 1 to avoid div by zero
             average_score=float(row[5]) if row[5] else None,
             status=row[6] or "in_progress",
             last_updated=row[7] or datetime.utcnow()
@@ -221,13 +232,16 @@ async def get_assessment_candidates_progress(session: DbSession):
                 ls.started_at,
                 ls.submitted_at,
                 ls.session_id::text,
-                (SELECT COUNT(*) FROM candidate_answers ca2 
+                (SELECT COUNT(*) FROM candidate_answers ca2
                  WHERE ca2.session_id = ls.session_id) as answered_questions,
-                (SELECT jsonb_array_length(
-                    (SELECT assigned_questions->'questions' 
-                     FROM ongoing_assessments oa2 
-                     WHERE oa2.session_id = ls.session_id)
-                )) as total_questions
+                (SELECT CASE
+                    WHEN jsonb_typeof(oa2.assigned_questions->'questions') = 'array'
+                    THEN jsonb_array_length(oa2.assigned_questions->'questions')
+                    ELSE 0
+                 END
+                 FROM ongoing_assessments oa2
+                 WHERE oa2.session_id = ls.session_id
+                 LIMIT 1) as total_questions
             FROM latest_sessions ls
             JOIN candidate_profiles cp ON ls.candidate_id = cp.candidate_id
             JOIN assessments a ON ls.assessment_id = a.assessment_id
