@@ -220,4 +220,11 @@ open http://localhost:8000/docs
 ### Environment Variables
 - Never commit `.env` file
 - Update `.env.example` when adding new variables (don't forget)
-- share el keys fe el chat 
+- Do not share real API keys in chat/PR screenshots/issues
+
+### Ollama API Key Rollout Policy
+
+- Default repo files must keep placeholders only (no live keys in docs or examples).
+- Local development: store real key in `ai-service/.env` and set `USE_MOCK=false` when testing live Ollama.
+- Later rollout (staging/prod): provide `OLLAMA_API_KEY` from secret manager/CI variables.
+- If any key leaks, rotate immediately and update local + deployed secrets.

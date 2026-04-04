@@ -24,6 +24,7 @@ dependencies = [
     "langchain-anthropic>=0.1.0",
     "langchain-ollama>=0.1.0",
     "langchain-google-genai>=1.0.0",
+    "pdfplumber>=0.11.9",
 ]
 
 [project.optional-dependencies]
