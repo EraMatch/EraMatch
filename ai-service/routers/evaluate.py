@@ -231,11 +231,17 @@ async def grade_essay(request: GradeEssayRequest):
         strengths = []
         improvements = []
 
+        import re
+
         for line in content.split("\n"):
             line = line.strip()
             if line.startswith("SCORE:"):
                 try:
-                    score = float(line.split("SCORE:")[1].strip().split()[0])
+                    score_text = line.split("SCORE:")[1].strip()
+                    # Handle formats like "65", "65/100", "65.0", "65.0/100", "65 (83%)"
+                    match = re.search(r'(\d+\.?\d*)', score_text)
+                    if match:
+                        score = float(match.group(1))
                 except Exception:
                     pass
             elif line.startswith("FEEDBACK:"):
