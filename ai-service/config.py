@@ -41,8 +41,8 @@ class Settings(BaseSettings):
     HUGGINGFACE_TOKEN: str = ""
     MODELS_DIR: str = "./models"
     
-    # Mock mode for development (when no API key)
-    USE_MOCK: bool = True
+    # Mock mode is opt-in for local testing only.
+    USE_MOCK: bool = False
     
     class Config:
         env_file = ".env"

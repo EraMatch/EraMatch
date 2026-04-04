@@ -88,6 +88,38 @@ class CandidateService:
 3. Call from service: task_name.delay(args)
 ```
 
+### Redis and Celery Local Setup
+
+Use these steps when working on async/background jobs.
+
+```bash
+# 1) Install Redis (Ubuntu/Debian)
+sudo apt update
+sudo apt install -y redis-server
+
+# 2) Start and enable Redis service
+sudo systemctl enable redis-server
+sudo systemctl start redis-server
+
+# 3) Verify Redis is alive
+redis-cli ping
+# Expected: PONG
+```
+
+```bash
+# 4) Run API (terminal 1)
+uvicorn app.main:app --reload --port 8000
+
+# 5) Run Celery worker (terminal 2)
+celery -A worker.celery_app worker --loglevel=info
+```
+
+If `celery` is not available in your shell path, run:
+
+```bash
+conda run --no-capture-output -n base celery -A worker.celery_app worker --loglevel=info
+```
+
 ---
 
 ## Code Style Guidelines
@@ -188,4 +220,11 @@ open http://localhost:8000/docs
 ### Environment Variables
 - Never commit `.env` file
 - Update `.env.example` when adding new variables (don't forget)
-- share el keys fe el chat 
+- Do not share real API keys in chat/PR screenshots/issues
+
+### Ollama API Key Rollout Policy
+
+- Default repo files must keep placeholders only (no live keys in docs or examples).
+- Local development: store real key in `ai-service/.env` and set `USE_MOCK=false` when testing live Ollama.
+- Later rollout (staging/prod): provide `OLLAMA_API_KEY` from secret manager/CI variables.
+- If any key leaks, rotate immediately and update local + deployed secrets.
