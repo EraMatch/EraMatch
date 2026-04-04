@@ -251,6 +251,89 @@ def build_refine_question_prompt(
     )
 
 
+def _mock_import_response(total_questions: int, question_plan: dict[str, dict], context_hint: str = "") -> ImportResponse:
+    topic = context_hint.strip() or "the provided material"
+    questions: list[DraftQuestion] = []
+
+    def _make_question(q_type: str, index: int, difficulty: str) -> DraftQuestion:
+        if q_type == "mcq":
+            return DraftQuestion(
+                type="mcq",
+                text=f"Which statement best reflects a key idea from {topic}?",
+                difficulty=difficulty,
+                category="General",
+                tags=["mock", "local-dev"],
+                options=[
+                    "It introduces the main concept clearly.",
+                    "It avoids discussing the core idea.",
+                    "It only lists unrelated details.",
+                    "It gives no useful context.",
+                ],
+                correct_answer=0,
+                evidence="Mock mode is enabled locally, so this question was generated without an external LLM.",
+                reference_answer="The question should capture the main idea from the source material.",
+                explanation="This is a local development fallback.",
+                rubric=None,
+                max_words=None,
+                rubric_yes_no_checks=None,
+                needs_review=False,
+                critic_score=1.0,
+                critic_weighted_score=1.0,
+                critic_feedback=None,
+                critic_checks=[],
+                retry_count=0,
+            )
+
+        return DraftQuestion(
+            type="essay",
+            text=f"Explain one important concept from {topic} and how it is applied.",
+            difficulty=difficulty,
+            category="General",
+            tags=["mock", "local-dev"],
+            options=None,
+            correct_answer=None,
+            evidence="Mock mode is enabled locally, so this question was generated without an external LLM.",
+            reference_answer="A strong answer should explain the concept clearly and connect it to the source material.",
+            explanation="This is a local development fallback.",
+            rubric="Assess correctness, completeness, and connection to the source material.",
+            max_words=200,
+            rubric_yes_no_checks=[],
+            needs_review=False,
+            critic_score=1.0,
+            critic_weighted_score=1.0,
+            critic_feedback=None,
+            critic_checks=[],
+            retry_count=0,
+        )
+
+    for q_type in ["mcq", "essay"]:
+        cfg = question_plan.get(q_type, {})
+        count = int(cfg.get("count", 0) or 0)
+        if count <= 0:
+            continue
+        split = cfg.get("by_difficulty", {}) or {}
+        diff_sequence: list[str] = []
+        for diff in ["Easy", "Medium", "Hard"]:
+            diff_sequence.extend([diff] * int(split.get(diff, 0) or 0))
+        if not diff_sequence:
+            diff_sequence = [str(cfg.get("difficulty", "Medium"))] * count
+        while len(diff_sequence) < count:
+            diff_sequence.append(str(cfg.get("difficulty", "Medium")))
+        for idx in range(count):
+            questions.append(_make_question(q_type, idx + 1, diff_sequence[idx]))
+
+    questions = questions[:total_questions]
+    return ImportResponse(
+        questions=questions,
+        critic_stats=CriticStats(
+            approved=len(questions),
+            flagged=0,
+            rejected=0,
+            total_retries=0,
+        ),
+    )
+
+
 # ─── Critic Agent ────────────────────────────────────────────────────────────
 
 def build_critic_prompt(question: dict) -> str:
@@ -865,6 +948,9 @@ async def generate_questions(request: GenerateRequest):
         },
     }
 
+    if settings.USE_MOCK:
+        return _mock_import_response(total_questions, question_plan, request.context_hint)
+
     try:
         prompt = build_generate_prompt(
             raw_text=raw_text,
@@ -1029,6 +1115,13 @@ async def extract_questions(request: ExtractRequest):
     """
     if not request.raw_text.strip():
         raise HTTPException(status_code=422, detail="raw_text must not be empty")
+
+    if settings.USE_MOCK:
+        question_plan = {
+            "mcq": {"count": 5, "difficulty": "Medium", "by_difficulty": {"Easy": 0, "Medium": 5, "Hard": 0}},
+            "essay": {"count": 5, "difficulty": "Medium", "by_difficulty": {"Easy": 0, "Medium": 5, "Hard": 0}},
+        }
+        return _mock_import_response(10, question_plan)
 
     raw_text = request.raw_text[:50_000]
 
