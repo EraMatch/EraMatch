@@ -1061,23 +1061,23 @@ async def run_tests(
         """Run a single test case for Python - executes code and calls function."""
         import ast
         import json
-        
+        import inspect
+
         start = time_module.perf_counter()
-        
-        # Parse the input - it's a string representation of the test input
-        # The entire test_input is passed as a single argument to the function
+
         parsed_input = test_input
-        
-        # Build judge wrapper
+
+        # Build judge wrapper with smart argument unpacking
         judge_code = f'''
 import sys
 import json
 import ast
+import inspect
 
 # Candidate's code
 {candidate_code}
 
-# Parse the test input (it's passed as a string in the test case)
+# Parse the test input
 try:
     test_input = ast.literal_eval({repr(parsed_input)})
 except:
@@ -1089,14 +1089,29 @@ if func is None:
     print("ERROR:FUNCTION_NOT_FOUND", file=sys.stderr)
     sys.exit(1)
 
-# Call the function - pass the input as-is (single argument)
+# Smart argument unpacking:
+# - If input is a dict AND function has multiple params → unpack as kwargs
+# - If input is a list → unpack as positional args
+# - Otherwise → pass as single argument
 try:
-    result = func(test_input)
-    
+    sig = inspect.signature(func)
+    param_count = len([p for p in sig.parameters.values()
+                       if p.default == inspect.Parameter.empty
+                       and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)])
+
+    if isinstance(test_input, dict) and param_count > 1:
+        result = func(**test_input)
+    elif isinstance(test_input, list) and param_count > 1:
+        result = func(*test_input)
+    else:
+        result = func(test_input)
+
     # Convert result to comparable format
     if isinstance(result, (list, dict)):
         result_str = json.dumps(result, sort_keys=True)
-        expected_str = json.dumps(json.loads({repr(expected)}), sort_keys=True)
+        # Use ast.literal_eval for expected (handles Python dict repr with single quotes)
+        expected_val = ast.literal_eval({repr(expected)})
+        expected_str = json.dumps(expected_val, sort_keys=True)
         print(result_str)
         sys.exit(0 if result_str == expected_str else 1)
     else:
