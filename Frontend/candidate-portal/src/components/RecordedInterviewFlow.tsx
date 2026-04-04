@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Sparkles, Video, Clock, User, Camera, Mic, Play, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw } from 'lucide-react';
+import { Sparkles, Video, Clock, User, Camera, Mic, Play, Square, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { api } from '../services/api';
 
@@ -46,6 +46,13 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedAudioId, setSelectedAudioId] = useState<string>('');
+
+  // Real microphone level monitoring
+  const [micLevel, setMicLevel] = useState(0);
+  const [micActive, setMicActive] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const micAnimFrameRef = useRef<number>(0);
 
   // Interview session states
   const [inInterviewSession, setInInterviewSession] = useState(false);
@@ -215,26 +222,25 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   useEffect(() => {
     const getDevices = async () => {
       console.log('[DeviceDetection] Starting device enumeration...');
-      
-      // Method 1: Get camera permission first and enumerate devices.
-      // Requesting audio here can fail if the selected mic is busy and falsely
-      // look like a camera issue to the user.
+
+      // Request both camera and microphone permissions so the browser prompts
+      // for both and we get proper device labels with audioinput devices.
       try {
         console.log('[DeviceDetection] Requesting media permissions...');
-        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        console.log('[DeviceDetection] Permissions granted');
-        
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        console.log('[DeviceDetection] Permissions granted — video:', tempStream.getVideoTracks().length, 'audio:', tempStream.getAudioTracks().length);
+
         const devices = await navigator.mediaDevices.enumerateDevices();
         console.log('[DeviceDetection] Devices after permission:', devices);
-        
+
         tempStream.getTracks().forEach(t => t.stop());
-        
+
         const cameras = devices.filter(d => d.kind === 'videoinput');
         const mics = devices.filter(d => d.kind === 'audioinput');
-        
+
         console.log('[DeviceDetection] Cameras:', cameras);
         console.log('[DeviceDetection] Mics:', mics);
-        
+
         if (cameras.length > 0 || mics.length > 0) {
           setCameraDevices(cameras);
           setAudioDevices(mics);
@@ -246,13 +252,13 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
         }
       } catch (err) {
         console.log('[DeviceDetection] Permission/enumeration failed:', err);
-        
+
         // Method 2: Just try to enumerate devices (may not have labels)
         try {
           const devices = await navigator.mediaDevices.enumerateDevices();
           const cameras = devices.filter(d => d.kind === 'videoinput');
           const mics = devices.filter(d => d.kind === 'audioinput');
-          
+
           if (cameras.length > 0) {
             setCameraDevices(cameras);
             setSelectedCameraId(cameras[0].deviceId);
@@ -261,20 +267,26 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
             setAudioDevices(mics);
             setSelectedAudioId(mics[0].deviceId);
           }
-          
+
           if (cameras.length === 0 && mics.length === 0) {
             // Method 3: Try to get user media to force device enumeration
             try {
-              const testStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+              const testStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
               testStream.getTracks().forEach(t => t.stop());
-              
+
               const devicesAfter = await navigator.mediaDevices.enumerateDevices();
               const camerasAfter = devicesAfter.filter(d => d.kind === 'videoinput');
+              const micsAfter = devicesAfter.filter(d => d.kind === 'audioinput');
               setCameraDevices(camerasAfter);
+              setAudioDevices(micsAfter);
               if (camerasAfter.length > 0) setSelectedCameraId(camerasAfter[0].deviceId);
-              
+              if (micsAfter.length > 0) setSelectedAudioId(micsAfter[0].deviceId);
+
               if (camerasAfter.length === 0) {
-                setCameraError('No cameras found. Please enable OBS Virtual Camera or connect a webcam.');
+                setCameraError('No cameras found. Please connect a webcam or enable OBS Virtual Camera.');
+              }
+              if (micsAfter.length === 0) {
+                console.warn('[DeviceDetection] No microphones detected');
               }
             } catch (e2) {
               console.error('[DeviceDetection] Direct access also failed:', e2);
@@ -283,7 +295,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
           }
         } catch (e2) {
           console.error('[DeviceDetection] enumerateDevices failed:', e2);
-          setCameraError('Could not enumerate devices. Please refresh and allow camera permissions.');
+          setCameraError('Could not enumerate devices. Please refresh and allow camera/mic permissions.');
         }
       }
     };
@@ -292,58 +304,158 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     setTimeout(getDevices, 500);
   }, []);
 
+  // Get the best supported MediaRecorder mimeType that includes audio
+  const getSupportedMimeType = (): string => {
+    const types = [
+      'video/webm;codecs=vp8,opus',  // Best: video + audio
+      'video/webm;codecs=vp9,opus',  // Alternative: vp9 + audio
+      'video/webm;codecs=vp8',       // Video only (fallback)
+      'video/webm',                   // Browser default
+    ];
+    for (const type of types) {
+      if (MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return 'video/webm'; // Last resort
+  };
+
+  // Start real microphone level monitoring using AudioContext + AnalyserNode
+  const startMicMonitoring = useCallback((mediaStream: MediaStream) => {
+    // Clean up any existing monitoring
+    stopMicMonitoring();
+
+    const audioTracks = mediaStream.getAudioTracks();
+    if (audioTracks.length === 0) {
+      setMicActive(false);
+      setMicLevel(0);
+      return;
+    }
+
+    setMicActive(true);
+
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioContextRef.current = audioContext;
+
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.3;
+      analyserRef.current = analyser;
+
+      const source = audioContext.createMediaStreamSource(mediaStream);
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      const updateLevel = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteFrequencyData(dataArray);
+
+        // Calculate RMS-like level from frequency data
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const average = sum / dataArray.length;
+        // Normalize to 0-100 range (typical speech peaks around 60-120 in byte frequency)
+        const level = Math.min(100, Math.round((average / 128) * 100));
+        setMicLevel(level);
+
+        micAnimFrameRef.current = requestAnimationFrame(updateLevel);
+      };
+
+      micAnimFrameRef.current = requestAnimationFrame(updateLevel);
+    } catch (err) {
+      console.warn('[Mic] Failed to start audio monitoring:', err);
+      setMicActive(false);
+    }
+  }, []);
+
+  // Stop microphone level monitoring
+  const stopMicMonitoring = useCallback(() => {
+    if (micAnimFrameRef.current) {
+      cancelAnimationFrame(micAnimFrameRef.current);
+      micAnimFrameRef.current = 0;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+    setMicActive(false);
+    setMicLevel(0);
+  }, []);
+
   // Start camera — accepts explicit deviceIds to avoid stale state closure issues
   const startCamera = async (videoDeviceId?: string, audioDeviceId?: string) => {
     console.log('[Camera] startCamera called', { videoDeviceId, audioDeviceId });
-    
+
     // Always stop current stream first using the ref (avoids stale closure)
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
-    
+
+    // Use explicit args if provided, otherwise fall back to current state
+    const vid = videoDeviceId ?? selectedCameraId;
+    const aud = audioDeviceId ?? selectedAudioId;
+
+    console.log('[Camera] Attempting with:', { vid, aud });
+
     try {
-      // Use explicit args if provided, otherwise fall back to current state
-      const vid = videoDeviceId ?? selectedCameraId;
-      const aud = audioDeviceId ?? selectedAudioId;
-      
-      console.log('[Camera] Attempting with:', { vid, aud });
-      
-      // Acquire video first. Mic is attempted separately so a busy/blocked mic
-      // does not prevent camera preview.
+      // Acquire video and audio together for a complete media stream.
+      // If audio fails we still show camera but warn the user clearly.
       const constraints: MediaStreamConstraints = {
         video: vid ? { deviceId: { exact: vid } } : true,
-        audio: false,
+        audio: aud ? { deviceId: { exact: aud } } : true,
       };
-      
+
       console.log('[Camera] Requesting getUserMedia...');
       const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('[Camera] getUserMedia SUCCESS', mediaStream.getVideoTracks().length, 'video tracks');
-      
+      console.log('[Camera] getUserMedia SUCCESS', mediaStream.getVideoTracks().length, 'video tracks,', mediaStream.getAudioTracks().length, 'audio tracks');
+
       streamRef.current = mediaStream;
       setStream(mediaStream);
       setCameraError(null);
-      
-      // Now add audio if we have an audio device
-      if (aud) {
-        try {
-          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: aud } } });
-          audioStream.getAudioTracks().forEach(track => mediaStream.addTrack(track));
-          console.log('[Camera] Audio added');
-        } catch (audioErr) {
-          console.warn('[Camera] Could not add audio:', audioErr);
-        }
+
+      // Start real microphone level monitoring
+      startMicMonitoring(mediaStream);
+
+      // Warn if audio tracks are missing
+      if (mediaStream.getAudioTracks().length === 0) {
+        console.warn('[Camera] No audio tracks in stream — microphone may not be working');
+        setCameraError(prev => prev
+          ? prev + ' Additionally, no microphone was detected. Check your mic permissions.'
+          : 'No microphone detected. Your recording will have no audio. Check mic permissions.'
+        );
       }
     } catch (err: any) {
       console.error('[Camera] Error accessing camera:', err);
+
+      // If combined request fails, try video-only as fallback
+      if (err.name === 'NotReadableError' || err.name === 'OverconstrainedError') {
+        try {
+          console.log('[Camera] Falling back to video-only stream');
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            video: vid ? { deviceId: { exact: vid } } : true,
+            audio: false,
+          });
+          streamRef.current = fallbackStream;
+          setStream(fallbackStream);
+          setCameraError('Camera connected but microphone unavailable. Your recordings will have no audio. Check mic permissions.');
+          return;
+        } catch (fallbackErr) {
+          console.error('[Camera] Video-only fallback also failed:', fallbackErr);
+        }
+      }
+
       let msg = 'Unable to access camera. Please ensure permissions are granted.';
-      const selectedCameraLabel = cameraDevices.find(d => d.deviceId === (videoDeviceId ?? selectedCameraId))?.label || '';
+      const selectedCameraLabel = cameraDevices.find(d => d.deviceId === vid)?.label || '';
       const isObsCamera = /obs/i.test(selectedCameraLabel);
-      
+
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         msg = 'Camera permission denied! Click the camera icon in your browser address bar and select "Always allow" for this site, then refresh.';
       } else if (err.name === 'NotFoundError') {
-        msg = 'No camera found. Please ensure OBS Virtual Camera is running or a webcam is connected.';
+        msg = 'No camera found. Please ensure a webcam is connected.';
       } else if (err.name === 'NotReadableError') {
         msg = isObsCamera
           ? 'OBS Virtual Camera is unavailable. In OBS, click "Start Virtual Camera", then close other apps using camera and retry.'
@@ -351,7 +463,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
       } else if (err.name === 'OverconstrainedError') {
         msg = 'Selected camera device is not available right now. Refresh devices and select it again.';
       }
-      
+
       setCameraError(msg);
     }
   };
@@ -363,6 +475,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
       streamRef.current = null;
       setStream(null);
     }
+    stopMicMonitoring();
   };
 
   // Attach stream to video element
@@ -377,6 +490,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   useEffect(() => {
     return () => {
       stopCamera();
+      stopMicMonitoring();
     };
   }, []);
 
@@ -387,12 +501,21 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
       return;
     }
 
+    // Stop any playback before recording
+    if (isPlaying) {
+      setIsPlaying(false);
+    }
+
     setIsRecording(true);
     setHasRecorded(false);
+    setRecordedUrl(null);
     chunksRef.current = [];
 
+    const mimeType = getSupportedMimeType();
+    console.log('[TestClip] Recording with mimeType:', mimeType);
+
     const mediaRecorder = new MediaRecorder(stream, {
-      mimeType: 'video/webm;codecs=vp8,opus',
+      mimeType,
       videoBitsPerSecond: 250000  // 250kbps - ~10x smaller files, very fast upload
     });
     mediaRecorderRef.current = mediaRecorder;
@@ -404,7 +527,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     };
 
     mediaRecorder.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+      const blob = new Blob(chunksRef.current, { type: mimeType || 'video/webm' });
       const url = URL.createObjectURL(blob);
       setRecordedUrl(url);
       setHasRecorded(true);
@@ -416,8 +539,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
 
     // Auto-stop after 10 seconds for test clip
     setTimeout(() => {
-      if (mediaRecorder.state === 'recording') {
-        mediaRecorder.stop();
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
       }
     }, 10000);
   };
@@ -425,7 +548,6 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   const handleStopTestRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
-      setIsRecording(false);
     }
   };
 
@@ -433,6 +555,18 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     if (recordedUrl) {
       setIsPlaying(true);
     }
+  };
+
+  const handleStopPlayback = () => {
+    setIsPlaying(false);
+  };
+
+  const handleRecordAgain = () => {
+    // Stop playback, clear recorded URL, start fresh recording
+    setIsPlaying(false);
+    setRecordedUrl(null);
+    setHasRecorded(false);
+    handleRecordTestClip();
   };
 
   const handleStartFaceDetection = () => {
@@ -453,7 +587,9 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   };
 
   const handleRetryCamera = () => {
-    console.log('Retrying camera access');
+    console.log('[Camera] Retrying camera access');
+    setCameraError(null);
+    startCamera(selectedCameraId, selectedAudioId);
   };
 
   const handleStartCalibration = () => {
@@ -555,8 +691,12 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     chunksRef.current = [];
 
     try {
+      // Pick the best supported mimeType that includes audio
+      const mimeType = getSupportedMimeType();
+      console.log('[MediaRecorder] Using mimeType:', mimeType);
+
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'video/webm;codecs=vp8',
+        mimeType,
         videoBitsPerSecond: 250000  // 250kbps - ~10x smaller files, very fast upload
       });
       mediaRecorderRef.current = mediaRecorder;
@@ -568,7 +708,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+        const blob = new Blob(chunksRef.current, { type: mimeType || 'video/webm' });
         const url = URL.createObjectURL(blob);
         setRecordedUrl(url);
         setQuestionRecorded(true);
@@ -834,7 +974,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                     console.log('[DeviceDetection] Refreshing devices...');
                     setCameraError(null);
                     try {
-                      const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                      const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                       tempStream.getTracks().forEach(t => t.stop());
                       const devices = await navigator.mediaDevices.enumerateDevices();
                       const cameras = devices.filter(d => d.kind === 'videoinput');
@@ -846,7 +986,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                       console.log('[DeviceDetection] Refreshed - Cameras:', cameras.length, 'Mics:', mics.length);
                     } catch (err) {
                       console.error('[DeviceDetection] Refresh failed:', err);
-                      setCameraError('Failed to refresh. Please ensure OBS Virtual Camera is running.');
+                      setCameraError('Failed to refresh devices. Please ensure camera and mic permissions are granted.');
                     }
                   }}
                   className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
@@ -895,42 +1035,99 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 )}
               </div>
 
-              <div className="flex items-center gap-2 text-gray-600">
-                <Mic className="w-4 h-4" />
-                <span className="text-sm">Microphone level</span>
-                <div className="h-1 bg-gray-200 w-32 rounded-full overflow-hidden ml-2">
-                  <div className="h-full bg-emerald-500 animate-pulse w-2/3" />
+              <div className="flex items-center gap-3 text-gray-600">
+                <Mic className={`w-4 h-4 transition-colors ${micActive ? 'text-emerald-500' : 'text-gray-400'}`} />
+                <span className="text-sm">
+                  {micActive ? 'Microphone active' : 'Microphone not detected'}
+                </span>
+                <div className="flex items-center gap-0.5 ml-2">
+                  {Array.from({ length: 20 }).map((_, i) => {
+                    const threshold = (i / 20) * 100;
+                    const isActive = micLevel > threshold;
+                    const barColor = micLevel > 75
+                      ? 'bg-red-500'
+                      : micLevel > 50
+                        ? 'bg-yellow-500'
+                        : 'bg-emerald-500';
+                    return (
+                      <div
+                        key={i}
+                        className={`w-1 rounded-full transition-all duration-75 ${
+                          isActive ? barColor : 'bg-gray-200'
+                        }`}
+                        style={{ height: `${8 + (i * 1.2)}px`, opacity: isActive ? 1 : 0.3 }}
+                      />
+                    );
+                  })}
                 </div>
+                <span className="text-xs text-gray-400 ml-1 w-8">{micLevel}%</span>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <Button
-                  className={`text-white rounded-full transition-all duration-300 ${isRecording ? 'animate-pulse' : ''}`}
-                  style={{ backgroundColor: isRecording ? '#EF4444' : '#6366F1' }}
-                  onClick={isRecording ? handleStopTestRecording : handleRecordTestClip}
-                  disabled={!isRecording && (isPlaying || hasRecorded)}
-                >
-                  {isRecording ? 'Stop Recording' : hasRecorded ? 'Record Again' : 'Record Test Clip'}
-                </Button>
-                <Button
-                  variant="outline"
-                  className="rounded-full"
-                  onClick={handlePlayClip}
-                  disabled={!hasRecorded || isRecording}
-                >
-                  {isPlaying ? (
-                    'Playing...'
+              {/* Recording controls */}
+              <div className="space-y-3">
+                {/* Primary action: Record / Stop Recording / Record Again */}
+                <div className="flex gap-3 justify-center">
+                  {isRecording ? (
+                    <Button
+                      className="text-white rounded-full bg-red-500 hover:bg-red-600 animate-pulse px-8"
+                      onClick={handleStopTestRecording}
+                    >
+                      <Square className="w-4 h-4 mr-2" />
+                      Stop Recording
+                    </Button>
+                  ) : isPlaying ? (
+                    <Button
+                      variant="outline"
+                      className="rounded-full px-8"
+                      onClick={handleStopPlayback}
+                    >
+                      <Square className="w-4 h-4 mr-2" />
+                      Stop Playback
+                    </Button>
+                  ) : hasRecorded ? (
+                    <Button
+                      className="text-white rounded-full bg-indigo-600 hover:bg-indigo-700 px-8"
+                      onClick={handleRecordAgain}
+                    >
+                      <Mic className="w-4 h-4 mr-2" />
+                      Record Again
+                    </Button>
                   ) : (
-                    <>
-                      <Play className="w-4 h-4 mr-2" />
-                      Play Clip
-                    </>
+                    <Button
+                      className="text-white rounded-full bg-indigo-600 hover:bg-indigo-700 px-8"
+                      onClick={handleRecordTestClip}
+                    >
+                      <Mic className="w-4 h-4 mr-2" />
+                      Record Test Clip
+                    </Button>
                   )}
-                </Button>
+                </div>
+
+                {/* Secondary actions: Play / Stop playback */}
+                {hasRecorded && !isRecording && (
+                  <div className="flex gap-3 justify-center">
+                    {!isPlaying ? (
+                      <Button
+                        variant="outline"
+                        className="rounded-full"
+                        onClick={handlePlayClip}
+                      >
+                        <Play className="w-4 h-4 mr-2" />
+                        Play Clip
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
               </div>
 
               <p className="text-center text-gray-500 text-xs">
-                Ensure your device permissions are enabled before proceeding
+                {isRecording
+                  ? 'Recording will auto-stop after 10 seconds'
+                  : isPlaying
+                    ? 'Review your test clip — check video and audio quality'
+                    : hasRecorded
+                      ? 'Clip recorded! Play it back or record again'
+                      : 'Record a short clip to test your camera and microphone'}
               </p>
 
               <div className="flex justify-between pt-4">
