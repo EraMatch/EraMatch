@@ -138,12 +138,17 @@ async def evaluate(request: EvaluateRequest):
         feedback = content
         strengths = []
         improvements = []
-        
+
+        import re
+
         for line in content.split("\n"):
             line = line.strip()
             if line.startswith("SCORE:"):
                 try:
-                    score = float(line.split("SCORE:")[1].strip().split()[0])
+                    score_text = line.split("SCORE:")[1].strip()
+                    match = re.search(r'(\d+\.?\d*)', score_text)
+                    if match:
+                        score = float(match.group(1))
                 except:
                     pass
             elif line.startswith("FEEDBACK:"):
