@@ -157,7 +157,9 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         }
       } catch (error) {
         console.error('Failed to fetch/start assessment:', error);
+        console.error('Error details:', error instanceof Error ? error.message : String(error));
         setQuestions([]);
+        setSessionId(null);
       } finally {
         setIsLoading(false);
       }
@@ -798,19 +800,28 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
               <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mt-4">
                 <h4 className="font-semibold text-gray-700 text-sm mb-3">Sample Test Cases</h4>
                 <div className="space-y-3">
-                  {currentQuestion.testCases.filter(tc => !tc.is_hidden).map((tc, idx) => (
-                    <div key={idx} className="bg-white p-3 rounded border border-gray-200 shadow-sm flex flex-col md:flex-row gap-4">
-                      <div className="flex-1">
-                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Input</span>
-                        <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">{tc.input}</pre>
+                  {currentQuestion.testCases.filter(tc => !tc.is_hidden).map((tc, idx) => {
+                    // Handle both string and object test case values
+                    const inputStr = typeof tc.input === 'object' && tc.input !== null
+                      ? JSON.stringify(tc.input, null, 2)
+                      : String(tc.input || '');
+                    const expectedStr = typeof tc.expected_output === 'object' && tc.expected_output !== null
+                      ? JSON.stringify(tc.expected_output, null, 2)
+                      : String(tc.expected_output || '');
+                    return (
+                      <div key={idx} className="bg-white p-3 rounded border border-gray-200 shadow-sm flex flex-col md:flex-row gap-4">
+                        <div className="flex-1">
+                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Input</span>
+                          <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">{inputStr}</pre>
+                        </div>
+                        <div className="hidden md:block w-px bg-gray-200"></div>
+                        <div className="flex-1">
+                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Expected Output</span>
+                          <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">{expectedStr}</pre>
+                        </div>
                       </div>
-                      <div className="hidden md:block w-px bg-gray-200"></div>
-                      <div className="flex-1">
-                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Expected Output</span>
-                        <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">{tc.expected_output}</pre>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -829,26 +840,32 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
 
               {currentQuestion.type === 'mcq' && currentQuestion.options && (
                 <div className="space-y-3">
-                  {currentQuestion.options.map((option, index) => (
-                    <label
-                      key={index}
-                      className="flex items-center gap-3 p-4 border-2 rounded-lg cursor-pointer transition-colors hover:bg-gray-50"
-                      style={{
-                        borderColor: answers[currentQuestion.id] === index ? '#6366F1' : '#E5E7EB',
-                        backgroundColor: answers[currentQuestion.id] === index ? '#EEF2FF' : 'transparent'
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name={`question-${currentQuestion.id}`}
-                        checked={answers[currentQuestion.id] === index}
-                        onChange={() => handleAnswerChange(index)}
-                        className="w-4 h-4"
-                        style={{ accentColor: '#6366F1' }}
-                      />
-                      <span className="text-gray-700">{option}</span>
-                    </label>
-                  ))}
+                  {currentQuestion.options.map((option, index) => {
+                    // Handle both string options and {id, text} object options from API
+                    const optionText = typeof option === 'object' && option !== null
+                      ? (option as any).text || JSON.stringify(option)
+                      : String(option);
+                    return (
+                      <label
+                        key={index}
+                        className="flex items-center gap-3 p-4 border-2 rounded-lg cursor-pointer transition-colors hover:bg-gray-50"
+                        style={{
+                          borderColor: answers[currentQuestion.id] === index ? '#6366F1' : '#E5E7EB',
+                          backgroundColor: answers[currentQuestion.id] === index ? '#EEF2FF' : 'transparent'
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name={`question-${currentQuestion.id}`}
+                          checked={answers[currentQuestion.id] === index}
+                          onChange={() => handleAnswerChange(index)}
+                          className="w-4 h-4"
+                          style={{ accentColor: '#6366F1' }}
+                        />
+                        <span className="text-gray-700">{optionText}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               )}
 
@@ -960,11 +977,11 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
                             </div>
                             <div className="text-xs font-mono bg-white p-2 rounded border border-gray-200 mt-2">
                               <span className="text-gray-500 font-semibold">Expected:</span>
-                              <pre className="text-gray-800 whitespace-pre-wrap mt-1">{res.expected}</pre>
+                              <pre className="text-gray-800 whitespace-pre-wrap mt-1">{typeof res.expected === 'object' ? JSON.stringify(res.expected, null, 2) : res.expected}</pre>
                             </div>
                             <div className={`text-xs font-mono bg-white p-2 rounded border mt-2 ${res.passed ? 'border-green-200' : 'border-red-200'}`}>
                               <span className={`${res.passed ? 'text-green-600' : 'text-red-600'} font-semibold`}>Actual:</span>
-                              <pre className={`${res.passed ? 'text-green-800' : 'text-red-800'} whitespace-pre-wrap mt-1`}>{res.actual || '(no output)'}</pre>
+                              <pre className={`${res.passed ? 'text-green-800' : 'text-red-800'} whitespace-pre-wrap mt-1`}>{typeof res.actual === 'object' ? JSON.stringify(res.actual, null, 2) : (res.actual || '(no output)')}</pre>
                             </div>
                           </div>
                         ))}
