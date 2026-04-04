@@ -63,7 +63,7 @@ export function GroupCreationPage({
           // Filter out candidates who are already in a group, UNLESS it's "Main Pipeline"
           const availableCandidates = ((response as any).candidates as any[]).map(c => ({
             ...c,
-            id: c.applicationId // Use applicationId as the primary id for selection
+            id: c.id
           })).filter(c => {
             const isMainPipeline = c.groupName === "Main Pipeline";
             const available = (!c.groupId && !c.groupName) || isMainPipeline;
