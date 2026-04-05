@@ -47,7 +47,7 @@ class CandidateProgressDTO(BaseModel):
 @router.get("/candidates", response_model=List[CandidateProgressDTO])
 async def get_candidates_progress(session: DbSession):
     """Get only candidates who have actual interview responses - real data only."""
-    
+
     result = await session.execute(
         text("""
             WITH latest_sessions AS (
@@ -64,36 +64,45 @@ async def get_candidates_progress(session: DbSession):
                 WHERE (cp.is_deleted = false OR cp.is_deleted IS NULL)
                 ORDER BY cp.candidate_id, COALESCE(oi.completed_at, oi.started_at) DESC NULLS LAST
             )
-            SELECT 
+            SELECT
                 ls.candidate_id::text,
                 ls.full_name,
                 ls.email,
-                (SELECT COUNT(*) FROM interview_responses ir 
+                (SELECT COUNT(*) FROM interview_responses ir
                  WHERE ir.session_id = ls.session_id) as completed_questions,
-                3 as total_questions,
-                (SELECT AVG(ir.ai_score) FROM interview_responses ir 
+                (SELECT CASE
+                    WHEN jsonb_typeof(aic.questions) = 'array' THEN jsonb_array_length(aic.questions)
+                    WHEN jsonb_typeof(aic.questions->'questions') = 'array' THEN jsonb_array_length(aic.questions->'questions')
+                    ELSE 5
+                 END
+                 FROM ai_interview_configs aic
+                 WHERE aic.config_id = (
+                     SELECT gps.config_id FROM group_pipeline_stages gps
+                     JOIN candidate_applications ca2 ON ca2.group_id = gps.group_id
+                     WHERE ca2.candidate_id = ls.candidate_id
+                       AND gps.stage_type = 'ai_interview'
+                     LIMIT 1
+                 )) as total_questions,
+                (SELECT AVG(ir.ai_score) FROM interview_responses ir
                  WHERE ir.session_id = ls.session_id AND ir.ai_score IS NOT NULL) as average_score,
                 ls.status as status,
                 ls.last_updated
             FROM latest_sessions ls
-            WHERE (
-                -- Only include candidates with actual responses or completed sessions
-                (SELECT COUNT(*) FROM interview_responses ir WHERE ir.session_id = ls.session_id) > 0
-                OR ls.status IN ('completed', 'in_progress')
-            )
+            WHERE ls.status IN ('completed', 'in_progress', 'not_started')
+               OR (SELECT COUNT(*) FROM interview_responses ir WHERE ir.session_id = ls.session_id) > 0
             ORDER BY ls.last_updated DESC NULLS LAST
             LIMIT 50
         """)
     )
     rows = result.fetchall()
-    
+
     return [
         CandidateProgressDTO(
             candidate_id=str(row[0]),
             candidate_name=row[1] or "Unknown",
             candidate_email=row[2] or "",
             completed_questions=row[3] or 0,
-            total_questions=row[4],
+            total_questions=max(row[4] or 3, 1),  # fallback to 3, ensure >= 1 to avoid div by zero
             average_score=float(row[5]) if row[5] else None,
             status=row[6] or "in_progress",
             last_updated=row[7] or datetime.utcnow()
@@ -223,13 +232,16 @@ async def get_assessment_candidates_progress(session: DbSession):
                 ls.started_at,
                 ls.submitted_at,
                 ls.session_id::text,
-                (SELECT COUNT(*) FROM candidate_answers ca2 
+                (SELECT COUNT(*) FROM candidate_answers ca2
                  WHERE ca2.session_id = ls.session_id) as answered_questions,
-                (SELECT jsonb_array_length(
-                    (SELECT assigned_questions->'questions' 
-                     FROM ongoing_assessments oa2 
-                     WHERE oa2.session_id = ls.session_id)
-                )) as total_questions
+                (SELECT CASE
+                    WHEN jsonb_typeof(oa2.assigned_questions->'questions') = 'array'
+                    THEN jsonb_array_length(oa2.assigned_questions->'questions')
+                    ELSE 0
+                 END
+                 FROM ongoing_assessments oa2
+                 WHERE oa2.session_id = ls.session_id
+                 LIMIT 1) as total_questions
             FROM latest_sessions ls
             JOIN candidate_profiles cp ON ls.candidate_id = cp.candidate_id
             JOIN assessments a ON ls.assessment_id = a.assessment_id
@@ -272,37 +284,82 @@ async def get_assessment_responses(candidate_id: str, session: DbSession):
                 WHERE ca.candidate_id = :candidate_id
                 ORDER BY COALESCE(oa.submitted_at, oa.started_at) DESC NULLS LAST
                 LIMIT 1
+            ),
+            latest_answers AS (
+                SELECT DISTINCT ON (ans.question_id)
+                    ans.answer_id,
+                    ans.question_id,
+                    ans.answer_data,
+                    ans.is_correct,
+                    ans.points_earned,
+                    ans.points_max,
+                    ans.time_spent_seconds,
+                    ans.answered_at
+                FROM candidate_answers ans
+                JOIN latest_session ls ON ans.session_id = ls.session_id
+                ORDER BY ans.question_id, ans.answered_at DESC
             )
-            SELECT 
-                ans.answer_id::text,
+            SELECT
+                la.answer_id::text,
                 qb.question_text,
                 qb.question_type,
-                ans.answer_data,
-                ans.is_correct,
-                ans.points_earned,
-                ans.points_max,
-                ans.time_spent_seconds,
-                ans.answered_at
-            FROM candidate_answers ans
-            JOIN latest_session ls ON ans.session_id = ls.session_id
-            JOIN question_bank qb ON ans.question_id = qb.question_id
-            ORDER BY ans.question_order ASC, ans.answered_at ASC
+                la.answer_data,
+                la.is_correct,
+                la.points_earned,
+                la.points_max,
+                la.time_spent_seconds,
+                la.answered_at,
+                qb.question_config,
+                qb.correct_answer
+            FROM latest_answers la
+            JOIN question_bank qb ON la.question_id = qb.question_id
+            ORDER BY la.answered_at ASC
         """),
         {"candidate_id": candidate_id}
     )
     rows = result.mappings().all()
 
-    return [
-        AssessmentAnswerDTO(
+    # Build response with MCQ options and reference answers included
+    responses = []
+    for row in rows:
+        answer_data = row["answer_data"] or {}
+        q_config = row["question_config"] or {}
+        
+        # Add MCQ options to answer_data for frontend display
+        if row["question_type"] == "mcq":
+            options = q_config.get("options", [])
+            # Normalize options to array of strings
+            normalized_options = []
+            for opt in options:
+                if isinstance(opt, str):
+                    normalized_options.append(opt)
+                elif isinstance(opt, dict):
+                    normalized_options.append(opt.get("text", str(opt)))
+                else:
+                    normalized_options.append(str(opt))
+            answer_data = {**answer_data, "_mcq_options": normalized_options}
+        
+        # Add reference answer and rubric for essay questions
+        if row["question_type"] == "essay":
+            correct_answer = row["correct_answer"] or {}
+            reference = correct_answer.get("reference_answer")
+            rubric = q_config.get("rubric")  # Rubric is in question_config
+            
+            if reference:
+                answer_data = {**answer_data, "_reference_answer": reference}
+            if rubric:
+                answer_data = {**answer_data, "_rubric": rubric}
+        
+        responses.append(AssessmentAnswerDTO(
             answer_id=row["answer_id"],
             question_text=row["question_text"] or "",
             question_type=row["question_type"] or "",
-            answer_data=row["answer_data"] or {},
+            answer_data=answer_data,
             is_correct=row["is_correct"],
             points_earned=float(row["points_earned"]) if row["points_earned"] else None,
             points_max=row["points_max"] or 0,
             time_spent_seconds=row["time_spent_seconds"],
             answered_at=row["answered_at"],
-        )
-        for row in rows
-    ]
+        ))
+    
+    return responses

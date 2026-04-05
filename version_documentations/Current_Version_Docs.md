@@ -1,361 +1,303 @@
-# EraMatch – Candidate Portal Version Docs
+# EraMatch Current Version Docs
 
-> **Branch:** `feat/51-candidate-assesment`
-> **Issues Addressed:** #1, #3, #13, #40, #51, #76, #78
-> **DB Change Logs:** See `backend/db_changes_log.md` for a full record of all database-level changes made during this sprint.
+## Summary
 
----
+This document reflects the current state after the stage-config consistency fix.
 
-## How to Test (Step-by-Step)
+The main correction was to make `group_pipeline_stages.config_id` the actual source of truth for configurable group stages:
 
-Open **3 separate terminals** and run each service:
+- `assessment` -> `assessments.assessment_id`
+- `ai_interview` -> `ai_interview_configs.config_id`
+- `live_interview` -> `live_interview_configs.config_id`
 
-### Terminal 1 – Backend API (Port 8000)
+Before this fix, the system was split:
 
-```bash
-cd backend
-.venv\Scripts\activate          # Windows
-# or: source .venv/bin/activate  # Mac/Linux
-uvicorn app.main:app --reload --port 8000
-```
+- candidate-side runtime mostly read `group_pipeline_stages.config_id`
+- some recruiter/backend paths stored config references inside `acceptance_criteria`
 
-### Terminal 2 – AI Service (Port 8001)
+That mismatch caused stage configuration drift.
 
-```bash
-cd ai-service
-.venv\Scripts\activate
-uvicorn main:app --reload --port 8001
-```
+## Cloud Database Changes
 
-### Terminal 3 – Candidate Frontend (Port 5173 or 5174)
+Live database actions were applied on Supabase project `gcdvpmqmwagusenewrie`.
 
-```bash
-cd Frontend/candidate-portal
-npm install   # first time only
-npm run dev
-```
+Full log:
 
-All 3 must be running. The AI service handles both essay grading and video interview transcription/evaluation.
+- [CLOUD_DB_CHANGE_LOG.md]
 
----
+Applied migrations:
 
-### Sample Test Credentials
+- `backfill_group_stage_config_links`
+- `enforce_group_stage_config_integrity`
 
-#### Technical Assessment Testing
+### What changed in the database
 
-These candidates are set up for the **Full Stack Developer Technical Assessment** (60 min, MCQ + Coding + Essay):
+1. Safe backfill of missing `group_pipeline_stages.config_id`
 
-| Email                     | Password       | Status              |
-| ------------------------- | -------------- | ------------------- |
-| `candidate4@eramatch.com` | `candidate123` | Fresh (not started) |
-| `candidate5@eramatch.com` | `candidate123` | In progress         |
-| `candidate8@eramatch.com` | `candidate123` | Fresh (not started) |
+- `assessment` stages were backfilled from group-linked assessments when that linkage could be inferred safely
+- `ai_interview` stages were backfilled from legacy JSON references in `acceptance_criteria`
+- `live_interview` stages were backfilled only when live sessions clearly pointed to one config
 
-**What to test:**
+2. Cleanup of obsolete JSON config references
 
-1. Log in → pass the pre-check screens (cam, mic, rules — done only once per browser session)
-2. Assessment starts and questions are shuffled per section
-3. Answer MCQs, write code, submit essays
-4. Submit → verify score in monitoring dashboard
+- removed `interview_config_id`
+- removed `assessment_id`
 
-#### AI Video Interview Testing
+3. Integrity guardrails
 
-These candidates are set up for the recorded video interview pipeline:
+- added a partial unique index for non-inactive `(group_id, stage_type)` rows
+- added a trigger that enforces:
+  - active configurable stages must have `config_id`
+  - `config_id` must point to the correct config table for the stage type
 
-| Email                     | Password       | Type                     |
-| ------------------------- | -------------- | ------------------------ |
-| `candidate6@eramatch.com` | `candidate123` | Recorded video interview |
-| `candidate7@eramatch.com` | `candidate123` | Recorded video interview |
+### Database result
 
-**What to test:**
+- active configurable stages with null `config_id`: `0`
+- legacy JSON config references in `acceptance_criteria`: `0`
 
-1. Log in → go through eye-tracking calibration
-2. Record a 60-120s response per question
-3. Upload completes → AI processes in background (Whisper + Gemma3)
-4. Check monitoring dashboard for transcript + score
+Some historical non-active rows still have null `config_id`. They were left unresolved when auto-filling would have required unsafe guesses.
 
-#### Monitoring / Admin Access
+## Recruiter Backend Changes
 
-The monitoring dashboard is at `/monitoring` and doesn't require a candidate login — access via the main recruiter panel.
+Main backend service:
 
----
+- [group.py](/c:/AnasUni/Grad/EraMatch/backend/app/services/group.py)
 
-## Overview
+### 1. Group details now read real stage linkage
 
-Candidate-related services are organized under `app/services/candidates/`. The same modular pattern should be applied to other service areas.
+`get_group_details()` now:
 
----
+- reads config links from `group_pipeline_stages.config_id`
+- loads stage-linked assessments instead of relying on `assessments.group_id` alone
+- loads stage-linked AI interview configs
+- loads stage-linked live interview configs
 
-## Folder Structure
+This fixes the old behavior where recruiter details could show configs that were not actually attached to the group stage.
 
-```
-app/services/
-├── candidates/
-│   ├── __init__.py         # Package exports
-│   ├── auth.py             # CandidateAuthService (login, token management)
-│   ├── dashboard.py        # CandidateDashboardService (home, assessments)
-│   └── candidate.py        # CandidateService (CRUD operations)
-│
-├── auth.py                 # AuthService (recruiter/admin authentication)
-├── recruiter.py            # RecruiterService
-├── admin.py                # AdminService
-└── __init__.py             # Main services package exports
-```
+### 2. Stage start now unlocks candidates instead of auto-starting them
 
----
+`start_stage()` now:
 
-## Services in the Candidates Package
+- requires a real config for configurable stages before start
+- skips rejected/withdrawn/hired applications
+- creates or updates candidate stage progress as `unlocked`
+- no longer treats recruiter stage start as candidate session start
 
-### 1. `auth.py` – CandidateAuthService
+This matches the intended flow:
 
-**Methods:**
+1. recruiter starts the stage
+2. candidate becomes `unlocked`
+3. candidate actually starts and becomes `in_progress`
 
-- `login(email, password)` → Returns JWT tokens + candidate profile
-- `get_current_candidate(token)` → Extracts candidate from JWT
-- `refresh_tokens(refresh_token)` → Generate new access token
+### 3. Interview assignment now writes `config_id`
 
-**Endpoints:** `POST /api/v1/candidate/login`, `POST /api/v1/candidate/refresh`
+`assign_interview()` now:
 
----
+- attaches configs directly to `group_pipeline_stages.config_id`
+- stops relying on `acceptance_criteria["interview_config_id"]`
+- handles recorded interview and live interview as separate stage targets
+- supports live configs through `live_interview_configs`
 
-### 2. `dashboard.py` – CandidateDashboardService
+### 4. Interview deletion now clears stage linkage
 
-**Methods:**
+`delete_interview()` now:
 
-- `get_home(candidate_id)` → Returns profile, application, group, position data
-- `get_assessments(candidate_id)` → Returns current status for stages
+- clears `group_pipeline_stages.config_id` if the stage points to the deleted config
+- also removes any leftover legacy JSON config reference
 
-**Endpoints:** `GET /api/v1/candidate/home`, `GET /api/v1/candidate/assessments`
+### 5. Live interview scheduling no longer falls back silently
 
----
+`schedule_live_interview()` now:
 
-### 3. `candidate.py` – CandidateService
+- requires the group live stage to already have a valid config
+- does not auto-pick or auto-create an unrelated fallback config
 
-**Methods:** `create_candidate`, `get_candidate`, `update_candidate`, `list_candidates`, `create_application`, `list_applications`
+## Assessment Service Changes
 
----
+Main file:
 
-## Database Changes
+- [assessments.py](/c:/AnasUni/Grad/EraMatch/backend/app/services/assessments.py)
 
-> See `backend/db_changes_log.md` for raw SQL logs of all DB operations run during this version.
+### What changed
 
-### Password Hash Updates
+Assessment create/update/delete now synchronizes the group assessment stage:
 
-- **Affected:** 311 candidates + dedicated test accounts
-- **Default Password:** `candidate123`
-- **Algorithm:** Bcrypt (12 rounds)
+- create -> attaches created assessment to the group assessment stage `config_id`
+- update -> keeps that linkage aligned
+- delete -> clears the stage `config_id` if it points to that assessment
 
-### pgbouncer Compatibility
+This removes the old drift where an assessment could exist for a group but the stage row still had no config link.
 
-- `app/db/session.py`: Added `statement_cache_size=0` and `prepared_statement_cache_size=0` for Supabase transaction-mode pooling.
+## Candidate Runtime Changes
 
-### Primary Key Synchronization
+Main file:
 
-ORM models aligned to actual DB column names:
+- [candidate_interview.py](/c:/AnasUni/Grad/EraMatch/backend/app/api/v1/candidate_interview.py)
 
-| Model                  | Primary Key      |
-| ---------------------- | ---------------- |
-| `CandidateProfile`     | `candidate_id`   |
-| `CandidateApplication` | `application_id` |
-| `CandidateGroup`       | `group_id`       |
-| `GroupStageConfig`     | `config_id`      |
-| `Position`             | `position_id`    |
+### What changed
 
----
+Candidate AI interview flow now:
 
-## API Endpoints
+- only reads configs for stages that are actually `unlocked` or `in_progress`
+- resumes existing interview sessions when applicable
+- marks candidate stage progress as `in_progress` when the candidate starts
 
-### Candidate Portal
+This aligns interview runtime with the assessment runtime pattern.
 
-| Endpoint                        | Method | Purpose                             | Auth          |
-| ------------------------------- | ------ | ----------------------------------- | ------------- |
-| `/api/v1/candidate/login`       | POST   | Login                               | Public        |
-| `/api/v1/candidate/refresh`     | POST   | Refresh token                       | Refresh token |
-| `/api/v1/candidate/me`          | GET    | Current profile                     | JWT           |
-| `/api/v1/candidate/home`        | GET    | Dashboard home                      | JWT           |
-| `/api/v1/candidate/assessments` | GET    | List stages                         | JWT           |
-| `/api/v1/assessment/start`      | POST   | Start/resume assessment             | JWT           |
-| `/api/v1/assessment/answer`     | POST   | Save an answer                      | JWT           |
-| `/api/v1/assessment/run-code`   | POST   | Run code + all tests (counts trial) | JWT           |
-| `/api/v1/assessment/submit`     | POST   | Submit + auto-grade                 | JWT           |
+## Recruiter Frontend Changes
 
-### AI-Service (Port 8001)
+Main files:
 
-| Endpoint        | Method | Purpose           |
-| --------------- | ------ | ----------------- |
-| `/transcribe/`  | POST   | Whisper STT       |
-| `/llm/evaluate` | POST   | Gemma3 evaluation |
-| `/grade/essay`  | POST   | Essay grading     |
+- [recruiter.service.ts](/c:/AnasUni/Grad/EraMatch/Frontend/recruiter-portal/src/services/recruiter.service.ts)
+- [UnifiedAIInterviewSetup.tsx](/c:/AnasUni/Grad/EraMatch/Frontend/recruiter-portal/src/components/recruiter/interviews/UnifiedAIInterviewSetup.tsx)
 
-### Video Interview
+### What changed
 
-| Endpoint                                      | Method | Purpose                 |
-| --------------------------------------------- | ------ | ----------------------- |
-| `/api/v1/interview/config`                    | GET    | Get questions config    |
-| `/api/v1/interview/start`                     | POST   | Start session           |
-| `/api/v1/interview/response`                  | POST   | Upload video response   |
-| `/api/v1/interview/status/{session_id}`       | GET    | Check processing        |
-| `/api/v1/interview/monitoring/candidates`     | GET    | All candidates progress |
-| `/api/v1/interview/monitoring/responses/{id}` | GET    | Candidate responses     |
+- recruiter frontend now sends `live` as `live`, instead of rewriting it to `live_ai`
+- live interview setup now correctly reopens existing live configs
+- live interview duration prefill now uses backend-returned duration fields correctly
+
+## Candidate Dashboard Change
+
+Main file:
+
+- [dashboard.py](/c:/AnasUni/Grad/EraMatch/backend/app/services/candidates/dashboard.py)
+
+### What changed
+
+Candidate dashboard stage titles now resolve live interview titles from `live_interview_configs` instead of using a hardcoded label only.
+
+## Remaining Follow-up
+
+There is one known ambiguous historical live stage that still needs a manual decision:
+
+- group `f74349bd-5f38-4c48-a4c0-0f4aea329429`
+
+That group had multiple live config IDs associated with its history, so it was not auto-corrected aggressively.
+
+## Verification Done
+
+- Python syntax check passed for the edited backend files using `python -m py_compile`
+- live DB verification confirmed:
+  - active configurable stages with null `config_id`: `0`
+  - trigger and index exist
+
+## Current Contract
+
+From this version onward, the system should be read as:
+
+- `group_pipeline_stages` defines the group flow and stage order
+- `group_pipeline_stages.config_id` defines which config belongs to that stage
+- `acceptance_criteria` stores pass/evaluation rules only
+- candidate runtime and recruiter backend both resolve stage configs from the same place
 
 ---
 
-## Section 2 – AI Service
+## Candidate Portal Fixes (March 2026)
 
-Standalone FastAPI microservice on port **8001**:
+### Overview
+Fixed multiple issues in the candidate assessment and video interview features.
 
-- **Whisper STT**: Transcribes candidate video responses
-- **Ollama/Gemma3 LLM**: Evaluates answers against reference responses
-- **Essay Grading**: Scores open-ended written answers (called during assessment submission)
+### Assessment Fixes
 
-```
-Main Backend (:8000)    AI-Service (:8001)
-     │                        │
-     ├─ Video Upload           ├─ Whisper transcription
-     ├─ Assessment Submit      ├─ Essay grading
-     └─► POST /transcribe/ ───►│
-         POST /llm/evaluate ──►│
-         POST /grade/essay  ──►│
-```
+#### 1. MCQ Grading Bug Fix
+**File:** `backend/app/api/v1/candidate_assessment.py`
 
-### Configuration (`.env`)
+**Problem:** MCQ questions stored `correct_answer` as JSON `{"correct_option": "c"}` but grading logic expected `correct_index`.
 
-```env
-USE_MOCK=false
-OLLAMA_HOST=https://ollama.com
-OLLAMA_API_KEY=your-api-key
-OLLAMA_MODEL=gemma3:4b-cloud
-WHISPER_MODEL=small
-WHISPER_DEVICE=cpu
-WHISPER_COMPUTE_TYPE=int8
-```
+**Fix:** Updated grading logic to parse JSON format and compare against selected option letter.
 
----
+#### 2. Coding Test Runner Redesign
+**File:** `backend/app/api/v1/candidate_assessment.py`
 
-## Section 3 – Technical Assessment Feature (New in this version)
+**Problem:** Coding test runner couldn't execute function-based solutions.
 
-### Logic Overview
+**Fix:** Redesigned runner to:
+- Parse test cases from `input` field (newline-separated)
+- Support function-based execution (extract function name and call it)
+- Handle multiple test cases with separate execution contexts
+- Return detailed results with pass/fail status and execution time
 
-The assessment system is config-driven. Each assessment is defined with **N sections**, each containing a pool of question variants. When a session starts:
+#### 3. Language Auto-Detection
+**File:** `Frontend/candidate-portal/src/components/AssessmentSession.tsx`
 
-1. The full assessment config is read from the DB (`assessments` + `assessment_sections` + `question_bank`)
-2. For each section, exactly the configured number of questions are **randomly sampled** from that section's variant pool
-3. The final question list is shuffled and saved to `ongoing_assessments.assigned_questions`
-4. On reload/resume, the same assigned questions are restored — no reshuffling
+**Fix:** Added language detection based on question metadata for code editor.
 
-### Session Lifecycle
+#### 4. Timer with Heartbeat Sync
+**File:** `Frontend/candidate-portal/src/components/AssessmentSession.tsx`
 
-```
-start_assessment
-   ↓ (checks for existing in_progress session first)
-   ═══ RESUME if found (restores questions + saved answers + remaining timer)
-   ═══ NEW SESSION if not found (samples questions, saves to DB)
-   ↓
-Candidate answers questions → POST /assessment/answer (upsert per question)
-   ↓
-Coding questions → POST /assessment/run-code
-   ├─ Runs test cases via subprocess (Python/JS/etc.)
-   ├─ Counts as a trial attempt (stored in answer_data.attempt_count)
-   └─ Also saves answer to DB
-   ↓
-POST /assessment/submit
-   ├─ Triggers auto_grade_answers()
-   │   ├─ MCQ: graded immediately by correct_answer match
-   │   ├─ Essay: sent to AI service → score + feedback
-   │   └─ Coding: test results already saved, score from run-code
-   ├─ Calculates total_points / max_points → total_score (percentage)
-   └─ Updates ongoing_assessments + candidate_pipeline_progress
-```
+**Fix:**
+- Added 30-second heartbeat sync with backend
+- Implemented periodic auto-save of answers every 60 seconds
 
-### Pre-Check Flow (Done Once Per Browser Session)
+### Video Interview Fixes
 
-Steps shown before the assessment (camera test, mic test, rules, etc.) are stored in `sessionStorage` with key `assessment_checks_done`. They are only shown if that key is missing — meaning they run **once per browser tab session** and don't repeat on reload within the same tab.
+#### 1. Rubric Pass-Through to AI Evaluation
+**Files:** `backend/app/api/v1/candidate_interview.py`, `backend/worker/tasks/video.py`, `ai-service/routers/llm.py`, `ai-service/routers/evaluate.py`
 
-### Coding Question "Run & Test" Button
+**Fix:** Backend extracts and passes rubric to video processing worker, which passes it to AI service for evaluation.
 
-The run-code button (`POST /assessment/run-code`) is the **"Final Answer"** mechanism for coding questions:
+#### 2. Session Handling Fixes
+**File:** `backend/app/api/v1/candidate_interview.py`
 
-- Runs **all test cases** (not just sample), uses subprocess via supported language runtimes
-- **Counts a trial attempt** (default max: 5), displayed as a counter on the button
-- Saves the code + test results to the DB (full answer)
-- The counter is persisted per question so it survives page reloads
+**Fix:**
+- Fixed session discovery to find sessions with `not_started` status
+- Update session status to `in_progress` when found
 
-### Monitoring Dashboard Fixes (Fixes #40, #76, #78)
+#### 3. Monitoring Page Fixes
+**File:** `backend/app/routers/monitoring.py`
 
-Previously the monitoring dashboard showed duplicate question rows because it fetched answers across **all sessions** a candidate ever had (including abandoned ones from page refreshes). The fixed logic:
+**Fix:**
+- Added `not_started` status to filter so candidates appear in monitoring
+- Fixed question ordering (1-based indexing instead of 0-based)
+- Added rubric to essay question response data
 
-- **`GET /monitoring/assessment-candidates`**: Uses a CTE to select the **latest session per candidate** (scoped by most recent `submitted_at` or `started_at`), then counts answers only from that session
-- **`GET /monitoring/assessment-responses/{id}`**: Uses a CTE to resolve the latest session, then joins `candidate_answers` against only that session
-- **Score fields**: `total_points` = raw points earned, `total_score` = percentage (0-100). The monitoring DTO now correctly maps these separately
+#### 4. Frontend UI Improvements
+**File:** `Frontend/candidate-portal/src/components/RecordedInterviewFlow.tsx`
+
+**Fix:**
+- Added stop button functionality to test recording
+- Changed submit button to show "Submit Interview" on last question
+- Fixed dropdown styling with proper arrows
+- Added refresh device button
+- Added multiple detection methods for OBS Virtual Camera
+
+#### 5. Video URL Fix
+**File:** `Frontend/candidate-portal/src/components/InterviewMonitoringPage.tsx`
+
+**Fix:** Fixed video URL to point to backend (port 8000) instead of frontend (port 5174).
+
+#### 6. AI Processing Timeouts
+**File:** `backend/worker/tasks/video.py`
+
+**Fix:** Increased transcription timeout from 120s to 300s, evaluation timeout from 60s to 120s.
 
 ---
 
-## Section 4 – Video Interview
+## Test Credentials
 
-### Flow
+### Assessment Candidates
+| Email | Name |
+|-------|------|
+| james.rodriguez@eramatch-test.com | James Rodriguez |
+| lucas.wagner@eramatch-test.com | Lucas Wagner |
+| michael.okafor@eramatch-test.com | Michael Okafor |
+| priya.sharma@eramatch-test.com | Priya Sharma |
+| sofia.petrov@eramatch-test.com | Sofia Petrov |
+| yuki.tanaka@eramatch-test.com | Yuki Tanaka |
 
-```
-Candidate Portal (React)
-    ↓
-1. Start → Load questions from DB
-2. Record Video (MediaRecorder, VP8, 250kbps)
-3. Upload (XMLHttpRequest → real-time progress)
-4. Backend saves to /static/uploads/
-5. BackgroundTask → process_video_logic()
-    ├─ POST /transcribe/ → AI-Service (Whisper)
-    ├─ POST /llm/evaluate → AI-Service (Gemma3)
-    └─ UPDATE interview_responses
-6. Monitoring → Display transcript + score
-```
+**Password:** `test123`
 
-### Database Tables
+### Video Interview Candidates
+| Email | Name |
+|-------|------|
+| liam.nguyen@eramatch-test.com | Liam Nguyen |
+| aisha.bakari@eramatch-test.com | Aisha Bakari |
+| amara.diop@eramatch-test.com | Amara Diop |
+| carlos.mendez@eramatch-test.com | Carlos Mendez |
+| david.osei@eramatch-test.com | David Osei |
+| mei.lin@eramatch-test.com | Mei Lin |
+| nathan.brooks@eramatch-test.com | Nathan Brooks |
+| roberto.rossi@eramatch-test.com | Roberto Rossi |
 
-| Table                  | Purpose                            |
-| ---------------------- | ---------------------------------- |
-| `ai_interview_configs` | Interview questions per position   |
-| `ongoing_interviews`   | Sessions                           |
-| `interview_responses`  | Video URLs, transcripts, AI scores |
-
-### New Table: `interview_responses`
-
-| Column                  | Type    | Notes                                             |
-| ----------------------- | ------- | ------------------------------------------------- |
-| `response_id`           | UUID PK |                                                   |
-| `session_id`            | UUID FK | → `ongoing_interviews`                            |
-| `question_order`        | int     |                                                   |
-| `video_url`             | text    | Path in `/static/uploads/`                        |
-| `transcript`            | text    | Whisper output                                    |
-| `transcript_confidence` | numeric | 0–1                                               |
-| `ai_score`              | numeric | 0–100                                             |
-| `ai_feedback`           | jsonb   | Detailed LLM feedback                             |
-| `processing_status`     | varchar | `pending` / `processing` / `completed` / `failed` |
-
----
-
-## CORS Configuration
-
-**File:** `backend/app/main.py`
-
-Previously used `allow_origins=["*"]` with `allow_credentials=True` — this is rejected by browsers. Fixed to explicit origins:
-
-```python
-allow_origins=[
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
-]
-```
-
----
-
-## Running Services
-
-| Service        | Port | Command                                     |
-| -------------- | ---- | ------------------------------------------- |
-| **Backend**    | 8000 | `uvicorn app.main:app --reload --port 8000` |
-| **AI-Service** | 8001 | `uvicorn main:app --reload --port 8001`     |
-| **Frontend**   | 5173 | `npm run dev`                               |
-
-All 3 must be running for full functionality.
+**Password:** `test123`

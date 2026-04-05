@@ -7,6 +7,7 @@ Handles the AI video interview flow:
 - Submit video response
 - Check processing status
 """
+import json
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form
 from pydantic import BaseModel
@@ -17,6 +18,72 @@ from app.api.deps import CurrentCandidate, DbSession
 
 
 router = APIRouter(prefix="/interview", tags=["Candidate Interview"])
+
+
+def _normalize_questions(questions_data) -> list[dict]:
+    if isinstance(questions_data, dict):
+        questions = questions_data.get("items") or questions_data.get("questions") or []
+    elif isinstance(questions_data, list):
+        questions = questions_data
+    else:
+        questions = []
+
+    normalized_questions = []
+    for i, q in enumerate(questions):
+        if isinstance(q, str):
+            normalized_questions.append({
+                "id": f"q{i+1}",
+                "text": q,
+                "reference_answer": None,
+            })
+        elif isinstance(q, dict):
+            normalized_questions.append({
+                "id": q.get("id", f"q{i+1}"),
+                "text": q.get("text", q.get("question", "")),
+                "reference_answer": q.get("reference_answer"),
+            })
+    return normalized_questions
+
+
+def _resolve_reference_answer(questions_data, question_id: str, question_text: str) -> str | None:
+    normalized_questions = _normalize_questions(questions_data)
+    for index, question in enumerate(normalized_questions, start=1):
+        if question["id"] == question_id:
+            return question.get("reference_answer")
+        if question_id.startswith("q") and question_id[1:].isdigit() and int(question_id[1:]) == index:
+            return question.get("reference_answer")
+        if question.get("text", "").strip() == question_text.strip():
+            return question.get("reference_answer")
+    return None
+
+
+def _resolve_rubric(questions_data, question_id: str, question_text: str) -> str | None:
+    """Extract rubric from questions data for a specific question."""
+    normalized_questions = _normalize_questions(questions_data)
+    for index, question in enumerate(normalized_questions, start=1):
+        if question["id"] == question_id:
+            return question.get("rubric")
+        if question_id.startswith("q") and question_id[1:].isdigit() and int(question_id[1:]) == index:
+            return question.get("rubric")
+        if question.get("text", "").strip() == question_text.strip():
+            return question.get("rubric")
+    return None
+
+
+def _parse_feedback_value(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value.get("feedback") or json.dumps(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        if isinstance(parsed, dict):
+            return parsed.get("feedback") or json.dumps(parsed)
+        return str(parsed)
+    return str(value)
 
 
 # =============================================================================
@@ -94,8 +161,14 @@ async def get_interview_config(candidate: CurrentCandidate, session: DbSession):
                 COALESCE(aic.max_retakes, 1) as max_retakes
             FROM candidate_applications ca
             JOIN group_pipeline_stages gps ON ca.group_id = gps.group_id AND gps.stage_type = 'ai_interview'
+            JOIN candidate_pipeline_progress cpp
+                ON cpp.application_id = ca.application_id
+                AND cpp.stage_id = gps.stage_id
             JOIN ai_interview_configs aic ON gps.config_id = aic.config_id
-            WHERE ca.candidate_id = :cid AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
+            WHERE ca.candidate_id = :cid
+              AND gps.state = 'active'
+              AND cpp.status IN ('unlocked', 'in_progress')
+              AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
             LIMIT 1
         """).bindparams(
             bindparam("cid", type_=pgUUID(as_uuid=True)),
@@ -107,25 +180,7 @@ async def get_interview_config(candidate: CurrentCandidate, session: DbSession):
     if not row:
         raise HTTPException(status_code=404, detail="No AI interview configured for this candidate")
     
-    # Parse questions from JSONB
-    questions_data = row[3] or {"questions": []}
-    questions = questions_data.get("questions", [])
-    
-    # Normalize questions to list of dicts
-    normalized_questions = []
-    for i, q in enumerate(questions):
-        if isinstance(q, str):
-            normalized_questions.append({
-                "id": f"q{i+1}",
-                "text": q,
-                "reference_answer": None,
-            })
-        elif isinstance(q, dict):
-            normalized_questions.append({
-                "id": q.get("id", f"q{i+1}"),
-                "text": q.get("text", q.get("question", "")),
-                "reference_answer": q.get("reference_answer"),
-            })
+    normalized_questions = _normalize_questions(row[3] or {})
     
     return InterviewConfigResponse(
         config_id=str(row[0]),
@@ -153,19 +208,26 @@ async def start_interview_session(
     
     session_id = str(uuid4())
     
-    # Get candidate's application and organization for this interview config
+    # Get candidate's application, organization, and stage progress for this interview config
     result = await session.execute(
         text("""
             SELECT 
                 ca.application_id,
                 aic.organization_id,
-                aic.interview_type
+                aic.interview_type,
+                cpp.progress_id,
+                cpp.status
             FROM candidate_applications ca
             JOIN group_pipeline_stages gps ON ca.group_id = gps.group_id 
                 AND gps.stage_type = 'ai_interview'
+            JOIN candidate_pipeline_progress cpp
+                ON cpp.application_id = ca.application_id
+                AND cpp.stage_id = gps.stage_id
             JOIN ai_interview_configs aic ON gps.config_id = aic.config_id
             WHERE ca.candidate_id = :cid 
                 AND aic.config_id = :config_id
+                AND gps.state = 'active'
+                AND cpp.status IN ('unlocked', 'in_progress')
                 AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
             LIMIT 1
         """).bindparams(
@@ -182,7 +244,55 @@ async def start_interview_session(
     application_id = str(row[0])
     organization_id = str(row[1])
     interview_type = row[2] or "recorded"
-    
+    progress_id = row[3]
+
+    existing_result = await session.execute(
+        text("""
+            SELECT session_id
+            FROM ongoing_interviews
+            WHERE application_id = :app_id
+              AND config_id = :config_id
+              AND status IN ('in_progress', 'not_started')
+            LIMIT 1
+        """).bindparams(
+            bindparam("app_id", type_=pgUUID(as_uuid=True)),
+            bindparam("config_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"app_id": UUID(application_id), "config_id": UUID(request.config_id)}
+    )
+    existing_session = existing_result.fetchone()
+    if existing_session:
+        # Update session status to in_progress if it's not_started
+        await session.execute(
+            text("""
+                UPDATE ongoing_interviews
+                SET status = 'in_progress', started_at = COALESCE(started_at, NOW())
+                WHERE session_id = :sid AND status = 'not_started'
+            """).bindparams(
+                bindparam("sid", type_=pgUUID(as_uuid=True)),
+            ),
+            {"sid": existing_session[0]}
+        )
+        await session.execute(
+            text("""
+                UPDATE candidate_pipeline_progress
+                SET status = 'in_progress',
+                    session_id = :sid,
+                    session_type = 'ai_interview',
+                    started_at = COALESCE(started_at, NOW())
+                WHERE progress_id = :progress_id
+            """).bindparams(
+                bindparam("sid", type_=pgUUID(as_uuid=True)),
+                bindparam("progress_id", type_=pgUUID(as_uuid=True)),
+            ),
+            {"sid": existing_session[0], "progress_id": progress_id}
+        )
+        await session.commit()
+        return StartSessionResponse(
+            session_id=str(existing_session[0]),
+            message="Interview session resumed.",
+        )
+
     # Create ongoing_interviews record
     await session.execute(
         text("""
@@ -206,6 +316,21 @@ async def start_interview_session(
             "org_id": UUID(organization_id),
             "itype": interview_type,
         }
+    )
+
+    await session.execute(
+        text("""
+            UPDATE candidate_pipeline_progress
+            SET status = 'in_progress',
+                session_id = :sid,
+                session_type = 'ai_interview',
+                started_at = COALESCE(started_at, NOW())
+            WHERE progress_id = :progress_id
+        """).bindparams(
+            bindparam("sid", type_=pgUUID(as_uuid=True)),
+            bindparam("progress_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"sid": UUID(session_id), "progress_id": progress_id}
     )
     await session.commit()
     
@@ -237,9 +362,10 @@ async def submit_video_response(
     # Verify session belongs to candidate
     result = await session.execute(
         text("""
-            SELECT oi.session_id 
+            SELECT oi.session_id, oi.status, aic.questions
             FROM ongoing_interviews oi
             JOIN candidate_applications ca ON oi.application_id = ca.application_id
+            LEFT JOIN ai_interview_configs aic ON oi.config_id = aic.config_id
             WHERE oi.session_id = :session_id AND ca.candidate_id = :candidate_id
         """).bindparams(
             bindparam("session_id", type_=pgUUID(as_uuid=True)),
@@ -247,8 +373,24 @@ async def submit_video_response(
         ),
         {"session_id": session_id, "candidate_id": candidate.candidate_id}
     )
-    if not result.scalar():
+    session_row = result.mappings().first()
+    if not session_row:
         raise HTTPException(status_code=403, detail="Invalid session or unauthorized")
+    if session_row["status"] == "completed":
+        raise HTTPException(status_code=400, detail="Interview session already completed")
+
+    if not reference_answer:
+        reference_answer = _resolve_reference_answer(
+            session_row["questions"] or {},
+            question_id,
+            question_text,
+        )
+    
+    rubric = _resolve_rubric(
+        session_row["questions"] or {},
+        question_id,
+        question_text,
+    )
 
     response_id = str(uuid4())
     
@@ -293,7 +435,7 @@ async def submit_video_response(
             "response_id": UUID(response_id),
             "session_id": session_id,
             "question_id": question_id,
-            "question_order": int(question_id.replace("q", "")) if question_id.startswith("q") else 0,
+            "question_order": int(question_id.replace("q", "")) if question_id.startswith("q") else (int(question_id) if question_id.isdigit() else 1),
             "question_text": question_text,
             "video_url": video_url_db,
         }
@@ -303,12 +445,16 @@ async def submit_video_response(
     # Queue processing task (using BackgroundTasks for MVP)
     # For production with high load, enable Celery + Redis
     from worker.tasks.video import process_video_logic
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[VIDEO] Adding background task for response {response_id}")
     background_tasks.add_task(
         process_video_logic,
         response_id=response_id,
         video_url=video_url_full,
         question_text=question_text,
         reference_answer=reference_answer,
+        rubric=rubric,
     )
     task_id = f"bg-{response_id[:8]}"
     
@@ -331,11 +477,29 @@ async def get_processing_status(
     
     Returns transcript and evaluation results when available.
     """
+    session_result = await session.execute(
+        text("""
+            SELECT oi.session_id, oi.status
+            FROM ongoing_interviews oi
+            JOIN candidate_applications ca ON oi.application_id = ca.application_id
+            WHERE oi.session_id = :sid
+              AND ca.candidate_id = :cid
+        """).bindparams(
+            bindparam("sid", type_=pgUUID(as_uuid=True)),
+            bindparam("cid", type_=pgUUID(as_uuid=True)),
+        ),
+        {"sid": UUID(session_id), "cid": candidate.candidate_id}
+    )
+    session_row = session_result.mappings().first()
+    if not session_row:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
     result = await session.execute(
         text("""
             SELECT 
                 response_id, question_id, question_order, question_text,
-                video_url, transcript, ai_score, ai_feedback, answered_at
+                video_url, transcript, ai_score, ai_feedback, answered_at,
+                processing_status
             FROM interview_responses
             WHERE session_id = :sid
             ORDER BY question_order
@@ -347,15 +511,27 @@ async def get_processing_status(
     rows = result.fetchall()
     
     responses = []
-    all_processed = True
+    any_failed = False
+    any_processing = False
+    completed_count = 0
     
     for row in rows:
-        has_transcript = row[5] is not None
-        has_score = row[6] is not None
-        
-        if not has_transcript or not has_score:
-            all_processed = False
-        
+        derived_status = row[9]
+        if not derived_status:
+            if row[6] is not None:
+                derived_status = "completed"
+            elif row[5]:
+                derived_status = "processing"
+            else:
+                derived_status = "pending"
+
+        if derived_status == "failed":
+            any_failed = True
+        elif derived_status in ("pending", "processing"):
+            any_processing = True
+        elif derived_status == "completed":
+            completed_count += 1
+
         responses.append({
             "response_id": str(row[0]),
             "question_id": row[1],
@@ -363,12 +539,19 @@ async def get_processing_status(
             "question_text": row[3],
             "video_url": row[4],
             "transcript": row[5],
-            "score": float(row[6]) if row[6] else None,
-            "feedback": row[7],
-            "status": "completed" if has_score else ("transcribed" if has_transcript else "processing"),
+            "score": float(row[6]) if row[6] is not None else None,
+            "feedback": _parse_feedback_value(row[7]),
+            "status": derived_status,
         })
     
-    overall_status = "completed" if all_processed and responses else ("processing" if responses else "no_responses")
+    if any_failed:
+        overall_status = "failed"
+    elif responses and completed_count == len(responses) and session_row["status"] == "completed":
+        overall_status = "completed"
+    elif responses or session_row["status"] in ("in_progress", "completed"):
+        overall_status = "processing" if any_processing or responses else session_row["status"]
+    else:
+        overall_status = "no_responses"
     
     return ProcessingStatusResponse(
         session_id=session_id,
@@ -396,8 +579,7 @@ async def complete_interview_session(
     """
     Mark an interview session as completed.
     
-    Updates the ongoing_interviews status to 'completed', sets completed_at timestamp,
-    and unlocks the next pipeline stage.
+    Updates the ongoing_interviews status to 'completed' and sets completed_at timestamp.
     """
     from uuid import uuid4
     from sqlalchemy import bindparam
