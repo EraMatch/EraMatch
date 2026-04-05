@@ -9,7 +9,7 @@ Generic AI service supporting multiple providers:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import llm, custom, transcribe, evaluate
+from routers import llm, custom, transcribe, evaluate, question_import, anomaly_detection, github_analysis
 
 app = FastAPI(
     title="EraMatch AI Service",
@@ -31,6 +31,9 @@ app.include_router(llm.router, prefix="/llm", tags=["LLM"])
 app.include_router(transcribe.router, prefix="/transcribe", tags=["Transcription"])
 app.include_router(custom.router, prefix="/custom", tags=["Custom Models"])
 app.include_router(evaluate.router, prefix="/evaluate", tags=["Evaluation"])
+app.include_router(question_import.router, prefix="/question-import", tags=["Question Import"])
+app.include_router(anomaly_detection.router, prefix="/anomaly", tags=["Anomaly Detection & HITL"])
+app.include_router(github_analysis.router, prefix="/github-analysis", tags=["GitHub Analysis"])
 
 
 @app.on_event("startup")

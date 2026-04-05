@@ -18,6 +18,7 @@ import { ActivityLogPanel } from './ActivityLogPanel';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
 import { useEffect } from 'react';
+import LoadingSpinner from '../../common/LoadingSpinner';
 
 interface EnhancedGroupOverviewV2Props {
   groupId: string;
@@ -138,6 +139,7 @@ export function EnhancedGroupOverviewV2({
   const [showRuleBuilderModal, setShowRuleBuilderModal] = useState(false);
   const [showAIInterviewSettingsModal, setShowAIInterviewSettingsModal] = useState(false);
   const [showFlowConfigModal, setShowFlowConfigModal] = useState(false);
+  const [githubQuestionsCount, setGithubQuestionsCount] = useState<number>(10);
   const [refreshKey, setRefreshKey] = useState(0);
 
   // New state for enhancements
@@ -367,6 +369,10 @@ export function EnhancedGroupOverviewV2({
           setAcceptanceCriteria(data.acceptanceCriteria as TechnicalAcceptanceCriteria);
         }
 
+        if (Number.isFinite(Number(data.github_questions_count))) {
+          setGithubQuestionsCount(Math.max(1, Math.min(30, Number(data.github_questions_count))));
+        }
+
         if (data.activityLog) {
           setActivityLog(data.activityLog.map((log: any) => ({
             ...log,
@@ -384,9 +390,13 @@ export function EnhancedGroupOverviewV2({
     fetchData();
   }, [groupId, refreshKey]);
 
-  const handleSaveFlow = async (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[]) => {
+  const handleSaveFlow = async (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[], configuredGithubQuestionsCount: number) => {
     try {
-      await api.recruiter.updateGroup(groupId, { filtration_flow: flowConfig });
+      await api.recruiter.updateGroup(groupId, {
+        filtration_flow: flowConfig,
+        github_questions_count: configuredGithubQuestionsCount,
+      });
+      setGithubQuestionsCount(configuredGithubQuestionsCount);
       setShowFlowConfigModal(false);
       setRefreshKey(prev => prev + 1); // Trigger refresh
       showToast('Filtration flow updated successfully');
@@ -546,7 +556,7 @@ export function EnhancedGroupOverviewV2({
           application_ids: appIds,
           action,
           current_stage_type: currentStage
-        });
+        } as any);
       }
     } catch (error) {
       console.error('Failed to bulk progress candidates on backend:', error);
@@ -1087,10 +1097,7 @@ export function EnhancedGroupOverviewV2({
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-[#f8fafc]">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-12 h-12 text-[#6366f1] animate-spin" />
-          <p className="text-[#64748b] font-medium">Loading group details...</p>
-        </div>
+        <LoadingSpinner message="Loading group details..." fullScreen={false} />
       </div>
     );
   }
@@ -2410,7 +2417,8 @@ export function EnhancedGroupOverviewV2({
               id: groupId,
               name: groupName,
               candidateCount: candidateStatuses.length,
-              filtration_flow: pipelineSteps.map(s => s.id)
+              filtration_flow: pipelineSteps.map(s => s.id),
+              github_questions_count: githubQuestionsCount,
             }}
             onClose={() => setShowFlowConfigModal(false)}
             onSave={handleSaveFlow}

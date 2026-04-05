@@ -1,9 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
-import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle, Sparkles, Inbox } from 'lucide-react';
 import { api } from '../../../services/api';
 import { MCQEditor } from '../../common/MCQEditor';
 import { EssayEditor } from '../../common/EssayEditor';
 import { CodeEditor } from '../../common/CodeEditor';
+import { QuestionImportModal } from './QuestionImportModal';
+import { QuestionImportReview } from './QuestionImportReview';
 
 // --- Interfaces ---
 
@@ -30,6 +33,18 @@ interface Question {
   explanation?: string;
   expectedKeywords?: string[];
   rubric?: string;
+  evidence?: string;
+  referenceAnswer?: string;
+  rubricYesNoChecks?: { id?: number; check?: string; weight?: number }[];
+  needsReview?: boolean;
+  criticScore?: number;
+  criticWeightedScore?: number;
+  criticFeedback?: string;
+  criticChecks?: { criterion?: string; verdict?: string; reason?: string; weight?: number }[];
+  retryCount?: number;
+  importType?: string;
+  importJobId?: string;
+  sourceFilename?: string;
 }
 
 // Interface used by the shared editors
@@ -48,6 +63,19 @@ interface QuestionVariant {
   expectedKeywords?: string[];
   maxWords?: number;
   rubric?: string;
+  // Imported metadata
+  evidence?: string;
+  referenceAnswer?: string;
+  rubricYesNoChecks?: { id?: number; check?: string; weight?: number }[];
+  needsReview?: boolean;
+  criticScore?: number;
+  criticWeightedScore?: number;
+  criticFeedback?: string;
+  criticChecks?: { criterion?: string; verdict?: string; reason?: string; weight?: number }[];
+  retryCount?: number;
+  importType?: string;
+  importJobId?: string;
+  sourceFilename?: string;
   // Code
   codeTemplate?: string;
   testCases?: any[];
@@ -61,15 +89,17 @@ interface QuestionBankPageProps {
 }
 
 export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
   // --- State ---
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [viewMode, setViewMode] = useState<'list' | 'editor'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'editor' | 'import-review' | 'import-review-list'>('list');
   const [editorType, setEditorType] = useState<'mcq' | 'essay' | 'code' | null>(null);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [currentVariant, setCurrentVariant] = useState<QuestionVariant | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [showAllCategories, setShowAllCategories] = useState(false);
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
@@ -78,7 +108,24 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const [loading, setLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [togglingFavorites, setTogglingFavorites] = useState<Record<string, boolean>>({});
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Import state ────────────────────────────────────────────────────────
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [pendingReviewJobId, setPendingReviewJobId] = useState<string | null>(null);
+  const [importJobs, setImportJobs] = useState<any[]>([]);
+  const [selectedImportJobIds, setSelectedImportJobIds] = useState<string[]>([]);
+  const [deletingImportJobIds, setDeletingImportJobIds] = useState<string[]>([]);
+  const [isDeletingImportJobs, setIsDeletingImportJobs] = useState(false);
+
+  const filterPendingReviewJobs = (jobs: any[]) => {
+    return (jobs || []).filter((j: any) => {
+      const generated = Number(j?.total_generated || 0);
+      const approved = Number(j?.total_approved || 0);
+      return j?.status === 'completed' && generated > 0 && approved < generated;
+    });
+  };
 
   // --- Effects ---
 
@@ -109,6 +156,35 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     fetchQuestions();
   }, []);
 
+  // Load completed import jobs for the badge
+  useEffect(() => {
+    api.recruiter.listImportJobs()
+      .then((jobs: any[]) => setImportJobs(filterPendingReviewJobs(jobs)))
+      .catch(() => {});
+  }, []);
+
+  // Auto-open review when arriving from Background Tasks link.
+  useEffect(() => {
+    const reviewJobId = searchParams.get('reviewJobId');
+    const reviewImports = searchParams.get('reviewImports');
+
+    if (reviewJobId) {
+      setPendingReviewJobId(reviewJobId);
+      setViewMode('import-review');
+      return;
+    }
+
+    if (reviewImports === '1') {
+      setPendingReviewJobId(null);
+      setViewMode('import-review-list');
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    const validIds = new Set(questions.map(q => q.id));
+    setSelectedQuestionIds(prev => prev.filter(id => validIds.has(id)));
+  }, [questions]);
+
   // --- Data Conversion Helpers ---
 
   const toVariant = (q: Question): QuestionVariant => {
@@ -137,7 +213,20 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       // Essay
       maxWords: q.maxWords,
       expectedKeywords: q.expectedKeywords,
-      rubric: q.rubric
+      rubric: q.rubric,
+      // Imported metadata
+      evidence: q.evidence,
+      referenceAnswer: q.referenceAnswer,
+      rubricYesNoChecks: q.rubricYesNoChecks,
+      needsReview: q.needsReview,
+      criticScore: q.criticScore,
+      criticWeightedScore: q.criticWeightedScore,
+      criticFeedback: q.criticFeedback,
+      criticChecks: q.criticChecks,
+      retryCount: q.retryCount,
+      importType: q.importType,
+      importJobId: q.importJobId,
+      sourceFilename: q.sourceFilename
     };
   };
 
@@ -170,7 +259,19 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       testCases: v.testCases,
       maxWords: v.maxWords,
       expectedKeywords: v.expectedKeywords,
-      rubric: v.rubric
+      rubric: v.rubric,
+      evidence: v.evidence,
+      referenceAnswer: v.referenceAnswer,
+      rubricYesNoChecks: v.rubricYesNoChecks,
+      needsReview: v.needsReview,
+      criticScore: v.criticScore,
+      criticWeightedScore: v.criticWeightedScore,
+      criticFeedback: v.criticFeedback,
+      criticChecks: v.criticChecks,
+      retryCount: v.retryCount,
+      importType: v.importType,
+      importJobId: v.importJobId,
+      sourceFilename: v.sourceFilename
     };
   };
 
@@ -232,6 +333,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
         setIsActionLoading(true);
         await api.recruiter.deleteQuestionBank(id);
         setQuestions(questions.filter(q => q.id !== id));
+        setSelectedQuestionIds(prev => prev.filter(qId => qId !== id));
       } catch (err) {
         console.error("Failed to delete question:", err);
         alert("Failed to delete question.");
@@ -313,30 +415,115 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
 
   // --- Render Helpers ---
 
-  // Dynamically extract unique categories from questions
-  const uniqueCategories = Array.from(new Set(questions.map(q => q.category).filter(Boolean)));
-
   const categoryIcons = [BookOpen, Code, Globe, Cpu, Database];
 
-  const categories = [
-    { id: 'all', label: 'All Categories', icon: BookOpen, count: questions.length },
-    ...uniqueCategories.map((cat, index) => ({
-      id: cat,
-      label: cat,
-      icon: categoryIcons[index % categoryIcons.length],
-      count: questions.filter(q => q.category === cat).length
-    }))
-  ];
+  const normalizeCategoryLabel = (value?: string) => {
+    const cleaned = (value || '').trim();
+    if (!cleaned) return 'Uncategorized';
+    return cleaned
+      .split(/\s+/)
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  };
+
+  const getCategoryIcon = (category: string, index: number) => {
+    const normalized = category.toLowerCase();
+    if (/python|javascript|typescript|java|golang|c\+\+|c#|ruby|rust/.test(normalized)) return Code;
+    if (/database|sql|postgres|mysql|mongodb/.test(normalized)) return Database;
+    if (/system|architecture|design|devops|cloud/.test(normalized)) return Cpu;
+    if (/frontend|web|react|html|css/.test(normalized)) return Globe;
+    return categoryIcons[index % categoryIcons.length];
+  };
+
+  const categories = useMemo(() => {
+    const categoryMap = questions.reduce((acc, q) => {
+      const label = normalizeCategoryLabel(q.category);
+      const key = label.toLowerCase();
+      const existing = acc.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        acc.set(key, { id: key, label, count: 1 });
+      }
+      return acc;
+    }, new Map<string, { id: string; label: string; count: number }>());
+
+    const sortedCategories = Array.from(categoryMap.values())
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+      .map((category, index) => ({
+        ...category,
+        icon: getCategoryIcon(category.label, index)
+      }));
+
+    return [
+      { id: 'all', label: 'All Categories', icon: BookOpen, count: questions.length },
+      ...sortedCategories
+    ];
+  }, [questions]);
+
+  const categoryItems = categories.filter(c => c.id !== 'all');
+  const maxCategoryCount = categoryItems[0]?.count || 1;
+  const visibleCategories = showAllCategories ? categoryItems : categoryItems.slice(0, 10);
 
   const filteredQuestions = questions.filter(q => {
     const matchesSearch = q.text.toLowerCase().includes(searchQuery.toLowerCase()) ||
       q.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesCategory = selectedCategory === 'all' || q.category === selectedCategory;
+    const matchesCategory = selectedCategory === 'all' || normalizeCategoryLabel(q.category).toLowerCase() === selectedCategory;
     const matchesDifficulty = selectedDifficulty === 'all' || q.difficulty === selectedDifficulty;
     const matchesType = selectedType === 'all' || q.type === selectedType;
 
     return matchesSearch && matchesCategory && matchesDifficulty && matchesType;
   });
+
+  const filteredQuestionIds = filteredQuestions.map(q => q.id);
+  const allFilteredSelected = filteredQuestionIds.length > 0 && filteredQuestionIds.every(id => selectedQuestionIds.includes(id));
+
+  const toggleSelectQuestion = (id: string) => {
+    setSelectedQuestionIds(prev => prev.includes(id) ? prev.filter(qId => qId !== id) : [...prev, id]);
+  };
+
+  const toggleSelectAllFilteredQuestions = () => {
+    if (allFilteredSelected) {
+      setSelectedQuestionIds(prev => prev.filter(id => !filteredQuestionIds.includes(id)));
+      return;
+    }
+
+    setSelectedQuestionIds(prev => {
+      const merged = new Set([...prev, ...filteredQuestionIds]);
+      return Array.from(merged);
+    });
+  };
+
+  const handleDeleteSelectedQuestions = async () => {
+    if (selectedQuestionIds.length === 0) return;
+
+    const confirmed = window.confirm(`Delete ${selectedQuestionIds.length} selected question(s)? This action cannot be undone.`);
+    if (!confirmed) return;
+
+    try {
+      setIsActionLoading(true);
+      const results = await Promise.allSettled(
+        selectedQuestionIds.map((id) => api.recruiter.deleteQuestionBank(id))
+      );
+
+      const successIds = selectedQuestionIds.filter((_, idx) => results[idx].status === 'fulfilled');
+      const failedCount = selectedQuestionIds.length - successIds.length;
+
+      if (successIds.length > 0) {
+        setQuestions(prev => prev.filter(q => !successIds.includes(q.id)));
+        setSelectedQuestionIds(prev => prev.filter(id => !successIds.includes(id)));
+      }
+
+      if (failedCount > 0) {
+        alert(`Deleted ${successIds.length} question(s). ${failedCount} failed to delete.`);
+      }
+    } catch (err) {
+      console.error('Failed to delete selected questions:', err);
+      alert('Failed to delete selected questions.');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
@@ -353,6 +540,219 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-[#f9fafb]">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  if (viewMode === 'import-review' && pendingReviewJobId) {
+    return (
+      <QuestionImportReview
+        jobId={pendingReviewJobId}
+        onBack={() => {
+          setViewMode('import-review-list');
+          setPendingReviewJobId(null);
+          const next = new URLSearchParams(searchParams);
+          next.delete('reviewJobId');
+          next.set('reviewImports', '1');
+          setSearchParams(next);
+        }}
+        onApproved={() => {
+          setViewMode('import-review-list');
+          setPendingReviewJobId(null);
+          const next = new URLSearchParams(searchParams);
+          next.delete('reviewJobId');
+          next.set('reviewImports', '1');
+          setSearchParams(next);
+          // Refresh question list after approval
+          api.recruiter.getQuestionBank().then((rawData: unknown) => {
+            const data = rawData as any[];
+            setQuestions(data.map(q => ({
+              ...q,
+              options: q.options || [],
+              tags: q.tags || [],
+              usageCount: q.usageCount || 0,
+              avgScore: q.avgScore || 0,
+              createdAt: q.createdAt || new Date().toISOString().split('T')[0],
+              createdBy: q.createdBy || 'System',
+              isFavorite: q.isFavorite || false
+            })));
+          }).catch(() => {});
+          // Refresh import jobs badge
+          api.recruiter.listImportJobs()
+            .then(jobs => setImportJobs(filterPendingReviewJobs(jobs)))
+            .catch(() => {});
+        }}
+      />
+    );
+  }
+
+  if (viewMode === 'import-review-list') {
+    const sortedJobs = [...importJobs].sort((a: any, b: any) => {
+      const aTime = new Date(a?.created_at || 0).getTime();
+      const bTime = new Date(b?.created_at || 0).getTime();
+      return bTime - aTime;
+    });
+    const sortedJobIds = sortedJobs.map((j: any) => String(j?.job_id || j?.id || '')).filter(Boolean);
+    const allSelected = sortedJobIds.length > 0 && sortedJobIds.every((id: string) => selectedImportJobIds.includes(id));
+
+    const toggleSelectAllImports = () => {
+      if (allSelected) {
+        setSelectedImportJobIds([]);
+        return;
+      }
+      setSelectedImportJobIds(sortedJobIds);
+    };
+
+    const toggleSelectImport = (jobId: string) => {
+      setSelectedImportJobIds(prev => prev.includes(jobId) ? prev.filter(id => id !== jobId) : [...prev, jobId]);
+    };
+
+    const handleDeleteSelectedImports = async () => {
+      if (selectedImportJobIds.length === 0 || isDeletingImportJobs) return;
+      const confirmed = window.confirm(`Delete ${selectedImportJobIds.length} selected import review job(s)? This action cannot be undone.`);
+      if (!confirmed) return;
+
+      setIsDeletingImportJobs(true);
+      setDeletingImportJobIds(selectedImportJobIds);
+
+      const results = await Promise.allSettled(
+        selectedImportJobIds.map((jobId) => api.recruiter.deleteBackgroundTask(jobId, 'question_import'))
+      );
+
+      const successIds = selectedImportJobIds.filter((_, idx) => results[idx].status === 'fulfilled');
+      const failedCount = selectedImportJobIds.length - successIds.length;
+
+      if (successIds.length > 0) {
+        setImportJobs(prev => prev.filter((job: any) => !successIds.includes(String(job?.job_id || job?.id || ''))));
+        setSelectedImportJobIds(prev => prev.filter(id => !successIds.includes(id)));
+      }
+
+      if (failedCount > 0) {
+        window.alert(`Deleted ${successIds.length} import job(s). ${failedCount} failed to delete.`);
+      }
+
+      setDeletingImportJobIds([]);
+      setIsDeletingImportJobs(false);
+    };
+
+    return (
+      <div className="min-h-screen p-8">
+        <div className="max-w-[1200px] mx-auto">
+          <button
+            onClick={() => {
+              setViewMode('list');
+              const next = new URLSearchParams(searchParams);
+              next.delete('reviewJobId');
+              next.delete('reviewImports');
+              setSearchParams(next);
+            }}
+            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-5 transition-colors"
+          >
+            <ArrowLeft size={18} />
+            <span className="text-sm">Back to Question Bank</span>
+          </button>
+
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h1 className="text-[#111827] mb-2 text-[30px] font-['Arimo',sans-serif]">Review Imports</h1>
+              <p className="text-[14px] text-gray-600">All pending review imports are listed below.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              {selectedImportJobIds.length > 0 && (
+                <button
+                  onClick={handleDeleteSelectedImports}
+                  disabled={isDeletingImportJobs}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-rose-200 bg-rose-50 text-rose-700 text-[13px] font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <Trash2 size={16} />
+                  {isDeletingImportJobs ? 'Deleting...' : `Delete Selected (${selectedImportJobIds.length})`}
+                </button>
+              )}
+              <div className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-amber-200 bg-amber-50 text-amber-700 text-[13px] font-medium">
+                <Inbox size={16} />
+                {sortedJobs.length} Pending
+              </div>
+            </div>
+          </div>
+
+          {sortedJobs.length === 0 ? (
+            <div className="bg-white border border-[#e5e7eb] rounded-[16px] p-10 text-center shadow-sm">
+              <CheckCircle size={32} className="mx-auto text-emerald-600 mb-3" />
+              <h3 className="text-[18px] text-[#111827] font-medium mb-2">No Pending Imports</h3>
+              <p className="text-[14px] text-gray-600">All imported questions are already reviewed.</p>
+            </div>
+          ) : (
+            <div className="bg-white border border-[#e5e7eb] rounded-[16px] shadow-sm overflow-hidden">
+              <table className="w-full text-left">
+                <thead className="bg-[#f9fafb] border-b border-[#e5e7eb]">
+                  <tr>
+                    <th className="px-5 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleSelectAllImports}
+                        disabled={isDeletingImportJobs}
+                        aria-label="Select all import jobs"
+                        className="w-4 h-4 rounded border-gray-300"
+                      />
+                    </th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Source</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Import Type</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Created</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Generated</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Approved</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase">Pending</th>
+                    <th className="px-5 py-3 text-[12px] font-medium text-[#6b7280] uppercase text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#f3f4f6]">
+                  {sortedJobs.map((job: any) => {
+                    const jobId = String(job?.job_id || job?.id || '');
+                    const generated = Number(job?.total_generated || 0);
+                    const approved = Number(job?.total_approved || 0);
+                    const pending = Math.max(0, generated - approved);
+                    return (
+                      <tr key={jobId} className="hover:bg-[#fafafa] transition-colors">
+                        <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedImportJobIds.includes(jobId)}
+                            onChange={() => toggleSelectImport(jobId)}
+                            disabled={isDeletingImportJobs || deletingImportJobIds.includes(jobId)}
+                            aria-label="Select import job"
+                            className="w-4 h-4 rounded border-gray-300"
+                          />
+                        </td>
+                        <td className="px-5 py-4 text-[14px] text-[#111827]">{job?.source_filename || 'Uploaded file'}</td>
+                        <td className="px-5 py-4 text-[13px] text-[#374151] capitalize">{String(job?.import_type || 'unknown')}</td>
+                        <td className="px-5 py-4 text-[13px] text-[#6b7280]">{job?.created_at ? new Date(job.created_at).toLocaleString() : 'N/A'}</td>
+                        <td className="px-5 py-4 text-[13px] text-[#374151]">{generated}</td>
+                        <td className="px-5 py-4 text-[13px] text-emerald-700">{approved}</td>
+                        <td className="px-5 py-4 text-[13px] text-amber-700 font-medium">{pending}</td>
+                        <td className="px-5 py-4 text-right">
+                          <button
+                            onClick={() => {
+                              if (!jobId) return;
+                              setPendingReviewJobId(jobId);
+                              setViewMode('import-review');
+                              const next = new URLSearchParams(searchParams);
+                              next.set('reviewJobId', jobId);
+                              next.set('reviewImports', '1');
+                              setSearchParams(next);
+                            }}
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] bg-indigo-600 text-white text-[13px] hover:bg-indigo-700"
+                          >
+                            <Sparkles size={14} /> Review
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -397,6 +797,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               <p className="font-['Arimo',sans-serif] text-[14px] text-gray-600">Manage and organize your assessment questions</p>
             </div>
             <div className="flex items-center gap-3 relative">
+              {/* Legacy JSON import still wired if needed */}
               <input
                 type="file"
                 ref={fileInputRef}
@@ -404,12 +805,36 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                 className="hidden"
                 accept=".json"
               />
+
+              {/* Pending Review badge — shown when completed import jobs exist */}
+              {importJobs.length > 0 && (
+                <button
+                  onClick={() => {
+                    setPendingReviewJobId(null);
+                    setViewMode('import-review-list');
+                    const next = new URLSearchParams(searchParams);
+                    next.delete('reviewJobId');
+                    next.set('reviewImports', '1');
+                    setSearchParams(next);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-[10px] transition-colors font-['Arimo',sans-serif] text-[14px]"
+                  style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: '#f59e0b' }}
+                  title="You have completed import jobs awaiting review"
+                >
+                  <Inbox size={16} />
+                  <span>Review Imports</span>
+                  <span style={{ background: '#f59e0b', color: '#fff', borderRadius: '9999px', padding: '0 6px', fontSize: '0.7rem', fontWeight: 700 }}>{importJobs.length}</span>
+                </button>
+              )}
+
+              {/* AI Import button */}
               <button
-                onClick={handleImportClick}
-                className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#e5e7eb] rounded-[10px] hover:bg-[#f9fafb] transition-colors font-['Arimo',sans-serif] text-[14px] text-[#374151]"
+                onClick={() => setShowImportModal(true)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-[10px] transition-colors font-['Arimo',sans-serif] text-[14px]"
+                style={{ background: 'linear-gradient(135deg,#8b5cf6,#6366f1)', color: '#fff', border: 'none' }}
               >
-                <Upload size={18} className="text-[#6b7280]" />
-                <span>Import</span>
+                <Sparkles size={16} />
+                <span>AI Import</span>
               </button>
               <button
                 onClick={handleExport}
@@ -459,6 +884,22 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                 )}
               </div>
             </div>
+
+            {/* AI Import Modal */}
+            {showImportModal && (
+              <QuestionImportModal
+                onClose={() => setShowImportModal(false)}
+                onJobQueued={(jobId) => {
+                  // Keep modal open so user sees the Step 3 success confirmation,
+                  // but refresh jobs list shortly after queueing.
+                  setTimeout(() => {
+                    api.recruiter.listImportJobs()
+                      .then(jobs => setImportJobs(filterPendingReviewJobs(jobs)))
+                      .catch(() => {});
+                  }, 3000);
+                }}
+              />
+            )}
           </div>
         </div>
 
@@ -506,7 +947,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               <div className="font-['Arimo',sans-serif] text-[14px] text-gray-600">Categories</div>
             </div>
             <div className="text-[32px] font-['Arimo',sans-serif] text-[#111827]">
-              {categories.filter(c => c.id !== 'all').length}
+              {categoryItems.length}
             </div>
           </div>
         </div>
@@ -515,10 +956,33 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
           {/* Categories Sidebar */}
           <div className="w-64 flex-shrink-0">
             <div className="bg-white border border-[#e5e7eb] rounded-[16px] p-4 shadow-sm">
-              <h3 className="font-['Arimo',sans-serif] text-[14px] font-medium text-[#111827] mb-4">Categories</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-['Arimo',sans-serif] text-[14px] font-medium text-[#111827]">Categories</h3>
+                <span className="text-[12px] text-[#6b7280] font-['Arimo',sans-serif]">{categoryItems.length}</span>
+              </div>
               <div className="space-y-1">
-                {categories.map(category => {
+                <button
+                  onClick={() => setSelectedCategory('all')}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-[8px] transition-colors font-['Arimo',sans-serif] ${selectedCategory === 'all'
+                    ? 'bg-[#f5f3ff] text-[#6366f1]'
+                    : 'text-[#374151] hover:bg-[#f9fafb]'
+                    }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <BookOpen size={18} />
+                    <span className="text-[14px]">All Categories</span>
+                  </div>
+                  <span className={`text-[12px] px-2 py-0.5 rounded-full ${selectedCategory === 'all'
+                    ? 'bg-[#ede9fe] text-[#6366f1]'
+                    : 'bg-[#f3f4f6] text-[#6b7280]'
+                    }`}>
+                    {questions.length}
+                  </span>
+                </button>
+
+                {visibleCategories.map(category => {
                   const Icon = category.icon;
+                  const percentage = Math.round((category.count / (questions.length || 1)) * 100);
                   return (
                     <button
                       key={category.id}
@@ -528,19 +992,39 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                         : 'text-[#374151] hover:bg-[#f9fafb]'
                         }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <Icon size={18} />
-                        <span className="text-[14px]">{category.label}</span>
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <Icon size={18} className="shrink-0" />
+                        <div className="min-w-0 flex-1 text-left">
+                          <div className="text-[14px] truncate">{category.label}</div>
+                          <div className="h-1.5 bg-[#f3f4f6] rounded-full mt-1.5 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${selectedCategory === category.id ? 'bg-[#6366f1]' : 'bg-[#d1d5db]'}`}
+                              style={{ width: `${Math.max(8, (category.count / maxCategoryCount) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <span className={`text-[12px] px-2 py-0.5 rounded-full ${selectedCategory === category.id
-                        ? 'bg-[#ede9fe] text-[#6366f1]'
-                        : 'bg-[#f3f4f6] text-[#6b7280]'
-                        }`}>
-                        {category.count}
-                      </span>
+                      <div className="ml-3 text-right">
+                        <div className={`text-[12px] px-2 py-0.5 rounded-full ${selectedCategory === category.id
+                          ? 'bg-[#ede9fe] text-[#6366f1]'
+                          : 'bg-[#f3f4f6] text-[#6b7280]'
+                          }`}>
+                          {category.count}
+                        </div>
+                        <div className="text-[11px] text-[#9ca3af] mt-1">{percentage}%</div>
+                      </div>
                     </button>
                   );
                 })}
+
+                {categoryItems.length > 10 && (
+                  <button
+                    onClick={() => setShowAllCategories(prev => !prev)}
+                    className="w-full mt-2 px-3 py-2 text-[13px] rounded-[8px] border border-[#e5e7eb] text-[#4f46e5] hover:bg-[#f8faff] transition-colors font-['Arimo',sans-serif]"
+                  >
+                    {showAllCategories ? 'Show Top 10' : `Show All (${categoryItems.length})`}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -616,6 +1100,28 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
               <p className="text-sm text-gray-600">
                 Showing <span className="font-medium text-gray-900">{filteredQuestions.length}</span> questions
               </p>
+              <div className="flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#e5e7eb] bg-white text-[13px] text-[#374151]">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleSelectAllFilteredQuestions}
+                    disabled={filteredQuestions.length === 0 || isActionLoading}
+                    className="w-4 h-4 rounded border-gray-300"
+                  />
+                  <span>Select all shown</span>
+                </label>
+                {selectedQuestionIds.length > 0 && (
+                  <button
+                    onClick={handleDeleteSelectedQuestions}
+                    disabled={isActionLoading}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-rose-200 bg-rose-50 text-rose-700 text-[13px] font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 size={14} />
+                    {isActionLoading ? 'Deleting...' : `Delete Selected (${selectedQuestionIds.length})`}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Questions List */}
@@ -628,6 +1134,15 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedQuestionIds.includes(question.id)}
+                          onChange={() => toggleSelectQuestion(question.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          disabled={isActionLoading}
+                          aria-label="Select question"
+                          className="w-4 h-4 rounded border-gray-300"
+                        />
                         <h3 className="text-[16px] font-medium font-['Arimo',sans-serif] text-[#111827]">{question.text}</h3>
                         <button
                           onClick={() => handleToggleFavorite(question.id)}
@@ -697,6 +1212,77 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                       <span className="text-[#9ca3af]">{question.createdAt}</span>
                     </div>
                   </div>
+
+                  {(question.importJobId || question.sourceFilename || question.evidence || question.referenceAnswer || question.criticFeedback || (question.criticChecks?.length || 0) > 0) && (
+                    <div className="mt-4 rounded-[12px] border border-[#e5e7eb] bg-[#f8fafc] p-4">
+                      <div className="flex flex-wrap items-center gap-2 mb-3">
+                        <span className="px-2.5 py-1 text-[12px] rounded-full bg-white text-[#334155] border border-[#cbd5e1]">
+                          Imported Metadata
+                        </span>
+                        {question.importType && (
+                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 capitalize">
+                            {question.importType}
+                          </span>
+                        )}
+                        {typeof question.criticWeightedScore === 'number' && (
+                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Critic Score {(question.criticWeightedScore * 100).toFixed(1)}%
+                          </span>
+                        )}
+                        {question.needsReview && (
+                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                            Needs Review
+                          </span>
+                        )}
+                        {typeof question.retryCount === 'number' && question.retryCount > 0 && (
+                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-white text-[#475569] border border-[#cbd5e1]">
+                            Retry {question.retryCount}
+                          </span>
+                        )}
+                      </div>
+
+                      {question.sourceFilename && (
+                        <div className="mb-3">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Source Filename</div>
+                          <p className="text-[13px] text-[#1f2937] break-all">{question.sourceFilename}</p>
+                        </div>
+                      )}
+
+                      {question.importJobId && (
+                        <div className="mb-3">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Import Job ID</div>
+                          <p className="text-[13px] text-[#1f2937] break-all">{question.importJobId}</p>
+                        </div>
+                      )}
+
+                      {question.referenceAnswer && (
+                        <div className="mb-3">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Reference Answer</div>
+                          <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap line-clamp-3">{question.referenceAnswer}</p>
+                        </div>
+                      )}
+
+                      {question.evidence && (
+                        <div className="mb-3">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Evidence</div>
+                          <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap line-clamp-3">{question.evidence}</p>
+                        </div>
+                      )}
+
+                      {question.criticFeedback && (
+                        <div className="mb-3">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Critic Feedback</div>
+                          <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap line-clamp-3">{question.criticFeedback}</p>
+                        </div>
+                      )}
+
+                      {(question.criticChecks?.length || 0) > 0 && (
+                        <div className="text-[13px] text-[#334155]">
+                          {question.criticChecks!.filter(c => String(c.verdict || '').toUpperCase() === 'NO').length} failed checklist item(s) out of {question.criticChecks!.length}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

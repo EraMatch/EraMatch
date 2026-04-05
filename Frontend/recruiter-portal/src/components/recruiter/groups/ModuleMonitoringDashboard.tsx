@@ -94,8 +94,13 @@ export function ModuleMonitoringDashboard({
   const scoreKey = currentSubpage?.scoreKey ?? (moduleType === 'assessment' ? 'assessmentScore' : 'aiInterviewScore');
   const statusKey = currentSubpage?.statusKey ?? (moduleType === 'assessment' ? 'assessment' : 'aiInterview');
 
+  // For interview monitoring tabs, only show candidates that actually reached the selected stage.
+  const stageScopedCandidates = showInterviewSubpages
+    ? candidates.filter(c => c[statusKey] !== 'locked')
+    : candidates;
+
   // Filter and sort candidates
-  const filteredCandidates = candidates
+  const filteredCandidates = stageScopedCandidates
     .filter(c => {
       if (filterStatus === 'all') return true;
       if (filterStatus === 'completed') return c[statusKey] === 'completed';
@@ -111,9 +116,9 @@ export function ModuleMonitoringDashboard({
     });
 
   // Calculate statistics
-  const completed = candidates.filter(c => c[statusKey] === 'completed');
-  const pending = candidates.filter(c => c[statusKey] === 'pending' || c[statusKey] === 'not-started');
-  const flagged = candidates.filter(c => c.flags.length > 0);
+  const completed = stageScopedCandidates.filter(c => c[statusKey] === 'completed');
+  const pending = stageScopedCandidates.filter(c => c[statusKey] === 'pending' || c[statusKey] === 'not-started');
+  const flagged = stageScopedCandidates.filter(c => c.flags.length > 0);
   const averageScore = completed.length > 0
     ? completed.reduce((sum, c) => sum + c[scoreKey], 0) / completed.length
     : 0;
@@ -212,7 +217,7 @@ export function ModuleMonitoringDashboard({
               <Users size={20} className="text-blue-600" />
               <TrendingUp size={16} className="text-blue-500" />
             </div>
-            <div className="text-[28px] font-bold text-blue-900">{candidates.length}</div>
+            <div className="text-[28px] font-bold text-blue-900">{stageScopedCandidates.length}</div>
             <div className="text-[12px] text-[#6b7280]">Total Candidates</div>
           </div>
 
@@ -220,7 +225,7 @@ export function ModuleMonitoringDashboard({
             <div className="flex items-center justify-between mb-2">
               <CheckCircle size={20} className="text-emerald-600" />
               <span className="text-[11px] text-emerald-700 font-medium">
-                {completed.length > 0 ? ((completed.length / candidates.length) * 100).toFixed(0) : 0}%
+                {completed.length > 0 && stageScopedCandidates.length > 0 ? ((completed.length / stageScopedCandidates.length) * 100).toFixed(0) : 0}%
               </span>
             </div>
             <div className="text-[28px] font-bold text-emerald-900">{completed.length}</div>
@@ -231,7 +236,7 @@ export function ModuleMonitoringDashboard({
             <div className="flex items-center justify-between mb-2">
               <AlertCircle size={20} className="text-amber-600" />
               <span className="text-[11px] text-amber-700 font-medium">
-                {pending.length > 0 ? ((pending.length / candidates.length) * 100).toFixed(0) : 0}%
+                {pending.length > 0 && stageScopedCandidates.length > 0 ? ((pending.length / stageScopedCandidates.length) * 100).toFixed(0) : 0}%
               </span>
             </div>
             <div className="text-[28px] font-bold text-amber-900">{pending.length}</div>
@@ -251,7 +256,7 @@ export function ModuleMonitoringDashboard({
             <div className="flex items-center justify-between mb-2">
               <Flag size={20} className="text-red-600" />
               <span className="text-[11px] text-red-700 font-medium">
-                {flagged.length > 0 ? ((flagged.length / candidates.length) * 100).toFixed(0) : 0}%
+                {flagged.length > 0 && stageScopedCandidates.length > 0 ? ((flagged.length / stageScopedCandidates.length) * 100).toFixed(0) : 0}%
               </span>
             </div>
             <div className="text-[28px] font-bold text-red-900">{flagged.length}</div>

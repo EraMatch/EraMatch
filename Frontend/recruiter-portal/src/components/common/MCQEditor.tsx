@@ -11,6 +11,14 @@ interface QuestionVariant {
   correctAnswer?: number | number[];
   multipleCorrect?: boolean;
   explanation?: string;
+  evidence?: string;
+  referenceAnswer?: string;
+  needsReview?: boolean;
+  criticScore?: number;
+  criticWeightedScore?: number;
+  criticFeedback?: string;
+  criticChecks?: Array<{ id?: number; criterion: string; verdict: 'YES' | 'NO'; weight?: number; weighted_value?: number }>;
+  retryCount?: number;
   category?: string;
   difficulty?: 'Easy' | 'Medium' | 'Hard';
   tags?: string[];
@@ -326,6 +334,73 @@ export function MCQEditor({ variant, onSave, onCancel }: MCQEditorProps) {
                   context="explanation"
                 />
               )}
+            </div>
+
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Evidence (Optional)
+              </label>
+              <textarea
+                value={questionData.evidence || ''}
+                onChange={(e) => setQuestionData({ ...questionData, evidence: e.target.value })}
+                placeholder="Source evidence that supports this MCQ and answer"
+                rows={3}
+                className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
+              />
+            </div>
+
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Reference Answer (Optional)
+              </label>
+              <textarea
+                value={questionData.referenceAnswer || ''}
+                onChange={(e) => setQuestionData({ ...questionData, referenceAnswer: e.target.value })}
+                placeholder="Ground-truth answer notes for reviewers"
+                rows={3}
+                className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
+              />
+            </div>
+
+            <div className="rounded-[8px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
+              <div className="font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-3">Critic Signals (Optional)</div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  value={questionData.criticScore ?? ''}
+                  onChange={(e) => setQuestionData({ ...questionData, criticScore: e.target.value === '' ? undefined : Number(e.target.value) })}
+                  placeholder="Critic Score (0-1)"
+                  className="h-[40px] px-3 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px]"
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  value={questionData.criticWeightedScore ?? ''}
+                  onChange={(e) => setQuestionData({ ...questionData, criticWeightedScore: e.target.value === '' ? undefined : Number(e.target.value) })}
+                  placeholder="Weighted Score (0-1)"
+                  className="h-[40px] px-3 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px]"
+                />
+                <label className="flex items-center gap-2 h-[40px] px-3 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px] text-[#374151]">
+                  <input
+                    type="checkbox"
+                    checked={!!questionData.needsReview}
+                    onChange={(e) => setQuestionData({ ...questionData, needsReview: e.target.checked })}
+                  />
+                  Needs Review
+                </label>
+              </div>
+              <textarea
+                value={questionData.criticFeedback || ''}
+                onChange={(e) => setQuestionData({ ...questionData, criticFeedback: e.target.value })}
+                placeholder="Critic feedback"
+                rows={2}
+                className="w-full px-3 py-2 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px] resize-none"
+              />
             </div>
 
             {/* Category */}

@@ -155,6 +155,14 @@ class PositionCandidateResponse(BaseModel):
     universities: list[str] = []
     degrees: list[str] = []
 
+    # GitHub analytics for cross-module filtering and segmentation
+    github_overall_score: float | None = None
+    github_repo_confidence_score: float | None = None
+    github_contribution_source: str | None = None
+    github_freshness_hours: float | None = None
+    github_has_fallback: bool = False
+    github_fallback_reason: str | None = None
+
 class PositionGroupResponse(BaseModel):
     id: UUID = Field(alias="id")
     name: str = Field(alias="name")

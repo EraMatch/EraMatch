@@ -11,6 +11,8 @@ import { FiltrationFlowConfigModal } from '../groups/FiltrationFlowConfigModal';
 import { CandidateProfile } from '../candidates/CandidateProfile';
 import { SimpleGroupCreationModal } from '../groups/SimpleGroupCreationModal';
 import { CandidateFilterSidebar, CandidateFilters } from '../candidates/CandidateFilterSidebar';
+import LoadingSpinner from '../../common/LoadingSpinner';
+import { GroupDeleteModal } from '../groups/GroupDeleteModal';
 
 interface Candidate {
   id: string;
@@ -29,6 +31,11 @@ interface Candidate {
   job_titles: string[];
   degrees: string[];
   universities: string[];
+  github_overall_score?: number | null;
+  github_repo_confidence_score?: number | null;
+  github_contribution_source?: string | null;
+  github_freshness_hours?: number | null;
+  github_has_fallback?: boolean;
 }
 
 interface Assessment {
@@ -109,7 +116,12 @@ export function PositionDetailView({
     experienceRange: [0, 20],
     skills: [],
     jobTitles: [],
-    degrees: []
+    degrees: [],
+    githubMinScore: 0,
+    githubMinRepoConfidence: 0,
+    githubMaxFreshnessHours: 720,
+    githubContributionSources: [],
+    githubFallbackOnly: false,
   });
 
   // Rename Group State
@@ -124,6 +136,7 @@ export function PositionDetailView({
     skills: Array.from(new Set(candidates.flatMap(c => c.skills || []))).filter(Boolean).sort(),
     jobTitles: Array.from(new Set(candidates.flatMap(c => c.job_titles || []))).filter(Boolean).sort(),
     degrees: Array.from(new Set(candidates.flatMap(c => c.degrees || []))).filter(Boolean).sort(),
+    githubContributionSources: Array.from(new Set(candidates.map(c => c.github_contribution_source || '').filter(Boolean))).sort(),
   };
 
   // Filter Logic
@@ -169,11 +182,41 @@ export function PositionDetailView({
       if (!hasSchool) return false;
     }
 
+    // GitHub score threshold
+    if (filters.githubMinScore > 0) {
+      const score = c.github_overall_score ?? 0;
+      if (score < filters.githubMinScore) return false;
+    }
+
+    // Repo confidence threshold (0..1)
+    if (filters.githubMinRepoConfidence > 0) {
+      const confidence = c.github_repo_confidence_score ?? 0;
+      if (confidence < filters.githubMinRepoConfidence) return false;
+    }
+
+    // Freshness threshold (hours)
+    if (filters.githubMaxFreshnessHours < 720) {
+      const freshness = c.github_freshness_hours;
+      if (freshness == null || freshness > filters.githubMaxFreshnessHours) return false;
+    }
+
+    // Contribution sources
+    if (filters.githubContributionSources.length > 0) {
+      const source = c.github_contribution_source || '';
+      if (!filters.githubContributionSources.includes(source)) return false;
+    }
+
+    // Fallback-only
+    if (filters.githubFallbackOnly && !c.github_has_fallback) return false;
+
     return true;
   });
 
   // Assessment management - use savedAssessments from props
   const assessments = savedAssessments;
+
+  const [isGroupDeleteModalOpen, setIsGroupDeleteModalOpen] = useState(false);
+  const [groupToDelete, setGroupToDelete] = useState<any>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -314,11 +357,8 @@ export function PositionDetailView({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[#edf0f8]">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-12 h-12 text-[#6366f1] animate-spin" />
-          <p className="text-[#64748b] font-medium font-['Arimo',sans-serif]">Loading position details...</p>
-        </div>
+      <div className="flex items-center justify-center h-full min-h-screen bg-[#edf0f8]">
+        <LoadingSpinner message="Loading position details..." fullScreen={false} />
       </div>
     );
   }
@@ -814,23 +854,9 @@ export function PositionDetailView({
                             Rename
                           </button>
                           <button
-                            onClick={async () => {
-                              if (window.confirm('Are you sure you want to delete this group? Candidates will be unassigned.')) {
-                                try {
-                                  await api.recruiter.deleteGroup(group.id);
-                                  // Refresh groups
-                                  const updatedGroups = await api.recruiter.getPositionGroups(positionId) as any[];
-                                  setGroups(updatedGroups);
-                                  // Refresh candidates to show them as unassigned
-                                  const details = await api.recruiter.getPositionDetails(positionId) as any;
-                                  if (details && details.candidates) {
-                                    setCandidates(details.candidates);
-                                  }
-                                } catch (err) {
-                                  console.error("Failed to delete group", err);
-                                  alert("Failed to delete group");
-                                }
-                              }
+                            onClick={() => {
+                              setGroupToDelete(group);
+                              setIsGroupDeleteModalOpen(true);
                             }}
                             className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#ef4444] font-['Arimo',sans-serif] text-[13px] text-[#ef4444] transition-colors"
                           >
@@ -1574,6 +1600,39 @@ export function PositionDetailView({
             setShowFlowConfigModal(false);
             const groups = await api.recruiter.getPositionGroups(positionId) as any[];
             setGroups(groups);
+          }}
+        />
+      )}
+
+      {/* Group Delete Modal */}
+      {isGroupDeleteModalOpen && groupToDelete && (
+        <GroupDeleteModal
+          isOpen={isGroupDeleteModalOpen}
+          onClose={() => {
+            setIsGroupDeleteModalOpen(false);
+            setGroupToDelete(null);
+          }}
+          groupId={groupToDelete.id}
+          groupName={groupToDelete.name}
+          candidateCount={candidates.filter(c => groups.find(g => g.id === groupToDelete.id)?.candidate_ids?.includes(c.id)).length || groupToDelete.candidate_count || 0}
+          availableGroups={groups.filter(g => g.id !== groupToDelete.id)}
+          onConfirm={async () => {
+            setIsGroupDeleteModalOpen(false);
+            setGroupToDelete(null);
+            // Refresh data
+            try {
+              setIsLoading(true);
+              const [detailsRes] = await Promise.all([
+                api.recruiter.getPositionDetails(positionId)
+              ]);
+              const details = detailsRes as any;
+              setCandidates(details.candidates);
+              setGroups(details.groups);
+            } catch (err) {
+              console.error("Failed to refresh data after group deletion", err);
+            } finally {
+              setIsLoading(false);
+            }
           }}
         />
       )}

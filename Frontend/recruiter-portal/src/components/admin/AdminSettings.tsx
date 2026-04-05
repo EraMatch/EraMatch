@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { adminService } from '../../services/admin.service';
 import { authService } from '../../services/auth.service';
 import EraMatchLogo from '../../assets/image-eramatch.png';
+import LoadingSpinner from '../common/LoadingSpinner';
 
 interface AdminSettingsProps {
   onSignOut: () => void;
@@ -260,13 +261,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex h-96 items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[#6366F1]" />
-      </div>
-    );
-  }
+
 
   const TabButton = ({ id, label, icon: Icon }: { id: typeof activeTab, label: string, icon: any }) => (
     <button
@@ -291,6 +286,11 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
         <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
+      {isLoading ? (
+        <div className="flex items-center justify-center min-h-[400px]">
+          <LoadingSpinner message="Loading settings..." fullScreen={false} />
+        </div>
+      ) : (
       <div className="grid grid-cols-[240px,1fr] gap-10">
         {/* Tabs Sidebar */}
         <div className="flex flex-col gap-2">
@@ -585,6 +585,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
           )}
         </div>
       </div>
+      )}
 
       <ChangePasswordModal />
 

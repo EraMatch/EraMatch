@@ -1,0 +1,47 @@
+Collecting fastapi-mail
+  Using cached fastapi_mail-1.6.2-py3-none-any.whl.metadata (5.0 kB)
+Collecting aiosmtplib<6.0.0,>=5.0.0 (from fastapi-mail)
+  Using cached aiosmtplib-5.1.0-py3-none-any.whl.metadata (3.6 kB)
+Collecting blinker<2.0.0,>=1.9.0 (from fastapi-mail)
+  Using cached blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+Requirement already satisfied: cryptography<47.0.0,>=46.0.3 in ./.venv/lib/python3.12/site-packages (from fastapi-mail) (46.0.6)
+Requirement already satisfied: email-validator<3.0.0,>=2.3.0 in ./.venv/lib/python3.12/site-packages (from fastapi-mail) (2.3.0)
+Collecting jinja2<4.0.0,>=3.1.6 (from fastapi-mail)
+  Using cached jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Requirement already satisfied: pydantic<3.0.0,>=2.12.5 in ./.venv/lib/python3.12/site-packages (from fastapi-mail) (2.12.5)
+Requirement already satisfied: pydantic-settings<3.0.0,>=2.6.1 in ./.venv/lib/python3.12/site-packages (from fastapi-mail) (2.13.1)
+Collecting regex<2026.0.0,>=2025.11.3 (from fastapi-mail)
+  Downloading regex-2025.11.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (40 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 40.5/40.5 kB 372.4 kB/s eta 0:00:00
+Collecting starlette<1.0,>=0.24 (from fastapi-mail)
+  Using cached starlette-0.52.1-py3-none-any.whl.metadata (6.3 kB)
+Requirement already satisfied: typing-extensions<5.0.0,>=4.15.0 in ./.venv/lib/python3.12/site-packages (from fastapi-mail) (4.15.0)
+Requirement already satisfied: cffi>=2.0.0 in ./.venv/lib/python3.12/site-packages (from cryptography<47.0.0,>=46.0.3->fastapi-mail) (2.0.0)
+Requirement already satisfied: dnspython>=2.0.0 in ./.venv/lib/python3.12/site-packages (from email-validator<3.0.0,>=2.3.0->fastapi-mail) (2.8.0)
+Requirement already satisfied: idna>=2.0.0 in ./.venv/lib/python3.12/site-packages (from email-validator<3.0.0,>=2.3.0->fastapi-mail) (3.11)
+Collecting MarkupSafe>=2.0 (from jinja2<4.0.0,>=3.1.6->fastapi-mail)
+  Using cached markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+Requirement already satisfied: annotated-types>=0.6.0 in ./.venv/lib/python3.12/site-packages (from pydantic<3.0.0,>=2.12.5->fastapi-mail) (0.7.0)
+Requirement already satisfied: pydantic-core==2.41.5 in ./.venv/lib/python3.12/site-packages (from pydantic<3.0.0,>=2.12.5->fastapi-mail) (2.41.5)
+Requirement already satisfied: typing-inspection>=0.4.2 in ./.venv/lib/python3.12/site-packages (from pydantic<3.0.0,>=2.12.5->fastapi-mail) (0.4.2)
+Requirement already satisfied: python-dotenv>=0.21.0 in ./.venv/lib/python3.12/site-packages (from pydantic-settings<3.0.0,>=2.6.1->fastapi-mail) (1.2.2)
+Requirement already satisfied: anyio<5,>=3.6.2 in ./.venv/lib/python3.12/site-packages (from starlette<1.0,>=0.24->fastapi-mail) (4.13.0)
+Requirement already satisfied: pycparser in ./.venv/lib/python3.12/site-packages (from cffi>=2.0.0->cryptography<47.0.0,>=46.0.3->fastapi-mail) (3.0)
+Using cached fastapi_mail-1.6.2-py3-none-any.whl (16 kB)
+Using cached aiosmtplib-5.1.0-py3-none-any.whl (27 kB)
+Using cached blinker-1.9.0-py3-none-any.whl (8.5 kB)
+Using cached jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading regex-2025.11.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (803 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 803.5/803.5 kB 2.0 MB/s eta 0:00:00
+Using cached starlette-0.52.1-py3-none-any.whl (74 kB)
+Using cached markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+Installing collected packages: regex, MarkupSafe, blinker, aiosmtplib, starlette, jinja2, fastapi-mail
+  Attempting uninstall: regex
+    Found existing installation: regex 2026.4.4
+    Uninstalling regex-2026.4.4:
+      Successfully uninstalled regex-2026.4.4
+  Attempting uninstall: starlette
+    Found existing installation: starlette 1.0.0
+    Uninstalling starlette-1.0.0:
+      Successfully uninstalled starlette-1.0.0
+Successfully installed MarkupSafe-3.0.3 aiosmtplib-5.1.0 blinker-1.9.0 fastapi-mail-1.6.2 jinja2-3.1.6 regex-2025.11.3 starlette-0.52.1

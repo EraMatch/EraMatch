@@ -1,14 +1,41 @@
-import { useState, useEffect } from 'react';
-import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck, AlertTriangle, Activity, Video, User, ShieldAlert, WandSparkles, ChevronRight } from 'lucide-react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../../../services/api';
 import { authService } from '../../../services/auth.service';
+
+type SidebarTask = {
+  id: string;
+  status: string;
+  type?: string;
+  question?: string;
+  source_filename?: string | null;
+  task_category: 'video' | 'question_import' | 'github_analysis' | string;
+};
+
+const includesAny = (value: string, terms: string[]) => terms.some((term) => value.includes(term));
+
+const normalizedTaskText = (task: SidebarTask) =>
+  `${task.type || ''} ${task.question || ''} ${task.source_filename || ''}`.toLowerCase();
+
+const isAntiCheatingTask = (task: SidebarTask) =>
+  includesAny(normalizedTaskText(task), ['anti cheat', 'anti-cheat', 'cheat', 'proctor', 'suspicious', 'anomaly']);
+
+const isGenerationTask = (task: SidebarTask) =>
+  (task.task_category === 'question_import' || task.task_category === 'github_analysis') && normalizedTaskText(task).includes('generative');
+
+const isExtractionTask = (task: SidebarTask) =>
+  (task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
+  (normalizedTaskText(task).includes('extraction') || normalizedTaskText(task).includes('csv'));
 
 export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [unreadCount, setUnreadCount] = useState(0);
   const [userRole, setUserRole] = useState<string | null>(null);
+  const [runningTasks, setRunningTasks] = useState<SidebarTask[]>([]);
+  const [showTaskCategoryPopover, setShowTaskCategoryPopover] = useState(false);
+  const taskPopoverRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const userStr = localStorage.getItem('user');
@@ -38,6 +65,61 @@ export function Sidebar() {
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (userRole !== 'technical') return;
+
+    const fetchRunningTasks = async () => {
+      try {
+        const tasks = await api.recruiter.getBackgroundTasks();
+        const running = (tasks || []).filter((task: SidebarTask) => {
+          const status = String(task.status || '').toLowerCase();
+          return status === 'pending' || status === 'processing';
+        });
+        setRunningTasks(running);
+      } catch (error) {
+        console.error('Failed to fetch running background tasks:', error);
+      }
+    };
+
+    fetchRunningTasks();
+    const interval = setInterval(fetchRunningTasks, 10000);
+    return () => clearInterval(interval);
+  }, [userRole]);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!taskPopoverRef.current) return;
+      if (!taskPopoverRef.current.contains(event.target as Node)) {
+        setShowTaskCategoryPopover(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  useEffect(() => {
+    setShowTaskCategoryPopover(false);
+  }, [location.pathname]);
+
+  const runningTaskCounts = useMemo(() => {
+    const videoTasks = runningTasks.filter((task) => task.task_category === 'video');
+    const questionImportTasks = runningTasks.filter((task) => task.task_category === 'question_import' || task.task_category === 'github_analysis');
+
+    const profileTasks = questionImportTasks.filter((task) => !isGenerationTask(task) && !isExtractionTask(task));
+    const questionGenerationAndExtraction = questionImportTasks.filter((task) => isGenerationTask(task) || isExtractionTask(task));
+
+    return {
+      total: runningTasks.length,
+      videoProcessing: videoTasks.filter((task) => !isAntiCheatingTask(task)).length,
+      profileProcessing: profileTasks.length,
+      videoRecording: videoTasks.filter((task) => isAntiCheatingTask(task)).length,
+      questionGenerationExtraction: questionGenerationAndExtraction.length,
+    };
+  }, [runningTasks]);
+
+  const isBackgroundTasksRoute = location.pathname.startsWith('/recruiter/background-tasks');
 
   const getLinkClass = (isActive: boolean) =>
     `w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${isActive
@@ -90,6 +172,86 @@ export function Sidebar() {
               <ClipboardCheck size={24} />
             </div>
           </NavLink>
+        )}
+
+        {/* Suspicious Assessment - Technical Only */}
+        {userRole === 'technical' && (
+          <NavLink to="/recruiter/suspicious-activity" className={({ isActive }) => getLinkClass(isActive)} title="Suspicious Assessment">
+            <AlertTriangle size={24} />
+          </NavLink>
+        )}
+
+        {/* Background Tasks - Technical Only */}
+        {userRole === 'technical' && (
+          <div className="relative" ref={taskPopoverRef}>
+            <button
+              onClick={() => setShowTaskCategoryPopover((prev) => !prev)}
+              className={getLinkClass(isBackgroundTasksRoute)}
+              title="Background Tasks"
+            >
+              <div className="relative">
+                <Activity size={24} />
+                {runningTaskCounts.total > 0 && (
+                  <div className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#ef4444] flex items-center justify-center">
+                    <span className="font-['Arimo',sans-serif] text-[9px] text-white font-bold leading-none">
+                      {runningTaskCounts.total > 99 ? '99+' : runningTaskCounts.total}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </button>
+
+            {showTaskCategoryPopover && (
+              <div className="absolute left-[64px] top-1/2 -translate-y-1/2 w-[290px] rounded-[14px] border border-[#e5e7eb] bg-white shadow-xl p-3 z-[130]">
+                <div className="px-2 py-1.5 border-b border-[#f1f5f9] mb-2">
+                  <div className="text-[13px] font-semibold text-[#111827] font-['Arimo',sans-serif]">Running Background Tasks</div>
+                  <div className="text-[12px] text-[#6b7280] font-['Arimo',sans-serif]">Total running: {runningTaskCounts.total}</div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
+                    <div className="flex items-center gap-2 text-[13px] text-[#334155]">
+                      <Video size={14} />
+                      <span>Video Processing</span>
+                    </div>
+                    <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.videoProcessing}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
+                    <div className="flex items-center gap-2 text-[13px] text-[#334155]">
+                      <User size={14} />
+                      <span>Profile Processing</span>
+                    </div>
+                    <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.profileProcessing}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
+                    <div className="flex items-center gap-2 text-[13px] text-[#334155]">
+                      <ShieldAlert size={14} />
+                      <span>Processing Video Recording</span>
+                    </div>
+                    <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.videoRecording}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
+                    <div className="flex items-center gap-2 text-[13px] text-[#334155]">
+                      <WandSparkles size={14} />
+                      <span>Question Generation & Extraction</span>
+                    </div>
+                    <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.questionGenerationExtraction}</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setShowTaskCategoryPopover(false);
+                    navigate('/recruiter/background-tasks/categories');
+                  }}
+                  className="mt-3 w-full h-[36px] rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] text-[#1d4ed8] text-[13px] font-medium flex items-center justify-center gap-2 hover:bg-[#dbeafe] transition-colors"
+                >
+                  <span>Open Background Tasks</span>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Settings Button */}

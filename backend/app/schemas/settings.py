@@ -62,7 +62,7 @@ class RecruiterPreferencesUpdate(BaseModel):
     weekly_summary: bool | None = None
     two_factor_auth: bool | None = None
     session_timeout: bool | None = None
-    bypass_admin_approval: bool | None = None
+
 
 class RecruiterAIPipelineUpdate(BaseModel):
     ai_pipeline_config: dict
@@ -83,7 +83,7 @@ class RecruiterSettingsResponse(BaseModel):
     # Preferences (Security)
     two_factor_auth: bool
     session_timeout: bool
-    bypass_admin_approval: bool = False
+
 
     # Technical AI Pipeline Config
     ai_pipeline_config: dict | None = None

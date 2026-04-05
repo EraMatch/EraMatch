@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Sparkles, X, Check, RefreshCw } from 'lucide-react';
 import { Button } from '../../ui/button';
+import { recruiterService } from '../../../services/recruiter.service';
 
 interface TextRefinerProps {
   originalText: string;
@@ -13,53 +14,22 @@ export function TextRefiner({ originalText, onApply, onClose, context = "text" }
   const [isRefining, setIsRefining] = useState(false);
   const [refinedText, setRefinedText] = useState('');
   const [showResult, setShowResult] = useState(false);
+  const [refineError, setRefineError] = useState<string | null>(null);
 
   const handleRefine = async () => {
     setIsRefining(true);
-    
-    // Simulate AI refinement
-    setTimeout(() => {
-      // Mock AI refinement - in real implementation, this would call an AI API
-      let refined = originalText;
-      
-      // Simulate improvements
-      if (context === 'question') {
-        refined = originalText
-          .replace(/\?$/, '') // Remove trailing question mark
-          .trim();
-        refined = refined + '?'; // Add clean question mark
-        
-        // Add clarity if the question is too short
-        if (refined.length < 30) {
-          refined = `Which of the following statements about ${refined.toLowerCase().replace('?', '')} is most accurate?`;
-        }
-      } else if (context === 'option') {
-        // Capitalize first letter, remove trailing punctuation for options
-        refined = originalText.trim();
-        refined = refined.charAt(0).toUpperCase() + refined.slice(1);
-        refined = refined.replace(/[.,!?;:]$/, '');
-      } else if (context === 'explanation') {
-        // Improve explanation text
-        refined = originalText.trim();
-        if (!refined.endsWith('.')) {
-          refined += '.';
-        }
-        if (refined.length < 50) {
-          refined = `This is correct because ${refined.toLowerCase()}`;
-        }
-      } else {
-        // General refinement
-        refined = originalText.trim();
-        refined = refined.charAt(0).toUpperCase() + refined.slice(1);
-        if (!refined.match(/[.!?]$/)) {
-          refined += '.';
-        }
-      }
-      
-      setRefinedText(refined);
+    setRefineError(null);
+
+    try {
+      const response = await recruiterService.refineAIQuestion(originalText);
+      setRefinedText((response?.refinedText || originalText).trim() || originalText);
       setShowResult(true);
+    } catch (error) {
+      console.error('Failed to refine text with AI:', error);
+      setRefineError('AI refinement failed. Please try again.');
+    } finally {
       setIsRefining(false);
-    }, 1200);
+    }
   };
 
   const handleRegenerate = () => {
@@ -124,6 +94,12 @@ export function TextRefiner({ originalText, onApply, onClose, context = "text" }
                   </div>
                 </div>
               </div>
+
+              {refineError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-[8px]">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-red-700">{refineError}</p>
+                </div>
+              )}
             </div>
           </div>
 

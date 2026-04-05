@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, Network, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock } from 'lucide-react';
+import LoadingSpinner from '../../common/LoadingSpinner';
 import { KnowledgeGraph } from './KnowledgeGraph';
 import { EnhancedAssessmentReport } from '../assessments/EnhancedAssessmentReport';
 import { EnhancedAIInterviewReport } from '../interviews/EnhancedAIInterviewReport';
@@ -25,6 +26,8 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
   const [showVideoResponse, setShowVideoResponse] = useState<number | null>(null);
   const [showVideoTranscript, setShowVideoTranscript] = useState<number | null>(null);
   const [showLiveInterviewTranscript, setShowLiveInterviewTranscript] = useState(false);
+  const [showGithubAssignedQuestions, setShowGithubAssignedQuestions] = useState(false);
+  const [githubQuestionTypeFilter, setGithubQuestionTypeFilter] = useState<'all' | 'mcq' | 'essay' | 'coding'>('all');
 
   const [candidate, setCandidate] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -48,7 +51,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
   if (isLoading || !candidate) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#f9fafb]">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+        <LoadingSpinner message="Loading candidate profile..." fullScreen={false} />
       </div>
     );
   }
@@ -214,8 +217,70 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     }
   };
 
+  const githubAssessment = candidate.githubAnalysis?.assessment || {};
+  const qualityIndicators = candidate.githubAnalysis?.qualityIndicators || {};
+  const contributionBreakdown = candidate.githubAnalysis?.contributionStats?.breakdown || {};
+  const repoConfidence = candidate.githubAnalysis?.repoConfidence || {};
+  const dataFreshness = candidate.githubAnalysis?.dataFreshness || {};
+  const fallbackRecentActivity = Object.entries(contributionBreakdown)
+    .filter(([, value]) => Number(value) > 0)
+    .slice(0, 4)
+    .map(([key, value]) => ({
+      type: key,
+      title: `${String(value)} ${key.replace('_', ' ')} event${Number(value) === 1 ? '' : 's'}`,
+      description: 'Derived from public GitHub activity events',
+      repo: 'GitHub profile',
+      time_ago: 'Last 12 months'
+    }));
+
+  const recentGithubActivity = Array.isArray(candidate.githubAnalysis?.recentActivity) && candidate.githubAnalysis.recentActivity.length > 0
+    ? candidate.githubAnalysis.recentActivity
+    : fallbackRecentActivity;
+
+  const avgPrReviewTimeHours = qualityIndicators?.avg_pr_review_time_hours;
+  const avgPrReviewTimeText = typeof avgPrReviewTimeHours === 'number' ? `${avgPrReviewTimeHours.toFixed(1)} hrs` : 'N/A';
+  const avgPrReviewTimeNote = qualityIndicators?.avg_pr_review_time_note || 'Insufficient PR review events';
+
+  const codeDocumentationPct = Number.isFinite(Number(qualityIndicators?.code_documentation_pct))
+    ? Number(qualityIndicators.code_documentation_pct)
+    : Number(githubAssessment?.sustainability || 0);
+  const testCoveragePct = Number.isFinite(Number(qualityIndicators?.test_coverage_pct))
+    ? Number(qualityIndicators.test_coverage_pct)
+    : Number(githubAssessment?.correctness || 0);
+  const codeReviewQualityScore = Number.isFinite(Number(qualityIndicators?.code_review_quality_score))
+    ? Number(qualityIndicators.code_review_quality_score)
+    : Math.max(0, Math.min(5, Number(githubAssessment?.knowledge || 0) / 20));
+  const overallGithubScore = Number.isFinite(Number(candidate.githubAnalysis?.overallScore))
+    ? Number(candidate.githubAnalysis.overallScore)
+    : (Number.isFinite(Number(qualityIndicators?.overall_github_score)) ? Number(qualityIndicators.overall_github_score) : Number(candidate.scores.github || 0));
+  const githubQuestionDelivery = candidate.githubAnalysis?.questionDelivery || {};
+  const githubAssignedStats = candidate.githubAnalysis?.assignedQuestionStats || {};
+  const githubAssignedFromSession = Number(githubAssignedStats?.githubAssigned);
+  const githubAssignedFromDelivery = Number(githubQuestionDelivery?.count);
+  const githubAssignedCount = Number.isFinite(githubAssignedFromSession)
+    ? githubAssignedFromSession
+    : (Number.isFinite(githubAssignedFromDelivery) ? githubAssignedFromDelivery : 0);
+  const githubAssignedTotal = Number.isFinite(Number(githubAssignedStats?.totalAssigned))
+    ? Number(githubAssignedStats.totalAssigned)
+    : 0;
+  const githubAssignmentSessionId = typeof githubAssignedStats?.sessionId === 'string' ? githubAssignedStats.sessionId : '';
+  const githubAssignmentSessionShort = githubAssignmentSessionId ? `${githubAssignmentSessionId.slice(0, 8)}...` : 'N/A';
+  const githubAssignedQuestionList = Array.isArray(githubAssignedStats?.githubQuestions) ? githubAssignedStats.githubQuestions : [];
+  const filteredGithubAssignedQuestionList = githubAssignedQuestionList.filter((q: any) => {
+    if (githubQuestionTypeFilter === 'all') return true;
+    const normalizedType = String(q?.questionType || '').trim().toLowerCase();
+    if (githubQuestionTypeFilter === 'coding') return normalizedType === 'coding' || normalizedType === 'code';
+    return normalizedType === githubQuestionTypeFilter;
+  });
+
+  const hasGithubProfile = Boolean(candidate.github_url);
+  const githubAnalysisReady = Boolean(candidate.githubAnalysis?.summary)
+    || Number.isFinite(Number(candidate.githubAnalysis?.overallScore))
+    || Number(candidate.githubStats?.contributionsLastYear || 0) > 0;
+  const showGithubProfileLock = hasGithubProfile && !githubAnalysisReady;
+
   return (
-    <div className="h-full w-full overflow-auto bg-[#f9fafb]">
+    <div className="h-full w-full overflow-auto bg-[#f9fafb] relative">
       <div className="max-w-[1400px] mx-auto px-[48px] py-[24px]">
         {/* Header */}
         <button
@@ -628,7 +693,25 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
 
             {activeTab === 'github' && (
               <div className="space-y-6">
-                <h3 className="text-[#111827] mb-4">GitHub Profile Analysis</h3>
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-[#111827] mb-4">GitHub Profile Analysis</h3>
+                </div>
+
+                {/* Overall GitHub Score */}
+                <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-indigo-900 font-semibold mb-2">Overall GitHub Score</h4>
+                      <p className="text-sm text-indigo-700">
+                        Based on code quality, contribution frequency, community engagement, and project impact
+                      </p>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-5xl font-bold text-indigo-600 mb-1">{Math.round(overallGithubScore)}</div>
+                      <div className="text-sm text-indigo-700">/ 100</div>
+                    </div>
+                  </div>
+                </div>
 
                 {/* GitHub Stats Overview */}
                 <div className="grid grid-cols-4 gap-4">
@@ -660,6 +743,137 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                     </div>
                     <div className="text-2xl font-semibold text-[#111827]">{candidate.githubStats?.contributionsLastYear}</div>
                   </div>
+                </div>
+
+                {/* GitHub Question Assignment Indicator */}
+                <div className="bg-white border border-[#e5e7eb] rounded-lg p-5">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <h4 className="text-[#111827] text-sm font-medium">GitHub Questions Routed to Assessment</h4>
+                    <span className="text-[11px] px-2 py-1 rounded-full border border-[#c7d2fe] bg-[#eef2ff] text-[#4338ca]">
+                      Candidate-scoped
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">GitHub Questions Assigned</div>
+                      <div className="text-2xl font-semibold text-[#111827]">{githubAssignedCount}</div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Total Questions in Session</div>
+                      <div className="text-2xl font-semibold text-[#111827]">{githubAssignedTotal}</div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Assessment Session</div>
+                      <div className="text-sm font-semibold text-[#111827]">{githubAssignmentSessionShort}</div>
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-xs text-[#6b7280]">
+                    Delivery mode: {githubQuestionDelivery?.mode || 'assigned_on_assessment_start'}
+                  </p>
+
+                  <div className="mt-3">
+                    <Button
+                      onClick={() => setShowGithubAssignedQuestions(true)}
+                      variant="outline"
+                      className="border-indigo-600 text-indigo-600 hover:bg-indigo-50"
+                    >
+                      View Assigned GitHub Questions
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Contribution Data Quality */}
+                <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-[#111827] text-sm font-medium">Contribution Data Quality</h4>
+                    <span className="text-[11px] px-2 py-1 rounded-full border border-[#e5e7eb] bg-[#f8fafc] text-[#475569]">
+                      Source: {candidate.githubAnalysis?.contributionStats?.source || 'unknown'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Reliability</div>
+                      <div className="text-sm font-semibold text-[#111827]">
+                        {candidate.githubAnalysis?.contributionStats?.estimated ? 'Estimated' : 'Authoritative'}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Window</div>
+                      <div className="text-sm font-semibold text-[#111827]">
+                        {candidate.githubAnalysis?.contributionStats?.window_days || 365} days
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Count Method</div>
+                      <div className="text-sm font-semibold text-[#111827]">
+                        {candidate.githubAnalysis?.contributionStats?.source === 'graphql' ? 'GitHub GraphQL' : 'Public Events'}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Last Year</div>
+                      <div className="text-sm font-semibold text-[#111827]">
+                        {candidate.githubStats?.contributionsLastYear ?? 0}
+                      </div>
+                    </div>
+                  </div>
+
+                  {candidate.githubAnalysis?.contributionStats?.breakdown && (
+                    <div>
+                      <div className="text-[11px] text-[#6b7280] mb-2">Event Breakdown</div>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                        {Object.entries(candidate.githubAnalysis.contributionStats.breakdown).map(([key, value]) => (
+                          <div key={key} className="rounded-md border border-[#e5e7eb] px-2 py-1.5 bg-white">
+                            <div className="text-[10px] uppercase tracking-wide text-[#6b7280]">{key.replace('_', ' ')}</div>
+                            <div className="text-sm font-medium text-[#111827]">{Number(value || 0)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Repository Confidence & Freshness */}
+                <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-[#111827] text-sm font-medium">Repository Confidence & Source Freshness</h4>
+                    <span className="text-[11px] px-2 py-1 rounded-full border border-[#e5e7eb] bg-[#f8fafc] text-[#475569]">
+                      Trust Signals
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Selected Repo</div>
+                      <div className="text-sm font-semibold text-[#111827]">{repoConfidence?.selected_repo || 'N/A'}</div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Selection Confidence</div>
+                      <div className="text-sm font-semibold text-[#111827]">
+                        {Number.isFinite(Number(repoConfidence?.selected_repo_confidence))
+                          ? `${Math.round(Number(repoConfidence.selected_repo_confidence) * 100)}%`
+                          : 'N/A'}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Contribution Source</div>
+                      <div className="text-sm font-semibold text-[#111827]">{dataFreshness?.contribution_source || 'unknown'}</div>
+                    </div>
+                  </div>
+
+                  <div className="text-[12px] text-[#6b7280]">
+                    Last successful fetch: {dataFreshness?.last_successful_fetch_at || 'N/A'}
+                  </div>
+                  <div className="text-[12px] text-[#6b7280]">
+                    Source freshness (hours): {dataFreshness?.source_freshness_hours ?? 'N/A'}
+                  </div>
+                  {dataFreshness?.fallback_reason && (
+                    <div className="mt-2 text-[12px] text-amber-700">
+                      Fallback reason: {dataFreshness.fallback_reason}
+                    </div>
+                  )}
                 </div>
 
                 {/* Contribution Activity Graph */}
@@ -798,51 +1012,65 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                   </div>
                 </div>
 
+                {/* Analysis Summary */}
+                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
+                  <h4 className="text-[#111827] text-sm font-medium mb-3">Analysis Summary</h4>
+                  {candidate.githubAnalysis?.summary ? (
+                    <p className="text-sm text-[#374151] leading-6 whitespace-pre-wrap">{candidate.githubAnalysis.summary}</p>
+                  ) : (
+                    <p className="text-sm text-[#6b7280]">No GitHub analysis summary available.</p>
+                  )}
+
+                  {Array.isArray(candidate.githubAnalysis?.archetypes) && candidate.githubAnalysis.archetypes.length > 0 && (
+                    <div className="mt-4">
+                      <h5 className="text-xs text-[#6b7280] mb-2 uppercase tracking-wide">Candidate Archetypes</h5>
+                      <div className="flex flex-wrap gap-2">
+                        {candidate.githubAnalysis.archetypes.map((item: any, idx: number) => (
+                          <div key={idx} className="px-3 py-2 rounded-[10px] border border-[#e5e7eb] bg-[#f8fafc]">
+                            <div className="text-[13px] text-[#111827] font-medium">{item?.name || 'Archetype'}</div>
+                            <div className="text-[12px] text-[#6b7280]">Score: {item?.score ?? 'N/A'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(Array.isArray(candidate.githubPersonalization?.keywords) && candidate.githubPersonalization.keywords.length > 0) && (
+                    <div className="mt-4">
+                      <h5 className="text-xs text-[#6b7280] mb-2 uppercase tracking-wide">Personalization Signals</h5>
+                      <div className="text-xs text-[#64748b] mb-2">Source: {candidate.githubPersonalization?.source || 'none'}</div>
+                      <div className="flex flex-wrap gap-2">
+                        {candidate.githubPersonalization.keywords.slice(0, 20).map((kw: string, idx: number) => (
+                          <span key={idx} className="px-2 py-1 rounded-full bg-[#eef2ff] border border-[#c7d2fe] text-[#4338ca] text-[11px]">
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Recent Activity */}
                 <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
                   <h4 className="text-[#111827] text-sm font-medium mb-4">Recent Activity</h4>
-                  <div className="space-y-4">
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500 mt-2" />
-                      <div className="flex-1">
-                        <p className="text-sm text-[#111827] mb-1">
-                          Opened pull request <span className="text-[#6366f1] font-medium">#142</span> in <span className="font-medium">react-microservices-boilerplate</span>
-                        </p>
-                        <p className="text-xs text-[#6b7280]">Added health check endpoints for all services</p>
-                        <span className="text-xs text-[#9ca3af]">2 days ago</span>
-                      </div>
+                  {recentGithubActivity.length > 0 ? (
+                    <div className="space-y-4">
+                      {recentGithubActivity.slice(0, 6).map((item: any, idx: number) => (
+                        <div key={idx} className="flex items-start gap-3">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500 mt-2" />
+                          <div className="flex-1">
+                            <p className="text-sm text-[#111827] mb-1">
+                              {item?.title || 'Activity detected'} in <span className="font-medium">{item?.repo || 'GitHub'}</span>
+                            </p>
+                            <p className="text-xs text-[#6b7280]">{item?.description || 'No additional details available'}</p>
+                            <span className="text-xs text-[#9ca3af]">{item?.time_ago || 'Recently'}</span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 rounded-full bg-purple-500 mt-2" />
-                      <div className="flex-1">
-                        <p className="text-sm text-[#111827] mb-1">
-                          Merged pull request <span className="text-[#6366f1] font-medium">#138</span> in <span className="font-medium">next-auth-rbac</span>
-                        </p>
-                        <p className="text-xs text-[#6b7280]">Fix: Permission inheritance for nested roles</p>
-                        <span className="text-xs text-[#9ca3af]">5 days ago</span>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 rounded-full bg-blue-500 mt-2" />
-                      <div className="flex-1">
-                        <p className="text-sm text-[#111827] mb-1">
-                          Created repository <span className="font-medium">k8s-deployment-scripts</span>
-                        </p>
-                        <p className="text-xs text-[#6b7280]">Automated Kubernetes deployment utilities</p>
-                        <span className="text-xs text-[#9ca3af]">1 week ago</span>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 rounded-full bg-amber-500 mt-2" />
-                      <div className="flex-1">
-                        <p className="text-sm text-[#111827] mb-1">
-                          Reviewed and approved PR in <span className="font-medium">graphql-query-optimizer</span>
-                        </p>
-                        <p className="text-xs text-[#6b7280]">Performance improvements for batch queries</p>
-                        <span className="text-xs text-[#9ca3af]">2 weeks ago</span>
-                      </div>
-                    </div>
-                  </div>
+                  ) : (
+                    <p className="text-sm text-[#6b7280]">No recent GitHub activity available yet.</p>
+                  )}
                 </div>
 
                 {/* Code Quality Metrics */}
@@ -854,51 +1082,36 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                         <span className="text-sm text-[#166534]">Avg. PR Review Time</span>
                         <CheckCircle className="w-4 h-4 text-[#16a34a]" />
                       </div>
-                      <div className="text-2xl font-semibold text-[#166534]">4.2 hrs</div>
-                      <p className="text-xs text-[#15803d] mt-1">Faster than 85% of developers</p>
+                      <div className="text-2xl font-semibold text-[#166534]">{avgPrReviewTimeText}</div>
+                      <p className="text-xs text-[#15803d] mt-1">{avgPrReviewTimeNote}</p>
                     </div>
                     <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-[#166534]">Code Documentation</span>
                         <CheckCircle className="w-4 h-4 text-[#16a34a]" />
                       </div>
-                      <div className="text-2xl font-semibold text-[#166534]">92%</div>
-                      <p className="text-xs text-[#15803d] mt-1">Excellent documentation coverage</p>
+                      <div className="text-2xl font-semibold text-[#166534]">{Math.round(codeDocumentationPct)}%</div>
+                      <p className="text-xs text-[#15803d] mt-1">Derived from sustainability and audit evidence</p>
                     </div>
                     <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-[#166534]">Test Coverage</span>
                         <CheckCircle className="w-4 h-4 text-[#16a34a]" />
                       </div>
-                      <div className="text-2xl font-semibold text-[#166534]">88%</div>
-                      <p className="text-xs text-[#15803d] mt-1">Above industry standard (75%)</p>
+                      <div className="text-2xl font-semibold text-[#166534]">{Math.round(testCoveragePct)}%</div>
+                      <p className="text-xs text-[#15803d] mt-1">Estimated from correctness and test-related findings</p>
                     </div>
                     <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-[#166534]">Code Review Quality</span>
                         <CheckCircle className="w-4 h-4 text-[#16a34a]" />
                       </div>
-                      <div className="text-2xl font-semibold text-[#166534]">4.8/5</div>
-                      <p className="text-xs text-[#15803d] mt-1">Highly valuable feedback</p>
+                      <div className="text-2xl font-semibold text-[#166534]">{codeReviewQualityScore.toFixed(1)}/5</div>
+                      <p className="text-xs text-[#15803d] mt-1">Based on review activity and technical depth indicators</p>
                     </div>
                   </div>
                 </div>
 
-                {/* Overall GitHub Score */}
-                <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-indigo-900 font-semibold mb-2">Overall GitHub Score</h4>
-                      <p className="text-sm text-indigo-700">
-                        Based on code quality, contribution frequency, community engagement, and project impact
-                      </p>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-5xl font-bold text-indigo-600 mb-1">88</div>
-                      <div className="text-sm text-indigo-700">/ 100</div>
-                    </div>
-                  </div>
-                </div>
               </div>
             )}
 
@@ -1529,7 +1742,105 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* GitHub Assigned Questions Modal */}
+        <Dialog open={showGithubAssignedQuestions} onOpenChange={setShowGithubAssignedQuestions}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Assigned GitHub Questions</DialogTitle>
+            </DialogHeader>
+            <div className="mt-2 space-y-4">
+              <div className="rounded-lg border border-[#e5e7eb] bg-[#f8fafc] p-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <div className="text-[11px] text-[#6b7280]">Session</div>
+                    <div className="text-sm font-semibold text-[#111827]">{githubAssignmentSessionShort}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-[#6b7280]">GitHub Assigned</div>
+                    <div className="text-sm font-semibold text-[#111827]">{githubAssignedCount}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-[#6b7280]">Assessment Status</div>
+                    <div className="text-sm font-semibold text-[#111827]">{githubAssignedStats?.assessmentStatus || 'N/A'}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => setGithubQuestionTypeFilter('all')}
+                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${githubQuestionTypeFilter === 'all' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'}`}
+                >
+                  All ({githubAssignedQuestionList.length})
+                </button>
+                <button
+                  onClick={() => setGithubQuestionTypeFilter('mcq')}
+                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${githubQuestionTypeFilter === 'mcq' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'}`}
+                >
+                  MCQ
+                </button>
+                <button
+                  onClick={() => setGithubQuestionTypeFilter('essay')}
+                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${githubQuestionTypeFilter === 'essay' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'}`}
+                >
+                  Essay
+                </button>
+                <button
+                  onClick={() => setGithubQuestionTypeFilter('coding')}
+                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${githubQuestionTypeFilter === 'coding' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'}`}
+                >
+                  Coding
+                </button>
+              </div>
+
+              {filteredGithubAssignedQuestionList.length > 0 ? (
+                <div className="space-y-3">
+                  {filteredGithubAssignedQuestionList.map((q: any, idx: number) => (
+                    <div key={q.assignmentId || idx} className="rounded-lg border border-[#e5e7eb] p-4">
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        <div className="text-sm font-medium text-[#111827]">
+                          Q{q.order || idx + 1} • {(q.questionType || 'essay').toUpperCase()}
+                        </div>
+                        <div className="text-xs px-2 py-1 rounded-full border border-[#e5e7eb] bg-[#fafafa] text-[#374151]">
+                          {q.points || 10} pts
+                        </div>
+                      </div>
+                      <p className="text-sm text-[#374151] whitespace-pre-wrap">{q.questionText || 'No question text available.'}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-[#e5e7eb] p-4 text-sm text-[#6b7280]">
+                  No questions found for the selected filter.
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
+
+      {showGithubProfileLock && (
+        <div className="fixed inset-0 z-40 bg-black/35 backdrop-blur-[1px] flex items-center justify-center px-4">
+          <div className="w-full max-w-[620px] rounded-2xl border border-[#e5e7eb] bg-white shadow-2xl p-8 text-center">
+            <div className="mx-auto mb-4 w-14 h-14 rounded-full bg-[#eef2ff] flex items-center justify-center">
+              <Lock size={24} className="text-[#4f46e5]" />
+            </div>
+            <h3 className="text-[#111827] text-[20px] font-['Arimo',sans-serif] mb-2">GitHub Analysis In Progress</h3>
+            <p className="text-[#6b7280] text-[14px] font-['Arimo',sans-serif] mb-6">
+              This candidate profile is locked until GitHub analysis finishes. Generated questions will be routed into the technical assessment.
+            </p>
+            <div className="flex items-center justify-center">
+              <button
+                onClick={() => window.location.reload()}
+                className="h-[40px] px-5 rounded-[10px] border border-[#d1d5db] bg-white hover:bg-[#f9fafb] text-[13px]"
+              >
+                Refresh Status
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronLeft, Plus, Trash2, GripVertical, Eye, Loader2, Sparkles } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, GripVertical, Eye, Loader2, Sparkles, RefreshCw } from 'lucide-react';
 import { api } from '../../../services/api';
 import { recruiterService } from '../../../services/recruiter.service';
 import { toast } from 'sonner';
@@ -27,18 +27,69 @@ export function RecordedInterviewQuestionSetup({
   const [showPreview, setShowPreview] = useState(false);
   const [showSuggestModal, setShowSuggestModal] = useState(false);
   const [isRefining, setIsRefining] = useState<string | null>(null);
+  const [isSuggesting, setIsSuggesting] = useState(false);
+  const [aiSuggestedQuestions, setAiSuggestedQuestions] = useState<Array<{ text: string; duration: number }>>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const aiSuggestedQuestions = [
-    { text: 'Tell me about yourself and your professional journey so far.', duration: 120 },
-    { text: 'Describe a situation where you had to meet a tight deadline. How did you handle it?', duration: 150 },
-    { text: 'What is your greatest professional achievement and why?', duration: 180 },
-    { text: 'How do you prioritize tasks when managing multiple projects simultaneously?', duration: 120 },
-    { text: 'Describe a time you disagreed with a manager or colleague. How did you resolve it?', duration: 150 },
-    { text: 'Where do you see yourself professionally in the next 3 to 5 years?', duration: 120 },
-    { text: 'What technical skills do you bring to this role, and how have you applied them?', duration: 180 },
-    { text: 'Tell me about a project where you had to learn a new technology or skill quickly.', duration: 150 },
-  ];
+  const buildSuggestedQuestion = (text: string): { text: string; duration: number } => {
+    const normalizedText = text.trim();
+    const charCount = normalizedText.length;
+    const computedDuration = Math.max(90, Math.min(240, Math.ceil(charCount / 35) * 30));
+    return { text: normalizedText, duration: computedDuration };
+  };
+
+  const generateSuggestedQuestions = async () => {
+    setIsSuggesting(true);
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          recruiterService.generateAIQuestion({
+            question_type: 'interview',
+            topic: groupName,
+            difficulty: 'Medium',
+            context: 'Recorded interview setup. Generate concise, role-relevant open-ended screening questions.'
+          })
+        )
+      );
+
+      const collected: Array<{ text: string; duration: number }> = [];
+      for (const response of responses as any[]) {
+        const interviewQuestions = Array.isArray(response?.questions) ? response.questions : [];
+        for (const item of interviewQuestions) {
+          const questionText = typeof item?.question === 'string' ? item.question : '';
+          if (questionText.trim()) {
+            collected.push(buildSuggestedQuestion(questionText));
+          }
+        }
+
+        if (typeof response?.questionText === 'string' && response.questionText.trim()) {
+          collected.push(buildSuggestedQuestion(response.questionText));
+        }
+      }
+
+      const deduped = Array.from(
+        new Map(collected.map((item) => [item.text.toLowerCase(), item])).values()
+      ).slice(0, 8);
+
+      if (deduped.length === 0) {
+        toast.error('No AI suggestions returned. Please try again.');
+      }
+
+      setAiSuggestedQuestions(deduped);
+    } catch (error) {
+      console.error('Failed to generate suggested interview questions:', error);
+      toast.error('Failed to generate AI suggestions');
+    } finally {
+      setIsSuggesting(false);
+    }
+  };
+
+  const openSuggestModal = () => {
+    setShowSuggestModal(true);
+    if (aiSuggestedQuestions.length === 0) {
+      void generateSuggestedQuestions();
+    }
+  };
 
   // Load questions: use initialQuestions (edit mode) or fetch from API (create mode)
   useEffect(() => {
@@ -140,7 +191,7 @@ export function RecordedInterviewQuestionSetup({
               <h3 className="text-[#111827]">Interview Questions</h3>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setShowSuggestModal(true)}
+                  onClick={openSuggestModal}
                   className="flex items-center gap-2 h-[36px] px-[16px] rounded-[8px] border border-[#8b5cf6] text-[#8b5cf6] hover:bg-[#faf5ff] transition-colors"
                 >
                   <Sparkles size={16} />
@@ -366,9 +417,29 @@ export function RecordedInterviewQuestionSetup({
               </p>
             </div>
             <div className="flex-1 overflow-auto px-8 py-6 space-y-3">
-              {aiSuggestedQuestions.map((suggestion, index) => (
+              {isSuggesting && (
+                <div className="py-12 flex flex-col items-center justify-center text-center">
+                  <Loader2 size={28} className="animate-spin text-[#8b5cf6] mb-3" />
+                  <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Generating suggestions with Ollama...</p>
+                </div>
+              )}
+
+              {!isSuggesting && aiSuggestedQuestions.length === 0 && (
+                <div className="py-10 text-center border border-dashed border-[#d1d5db] rounded-[10px]">
+                  <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280] mb-3">No suggestions available yet.</p>
+                  <button
+                    onClick={() => void generateSuggestedQuestions()}
+                    className="inline-flex items-center gap-2 h-[36px] px-[14px] rounded-[8px] border border-[#8b5cf6] text-[#8b5cf6] hover:bg-[#faf5ff] transition-colors"
+                  >
+                    <RefreshCw size={14} />
+                    <span className="font-['Arimo',sans-serif] text-[13px]">Try Again</span>
+                  </button>
+                </div>
+              )}
+
+              {!isSuggesting && aiSuggestedQuestions.map((suggestion, index) => (
                 <button
-                  key={index}
+                  key={`${suggestion.text}-${index}`}
                   onClick={() => {
                     const newQ: Question = {
                       id: Date.now().toString() + index,
@@ -394,12 +465,22 @@ export function RecordedInterviewQuestionSetup({
               ))}
             </div>
             <div className="px-8 py-6 border-t border-[#e5e7eb]">
-              <button
-                onClick={() => setShowSuggestModal(false)}
-                className="w-full h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => void generateSuggestedQuestions()}
+                  disabled={isSuggesting}
+                  className="h-[44px] px-[16px] rounded-[8px] border border-[#8b5cf6] text-[#8b5cf6] hover:bg-[#faf5ff] font-['Arimo',sans-serif] text-[14px] transition-colors disabled:opacity-60 flex items-center gap-2"
+                >
+                  <RefreshCw size={14} className={isSuggesting ? 'animate-spin' : ''} />
+                  Regenerate
+                </button>
+                <button
+                  onClick={() => setShowSuggestModal(false)}
+                  className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

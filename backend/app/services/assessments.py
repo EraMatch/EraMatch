@@ -64,13 +64,24 @@ class AssessmentService:
                     # Prepare question_config based on type
                     question_config = {}
                     correct_answer_payload = None
+
+                    # Shared metadata across question types
+                    question_config["evidence"] = variant_data.evidence
+                    question_config["reference_answer"] = variant_data.referenceAnswer
+                    question_config["rubric_yes_no_checks"] = variant_data.rubricYesNoChecks
+                    question_config["needs_review"] = variant_data.needsReview
+                    question_config["critic_score"] = variant_data.criticScore
+                    question_config["critic_weighted_score"] = variant_data.criticWeightedScore
+                    question_config["critic_feedback"] = variant_data.criticFeedback
+                    question_config["critic_checks"] = variant_data.criticChecks
+                    question_config["retry_count"] = variant_data.retryCount
                     
                     if variant_data.type == "mcq":
-                        question_config = {
+                        question_config.update({
                             "options": variant_data.options,
                             "explanation": variant_data.explanation,
                             "multipleCorrect": variant_data.multipleCorrect
-                        }
+                        })
                         
                         # Assuming single correct answer for now as per instructions "leave multiple correct answers for now"
                         # Handle array or int representing correct answer from frontend
@@ -84,21 +95,21 @@ class AssessmentService:
                              correct_answer_payload = {"correct_text": correct_text, "correct_index": correct_idx}
                              
                     elif variant_data.type == "essay":
-                         question_config = {
+                         question_config.update({
                              "rubric": variant_data.rubric,
                              "max_words": variant_data.maxWords,
                              "expected_keywords": variant_data.expectedKeywords,
                              "explanation": variant_data.explanation
-                         }
+                         })
                     elif variant_data.type == "code":
-                         question_config = {
+                         question_config.update({
                              "language": variant_data.language,
                              "time_limit": variant_data.timeLimit,
                              "memory_limit": variant_data.memoryLimit,
                              "test_cases": variant_data.testCases,
                              "starter_code": variant_data.codeTemplate,
                              "explanation": variant_data.explanation
-                         }
+                         })
 
                     # Map difficulty
                     difficulty_mapping = {"Easy": 1, "Medium": 2, "Hard": 3}
@@ -223,7 +234,16 @@ class AssessmentService:
                             "testCases": qbank.question_config.get("test_cases") if qbank.question_config else None,
                             "maxWords": qbank.question_config.get("max_words") if qbank.question_config else None,
                             "expectedKeywords": qbank.question_config.get("expected_keywords") if qbank.question_config else None,
-                            "rubric": qbank.question_config.get("rubric") if qbank.question_config else None
+                            "rubric": qbank.question_config.get("rubric") if qbank.question_config else None,
+                            "evidence": qbank.question_config.get("evidence") if qbank.question_config else None,
+                            "referenceAnswer": qbank.question_config.get("reference_answer") if qbank.question_config else None,
+                            "rubricYesNoChecks": qbank.question_config.get("rubric_yes_no_checks") if qbank.question_config else None,
+                            "needsReview": qbank.question_config.get("needs_review") if qbank.question_config else None,
+                            "criticScore": qbank.question_config.get("critic_score") if qbank.question_config else None,
+                            "criticWeightedScore": qbank.question_config.get("critic_weighted_score") if qbank.question_config else None,
+                            "criticFeedback": qbank.question_config.get("critic_feedback") if qbank.question_config else None,
+                            "criticChecks": qbank.question_config.get("critic_checks") if qbank.question_config else None,
+                            "retryCount": qbank.question_config.get("retry_count") if qbank.question_config else None,
                         })
 
             sec_bg_type = sec.question_type
@@ -313,13 +333,24 @@ class AssessmentService:
                 for variant_idx, variant_data in enumerate(section_data.variants):
                     question_config = {}
                     correct_answer_payload = None
+
+                    # Shared metadata across question types
+                    question_config["evidence"] = variant_data.evidence
+                    question_config["reference_answer"] = variant_data.referenceAnswer
+                    question_config["rubric_yes_no_checks"] = variant_data.rubricYesNoChecks
+                    question_config["needs_review"] = variant_data.needsReview
+                    question_config["critic_score"] = variant_data.criticScore
+                    question_config["critic_weighted_score"] = variant_data.criticWeightedScore
+                    question_config["critic_feedback"] = variant_data.criticFeedback
+                    question_config["critic_checks"] = variant_data.criticChecks
+                    question_config["retry_count"] = variant_data.retryCount
                     
                     if variant_data.type == "mcq":
-                        question_config = {
+                        question_config.update({
                             "options": variant_data.options,
                             "explanation": variant_data.explanation,
                             "multipleCorrect": variant_data.multipleCorrect
-                        }
+                        })
                         
                         if isinstance(variant_data.correctAnswer, list) and len(variant_data.correctAnswer) > 0:
                              correct_idx = variant_data.correctAnswer[0]
@@ -331,21 +362,21 @@ class AssessmentService:
                              correct_answer_payload = {"correct_text": correct_text, "correct_index": correct_idx}
                              
                     elif variant_data.type == "essay":
-                         question_config = {
+                         question_config.update({
                              "rubric": variant_data.rubric,
                              "max_words": variant_data.maxWords,
                              "expected_keywords": variant_data.expectedKeywords,
                              "explanation": variant_data.explanation
-                         }
+                         })
                     elif variant_data.type == "code":
-                         question_config = {
+                         question_config.update({
                              "language": variant_data.language,
                              "time_limit": variant_data.timeLimit,
                              "memory_limit": variant_data.memoryLimit,
                              "test_cases": variant_data.testCases,
                              "starter_code": variant_data.codeTemplate,
                              "explanation": variant_data.explanation
-                         }
+                         })
 
                     difficulty_mapping = {"Easy": 1, "Medium": 2, "Hard": 3}
                     difficulty_val = difficulty_mapping.get(variant_data.difficulty, 2)

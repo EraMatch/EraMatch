@@ -46,7 +46,7 @@ const DEFAULT_MODULES: FiltrationModule[] = [
 interface FiltrationFlowConfigModalProps {
   groupData?: any;
   onClose: () => void;
-  onSave: (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[]) => void;
+  onSave: (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[], githubQuestionsCount: number) => void;
 }
 
 export function FiltrationFlowConfigModal({
@@ -76,6 +76,11 @@ export function FiltrationFlowConfigModal({
     return DEFAULT_MODULES;
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [githubQuestionsCount, setGithubQuestionsCount] = useState<number>(() => {
+    const parsed = Number(groupData?.github_questions_count ?? 10);
+    if (!Number.isFinite(parsed)) return 10;
+    return Math.min(30, Math.max(1, Math.round(parsed)));
+  });
 
   const [draggedModule, setDraggedModule] = useState<string | null>(null);
 
@@ -126,11 +131,11 @@ export function FiltrationFlowConfigModal({
         } as any);
       }
 
-      onSave(enabledFlow);
+      onSave(enabledFlow, githubQuestionsCount);
     } catch (err) {
       console.error('Failed to save flow config:', err);
       // Still call onSave even if backend update fails
-      onSave(enabledFlow);
+      onSave(enabledFlow, githubQuestionsCount);
     } finally {
       setIsSaving(false);
     }
@@ -216,6 +221,29 @@ export function FiltrationFlowConfigModal({
         </div>
 
         <div className="bg-[#f9fafb] rounded-[8px] p-4 mb-6">
+          <div className="mb-4">
+            <label className="font-['Arimo',sans-serif] text-[13px] text-[#374151] block mb-2">
+              GitHub Questions Per Candidate
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={githubQuestionsCount}
+              onChange={(e) => {
+                const value = Number(e.target.value || 10);
+                if (!Number.isFinite(value)) {
+                  setGithubQuestionsCount(10);
+                  return;
+                }
+                setGithubQuestionsCount(Math.min(30, Math.max(1, Math.round(value))));
+              }}
+              className="w-full h-[40px] px-3 rounded-[8px] border border-[#d1d5db] focus:outline-none focus:border-[#6366f1]"
+            />
+            <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mt-1">
+              This count is used for auto-generated GitHub-based technical questions per candidate.
+            </p>
+          </div>
           <div className="flex items-center gap-2 mb-2">
             <div className="w-[6px] h-[6px] rounded-full bg-[#6366f1]" />
             <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">

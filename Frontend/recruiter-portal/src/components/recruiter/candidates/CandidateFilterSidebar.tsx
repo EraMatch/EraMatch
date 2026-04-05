@@ -13,6 +13,7 @@ interface FilterOptions {
     skills: string[];
     jobTitles: string[];
     degrees: string[];
+    githubContributionSources?: string[];
 }
 
 export interface CandidateFilters {
@@ -24,6 +25,11 @@ export interface CandidateFilters {
     skills: string[];
     jobTitles: string[];
     degrees: string[];
+    githubMinScore: number;
+    githubMinRepoConfidence: number;
+    githubMaxFreshnessHours: number;
+    githubContributionSources: string[];
+    githubFallbackOnly: boolean;
 }
 
 interface CandidateFilterSidebarProps {
@@ -50,7 +56,8 @@ export function CandidateFilterSidebar({
         experience: true,
         skills: true,
         jobTitles: false,
-        degrees: false
+        degrees: false,
+        github: true,
     });
     const [templates, setTemplates] = useState<any[]>([]);
     const [saveTemplateName, setSaveTemplateName] = useState('');
@@ -362,6 +369,96 @@ export function CandidateFilterSidebar({
                             {options.schools.length === 0 && (
                                 <p className="text-[13px] text-[#9ca3af] italic">No schools available</p>
                             )}
+                        </div>
+                    )}
+                </div>
+
+                {/* GitHub Analytics Filter */}
+                <div className="border-t border-[#e5e7eb] pt-6">
+                    <button
+                        onClick={() => toggleSection('github')}
+                        className="flex items-center justify-between w-full mb-4"
+                    >
+                        <div className="flex items-center gap-2">
+                            <span className="text-[#111827] font-medium text-[15px] font-['Arimo',sans-serif]">GitHub Signals</span>
+                        </div>
+                        {expandedSections.github ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+
+                    {expandedSections.github && (
+                        <div className="space-y-5">
+                            <div>
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[13px] text-[#6b7280] font-['Arimo',sans-serif]">Min GitHub Score</span>
+                                    <span className="text-[13px] text-[#111827] font-medium font-['Arimo',sans-serif]">{filters.githubMinScore}</span>
+                                </div>
+                                <Slider
+                                    value={[filters.githubMinScore]}
+                                    min={0}
+                                    max={100}
+                                    step={5}
+                                    onValueChange={(value) => onFilterChange({ ...filters, githubMinScore: value[0] || 0 })}
+                                    className="w-full"
+                                />
+                            </div>
+
+                            <div>
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[13px] text-[#6b7280] font-['Arimo',sans-serif]">Min Repo Confidence</span>
+                                    <span className="text-[13px] text-[#111827] font-medium font-['Arimo',sans-serif]">{Math.round(filters.githubMinRepoConfidence * 100)}%</span>
+                                </div>
+                                <Slider
+                                    value={[Math.round(filters.githubMinRepoConfidence * 100)]}
+                                    min={0}
+                                    max={100}
+                                    step={5}
+                                    onValueChange={(value) => onFilterChange({ ...filters, githubMinRepoConfidence: (value[0] || 0) / 100 })}
+                                    className="w-full"
+                                />
+                            </div>
+
+                            <div>
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[13px] text-[#6b7280] font-['Arimo',sans-serif]">Max Freshness (hours)</span>
+                                    <span className="text-[13px] text-[#111827] font-medium font-['Arimo',sans-serif]">{filters.githubMaxFreshnessHours}h</span>
+                                </div>
+                                <Slider
+                                    value={[filters.githubMaxFreshnessHours]}
+                                    min={0}
+                                    max={720}
+                                    step={12}
+                                    onValueChange={(value) => onFilterChange({ ...filters, githubMaxFreshnessHours: value[0] || 0 })}
+                                    className="w-full"
+                                />
+                            </div>
+
+                            <div>
+                                <span className="block text-[13px] text-[#6b7280] mb-2 font-['Arimo',sans-serif]">Contribution Source</span>
+                                <div className="flex flex-wrap gap-2">
+                                    {(options.githubContributionSources || []).map(source => (
+                                        <button
+                                            key={source}
+                                            onClick={() => handleCheckboxChange('githubContributionSources', source)}
+                                            className={`px-3 py-1.5 rounded-full text-[12px] border transition-colors font-['Arimo',sans-serif] ${filters.githubContributionSources.includes(source)
+                                                ? 'bg-[#6366f1] text-white border-[#6366f1]'
+                                                : 'bg-white text-[#374151] border-[#e5e7eb] hover:border-[#d1d5db]'
+                                                }`}
+                                        >
+                                            {source}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <label className="flex items-center gap-3 cursor-pointer">
+                                <Checkbox
+                                    id="github-fallback-only"
+                                    checked={filters.githubFallbackOnly}
+                                    onCheckedChange={(checked) => onFilterChange({ ...filters, githubFallbackOnly: Boolean(checked) })}
+                                    className="data-[state=checked]:bg-[#6366f1] data-[state=checked]:border-[#6366f1]"
+                                />
+                                <span className="text-[14px] text-[#374151] font-['Arimo',sans-serif]">Only fallback-based analyses</span>
+                            </label>
                         </div>
                     )}
                 </div>
