@@ -1095,9 +1095,10 @@ if func is None:
 # - Otherwise → pass as single argument
 try:
     sig = inspect.signature(func)
-    param_count = len([p for p in sig.parameters.values()
-                       if p.default == inspect.Parameter.empty
-                       and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)])
+    params = [p for p in sig.parameters.values()
+              if p.default == inspect.Parameter.empty
+              and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
+    param_count = len(params)
 
     if isinstance(test_input, dict) and param_count > 1:
         result = func(**test_input)
@@ -1486,40 +1487,51 @@ async def auto_grade_answers(session_id: UUID, db_session):
             if isinstance(answer_data, str):
                 essay_text = answer_data
 
-            reference = correct_answer.get("reference_answer", "")
-            rubric = q_config.get("rubric")  # Get rubric from question_config
+            # Skip grading if essay is too short (partial typing, not a real answer)
+            if not essay_text or len(essay_text.strip()) < 20:
+                points_earned = 0.0
+                feedback_data = {
+                    "ai_feedback": "Answer too short to grade. Please provide a more detailed response.",
+                    "ai_score": 0.0,
+                    "ai_strengths": [],
+                    "ai_improvements": ["Provide a more detailed and substantive answer."],
+                }
+                logger.info(f"[auto_grade] Essay {answer_id}: too short ({len(essay_text.strip())} chars), pts=0")
+            else:
+                reference = correct_answer.get("reference_answer", "")
+                rubric = q_config.get("rubric")  # Get rubric from question_config
 
-            try:
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.post(
-                        f"{AI_SERVICE_URL}/evaluate/grade-essay",
-                        json={
-                            "question_text": q_text,
-                            "essay_response": essay_text,
-                            "reference_answer": reference,
-                            "rubric": rubric,  # Include rubric for better grading
-                            "max_points": points_max,
-                        },
-                    )
-                    if resp.status_code == 200:
-                        grade = resp.json()
-                        points_earned = float(grade["points_earned"])
-                        feedback_data = {
-                            "ai_score": grade["score"],
-                            "ai_feedback": grade["feedback"],
-                            "ai_strengths": grade.get("strengths", []),
-                            "ai_improvements": grade.get("improvements", []),
-                        }
-                        logger.info(f"[auto_grade] Essay {answer_id}: score={grade['score']}, pts={points_earned}/{points_max}")
-                    else:
-                        logger.warning(f"[auto_grade] AI service returned {resp.status_code}: {resp.text[:200]}")
-                        # Fallback: give partial credit
-                        points_earned = round(points_max * 0.5, 2)
-                        feedback_data = {"ai_feedback": "AI grading unavailable – partial credit assigned."}
-            except Exception as e:
-                logger.error(f"[auto_grade] AI service error: {e}")
-                points_earned = round(points_max * 0.5, 2)
-                feedback_data = {"ai_feedback": f"AI grading error – partial credit assigned. Error: {str(e)[:100]}"}
+                try:
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        resp = await client.post(
+                            f"{AI_SERVICE_URL}/evaluate/grade-essay",
+                            json={
+                                "question_text": q_text,
+                                "essay_response": essay_text,
+                                "reference_answer": reference,
+                                "rubric": rubric,  # Include rubric for better grading
+                                "max_points": points_max,
+                            },
+                        )
+                        if resp.status_code == 200:
+                            grade = resp.json()
+                            points_earned = float(grade["points_earned"])
+                            feedback_data = {
+                                "ai_score": grade["score"],
+                                "ai_feedback": grade["feedback"],
+                                "ai_strengths": grade.get("strengths", []),
+                                "ai_improvements": grade.get("improvements", []),
+                            }
+                            logger.info(f"[auto_grade] Essay {answer_id}: score={grade['score']}, pts={points_earned}/{points_max}")
+                        else:
+                            logger.warning(f"[auto_grade] AI service returned {resp.status_code}: {resp.text[:200]}")
+                            # Fallback: give partial credit
+                            points_earned = round(points_max * 0.5, 2)
+                            feedback_data = {"ai_feedback": "AI grading unavailable – partial credit assigned."}
+                except Exception as e:
+                    logger.error(f"[auto_grade] AI service error: {e}")
+                    points_earned = round(points_max * 0.5, 2)
+                    feedback_data = {"ai_feedback": f"AI grading error – partial credit assigned. Error: {str(e)[:100]}"}
 
         # ── CODING GRADING (via test case execution) ──────────────────
         elif q_type == "coding":
