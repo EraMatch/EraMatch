@@ -12,6 +12,7 @@ import { api } from '../../services/api';
 import { toast } from 'sonner';
 import EraMatchLogo from '../../assets/image-eramatch.png';
 import { useNavigate } from 'react-router-dom';
+import LoadingSpinner from '../common/LoadingSpinner';
 
 export default function AdminRequests() {
     return (
@@ -270,7 +271,7 @@ function AdminRequestsContent() {
 
             {isLoading ? (
                 <div className="flex items-center justify-center py-20">
-                    <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+                    <LoadingSpinner message="Loading requests..." fullScreen={false} />
                 </div>
             ) : activeTab === 'create_project' ? (
                 <Card className="rounded-3xl border-gray-100 shadow-sm bg-white overflow-hidden">

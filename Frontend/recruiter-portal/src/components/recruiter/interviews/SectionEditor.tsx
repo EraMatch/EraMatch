@@ -33,6 +33,15 @@ interface QuestionVariant {
   timeLimit?: number;
   memoryLimit?: number;
   explanation?: string;
+  evidence?: string;
+  referenceAnswer?: string;
+  rubricYesNoChecks?: Array<{ id: number; check: string; weight: number }>;
+  needsReview?: boolean;
+  criticScore?: number;
+  criticWeightedScore?: number;
+  criticFeedback?: string;
+  criticChecks?: Array<{ id?: number; criterion: string; verdict: 'YES' | 'NO'; weight?: number; weighted_value?: number }>;
+  retryCount?: number;
   category?: string;
   difficulty?: 'Easy' | 'Medium' | 'Hard';
   tags?: string[];
@@ -670,6 +679,20 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                                 </div>
                               </div>
                             )}
+
+                            {variant.rubricYesNoChecks && variant.rubricYesNoChecks.length > 0 && (
+                              <div>
+                                <div className="text-[13px] font-medium text-[#374151] mb-2">Rubric YES/NO Checks:</div>
+                                <div className="bg-white rounded-[8px] border border-[#e5e7eb] p-3 space-y-2">
+                                  {variant.rubricYesNoChecks.slice(0, 10).map((check, checkIndex) => (
+                                    <div key={`${check.id}-${checkIndex}`} className="flex items-center justify-between gap-3 text-[12px]">
+                                      <span className="text-[#374151]">{checkIndex + 1}. {check.check}</span>
+                                      <span className="text-[#6b7280]">{Number(check.weight || 0).toFixed(2)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -681,6 +704,44 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                               <p className="font-['Arimo',sans-serif] text-[13px] text-emerald-900">
                                 {variant.explanation}
                               </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {(variant.evidence || variant.referenceAnswer) && (
+                          <div className="mt-4 space-y-3">
+                            {variant.evidence && (
+                              <div>
+                                <div className="text-[13px] font-medium text-[#374151] mb-2">Evidence:</div>
+                                <div className="bg-blue-50 border border-blue-200 rounded-[8px] p-3">
+                                  <p className="font-['Arimo',sans-serif] text-[13px] text-blue-900 whitespace-pre-wrap">{variant.evidence}</p>
+                                </div>
+                              </div>
+                            )}
+                            {variant.referenceAnswer && (
+                              <div>
+                                <div className="text-[13px] font-medium text-[#374151] mb-2">Reference Answer:</div>
+                                <div className="bg-indigo-50 border border-indigo-200 rounded-[8px] p-3">
+                                  <p className="font-['Arimo',sans-serif] text-[13px] text-indigo-900 whitespace-pre-wrap">{variant.referenceAnswer}</p>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {(variant.criticFeedback || typeof variant.criticScore === 'number') && (
+                          <div className="mt-4">
+                            <div className="text-[13px] font-medium text-[#374151] mb-2">Critic Signals:</div>
+                            <div className="bg-amber-50 border border-amber-200 rounded-[8px] p-3">
+                              <div className="text-[12px] text-amber-900">
+                                Score: {typeof variant.criticScore === 'number' ? variant.criticScore.toFixed(2) : 'N/A'}
+                                {typeof variant.criticWeightedScore === 'number' && (
+                                  <span className="ml-3">Weighted: {variant.criticWeightedScore.toFixed(2)}</span>
+                                )}
+                              </div>
+                              {variant.criticFeedback && (
+                                <p className="mt-2 font-['Arimo',sans-serif] text-[13px] text-amber-900 whitespace-pre-wrap">{variant.criticFeedback}</p>
+                              )}
                             </div>
                           </div>
                         )}

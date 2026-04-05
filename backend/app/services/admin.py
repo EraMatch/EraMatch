@@ -1485,6 +1485,8 @@ CandidateStageProgress.completed_at.isnot(None),
             current_settings = dict(org.settings) if org.settings else {}
             # Update settings with new preferences
             for key, value in prefs.items():
+                if key == "bypass_admin_approval" and self.current_user.role != "admin":
+                    continue
                 current_settings[key] = value
                 
             org.settings = current_settings

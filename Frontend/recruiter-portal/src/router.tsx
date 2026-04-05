@@ -25,6 +25,7 @@ import { LandingPage } from './components/common/LandingPage';
 import { SuspectReviewWrapper } from './components/recruiter/candidates/SuspectReviewWrapper';
 import { RecruiterSettings } from './components/recruiter/settings/RecruiterSettings';
 import { SuspiciousActivityLog } from './components/recruiter/dashboard/SuspiciousActivityLog';
+import { BackgroundTasks } from './components/recruiter/dashboard/BackgroundTasks';
 import { ReviewRequests } from './components/recruiter/reviews/ReviewRequests';
 import { api, PositionGroup } from './services/api';
 
@@ -502,5 +503,25 @@ export const router = createBrowserRouter([
                 </RecruiterLayout>
             </RecruiterProtectedRoute>
         ),
+    },
+    {
+        path: "/recruiter/background-tasks",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <Navigate to="/recruiter/background-tasks/dashboard" replace />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        )
+    },
+    {
+        path: "/recruiter/background-tasks/:view",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <BackgroundTasks />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        )
     },
 ]);

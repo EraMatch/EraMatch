@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import text
 
 from app.core.config import settings
 
@@ -45,3 +46,6 @@ async def init_db() -> None:
     """Initialize database tables."""
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.execute(
+            text("ALTER TABLE IF EXISTS cv_analysis ADD COLUMN IF NOT EXISTS github_profile JSONB")
+        )

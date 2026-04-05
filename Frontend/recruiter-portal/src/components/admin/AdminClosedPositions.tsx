@@ -3,6 +3,7 @@ import { ArrowLeft, Eye, ArrowUpDown, Calendar, Users, FileText, CheckCircle, XC
 import { Card } from '../ui/card';
 import { api, ClosedProject, ClosedPosition } from '../../services/api';
 import EraMatchLogo from '../../assets/image-eramatch.png';
+import LoadingSpinner from '../common/LoadingSpinner';
 
 interface AdminClosedPositionsProps {
   onSignOut: () => void;
@@ -35,14 +36,6 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
     };
     fetchProjects();
   }, []);
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center p-12">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-      </div>
-    );
-  }
 
   const getPositionsForProject = (projectName: string) => {
     return closedPositions.filter(pos => pos.projectName === projectName);
@@ -85,6 +78,11 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
             <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
           </div>
 
+          {isLoading ? (
+            <div className="flex items-center justify-center p-12">
+              <LoadingSpinner message="Loading data..." />
+            </div>
+          ) : (
           <div className="bg-white rounded-3xl p-6 shadow-sm">
             <div className="mb-6">
               <h3 className="text-gray-900 mb-2">Closed Projects</h3>
@@ -212,6 +210,7 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
               </div>
             </div>
           </div>
+          )}
         </div>
       )}
 
@@ -237,6 +236,11 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
             <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
           </div>
 
+          {isLoading ? (
+            <div className="flex items-center justify-center p-12">
+              <LoadingSpinner message="Loading data..." />
+            </div>
+          ) : (
           <div className="bg-white rounded-3xl p-6 shadow-sm">
             <div className="mb-6">
               <h3 className="text-gray-900 mb-2">Closed Positions</h3>
@@ -386,6 +390,7 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
               </div>
             </div>
           </div>
+          )}
         </div>
       )}
 
@@ -411,6 +416,11 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
             <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
           </div>
 
+          {isLoading ? (
+            <div className="flex items-center justify-center p-12">
+              <LoadingSpinner message="Loading data..." />
+            </div>
+          ) : (
           <div className="grid grid-cols-2 gap-6">
             {/* Left Column - Position Overview */}
             <Card className="p-6 rounded-3xl shadow-sm">
@@ -638,6 +648,7 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
               )}
             </Card>
           </div>
+          )}
         </div>
       )}
     </div>

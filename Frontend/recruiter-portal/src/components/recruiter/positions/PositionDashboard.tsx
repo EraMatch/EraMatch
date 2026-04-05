@@ -5,6 +5,7 @@ import { SemanticSearchModal } from '../shared/SemanticSearchModal';
 import { EnhancedGroupCreationModal } from '../groups/EnhancedGroupCreationModal';
 import { MiniKGTreePopover } from '../candidates/MiniKGTreePopover';
 import { api } from '../../../services/api';
+import LoadingSpinner from '../../common/LoadingSpinner';
 
 interface Candidate {
   id: number;
@@ -241,6 +242,14 @@ export function PositionDashboard({
   };
 
   const topSkills = ['React', 'TypeScript', 'Python', 'Java', 'AWS', 'Docker'];
+
+  if (isLoading) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-gray-50/50">
+        <LoadingSpinner message="Loading candidates..." fullScreen={false} />
+      </div>
+    );
+  }
 
   return (
     <div className="h-full w-full overflow-hidden flex">

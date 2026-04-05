@@ -73,7 +73,16 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
             codeTemplate: q.codeTemplate,
             testCases: q.testCases,
             maxWords: q.maxWords,
-            rubric: q.rubric
+            rubric: q.rubric,
+            evidence: q.evidence,
+            referenceAnswer: q.referenceAnswer,
+            rubricYesNoChecks: q.rubricYesNoChecks,
+            needsReview: q.needsReview,
+            criticScore: q.criticScore,
+            criticWeightedScore: q.criticWeightedScore,
+            criticFeedback: q.criticFeedback,
+            criticChecks: q.criticChecks,
+            retryCount: q.retryCount,
           } as QuestionVariant;
         });
 

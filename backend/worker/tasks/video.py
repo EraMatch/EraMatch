@@ -26,6 +26,45 @@ DEBUG_LOG_PATH = Path("logs/video_processing_debug.json")
 DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _get_db_conn():
+    import psycopg2
+    return psycopg2.connect(settings.DATABASE_URL.replace("+asyncpg", ""))
+
+
+def _get_processing_status(response_id: str) -> str | None:
+    conn = _get_db_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT processing_status FROM interview_responses WHERE response_id = %s",
+            (response_id,),
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _set_processing_status(response_id: str, status: str) -> None:
+    conn = _get_db_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE interview_responses SET processing_status = %s WHERE response_id = %s",
+            (status, response_id),
+        )
+        conn.commit()
+        cursor.close()
+    finally:
+        conn.close()
+
+
+def _is_cancelled(response_id: str) -> bool:
+    status = (_get_processing_status(response_id) or "").lower()
+    return status == "cancelled"
+
+
 def log_debug(step: str, data: dict):
     """Log processing steps to debug file."""
     entry = {
@@ -69,17 +108,15 @@ def process_video_logic(
     })
     
     try:
-        # Step 0: Mark as processing
-        import psycopg2
-        conn = psycopg2.connect(settings.DATABASE_URL.replace("+asyncpg", ""))
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE interview_responses SET processing_status = %s WHERE response_id = %s",
-            ('processing', response_id)
-        )
-        conn.commit()
-        cursor.close()
-        conn.close()
+        # Step 0: Mark as processing unless already cancelled
+        if _is_cancelled(response_id):
+            log_debug("task_cancelled_before_start", {"response_id": response_id})
+            return {"status": "cancelled", "response_id": response_id}
+        _set_processing_status(response_id, 'processing')
+
+        if _is_cancelled(response_id):
+            log_debug("task_cancelled_after_processing_mark", {"response_id": response_id})
+            return {"status": "cancelled", "response_id": response_id}
         
         # Step 1: Transcribe video
         log_debug("transcription_started", {"response_id": response_id})
@@ -103,6 +140,10 @@ def process_video_logic(
             "transcript_length": len(transcript),
             "confidence": confidence,
         })
+
+        if _is_cancelled(response_id):
+            log_debug("task_cancelled_after_transcription", {"response_id": response_id})
+            return {"status": "cancelled", "response_id": response_id}
         
         # Step 2: Evaluate with LLM
         log_debug("evaluation_started", {"response_id": response_id})
@@ -130,13 +171,16 @@ def process_video_logic(
             "score": score,
             "feedback": feedback[:100],
         })
+
+        if _is_cancelled(response_id):
+            log_debug("task_cancelled_after_evaluation", {"response_id": response_id})
+            return {"status": "cancelled", "response_id": response_id}
         
         # Step 3: Update database
         log_debug("database_update_started", {"response_id": response_id})
         
-        # Use synchronous database connection
-        import psycopg2
-        conn = psycopg2.connect(settings.DATABASE_URL.replace("+asyncpg", ""))
+        # Use synchronous database connection; do not overwrite if cancelled mid-flight.
+        conn = _get_db_conn()
         cursor = conn.cursor()
         
         cursor.execute(
@@ -147,11 +191,16 @@ def process_video_logic(
                 ai_score = %s,
                 ai_feedback = %s,
                 processing_status = %s
-            WHERE response_id = %s
+            WHERE response_id = %s AND processing_status <> 'cancelled'
             """,
             (transcript, confidence, score, json.dumps({"feedback": feedback}), 'completed', response_id)
         )
         conn.commit()
+        if cursor.rowcount == 0:
+            cursor.close()
+            conn.close()
+            log_debug("task_cancelled_before_db_commit", {"response_id": response_id})
+            return {"status": "cancelled", "response_id": response_id}
         cursor.close()
         conn.close()
         
@@ -184,6 +233,10 @@ def process_video_logic(
         return result
 
     except Exception as exc:
+        try:
+            _set_processing_status(response_id, 'failed')
+        except Exception:
+            pass
         log_debug("task_error", {
             "response_id": response_id,
             "error": str(exc),

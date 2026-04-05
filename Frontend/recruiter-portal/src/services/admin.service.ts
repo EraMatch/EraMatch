@@ -86,10 +86,8 @@ export const adminService = {
         const transformedGroups = (groups || []).map((g: any) => ({
             ...g,
             id: g.groupID || g.group_id || g.id,
-            // API returns `name` (not groupName/group_name) — fix was here
             groupName: g.name || g.groupName || g.group_name || 'Unnamed Group',
             name: g.name || g.groupName || g.group_name || 'Unnamed Group',
-            // API returns `candidateCount` (not candidatesCount) — fix was here
             candidatesCount: g.candidateCount ?? g.candidatesCount ?? g.candidates_count ?? 0,
             candidateCount: g.candidateCount ?? g.candidatesCount ?? g.candidates_count ?? 0,
             integrityIssues: g.integrityIssues || g.integrity_issues || 0,
@@ -138,6 +136,45 @@ export const adminService = {
         });
     },
     removeMember: async (userId: string) => fetchAPI(`/admin/members/${userId}`, { method: 'DELETE' }),
+
+    /**
+     * 4 Core Position Distribution Actions
+     */
+    
+    // 1. Delegate: Manually reassign a position to a recruiter
+    delegatePosition: async (positionId: string, recruiterId: string, type: 'HR' | 'Technical') => {
+        return fetchAPI(`/delegation/positions/${positionId}/reassign`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ recruiterID: recruiterId, type })
+        });
+    },
+
+    // 2. Suspend: Suspend member and auto-redistribute their open positions
+    suspendMember: async (userId: string) => {
+        return fetchAPI(`/admin/members/${userId}/status?status=suspended`, {
+            method: 'PATCH'
+        });
+    },
+
+    // 3. Activate: Reactivate member from suspended state
+    activateMember: async (userId: string) => {
+        return fetchAPI(`/admin/members/${userId}/status?status=active`, {
+            method: 'PATCH'
+        });
+    },
+
+    // 4. Delete: Soft delete member
+    deleteMember: async (userId: string) => {
+        return fetchAPI(`/admin/members/${userId}`, { method: 'DELETE' });
+    },
+
+    // 5. Return: Restore/backfill unassigned positions to available recruiters
+    backfillPositionAssignments: async () => {
+        return fetchAPI('/admin/positions/backfill-assignments', {
+            method: 'PATCH'
+        });
+    },
 
     getPendingRequests: async () => fetchAPI('/admin/requests'),
 
@@ -263,6 +300,67 @@ export const adminService = {
             positions: transformedPositions,
             projects: projects
         };
+    },
+
+    /**
+     * Get recruiter workload distribution data
+     * Returns aggregated position count for all HR and Technical recruiters
+     */
+    getRecruiterWorkloadDistribution: async () => {
+        try {
+            const data = await adminService.getRecruiterDelegation();
+            
+            // Combine and format HR and Technical recruiters
+            const allRecruiters = [
+                ...(data.hrRecruiters || []).map((r: any) => ({
+                    id: r.id,
+                    name: r.name || 'Unknown',
+                    positionsCount: r.assignedCount || 0,
+                    type: 'HR'
+                })),
+                ...(data.technicalRecruiters || []).map((r: any) => ({
+                    id: r.id,
+                    name: r.name || 'Unknown',
+                    positionsCount: r.assignedCount || 0,
+                    type: 'Technical'
+                }))
+            ];
+            
+            // Aggregate by recruiter type
+            const hrLoadSum = (data.hrRecruiters || []).reduce((sum: number, r: any) => sum + (r.assignedCount || 0), 0);
+            const techLoadSum = (data.technicalRecruiters || []).reduce((sum: number, r: any) => sum + (r.assignedCount || 0), 0);
+            
+            return {
+                hrRecruiters: data.hrRecruiters || [],
+                technicalRecruiters: data.technicalRecruiters || [],
+                allRecruiters,
+                summary: {
+                    hrTotalLoad: hrLoadSum,
+                    technicalTotalLoad: techLoadSum,
+                    totalLoad: hrLoadSum + techLoadSum,
+                    hrCount: (data.hrRecruiters || []).length,
+                    technicalCount: (data.technicalRecruiters || []).length,
+                    avgHRLoad: (data.hrRecruiters || []).length > 0 ? hrLoadSum / (data.hrRecruiters || []).length : 0,
+                    avgTechnicalLoad: (data.technicalRecruiters || []).length > 0 ? techLoadSum / (data.technicalRecruiters || []).length : 0
+                }
+            };
+        } catch (error) {
+            console.error('Error fetching recruiter workload distribution:', error);
+            return {
+                hrRecruiters: [],
+                technicalRecruiters: [],
+                allRecruiters: [],
+                summary: {
+                    hrTotalLoad: 0,
+                    technicalTotalLoad: 0,
+                    totalLoad: 0,
+                    hrCount: 0,
+                    technicalCount: 0,
+                    avgHRLoad: 0,
+                    avgTechnicalLoad: 0
+                }
+            };
+        }
     },
 
     getArchivedProjects: async () => {

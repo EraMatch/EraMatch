@@ -1,5 +1,6 @@
 import { Plus, Filter, ArrowUpDown, Search, Loader2 } from 'lucide-react';
 import { ProjectCard } from '../../common/ProjectCard';
+import LoadingSpinner from '../../common/LoadingSpinner';
 import { ProjectDetailView } from './ProjectDetailView';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../../ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../../ui/popover';
@@ -436,12 +437,7 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
           {/* Projects List */}
           <div className="content-stretch flex flex-col gap-[16px] items-start w-full">
             {isLoading ? (
-              <div className="w-full h-[200px] flex flex-col items-center justify-center gap-3">
-                <Loader2 className="w-8 h-8 text-[#4834ab] animate-spin" />
-                <p className="text-[#6b7280] font-['Arimo',sans-serif] text-[16px]">
-                  Fetching your projects...
-                </p>
-              </div>
+              <LoadingSpinner message="Fetching your projects..." fullScreen={false} />
             ) : filteredProjects.length === 0 ? (
               <div className="w-full h-[200px] flex items-center justify-center">
                 <p className="text-[#9ca3af] font-['Arimo',sans-serif] text-[16px]">

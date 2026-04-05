@@ -95,6 +95,8 @@ WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
 ```
 
+Real question generation now uses Ollama by default. Keep `USE_MOCK=false` and set a valid `OLLAMA_API_KEY` if you want live model output. Set `USE_MOCK=true` only when you explicitly want a local fallback for UI/testing.
+
 ### 3. Start Service
 ```bash
 uv run uvicorn main:app --reload --port 8001
@@ -292,8 +294,11 @@ async def process_item(data: str, background_tasks: BackgroundTasks):
 USE_MOCK=false
 OLLAMA_HOST=https://your-ollama-instance.com
 OLLAMA_API_KEY=prod-key
+GITHUB_TOKEN=ghp_xxx
 DEBUG=false
 ```
+
+Set `GITHUB_TOKEN` in the AI service environment to improve GitHub API reliability and reduce rate-limit failures during analysis.
 
 ### Docker (Future)
 ```dockerfile

@@ -10,7 +10,7 @@ from app.core.exceptions import NotFoundException, UnauthorizedException
 from app.models import (
     User, Project, Position, CandidateApplication, CandidateGroup, 
     CandidateStageProgress, OrganizationUser, Hire, Offer, ProctoringFlag,
-    ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, Organization,
+    ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, GitHubAnalysis, Organization,
     OrganizationUserSettings, FilterTemplate
 )
 from app.integrations.llm import get_llm
@@ -591,15 +591,13 @@ class RecruiterService:
 
     async def list_all_candidates(self) -> list[PositionCandidateResponse]:
         """List all candidates in the organization (for manual adding)."""
-        from app.models import CVAnalysis # Import here to avoid circular
-        # CandidateApplication should be available from top-level imports
-        
-        # Join Profile -> Application -> CVAnalysis
+        # Join Profile -> Application -> CVAnalysis -> GitHubAnalysis
         # Start from CandidateProfile to get all profiles, then left join apps and cvs
         stmt = (
-            select(CandidateProfile, CVAnalysis)
+            select(CandidateProfile, CVAnalysis, GitHubAnalysis)
             .outerjoin(CandidateApplication, CandidateProfile.id == CandidateApplication.candidate_id)
             .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
+            .outerjoin(GitHubAnalysis, CandidateProfile.id == GitHubAnalysis.candidate_id)
             .where(
                 CandidateProfile.organization_id == self.organization_id,
                 CandidateProfile.is_deleted == False
@@ -611,7 +609,15 @@ class RecruiterService:
         # Deduplicate profiles, keeping the one with best match score or latest
         candidates_map = {}
         
-        for p, cv in rows:
+        def _to_float(value, default: float | None = None) -> float | None:
+            if value is None:
+                return default
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        for p, cv, gh in rows:
             if p.id in candidates_map:
                 # Logic: If current CV has higher match score than stored one, replace
                 current_best_cv = candidates_map[p.id]['cv']
@@ -619,15 +625,22 @@ class RecruiterService:
                 old_score = float(current_best_cv.match_score) if current_best_cv and current_best_cv.match_score is not None else 0.0
                 
                 if new_score > old_score:
-                    candidates_map[p.id] = {'profile': p, 'cv': cv}
+                    candidates_map[p.id] = {
+                        'profile': p,
+                        'cv': cv,
+                        'gh': gh if gh is not None else candidates_map[p.id].get('gh')
+                    }
+                if candidates_map[p.id].get('gh') is None and gh is not None:
+                    candidates_map[p.id]['gh'] = gh
                 # Else keep existing
             else:
-                candidates_map[p.id] = {'profile': p, 'cv': cv}
+                candidates_map[p.id] = {'profile': p, 'cv': cv, 'gh': gh}
         
         candidates = []
         for item in candidates_map.values():
             p = item['profile']
             cv = item['cv']
+            gh = item.get('gh')
             
             # Extract skills and experience if available
             skills = cv.skills if cv and cv.skills else []
@@ -666,6 +679,27 @@ class RecruiterService:
                         deg = edu.get("degree") or edu.get("qualification")
                         if deg: degrees.append(str(deg))
 
+            github_overall_score = None
+            github_repo_confidence_score = None
+            github_contribution_source = None
+            github_freshness_hours = None
+            github_has_fallback = False
+            github_fallback_reason = None
+
+            if gh and isinstance(gh.analysis_data, dict):
+                analysis_data = gh.analysis_data
+                repo_confidence = analysis_data.get("repo_confidence")
+                data_freshness = analysis_data.get("data_freshness")
+
+                github_overall_score = _to_float(analysis_data.get("overall_github_score"))
+                if isinstance(repo_confidence, dict):
+                    github_repo_confidence_score = _to_float(repo_confidence.get("selected_repo_confidence"))
+                if isinstance(data_freshness, dict):
+                    github_contribution_source = data_freshness.get("contribution_source")
+                    github_freshness_hours = _to_float(data_freshness.get("source_freshness_hours"))
+                    github_fallback_reason = data_freshness.get("fallback_reason")
+                    github_has_fallback = bool(github_fallback_reason)
+
             candidates.append(PositionCandidateResponse(
                 id=p.id, # Profile ID
                 name=p.full_name,
@@ -681,7 +715,13 @@ class RecruiterService:
                 companies=companies,
                 job_titles=job_titles,
                 universities=universities,
-                degrees=degrees
+                degrees=degrees,
+                github_overall_score=github_overall_score,
+                github_repo_confidence_score=github_repo_confidence_score,
+                github_contribution_source=github_contribution_source,
+                github_freshness_hours=github_freshness_hours,
+                github_has_fallback=github_has_fallback,
+                github_fallback_reason=github_fallback_reason,
             ))
             
         return candidates
@@ -1979,7 +2019,6 @@ class RecruiterService:
             "two_factor_auth": settings.two_factor_auth,
             "session_timeout": settings.session_timeout,
             "ai_pipeline_config": settings.ai_pipeline_config,
-            "bypass_admin_approval": settings.bypass_admin_approval,
         }
 
     async def update_profile(self, data: dict) -> dict:
@@ -2009,6 +2048,8 @@ class RecruiterService:
             self.session.add(settings)
             
         for key, val in data.items():
+            if key == "bypass_admin_approval":
+                continue
             if val is not None and hasattr(settings, key):
                 setattr(settings, key, val)
                 
@@ -2081,10 +2122,35 @@ class RecruiterService:
     async def generate_ai_question(self, question_type: str, topic: str, difficulty: str, context: str = "") -> dict:
         """Generate a technical or interview question using Ollama."""
         llm = get_llm("ollama")
+
+        def _derive_yes_no_checks(payload: dict) -> list[dict]:
+            rubric = str(payload.get("rubric") or "").strip()
+            reference = str(payload.get("referenceAnswer") or "").strip()
+            evidence = str(payload.get("evidence") or "").strip()
+            seed_text = "\n".join([part for part in [rubric, reference, evidence] if part]).strip()
+            if not seed_text:
+                seed_text = "correctly answer the question with clear supporting rationale"
+
+            candidates: list[str] = []
+            for piece in [p.strip(" -:;,.\n\t") for p in seed_text.replace("\r", "\n").split("\n") if p.strip()]:
+                if len(piece) < 8:
+                    continue
+                if len(candidates) >= 10:
+                    break
+                normalized = piece[0].lower() + piece[1:] if len(piece) > 1 else piece.lower()
+                candidates.append(f"Does the answer {normalized}?")
+
+            while len(candidates) < 10:
+                candidates.append(f"Does the answer satisfy rubric criterion {len(candidates) + 1}?")
+
+            return [
+                {"id": idx + 1, "check": check, "weight": 0.10}
+                for idx, check in enumerate(candidates[:10])
+            ]
         
         prompts = {
-            "mcq": f"Generate a multiple-choice question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, options (array of 4), correctAnswer (index 0-3), explanation, difficulty.",
-            "essay": f"Generate an essay or theoretical question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, maxWords, rubric, expectedKeywords (array), difficulty.",
+            "mcq": f"Generate a multiple-choice question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, options (array of 4), correctAnswer (index 0-3), explanation, evidence, referenceAnswer, difficulty.",
+            "essay": f"Generate an essay or theoretical question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, maxWords, rubric, expectedKeywords (array), evidence, referenceAnswer, rubricYesNoChecks (array of 10 items with id/check/weight), difficulty.",
             "code": f"Generate a coding problem about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText (requirements), language, codeTemplate (with a TODO), testCases (array of {{input, expectedOutput, isHidden, points}}), difficulty.",
             "interview": f"Generate 2 interview questions about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with a 'questions' key containing an array of {{question, criteria (array), keyPoints (array), difficulty}}."
         }
@@ -2100,11 +2166,98 @@ class RecruiterService:
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0].strip()
                 
-            return json.loads(content)
+            payload = json.loads(content)
+
+            if not isinstance(payload, dict):
+                return {"questionText": f"Stub: {topic} ({difficulty})", "type": question_type, "difficulty": difficulty}
+
+            if question_type in {"mcq", "essay", "code"}:
+                payload.setdefault("type", question_type)
+                payload.setdefault("difficulty", difficulty)
+                payload.setdefault("questionText", f"{topic} question")
+                payload.setdefault("evidence", "")
+                payload.setdefault("referenceAnswer", payload.get("explanation") or "")
+                payload.setdefault("needsReview", False)
+                payload.setdefault("criticScore", 1.0)
+                payload.setdefault("criticWeightedScore", 1.0)
+                payload.setdefault("criticFeedback", "")
+                payload.setdefault("criticChecks", [])
+                payload.setdefault("retryCount", 0)
+
+            if question_type == "mcq":
+                options = payload.get("options") if isinstance(payload.get("options"), list) else []
+                payload["options"] = [str(o) for o in options][:4]
+                while len(payload["options"]) < 4:
+                    payload["options"].append(f"Option {len(payload['options']) + 1}")
+                if not isinstance(payload.get("correctAnswer"), int):
+                    payload["correctAnswer"] = 0
+
+            if question_type == "essay":
+                if not isinstance(payload.get("expectedKeywords"), list):
+                    payload["expectedKeywords"] = []
+                if not isinstance(payload.get("maxWords"), int):
+                    payload["maxWords"] = 500
+                checks = payload.get("rubricYesNoChecks")
+                if not isinstance(checks, list) or len(checks) == 0:
+                    payload["rubricYesNoChecks"] = _derive_yes_no_checks(payload)
+                else:
+                    normalized_checks = []
+                    for idx, check in enumerate(checks[:10]):
+                        if not isinstance(check, dict):
+                            continue
+                        normalized_checks.append(
+                            {
+                                "id": idx + 1,
+                                "check": str(check.get("check") or "").strip() or f"Does the answer satisfy rubric criterion {idx + 1}?",
+                                "weight": float(check.get("weight") or 0.1),
+                            }
+                        )
+                    while len(normalized_checks) < 10:
+                        normalized_checks.append(
+                            {
+                                "id": len(normalized_checks) + 1,
+                                "check": f"Does the answer satisfy rubric criterion {len(normalized_checks) + 1}?",
+                                "weight": 0.1,
+                            }
+                        )
+                    payload["rubricYesNoChecks"] = normalized_checks
+
+            return payload
         except Exception as e:
             print(f"Ollama generation failed: {e}")
             # Fallback mock for safety
-            return {"questionText": f"Stub: {topic} ({difficulty})", "error": str(e)}
+            fallback: dict = {
+                "questionText": f"Stub: {topic} ({difficulty})",
+                "type": question_type,
+                "difficulty": difficulty,
+                "evidence": "",
+                "referenceAnswer": "",
+                "needsReview": False,
+                "criticScore": 1.0,
+                "criticWeightedScore": 1.0,
+                "criticFeedback": "",
+                "criticChecks": [],
+                "retryCount": 0,
+                "error": str(e),
+            }
+            if question_type == "mcq":
+                fallback.update(
+                    {
+                        "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+                        "correctAnswer": 0,
+                        "explanation": "",
+                    }
+                )
+            if question_type == "essay":
+                fallback.update(
+                    {
+                        "maxWords": 500,
+                        "rubric": "",
+                        "expectedKeywords": [],
+                        "rubricYesNoChecks": _derive_yes_no_checks(fallback),
+                    }
+                )
+            return fallback
 
     async def refine_question_with_ai(self, question_text: str) -> str:
         """Refine or polish a question text using Ollama."""

@@ -5,6 +5,7 @@ import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api, JobPosition, Project } from '../../services/api';
 import EraMatchLogo from '../../assets/image-eramatch.png';
+import LoadingSpinner from '../common/LoadingSpinner';
 
 interface AdminRecruiterDelegationProps {
   onSignOut: () => void;
@@ -48,14 +49,6 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
     };
     fetchData();
   }, []);
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center p-12">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-      </div>
-    );
-  }
 
   const handleAssignHR = async (positionId: any, recruiter: { id: string, name: string }) => {
     try {
@@ -143,7 +136,13 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
         <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
       </div>
 
-      {/* Projects Table View */}
+      {isLoading ? (
+        <div className="flex items-center justify-center p-12">
+          <LoadingSpinner message="Loading delegation data..." fullScreen={false} />
+        </div>
+      ) : (
+        <>
+          {/* Projects Table View */}
       {viewMode === 'projects' && (
         <div className="bg-white rounded-3xl p-6 shadow-sm">
           <div className="mb-6">
@@ -650,6 +649,8 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
             </Card>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

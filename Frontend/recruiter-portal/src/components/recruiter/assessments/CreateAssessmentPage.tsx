@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Sparkles, Trash2, Plus, ChevronLeft, X, Edit2, Loader2 } from 'lucide-react';
 import { api } from '../../../services/api';
+import { recruiterService } from '../../../services/recruiter.service';
 
 export interface Question {
   id: string;
@@ -34,6 +35,7 @@ export function CreateAssessmentPage({
   const [editingQuestion, setEditingQuestion] = useState<string | null>(null);
   const [editQuestionText, setEditQuestionText] = useState('');
   const [editQuestionOptions, setEditQuestionOptions] = useState<string[]>([]);
+  const [enhancingQuestionId, setEnhancingQuestionId] = useState<string | null>(null);
 
   // Fetch assessment templates from API
   useEffect(() => {
@@ -66,17 +68,30 @@ export function CreateAssessmentPage({
     setQuestions(questions.filter(q => q.id !== id));
   };
 
-  const handleEnhanceQuestion = (id: string) => {
-    // Simulate AI enhancement
-    setQuestions(questions.map(q => {
-      if (q.id === id) {
-        return {
-          ...q,
-          question: q.question.includes('(Enhanced)') ? q.question : q.question + ' (Enhanced)'
-        };
+  const handleEnhanceQuestion = async (id: string, target: 'saved' | 'draft' = 'saved') => {
+    const sourceText = target === 'draft' && editingQuestion === id
+      ? editQuestionText
+      : questions.find((q) => q.id === id)?.question || '';
+
+    if (!sourceText.trim()) {
+      return;
+    }
+
+    setEnhancingQuestionId(id);
+    try {
+      const response = await recruiterService.refineAIQuestion(sourceText);
+      const refined = (response?.refinedText || sourceText).trim() || sourceText;
+
+      if (target === 'draft' && editingQuestion === id) {
+        setEditQuestionText(refined);
+      } else {
+        setQuestions(questions.map(q => (q.id === id ? { ...q, question: refined } : q)));
       }
-      return q;
-    }));
+    } catch (error) {
+      console.error('Failed to enhance question with AI:', error);
+    } finally {
+      setEnhancingQuestionId(null);
+    }
   };
 
   const handleAddNewQuestion = () => {
@@ -382,11 +397,16 @@ export function CreateAssessmentPage({
                         Cancel
                       </button>
                       <button
-                        onClick={() => handleEnhanceQuestion(question.id)}
-                        className="flex items-center gap-2 h-[36px] px-[16px] rounded-[8px] border border-[#6366f1] bg-white hover:bg-[#f9fafb] transition-colors"
+                        onClick={() => void handleEnhanceQuestion(question.id, 'draft')}
+                        disabled={enhancingQuestionId === question.id}
+                        className="flex items-center gap-2 h-[36px] px-[16px] rounded-[8px] border border-[#6366f1] bg-white hover:bg-[#f9fafb] transition-colors disabled:opacity-60"
                         title="Enhance with AI"
                       >
-                        <Sparkles size={16} className="text-[#6366f1]" />
+                        {enhancingQuestionId === question.id ? (
+                          <Loader2 size={16} className="text-[#6366f1] animate-spin" />
+                        ) : (
+                          <Sparkles size={16} className="text-[#6366f1]" />
+                        )}
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
                           Enhance
                         </span>
@@ -412,11 +432,16 @@ export function CreateAssessmentPage({
                       </div>
                       <div className="flex items-center gap-2 ml-4">
                         <button
-                          onClick={() => handleEnhanceQuestion(question.id)}
-                          className="flex items-center justify-center w-[36px] h-[36px] rounded-[6px] hover:bg-white transition-colors"
+                          onClick={() => void handleEnhanceQuestion(question.id)}
+                          disabled={enhancingQuestionId === question.id}
+                          className="flex items-center justify-center w-[36px] h-[36px] rounded-[6px] hover:bg-white transition-colors disabled:opacity-60"
                           title="Enhance with AI"
                         >
-                          <Sparkles size={18} className="text-[#6366f1]" />
+                          {enhancingQuestionId === question.id ? (
+                            <Loader2 size={18} className="text-[#6366f1] animate-spin" />
+                          ) : (
+                            <Sparkles size={18} className="text-[#6366f1]" />
+                          )}
                         </button>
                         <button
                           onClick={() => startEditQuestion(question)}

@@ -106,6 +106,10 @@ export const recruiterService = {
     getGroupCandidates: async () => fetchAPI('/groups/candidates/all'),
 
     getCandidate: async (candidateId: string) => fetchAPI<any>(`/candidates/${candidateId}`),
+    startCandidateGithubAnalysis: async (candidateId: string) =>
+        fetchAPI<{ job_id: string; status: string; message: string }>(`/candidates/${candidateId}/github-analysis/start`, {
+            method: 'POST'
+        }),
 
     getSuspectReview: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/suspect-review`),
 
@@ -272,9 +276,11 @@ export const recruiterService = {
         });
     },
 
-    deleteGroup: async (groupId: string) => {
+    deleteGroup: async (groupId: string, action: 'release' | 'reject' | 'transfer' = 'release', transfer_group_id?: string) => {
         return fetchAPI(`/recruiter/groups/${groupId}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, transfer_group_id })
         });
     },
 
@@ -416,11 +422,15 @@ export const recruiterService = {
     },
 
     // AI Features
-    generateAIQuestion: async (data: { question_type: string, topic: string, difficulty: string, context?: string }) => {
+    generateAIQuestion: async (
+        data: { question_type: string, topic: string, difficulty: string, context?: string },
+        signal?: AbortSignal
+    ) => {
         return fetchAPI<any>('/recruiter/ai/generate-question', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            body: JSON.stringify(data),
+            signal
         });
     },
 
@@ -449,5 +459,202 @@ export const recruiterService = {
         return fetchAPI(`/recruiter/filters/templates/${templateId}`, {
             method: 'DELETE'
         });
-    }
+    },
+
+    // Background Tasks
+    getBackgroundTasks: async () => fetchAPI<any[]>('/background-tasks/'),
+    getBackgroundTaskSloHealth: async () => fetchAPI<any>('/background-tasks/slo-health'),
+    getTaskLogs: async (taskId: string) => fetchAPI<any>(`/background-tasks/${taskId}/logs`),
+    stopAllVideoTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-video', { method: 'POST' }),
+    stopAllQuestionImportTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-question-import', { method: 'POST' }),
+    stopAllGithubAnalysisTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-github-analysis', { method: 'POST' }),
+    stopVideoTask: async (taskId: string) =>
+        fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-video/${taskId}`, { method: 'POST' }),
+    stopQuestionImportTask: async (taskId: string) =>
+        fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-question-import/${taskId}`, { method: 'POST' }),
+    stopGithubAnalysisTask: async (taskId: string) =>
+        fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-github-analysis/${taskId}`, { method: 'POST' }),
+    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import' | 'github_analysis') =>
+        fetchAPI<{ message: string }>(
+            `/background-tasks/${taskId}?task_category=${encodeURIComponent(taskCategory)}`,
+            { method: 'DELETE' }
+        ),
+
+    // ── Question Import ──────────────────────────────────────────────────────
+
+    /**
+     * Start a question import job (Celery background task).
+     * @param file - The uploaded file (PDF, DOCX, CSV, XLSX, MD, TXT)
+     * @param importType - "generative" | "extraction" | "csv"
+     * @param numQuestions - legacy total question count fallback
+     * @param contextHint - (generative only) topic hint e.g. "Python OOP"
+     * @param questionTypes - comma-separated e.g. "mcq,essay"
+     */
+    startQuestionImport: async (
+        file: File,
+        importType: 'generative' | 'extraction' | 'csv',
+        numQuestions: number = 10,
+        contextHint: string = '',
+        recruiterInstructions: string = '',
+        questionTypes: string = 'mcq,essay',
+        mcqCount: number = 5,
+        essayCount: number = 5,
+        mcqDifficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium',
+        essayDifficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium',
+        mcqEasyCount: number = 0,
+        mcqMediumCount: number = 0,
+        mcqHardCount: number = 0,
+        essayEasyCount: number = 0,
+        essayMediumCount: number = 0,
+        essayHardCount: number = 0,
+        processInChunks: boolean = false,
+        chunkPageSize: number = 20,
+        sheetName?: string,
+        columnMapping?: Record<string, string>,
+        applyAutoFixes: boolean = false
+    ) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('import_type', importType);
+        formData.append('num_questions', String(numQuestions));
+        formData.append('context_hint', contextHint);
+        formData.append('recruiter_instructions', recruiterInstructions);
+        formData.append('question_types', questionTypes);
+        formData.append('mcq_count', String(mcqCount));
+        formData.append('essay_count', String(essayCount));
+        formData.append('mcq_difficulty', mcqDifficulty);
+        formData.append('essay_difficulty', essayDifficulty);
+        formData.append('mcq_easy_count', String(mcqEasyCount));
+        formData.append('mcq_medium_count', String(mcqMediumCount));
+        formData.append('mcq_hard_count', String(mcqHardCount));
+        formData.append('essay_easy_count', String(essayEasyCount));
+        formData.append('essay_medium_count', String(essayMediumCount));
+        formData.append('essay_hard_count', String(essayHardCount));
+        formData.append('process_in_chunks', processInChunks ? 'true' : 'false');
+        formData.append('chunk_page_size', String(chunkPageSize));
+        if (sheetName) {
+            formData.append('sheet_name', sheetName);
+        }
+        if (columnMapping && Object.keys(columnMapping).length > 0) {
+            formData.append('column_mapping', JSON.stringify(columnMapping));
+        }
+        formData.append('apply_auto_fixes', applyAutoFixes ? 'true' : 'false');
+        return fetchAPI<{ job_id: string; status: string; message: string; chunked?: boolean; chunk_count?: number; job_ids?: string[] }>(
+            '/questions/import',
+            { method: 'POST', body: formData }
+        );
+    },
+
+    preflightQuestionImport: async (file: File, chunkPageSize: number = 20) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('chunk_page_size', String(chunkPageSize));
+        return fetchAPI<{
+            is_pdf: boolean;
+            total_pages: number | null;
+            max_pages_without_chunking: number;
+            requires_chunking: boolean;
+            chunk_page_size: number;
+            chunk_count: number;
+            message: string;
+        }>('/questions/import/preflight', { method: 'POST', body: formData });
+    },
+
+    preflightSpreadsheetImport: async (file: File, sheetName?: string) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        if (sheetName) {
+            formData.append('sheet_name', sheetName);
+        }
+        return fetchAPI<{
+            sheets: string[];
+            selected_sheet: string | null;
+            columns: string[];
+            mapping: Record<string, string | null>;
+            confidence: Record<string, number>;
+            uncertain_fields: string[];
+            valid_rows: number;
+            invalid_rows: number;
+            row_errors_preview: Array<{ row: number; error: string }>;
+            auto_fix_suggestions_preview: Array<{ row: number; error: string; suggestion: string; auto_fixable: boolean }>;
+            auto_fixable_count: number;
+            unfixable_count: number;
+        }>('/questions/import/spreadsheet/preflight', { method: 'POST', body: formData });
+    },
+
+    downloadQuestionImportTemplate: async () => {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/questions/import/template`, {
+            method: 'GET',
+            headers: {
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            },
+        });
+
+        if (!res.ok) {
+            throw new Error(`Failed to download template: ${res.statusText}`);
+        }
+
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'eramatch_question_import_template.csv';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+    },
+
+    /** List all import jobs for the current organization. */
+    listImportJobs: async () => fetchAPI<any[]>('/questions/import/jobs'),
+
+    /** Get draft questions for a completed import job (staging review). */
+    getDraftQuestions: async (jobId: string) =>
+        fetchAPI<any>(`/questions/import/jobs/${jobId}/draft`),
+
+    downloadImportRowErrorsReport: async (jobId: string) => {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/questions/import/jobs/${jobId}/row-errors-report`, {
+            method: 'GET',
+            headers: {
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            },
+        });
+
+        if (!res.ok) {
+            throw new Error(`Failed to download row error report: ${res.statusText}`);
+        }
+
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `import_row_errors_${jobId}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+    },
+
+    /** Commit approved draft questions into the live Question Bank. */
+    approveImportQuestions: async (jobId: string, questions: any[]) =>
+        fetchAPI<{ imported_count: number; skipped_count: number; message: string }>(
+            `/questions/import/jobs/${jobId}/approve`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ questions }),
+            }
+        ),
+
+    refineImportQuestion: async (jobId: string, questionIndex: number) =>
+        fetchAPI<{ question_index: number; refined_question: any; message: string }>(
+            `/questions/import/jobs/${jobId}/draft/refine`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question_index: questionIndex }),
+            }
+        ),
 };

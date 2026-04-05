@@ -27,6 +27,7 @@ from app.schemas.group import (
     GroupStatsResponse,
     CandidateProgressResponse,
     GroupUpdateRequest,
+    GroupDeleteRequest,
     StartStageRequest,
     StartStageResponse,
     CloseStageRequest,
@@ -111,12 +112,13 @@ async def update_group(
 )
 async def delete_group(
     group_id: UUID,
+    body: GroupDeleteRequest,
     session: DbSession,
     current_user: RecruiterUser,
 ):
-    """Soft delete a group and release all assigned candidates."""
+    """Soft delete a group with options to release, reject, or transfer candidates."""
     svc = GroupService(session, current_user)
-    await svc.delete_group(group_id)
+    await svc.delete_group(group_id, request=body)
 
 
 # ─── Group Statistics ────────────────────────────────────────────────────────

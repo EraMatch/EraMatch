@@ -145,6 +145,11 @@ class OrganizationUser(BaseModel, table=True):
     last_login_at: datetime | None = Field(default=None)
     is_deleted: bool = Field(default=False)
 
+    @property
+    def user_id(self) -> UUID:
+        """Backward-compatible alias for code paths that still read user_id."""
+        return self.id
+
 
 class UserPermission(BaseModel, table=True):
     __tablename__ = "user_permissions"
@@ -416,6 +421,71 @@ class QuestionBankFavorite(BaseModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class QuestionImportJob(SQLModel, table=True):
+    """
+    Tracks an AI-powered question import job.
+    A job goes through: pending → processing → completed | failed
+    Draft questions are stored in JSONB until the recruiter approves them.
+    """
+    __tablename__ = "question_import_jobs"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="job_id",
+        sa_column=Column("job_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    created_by_user_id: UUID = Field(foreign_key="organization_users.user_id")
+
+    # Status lifecycle
+    status: str = Field(default="pending", max_length=20)  # pending|processing|completed|failed
+    import_type: str = Field(max_length=30)  # generative|csv|extraction
+
+    # Source file info
+    source_filename: str | None = Field(default=None, max_length=255)
+
+    # AI results stored as JSONB until recruiter approves
+    draft_questions: list | None = Field(default=None, sa_column=Column(JSONB))
+    critic_stats: dict | None = Field(default=None, sa_column=Column(JSONB))
+
+    # Progress counters
+    total_generated: int = Field(default=0)
+    total_flagged: int = Field(default=0)
+    total_approved: int = Field(default=0)
+
+    error_message: str | None = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = Field(default=None)
+
+
+class GitHubAnalysisJob(SQLModel, table=True):
+    """
+    Tracks GitHub profile analysis and GitHub-inspired question generation jobs.
+    Lifecycle: pending -> processing -> completed|failed|cancelled
+    """
+    __tablename__ = "github_analysis_jobs"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="job_id",
+        sa_column=Column("job_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    candidate_id: UUID = Field(foreign_key="candidate_profiles.candidate_id")
+    created_by_user_id: UUID = Field(foreign_key="organization_users.user_id")
+
+    status: str = Field(default="pending", max_length=20)
+    github_url: str | None = Field(default=None, max_length=500)
+
+    analysis_data: dict | None = Field(default=None, sa_column=Column(JSONB))
+    generated_questions: list | None = Field(default=None, sa_column=Column(JSONB))
+    total_generated: int = Field(default=0)
+
+    error_message: str | None = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = Field(default=None)
+
+
 # =============================================================================
 # SECTION 6: ASSESSMENT CONFIG & SESSIONS (4 Tables)
 # =============================================================================
@@ -667,6 +737,7 @@ class CVAnalysis(BaseModel, table=True):
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     cv_file_url: str | None = Field(default=None, max_length=500)
     parsed_data: dict | None = Field(default=None, sa_column=Column(JSONB))
+    github_profile: dict | None = Field(default=None, sa_column=Column(JSONB))
     skills: list | None = Field(default=None, sa_column=Column(ARRAY(String)))
     experience_years: Decimal | None = Field(default=None)
     match_score: Decimal | None = Field(default=None)

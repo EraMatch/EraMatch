@@ -56,6 +56,18 @@ class QuestionService:
             diff_str = diff_map.get(qb.difficulty, "Medium")
             type_str = type_map.get(qb.question_type, "Multiple Choice")
 
+            # Form specific settings from `question_config` and `correct_answer`
+            raw_options = config.get("options")
+            processed_options = []
+            if raw_options and isinstance(raw_options, list):
+                for opt in raw_options:
+                    if isinstance(opt, dict):
+                        processed_options.append(opt.get("text", str(opt)))
+                    else:
+                        processed_options.append(str(opt))
+            else:
+                processed_options = raw_options if raw_options is not None else []
+
             item = QuestionBankResponseItem(
                 id=qb.id,
                 text=qb.question_text,
@@ -69,8 +81,8 @@ class QuestionService:
                 createdBy="You" if qb.created_by_user_id == self.user.id else "System",
                 isFavorite=qb.id in favorite_ids,
 
-                # Form specific settings from `question_config` and `correct_answer`
-                options=config.get("options"),
+                # Form specific settings from processed options
+                options=processed_options,
                 correctAnswer=qb.correct_answer.get("answer") if qb.correct_answer else None,
                 multipleCorrect=config.get("multiple_correct", False),
                 explanation=config.get("explanation"),
@@ -81,7 +93,19 @@ class QuestionService:
                 memoryLimit=config.get("memory_limit"),
                 maxWords=config.get("max_words"),
                 expectedKeywords=config.get("expected_keywords"),
-                rubric=config.get("rubric")
+                rubric=config.get("rubric"),
+                evidence=config.get("evidence"),
+                referenceAnswer=config.get("reference_answer"),
+                rubricYesNoChecks=config.get("rubric_yes_no_checks"),
+                needsReview=config.get("needs_review"),
+                criticScore=config.get("critic_score"),
+                criticWeightedScore=config.get("critic_weighted_score"),
+                criticFeedback=config.get("critic_feedback"),
+                criticChecks=config.get("critic_checks"),
+                retryCount=config.get("retry_count"),
+                importType=config.get("import_type"),
+                importJobId=config.get("import_job_id"),
+                sourceFilename=config.get("source_filename")
             )
             response_items.append(item)
         
@@ -106,6 +130,17 @@ class QuestionService:
 
         config = {}
         correct_answer = None
+
+        # Shared metadata fields used by review/approval workflows.
+        config["evidence"] = data.evidence
+        config["reference_answer"] = data.referenceAnswer
+        config["rubric_yes_no_checks"] = data.rubricYesNoChecks
+        config["needs_review"] = data.needsReview
+        config["critic_score"] = data.criticScore
+        config["critic_weighted_score"] = data.criticWeightedScore
+        config["critic_feedback"] = data.criticFeedback
+        config["critic_checks"] = data.criticChecks
+        config["retry_count"] = data.retryCount
 
         if q_type == "mcq":
             config["options"] = data.options
@@ -167,7 +202,19 @@ class QuestionService:
             memoryLimit=data.memoryLimit,
             maxWords=data.maxWords,
             expectedKeywords=data.expectedKeywords,
-            rubric=data.rubric
+            rubric=data.rubric,
+            evidence=data.evidence,
+            referenceAnswer=data.referenceAnswer,
+            rubricYesNoChecks=data.rubricYesNoChecks,
+            needsReview=data.needsReview,
+            criticScore=data.criticScore,
+            criticWeightedScore=data.criticWeightedScore,
+            criticFeedback=data.criticFeedback,
+            criticChecks=data.criticChecks,
+            retryCount=data.retryCount,
+            importType=None,
+            importJobId=None,
+            sourceFilename=None
         )
 
     async def toggle_favorite(self, question_id: UUID) -> bool:
