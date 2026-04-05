@@ -31,6 +31,11 @@ interface Candidate {
   job_titles: string[];
   degrees: string[];
   universities: string[];
+  github_overall_score?: number | null;
+  github_repo_confidence_score?: number | null;
+  github_contribution_source?: string | null;
+  github_freshness_hours?: number | null;
+  github_has_fallback?: boolean;
 }
 
 interface Assessment {
@@ -111,7 +116,12 @@ export function PositionDetailView({
     experienceRange: [0, 20],
     skills: [],
     jobTitles: [],
-    degrees: []
+    degrees: [],
+    githubMinScore: 0,
+    githubMinRepoConfidence: 0,
+    githubMaxFreshnessHours: 720,
+    githubContributionSources: [],
+    githubFallbackOnly: false,
   });
 
   // Rename Group State
@@ -126,6 +136,7 @@ export function PositionDetailView({
     skills: Array.from(new Set(candidates.flatMap(c => c.skills || []))).filter(Boolean).sort(),
     jobTitles: Array.from(new Set(candidates.flatMap(c => c.job_titles || []))).filter(Boolean).sort(),
     degrees: Array.from(new Set(candidates.flatMap(c => c.degrees || []))).filter(Boolean).sort(),
+    githubContributionSources: Array.from(new Set(candidates.map(c => c.github_contribution_source || '').filter(Boolean))).sort(),
   };
 
   // Filter Logic
@@ -170,6 +181,33 @@ export function PositionDetailView({
       const hasSchool = c.universities?.some(u => filters.schools.includes(u));
       if (!hasSchool) return false;
     }
+
+    // GitHub score threshold
+    if (filters.githubMinScore > 0) {
+      const score = c.github_overall_score ?? 0;
+      if (score < filters.githubMinScore) return false;
+    }
+
+    // Repo confidence threshold (0..1)
+    if (filters.githubMinRepoConfidence > 0) {
+      const confidence = c.github_repo_confidence_score ?? 0;
+      if (confidence < filters.githubMinRepoConfidence) return false;
+    }
+
+    // Freshness threshold (hours)
+    if (filters.githubMaxFreshnessHours < 720) {
+      const freshness = c.github_freshness_hours;
+      if (freshness == null || freshness > filters.githubMaxFreshnessHours) return false;
+    }
+
+    // Contribution sources
+    if (filters.githubContributionSources.length > 0) {
+      const source = c.github_contribution_source || '';
+      if (!filters.githubContributionSources.includes(source)) return false;
+    }
+
+    // Fallback-only
+    if (filters.githubFallbackOnly && !c.github_has_fallback) return false;
 
     return true;
   });

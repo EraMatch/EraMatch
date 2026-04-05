@@ -10,7 +10,7 @@ from app.core.exceptions import NotFoundException, UnauthorizedException
 from app.models import (
     User, Project, Position, CandidateApplication, CandidateGroup, 
     CandidateStageProgress, OrganizationUser, Hire, Offer, ProctoringFlag,
-    ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, Organization,
+    ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, GitHubAnalysis, Organization,
     OrganizationUserSettings, FilterTemplate
 )
 from app.integrations.llm import get_llm
@@ -591,15 +591,13 @@ class RecruiterService:
 
     async def list_all_candidates(self) -> list[PositionCandidateResponse]:
         """List all candidates in the organization (for manual adding)."""
-        from app.models import CVAnalysis # Import here to avoid circular
-        # CandidateApplication should be available from top-level imports
-        
-        # Join Profile -> Application -> CVAnalysis
+        # Join Profile -> Application -> CVAnalysis -> GitHubAnalysis
         # Start from CandidateProfile to get all profiles, then left join apps and cvs
         stmt = (
-            select(CandidateProfile, CVAnalysis)
+            select(CandidateProfile, CVAnalysis, GitHubAnalysis)
             .outerjoin(CandidateApplication, CandidateProfile.id == CandidateApplication.candidate_id)
             .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
+            .outerjoin(GitHubAnalysis, CandidateProfile.id == GitHubAnalysis.candidate_id)
             .where(
                 CandidateProfile.organization_id == self.organization_id,
                 CandidateProfile.is_deleted == False
@@ -611,7 +609,15 @@ class RecruiterService:
         # Deduplicate profiles, keeping the one with best match score or latest
         candidates_map = {}
         
-        for p, cv in rows:
+        def _to_float(value, default: float | None = None) -> float | None:
+            if value is None:
+                return default
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        for p, cv, gh in rows:
             if p.id in candidates_map:
                 # Logic: If current CV has higher match score than stored one, replace
                 current_best_cv = candidates_map[p.id]['cv']
@@ -619,15 +625,22 @@ class RecruiterService:
                 old_score = float(current_best_cv.match_score) if current_best_cv and current_best_cv.match_score is not None else 0.0
                 
                 if new_score > old_score:
-                    candidates_map[p.id] = {'profile': p, 'cv': cv}
+                    candidates_map[p.id] = {
+                        'profile': p,
+                        'cv': cv,
+                        'gh': gh if gh is not None else candidates_map[p.id].get('gh')
+                    }
+                if candidates_map[p.id].get('gh') is None and gh is not None:
+                    candidates_map[p.id]['gh'] = gh
                 # Else keep existing
             else:
-                candidates_map[p.id] = {'profile': p, 'cv': cv}
+                candidates_map[p.id] = {'profile': p, 'cv': cv, 'gh': gh}
         
         candidates = []
         for item in candidates_map.values():
             p = item['profile']
             cv = item['cv']
+            gh = item.get('gh')
             
             # Extract skills and experience if available
             skills = cv.skills if cv and cv.skills else []
@@ -666,6 +679,27 @@ class RecruiterService:
                         deg = edu.get("degree") or edu.get("qualification")
                         if deg: degrees.append(str(deg))
 
+            github_overall_score = None
+            github_repo_confidence_score = None
+            github_contribution_source = None
+            github_freshness_hours = None
+            github_has_fallback = False
+            github_fallback_reason = None
+
+            if gh and isinstance(gh.analysis_data, dict):
+                analysis_data = gh.analysis_data
+                repo_confidence = analysis_data.get("repo_confidence")
+                data_freshness = analysis_data.get("data_freshness")
+
+                github_overall_score = _to_float(analysis_data.get("overall_github_score"))
+                if isinstance(repo_confidence, dict):
+                    github_repo_confidence_score = _to_float(repo_confidence.get("selected_repo_confidence"))
+                if isinstance(data_freshness, dict):
+                    github_contribution_source = data_freshness.get("contribution_source")
+                    github_freshness_hours = _to_float(data_freshness.get("source_freshness_hours"))
+                    github_fallback_reason = data_freshness.get("fallback_reason")
+                    github_has_fallback = bool(github_fallback_reason)
+
             candidates.append(PositionCandidateResponse(
                 id=p.id, # Profile ID
                 name=p.full_name,
@@ -681,7 +715,13 @@ class RecruiterService:
                 companies=companies,
                 job_titles=job_titles,
                 universities=universities,
-                degrees=degrees
+                degrees=degrees,
+                github_overall_score=github_overall_score,
+                github_repo_confidence_score=github_repo_confidence_score,
+                github_contribution_source=github_contribution_source,
+                github_freshness_hours=github_freshness_hours,
+                github_has_fallback=github_has_fallback,
+                github_fallback_reason=github_fallback_reason,
             ))
             
         return candidates

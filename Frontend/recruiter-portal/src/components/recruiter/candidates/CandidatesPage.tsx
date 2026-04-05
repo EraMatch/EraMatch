@@ -17,6 +17,19 @@ interface Candidate {
   source?: string;
   seniority?: string;
   location?: string;
+  githubOverallScore?: number | null;
+  githubRepoConfidenceScore?: number | null;
+  githubContributionSource?: string | null;
+  githubFreshnessHours?: number | null;
+  githubHasFallback?: boolean;
+}
+
+interface GitHubFilters {
+  minScore: number;
+  minConfidence: number;
+  maxFreshnessHours: number;
+  sources: string[];
+  fallbackOnly: boolean;
 }
 
 interface CandidatesPageProps {
@@ -31,6 +44,13 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [githubFilters, setGithubFilters] = useState<GitHubFilters>({
+    minScore: 0,
+    minConfidence: 0,
+    maxFreshnessHours: 720,
+    sources: [],
+    fallbackOnly: false,
+  });
   const navigate = useNavigate();
 
   // Fetch candidates from API
@@ -51,7 +71,12 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
           hiringRound: c.hiringRound || 'Q1 2025',
           source: c.source || 'LinkedIn',
           seniority: c.seniority,
-          location: c.location
+          location: c.location,
+          githubOverallScore: c.github_overall_score,
+          githubRepoConfidenceScore: c.github_repo_confidence_score,
+          githubContributionSource: c.github_contribution_source,
+          githubFreshnessHours: c.github_freshness_hours,
+          githubHasFallback: c.github_has_fallback,
         }));
         setCandidates(mappedCandidates);
       } catch (error) {
@@ -69,10 +94,23 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
 
   const displayedCandidates = activeView === 'active' ? activeCandidates : archivedCandidates;
 
+  const githubSources = Array.from(
+    new Set(
+      displayedCandidates
+        .map((candidate) => candidate.githubContributionSource || '')
+        .filter((source) => source.length > 0)
+    )
+  ).sort();
+
   const filteredCandidates = displayedCandidates.filter(candidate =>
-    candidate.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    candidate.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (candidate.position?.toLowerCase() || '').includes(searchQuery.toLowerCase())
+    (candidate.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      candidate.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (candidate.position?.toLowerCase() || '').includes(searchQuery.toLowerCase())) &&
+    (githubFilters.minScore <= 0 || (candidate.githubOverallScore ?? 0) >= githubFilters.minScore) &&
+    (githubFilters.minConfidence <= 0 || (candidate.githubRepoConfidenceScore ?? 0) >= githubFilters.minConfidence) &&
+    (githubFilters.maxFreshnessHours >= 720 || ((candidate.githubFreshnessHours ?? Infinity) <= githubFilters.maxFreshnessHours)) &&
+    (githubFilters.sources.length === 0 || githubFilters.sources.includes(candidate.githubContributionSource || '')) &&
+    (!githubFilters.fallbackOnly || Boolean(candidate.githubHasFallback))
   );
 
   const handleToggleSelect = (id: number) => {
@@ -200,6 +238,88 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
               <ChevronDown size={14} className={`transition-transform ${showFilters ? 'rotate-180' : ''}`} />
             </button>
           </div>
+
+          {showFilters && (
+            <div className="mb-6 p-4 bg-white rounded-[12px] border border-[#e5e7eb] space-y-4">
+              <div className="flex flex-wrap items-center gap-4">
+                <label className="flex items-center gap-2">
+                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Min GitHub score</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={githubFilters.minScore}
+                    onChange={(e) => setGithubFilters((prev) => ({ ...prev, minScore: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }))}
+                    className="w-[88px] h-[36px] px-3 rounded-[8px] border border-[#e5e7eb] text-[13px]"
+                  />
+                </label>
+
+                <label className="flex items-center gap-2">
+                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Min confidence</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={Math.round(githubFilters.minConfidence * 100)}
+                    onChange={(e) => {
+                      const percentage = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                      setGithubFilters((prev) => ({ ...prev, minConfidence: percentage / 100 }));
+                    }}
+                    className="w-[88px] h-[36px] px-3 rounded-[8px] border border-[#e5e7eb] text-[13px]"
+                  />
+                </label>
+
+                <label className="flex items-center gap-2">
+                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Max freshness (h)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={720}
+                    value={githubFilters.maxFreshnessHours}
+                    onChange={(e) => setGithubFilters((prev) => ({ ...prev, maxFreshnessHours: Math.max(0, Math.min(720, Number(e.target.value) || 0)) }))}
+                    className="w-[100px] h-[36px] px-3 rounded-[8px] border border-[#e5e7eb] text-[13px]"
+                  />
+                </label>
+
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={githubFilters.fallbackOnly}
+                    onChange={(e) => setGithubFilters((prev) => ({ ...prev, fallbackOnly: e.target.checked }))}
+                    className="w-[16px] h-[16px]"
+                  />
+                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Fallback only</span>
+                </label>
+              </div>
+
+              {githubSources.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {githubSources.map((source) => {
+                    const active = githubFilters.sources.includes(source);
+                    return (
+                      <button
+                        key={source}
+                        onClick={() => {
+                          setGithubFilters((prev) => ({
+                            ...prev,
+                            sources: active
+                              ? prev.sources.filter((item) => item !== source)
+                              : [...prev.sources, source],
+                          }));
+                        }}
+                        className={`px-3 py-1.5 rounded-full text-[12px] border transition-colors ${active
+                          ? 'bg-[#6366f1] text-white border-[#6366f1]'
+                          : 'bg-white text-[#374151] border-[#e5e7eb] hover:border-[#d1d5db]'
+                          }`}
+                      >
+                        {source}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Candidates List */}
           <div className="bg-white rounded-[16px] border border-[#e5e7eb] overflow-hidden">
