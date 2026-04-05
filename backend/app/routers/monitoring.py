@@ -284,23 +284,36 @@ async def get_assessment_responses(candidate_id: str, session: DbSession):
                 WHERE ca.candidate_id = :candidate_id
                 ORDER BY COALESCE(oa.submitted_at, oa.started_at) DESC NULLS LAST
                 LIMIT 1
+            ),
+            latest_answers AS (
+                SELECT DISTINCT ON (ans.question_id)
+                    ans.answer_id,
+                    ans.question_id,
+                    ans.answer_data,
+                    ans.is_correct,
+                    ans.points_earned,
+                    ans.points_max,
+                    ans.time_spent_seconds,
+                    ans.answered_at
+                FROM candidate_answers ans
+                JOIN latest_session ls ON ans.session_id = ls.session_id
+                ORDER BY ans.question_id, ans.answered_at DESC
             )
-            SELECT 
-                ans.answer_id::text,
+            SELECT
+                la.answer_id::text,
                 qb.question_text,
                 qb.question_type,
-                ans.answer_data,
-                ans.is_correct,
-                ans.points_earned,
-                ans.points_max,
-                ans.time_spent_seconds,
-                ans.answered_at,
+                la.answer_data,
+                la.is_correct,
+                la.points_earned,
+                la.points_max,
+                la.time_spent_seconds,
+                la.answered_at,
                 qb.question_config,
                 qb.correct_answer
-            FROM candidate_answers ans
-            JOIN latest_session ls ON ans.session_id = ls.session_id
-            JOIN question_bank qb ON ans.question_id = qb.question_id
-            ORDER BY ans.question_order ASC, ans.answered_at ASC
+            FROM latest_answers la
+            JOIN question_bank qb ON la.question_id = qb.question_id
+            ORDER BY la.answered_at ASC
         """),
         {"candidate_id": candidate_id}
     )
