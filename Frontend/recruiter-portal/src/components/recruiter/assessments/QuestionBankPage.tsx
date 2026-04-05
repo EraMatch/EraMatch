@@ -1213,7 +1213,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                     </div>
                   </div>
 
-                  {(question.importJobId || question.evidence || question.referenceAnswer || question.criticFeedback || (question.criticChecks?.length || 0) > 0) && (
+                  {(question.importJobId || question.sourceFilename || question.evidence || question.referenceAnswer || question.criticFeedback || (question.criticChecks?.length || 0) > 0) && (
                     <div className="mt-4 rounded-[12px] border border-[#e5e7eb] bg-[#f8fafc] p-4">
                       <div className="flex flex-wrap items-center gap-2 mb-3">
                         <span className="px-2.5 py-1 text-[12px] rounded-full bg-white text-[#334155] border border-[#cbd5e1]">
@@ -1240,6 +1240,20 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                           </span>
                         )}
                       </div>
+
+                      {question.sourceFilename && (
+                        <div className="mb-3">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Source Filename</div>
+                          <p className="text-[13px] text-[#1f2937] break-all">{question.sourceFilename}</p>
+                        </div>
+                      )}
+
+                      {question.importJobId && (
+                        <div className="mb-3">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Import Job ID</div>
+                          <p className="text-[13px] text-[#1f2937] break-all">{question.importJobId}</p>
+                        </div>
+                      )}
 
                       {question.referenceAnswer && (
                         <div className="mb-3">

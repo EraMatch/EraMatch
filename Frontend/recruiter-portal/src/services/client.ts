@@ -24,7 +24,20 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
         window.location.href = path.startsWith('/admin') ? '/admin/login' : '/recruiter/login';
         throw new Error('Unauthorized');
     }
-    if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
+    if (!res.ok) {
+        let detail = '';
+        try {
+            const data = await res.json();
+            if (typeof data?.detail === 'string') {
+                detail = data.detail;
+            } else if (Array.isArray(data?.detail)) {
+                detail = data.detail.map((item: any) => item?.msg || JSON.stringify(item)).join('; ');
+            }
+        } catch {
+            detail = '';
+        }
+        throw new Error(detail ? `API Error: ${detail}` : `API Error: ${res.status} ${res.statusText}`);
+    }
     if (res.status === 204) return {} as T;
     return res.json();
 }

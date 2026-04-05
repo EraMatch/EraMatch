@@ -14,7 +14,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   ArrowLeft, CheckCircle2, XCircle, AlertTriangle, Loader2,
-  ChevronDown, ChevronUp, Edit3, Save, RotateCcw, Sparkles, ShieldAlert, ListChecks
+  ChevronDown, ChevronUp, Edit3, Save, RotateCcw, Sparkles, ShieldAlert, ListChecks, Copy, Download
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../../../services/api';
@@ -57,7 +57,27 @@ interface DraftReviewData {
   job_id: string;
   import_type: string;
   source_filename: string | null;
-  critic_stats: { approved: number; flagged: number; rejected: number; total_retries: number } | null;
+  critic_stats: {
+    approved: number;
+    flagged: number;
+    rejected: number;
+    total_retries: number;
+    row_error_count?: number;
+    sheet_name?: string | null;
+    row_errors?: Array<{
+      row?: number;
+      error?: string;
+      question_type?: string;
+      question_text?: string;
+    }>;
+    auto_fix_enabled?: boolean;
+    auto_fix_count?: number;
+    auto_fix_actions?: Array<{
+      row?: number;
+      error?: string;
+      fix_applied?: string;
+    }>;
+  } | null;
   questions: DraftQuestion[];
 }
 
@@ -109,6 +129,13 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
   const [approveResult, setApproveResult] = useState<{ imported_count: number; message: string } | null>(null);
   const [refiningQuestionIndex, setRefiningQuestionIndex] = useState<number | null>(null);
   const [refineError, setRefineError] = useState<string | null>(null);
+  const [isDownloadingRowReport, setIsDownloadingRowReport] = useState(false);
+  const [rowErrorTypeFilter, setRowErrorTypeFilter] = useState<string>('all');
+  const [rowJumpInput, setRowJumpInput] = useState<string>('');
+  const [rowJumpError, setRowJumpError] = useState<string | null>(null);
+  const [highlightedRow, setHighlightedRow] = useState<number | null>(null);
+  const [copiedRowKey, setCopiedRowKey] = useState<string | null>(null);
+  const [reviewSortMode, setReviewSortMode] = useState<'risk' | 'chronological'>('risk');
 
   const reviewPage: ReviewSubPage = useMemo(() => {
     const tab = searchParams.get('reviewType')?.toLowerCase();
@@ -423,12 +450,26 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
   const getNormalizedType = (type?: string) => (type || '').trim().toLowerCase();
   const isMcqQuestion = (type?: string) => getNormalizedType(type) === 'mcq';
 
+  const computeRiskScore = useCallback((q: DraftQuestion) => {
+    const criticWeighted = typeof q.critic_weighted_score === 'number' ? q.critic_weighted_score : q.critic_score;
+    const qualityPenalty = Math.max(0, (1 - Number(criticWeighted || 0)) * 100);
+    const needsReviewPenalty = q.needs_review ? 60 : 0;
+    const difficultyBonus = q.difficulty === 'Hard' ? 20 : q.difficulty === 'Medium' ? 10 : 0;
+    const typeBonus = getNormalizedType(q.type) === 'essay' ? 8 : 4;
+    const critiquePenalty = (q.critic_checks || []).filter((c) => c.verdict === 'NO').length * 6;
+    return qualityPenalty + needsReviewPenalty + difficultyBonus + typeBonus + critiquePenalty;
+  }, []);
+
   const mcqCount = rows.filter(r => isMcqQuestion(r.question.type)).length;
   const essayCount = rows.length - mcqCount;
 
   const visibleRows = rows
     .map((row, index) => ({ row, index }))
-    .filter(({ row }) => reviewPage === 'mcq' ? isMcqQuestion(row.question.type) : !isMcqQuestion(row.question.type));
+    .filter(({ row }) => reviewPage === 'mcq' ? isMcqQuestion(row.question.type) : !isMcqQuestion(row.question.type))
+    .sort((a, b) => {
+      if (reviewSortMode === 'chronological') return a.index - b.index;
+      return computeRiskScore(b.row.question) - computeRiskScore(a.row.question);
+    });
 
   const visibleCount = visibleRows.length;
   const visibleSelectedCount = visibleRows.filter(({ row }) => row.selected).length;
@@ -484,6 +525,92 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
   }
 
   const stats = data?.critic_stats;
+  const csvRowErrors = useMemo(() => {
+    if (!stats?.row_errors || !Array.isArray(stats.row_errors)) return [];
+    return stats.row_errors
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        row: Number(item.row || 0),
+        error: String(item.error || 'Unknown validation error'),
+        question_type: String(item.question_type || ''),
+        question_text: String(item.question_text || ''),
+      }))
+      .filter((item) => item.row > 0);
+  }, [stats]);
+
+  const rowErrorTypes = useMemo(() => {
+    const unique = Array.from(new Set(csvRowErrors.map((item) => item.error))).filter(Boolean);
+    return ['all', ...unique];
+  }, [csvRowErrors]);
+
+  useEffect(() => {
+    const urlJob = searchParams.get('rowErrorFilterJob');
+    const urlFilter = searchParams.get('rowErrorFilter');
+    if (urlJob === jobId && urlFilter && rowErrorTypes.includes(urlFilter)) {
+      setRowErrorTypeFilter(urlFilter);
+      return;
+    }
+    setRowErrorTypeFilter('all');
+  }, [searchParams, jobId, rowErrorTypes]);
+
+  const setRowErrorFilterAndPersist = (nextFilter: string) => {
+    setRowErrorTypeFilter(nextFilter);
+    const nextParams = new URLSearchParams(searchParams);
+    if (nextFilter === 'all') {
+      nextParams.delete('rowErrorFilter');
+      nextParams.delete('rowErrorFilterJob');
+    } else {
+      nextParams.set('rowErrorFilter', nextFilter);
+      nextParams.set('rowErrorFilterJob', jobId);
+    }
+    setSearchParams(nextParams);
+  };
+
+  const filteredRowErrors = useMemo(() => {
+    if (rowErrorTypeFilter === 'all') return csvRowErrors;
+    return csvRowErrors.filter((item) => item.error === rowErrorTypeFilter);
+  }, [csvRowErrors, rowErrorTypeFilter]);
+
+  const exportFilteredRowErrors = () => {
+    if (filteredRowErrors.length === 0) {
+      setRowJumpError('No rows to export for the current filter.');
+      return;
+    }
+
+    const escapeCell = (value: string) => `"${(value || '').replace(/"/g, '""')}"`;
+    const header = ['row', 'error', 'question_type', 'question_text'];
+    const body = filteredRowErrors.map((item) => [
+      String(item.row),
+      item.error,
+      item.question_type || '',
+      item.question_text || '',
+    ]);
+    const csv = [header, ...body]
+      .map((r) => r.map((cell) => escapeCell(String(cell))).join(','))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `import_row_errors_filtered_${jobId}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  };
+
+  const copyRowErrorText = async (item: { row: number; error: string; question_type?: string; question_text?: string }, index: number) => {
+    const rowText = `Row ${item.row} | Error: ${item.error} | Type: ${item.question_type || '-'} | Question: ${item.question_text || '-'}`;
+    try {
+      await navigator.clipboard.writeText(rowText);
+      const key = `${item.row}-${index}`;
+      setCopiedRowKey(key);
+      setTimeout(() => setCopiedRowKey((prev) => (prev === key ? null : prev)), 1500);
+    } catch {
+      setError('Unable to copy row error text from browser clipboard.');
+    }
+  };
 
   return (
     <div className="max-w-[1280px] mx-auto px-6 py-6">
@@ -505,6 +632,9 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
               {data?.source_filename ? `${data.source_filename} · ` : ''}
               {rows.length} generated question{rows.length !== 1 ? 's' : ''}
             </p>
+            {data?.import_type === 'csv' && stats?.sheet_name && (
+              <p className="text-[12px] text-[#94a3b8] mt-1">Sheet: {stats.sheet_name}</p>
+            )}
           </div>
 
           <div className="bg-white border border-[#e5e7eb] rounded-xl px-4 py-3 shadow-sm min-w-[240px]">
@@ -514,6 +644,28 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
             <div className="text-[12px] text-[#9ca3af] mt-1">Overall selected: {selectedCount}/{rows.length}</div>
           </div>
         </div>
+
+        {data?.import_type === 'csv' && (stats?.row_error_count || 0) > 0 && (
+          <div className="mt-3">
+            <button
+              onClick={async () => {
+                setIsDownloadingRowReport(true);
+                try {
+                  await api.recruiter.downloadImportRowErrorsReport(jobId);
+                } catch (err: any) {
+                  setError(err?.message || 'Failed to download row error report');
+                } finally {
+                  setIsDownloadingRowReport(false);
+                }
+              }}
+              disabled={isDownloadingRowReport}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-amber-300 text-amber-700 text-[13px] font-medium hover:bg-amber-50 disabled:opacity-55 disabled:cursor-not-allowed"
+            >
+              {isDownloadingRowReport ? <Loader2 size={15} className="animate-spin" /> : <AlertTriangle size={15} />}
+              {isDownloadingRowReport ? 'Downloading row report...' : `Download Row Error Report (${stats?.row_error_count || 0})`}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="mb-5 rounded-2xl border border-[#e5e7eb] bg-white p-2 shadow-sm">
@@ -546,6 +698,22 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
         </div>
       </div>
 
+      <div className="mb-5 rounded-2xl border border-[#e5e7eb] bg-white p-3 shadow-sm flex flex-wrap items-center gap-2">
+        <span className="text-[12px] uppercase tracking-wide text-[#6b7280] font-semibold">Queue Priority</span>
+        <button
+          onClick={() => setReviewSortMode('risk')}
+          className={`px-3 py-1.5 rounded-full text-[12px] border ${reviewSortMode === 'risk' ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-[#f8fafc] text-[#4b5563] border-[#e5e7eb]'}`}
+        >
+          Risk/Impact First
+        </button>
+        <button
+          onClick={() => setReviewSortMode('chronological')}
+          className={`px-3 py-1.5 rounded-full text-[12px] border ${reviewSortMode === 'chronological' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-[#f8fafc] text-[#4b5563] border-[#e5e7eb]'}`}
+        >
+          Chronological
+        </button>
+      </div>
+
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
@@ -563,6 +731,146 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
           <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3">
             <div className="text-[12px] text-indigo-700">Total Retries</div>
             <div className="text-[22px] font-semibold text-indigo-700">{stats.total_retries}</div>
+          </div>
+        </div>
+      )}
+
+      {data?.import_type === 'csv' && stats?.auto_fix_enabled && (
+        <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4">
+          <div className="text-[14px] font-semibold text-emerald-800">Auto-fix Applied Before Review</div>
+          <div className="text-[12px] text-emerald-700 mt-1">
+            Applied fixes: {stats.auto_fix_count || 0}
+          </div>
+          {Array.isArray(stats.auto_fix_actions) && stats.auto_fix_actions.length > 0 && (
+            <div className="mt-2 max-h-[140px] overflow-y-auto space-y-1">
+              {stats.auto_fix_actions.slice(0, 12).map((item, idx) => (
+                <div key={`auto-fix-${idx}`} className="text-[12px] text-emerald-800">
+                  Row {item.row || '-'}: {item.fix_applied || item.error || 'Auto-fix applied'}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {data?.import_type === 'csv' && csvRowErrors.length > 0 && (
+        <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50/40 p-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+            <div>
+              <div className="text-[14px] font-semibold text-amber-800">Spreadsheet Row Validation Table</div>
+              <div className="text-[12px] text-amber-700">{filteredRowErrors.length} visible row issue(s) • {csvRowErrors.length} total</div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={rowErrorTypeFilter}
+                onChange={(e) => {
+                  setRowErrorFilterAndPersist(e.target.value);
+                  setRowJumpError(null);
+                }}
+                className="h-[34px] px-2 rounded-[8px] border border-amber-300 bg-white text-[12px] text-amber-900"
+              >
+                {rowErrorTypes.map((errType) => (
+                  <option key={errType} value={errType}>
+                    {errType === 'all' ? 'All Error Types' : errType}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                type="number"
+                min={1}
+                value={rowJumpInput}
+                onChange={(e) => {
+                  setRowJumpInput(e.target.value);
+                  setRowJumpError(null);
+                }}
+                placeholder="Row #"
+                className="h-[34px] w-[92px] px-2 rounded-[8px] border border-amber-300 bg-white text-[12px] text-amber-900"
+              />
+
+              <button
+                onClick={() => {
+                  const rowNum = Number(rowJumpInput);
+                  if (!Number.isInteger(rowNum) || rowNum <= 0) {
+                    setRowJumpError('Enter a valid row number.');
+                    return;
+                  }
+
+                  const existsInView = filteredRowErrors.some((item) => item.row === rowNum);
+                  if (!existsInView) {
+                    setRowJumpError('Row is not in the current filtered view.');
+                    return;
+                  }
+
+                  setHighlightedRow(rowNum);
+                  const target = document.getElementById(`row-error-${rowNum}`);
+                  if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                }}
+                className="h-[34px] px-3 rounded-[8px] border border-amber-300 bg-white text-[12px] font-medium text-amber-800 hover:bg-amber-100"
+              >
+                Jump To Row
+              </button>
+
+              <button
+                onClick={exportFilteredRowErrors}
+                className="h-[34px] px-3 rounded-[8px] border border-amber-300 bg-white text-[12px] font-medium text-amber-800 hover:bg-amber-100 inline-flex items-center gap-1"
+              >
+                <Download size={14} />
+                Export Filtered
+              </button>
+            </div>
+          </div>
+
+          {rowJumpError && (
+            <div className="mb-3 text-[12px] text-rose-700">{rowJumpError}</div>
+          )}
+
+          <div className="rounded-xl border border-amber-200 bg-white overflow-hidden">
+            <div className="max-h-[280px] overflow-y-auto">
+              <table className="min-w-full text-left">
+                <thead className="bg-amber-100/70 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-3 py-2 text-[11px] uppercase tracking-wide text-amber-900">Row</th>
+                    <th className="px-3 py-2 text-[11px] uppercase tracking-wide text-amber-900">Error</th>
+                    <th className="px-3 py-2 text-[11px] uppercase tracking-wide text-amber-900">Type</th>
+                    <th className="px-3 py-2 text-[11px] uppercase tracking-wide text-amber-900">Question Preview</th>
+                    <th className="px-3 py-2 text-[11px] uppercase tracking-wide text-amber-900">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRowErrors.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-3 text-[12px] text-amber-700">No rows match this error filter.</td>
+                    </tr>
+                  ) : (
+                    filteredRowErrors.map((item, index) => (
+                      <tr
+                        key={`row-error-${item.row}-${index}`}
+                        id={`row-error-${item.row}`}
+                        className={highlightedRow === item.row ? 'bg-amber-200/60' : 'border-t border-amber-100'}
+                      >
+                        <td className="px-3 py-2 text-[12px] font-semibold text-amber-900">{item.row}</td>
+                        <td className="px-3 py-2 text-[12px] text-amber-900">{item.error}</td>
+                        <td className="px-3 py-2 text-[12px] text-amber-900 uppercase">{item.question_type || '-'}</td>
+                        <td className="px-3 py-2 text-[12px] text-amber-900 max-w-[420px] truncate">{item.question_text || '-'}</td>
+                        <td className="px-3 py-2 text-[12px] text-amber-900">
+                          <button
+                            onClick={() => copyRowErrorText(item, index)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-amber-300 hover:bg-amber-100"
+                          >
+                            <Copy size={12} />
+                            {copiedRowKey === `${item.row}-${index}` ? 'Copied' : 'Copy'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -629,6 +937,9 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`text-[11px] px-2 py-0.5 rounded-md border ${difficultyClass[row.question.difficulty] || 'bg-gray-50 text-gray-700 border-gray-200'}`}>
                     {row.question.difficulty}
+                  </span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-md border border-rose-200 bg-rose-50 text-rose-700">
+                    Risk: {computeRiskScore(row.question).toFixed(1)}
                   </span>
                   <span className="text-[12px] text-[#6b7280]">Category: {row.question.category || 'Uncategorized'}</span>
                   <span className="text-[12px] text-[#6b7280]">Critic score: {row.question.critic_score.toFixed(2)}</span>

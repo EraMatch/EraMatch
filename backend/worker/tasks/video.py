@@ -233,6 +233,10 @@ def process_video_logic(
         return result
 
     except Exception as exc:
+        try:
+            _set_processing_status(response_id, 'failed')
+        except Exception:
+            pass
         log_debug("task_error", {
             "response_id": response_id,
             "error": str(exc),

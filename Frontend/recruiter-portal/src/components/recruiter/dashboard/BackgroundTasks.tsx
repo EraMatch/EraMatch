@@ -42,6 +42,22 @@ interface LogEntry {
     data: any;
 }
 
+interface SloAlert {
+    pipeline: string;
+    severity: 'high' | 'medium' | 'low';
+    metric: string;
+    threshold: number;
+    actual: number;
+    message: string;
+}
+
+interface SloHealthResponse {
+    generated_at: string;
+    window_hours: number;
+    pipelines: Record<string, any>;
+    alerts: SloAlert[];
+}
+
 type PageView = 'dashboard' | 'categories';
 type CategoryId = 'video-processing' | 'profile-processing' | 'video-recording' | 'question-generation-extraction';
 
@@ -270,6 +286,7 @@ export function BackgroundTasks() {
     const [autoRefresh, setAutoRefresh] = useState(true);
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
     const [taskLogs, setTaskLogs] = useState<Record<string, LogEntry[]>>({});
+    const [sloHealth, setSloHealth] = useState<SloHealthResponse | null>(null);
 
     const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
     const [deletingTaskIds, setDeletingTaskIds] = useState<string[]>([]);
@@ -285,8 +302,12 @@ export function BackgroundTasks() {
 
     const fetchTasks = async () => {
         try {
-            const data = await api.recruiter.getBackgroundTasks();
+            const [data, slo] = await Promise.all([
+                api.recruiter.getBackgroundTasks(),
+                api.recruiter.getBackgroundTaskSloHealth(),
+            ]);
             setTasks(data);
+            setSloHealth(slo);
             setSelectedTaskIds((prev) => prev.filter((id) => data.some((item) => item.id === id)));
         } catch (error) {
             console.error('Failed to fetch tasks:', error);
@@ -879,6 +900,25 @@ export function BackgroundTasks() {
                 </div>
 
                 <div className="mx-auto w-full max-w-[1440px]">
+                    {sloHealth?.alerts?.length ? (
+                        <div className="mb-4 rounded-[12px] border border-amber-300 bg-amber-50 px-4 py-3">
+                            <div className="text-[13px] font-semibold text-amber-900 mb-2">
+                                SLO Alerts ({sloHealth.alerts.length}) · Last {sloHealth.window_hours}h
+                            </div>
+                            <div className="space-y-1">
+                                {sloHealth.alerts.slice(0, 5).map((alert, idx) => (
+                                    <div key={`${alert.pipeline}-${alert.metric}-${idx}`} className="text-[12px] text-amber-800">
+                                        <span className="font-semibold">[{alert.pipeline}]</span> {alert.message} ({alert.metric}: {alert.actual} vs threshold {alert.threshold})
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="mb-4 rounded-[12px] border border-emerald-300 bg-emerald-50 px-4 py-3 text-[12px] text-emerald-800">
+                            SLO health is stable across question import, GitHub analysis, and transcription pipelines.
+                        </div>
+                    )}
+
                     <div className="mb-6 flex flex-wrap gap-3">
                         {PAGE_TABS.map((tab) => {
                             const active = tab.id === activeView;

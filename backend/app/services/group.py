@@ -14,7 +14,7 @@ from sqlalchemy import select, func, or_, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import BadRequestException, NotFoundException
 from app.models import (
     AssessmentSection,
     CandidateApplication,
@@ -109,15 +109,126 @@ class GroupService:
             raise NotFoundException("Position not found for group")
         return pos
 
+    async def _resolve_stage_config_id(self, group: CandidateGroup, stage: str, stage_config: GroupStageConfig | None) -> UUID | None:
+        """Resolve config_id for stages that require backing configs."""
+        # 1) Existing direct config on the stage row
+        if stage_config and stage_config.config_id:
+            return stage_config.config_id
+
+        # 2) Legacy config in acceptance_criteria payload
+        criteria = stage_config.acceptance_criteria if stage_config and isinstance(stage_config.acceptance_criteria, dict) else {}
+        if stage == "assessment":
+            raw_id = criteria.get("assessment_id")
+        else:
+            raw_id = criteria.get("interview_config_id")
+        if raw_id:
+            try:
+                return raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id))
+            except (TypeError, ValueError):
+                pass
+
+        # 3) Fallback lookup from persisted configs
+        if stage == "assessment":
+            cfg_res = await self.session.execute(
+                select(Assessment.id)
+                .where(
+                    Assessment.organization_id == self.org_id,
+                    Assessment.group_id == group.id,
+                    Assessment.is_deleted == False,
+                )
+                .order_by(Assessment.updated_at.desc(), Assessment.created_at.desc())
+                .limit(1)
+            )
+            cfg_id = cfg_res.scalars().first()
+            if cfg_id:
+                return cfg_id
+
+            cfg_res = await self.session.execute(
+                select(Assessment.id)
+                .where(
+                    Assessment.organization_id == self.org_id,
+                    Assessment.position_id == group.position_id,
+                    Assessment.is_deleted == False,
+                )
+                .order_by(Assessment.updated_at.desc(), Assessment.created_at.desc())
+                .limit(1)
+            )
+            return cfg_res.scalars().first()
+
+        if stage == "ai_interview":
+            interview_type = "recorded"
+            cfg_res = await self.session.execute(
+                select(AIInterviewConfig.config_id)
+                .where(
+                    AIInterviewConfig.organization_id == self.org_id,
+                    AIInterviewConfig.position_id == group.position_id,
+                    AIInterviewConfig.interview_type == interview_type,
+                    AIInterviewConfig.is_deleted == False,
+                )
+                .order_by(AIInterviewConfig.updated_at.desc(), AIInterviewConfig.created_at.desc())
+                .limit(1)
+            )
+            existing_cfg_id = cfg_res.scalars().first()
+            if existing_cfg_id:
+                return existing_cfg_id
+
+            # Auto-provision a minimal default config so stage start can proceed.
+            default_cfg = AIInterviewConfig(
+                organization_id=self.org_id,
+                position_id=group.position_id,
+                title="AI Interview",
+                interview_type=interview_type,
+                questions={"questions": []},
+                created_by_user_id=self.user.id,
+            )
+            self.session.add(default_cfg)
+            await self.session.flush()
+            return default_cfg.config_id
+
+        if stage == "live_interview":
+            cfg_res = await self.session.execute(
+                select(LiveInterviewConfig.id)
+                .where(
+                    LiveInterviewConfig.organization_id == self.org_id,
+                    LiveInterviewConfig.position_id == group.position_id,
+                )
+                .order_by(LiveInterviewConfig.created_at.desc())
+                .limit(1)
+            )
+            existing_cfg_id = cfg_res.scalars().first()
+            if existing_cfg_id:
+                return existing_cfg_id
+
+            default_live_cfg = LiveInterviewConfig(
+                organization_id=self.org_id,
+                position_id=group.position_id,
+                title="Live Interview",
+                duration_minutes=60,
+            )
+            self.session.add(default_live_cfg)
+            await self.session.flush()
+            return default_live_cfg.id
+
+        return None
+
 
     async def _get_candidates_progress_data(
         self, group_id: UUID, filter_str: str | None = None, sort_str: str | None = None
     ) -> list[CandidateProgressItem]:
         # Acceptance criteria for meets_criteria calculation
         sc_res = await self.session.execute(
-            select(GroupStageConfig).where(GroupStageConfig.group_id == group_id)
+            select(GroupStageConfig)
+            .where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.state != "inactive",
+            )
+            .order_by(GroupStageConfig.stage_order.asc())
         )
         stage_configs = sc_res.scalars().all()
+        ordered_flow_types: list[str] = []
+        for sc in stage_configs:
+            if sc.stage_type not in ordered_flow_types:
+                ordered_flow_types.append(sc.stage_type)
         min_score = 70.0
         allowed_risk = "Low"
         for sc in stage_configs:
@@ -198,6 +309,34 @@ class GroupService:
             assess_status = assess_prog.status if assess_prog else "locked"
             ai_status = ai_prog.status if ai_prog else "locked"
             live_status = live_prog.status if live_prog else "locked"
+
+            # Hard gate downstream stages by previous-stage completion to prevent
+            # stale progress rows from exposing candidates in later-stage views.
+            stage_statuses: dict[str, str] = {
+                "assessment": assess_status,
+                "ai_interview": ai_status,
+                "live_interview": live_status,
+            }
+            stage_scores: dict[str, float | None] = {
+                "assessment": assess_score,
+                "ai_interview": ai_score,
+                "live_interview": live_score,
+            }
+            for idx, stage_type in enumerate(ordered_flow_types):
+                if idx == 0:
+                    continue
+                prev_stage_type = ordered_flow_types[idx - 1]
+                if stage_statuses.get(prev_stage_type) not in ("passed", "completed"):
+                    if stage_type in stage_statuses:
+                        stage_statuses[stage_type] = "locked"
+                        stage_scores[stage_type] = None
+
+            assess_status = stage_statuses["assessment"]
+            ai_status = stage_statuses["ai_interview"]
+            live_status = stage_statuses["live_interview"]
+            assess_score = stage_scores["assessment"]
+            ai_score = stage_scores["ai_interview"]
+            live_score = stage_scores["live_interview"]
 
             ls_data = live_map.get(app.id)
             scheduled_at = ls_data.scheduled_at if ls_data else None
@@ -373,7 +512,7 @@ class GroupService:
                 completed_c = sum(1 for c in active_candidates if c.live_interview.status in ("completed", "passed", "failed"))
                 pending_c = sum(1 for c in active_candidates if c.live_interview.status not in ("completed", "passed", "failed"))
             else:
-                active_candidates = candidates if is_first_stage else [c for c in candidates if c.status != "Rejected"]
+                active_candidates = candidates if is_first_stage else [c for c in candidates if c.status != "rejected"]
                 completed_c = 0
                 pending_c = len(active_candidates)
             
@@ -577,9 +716,8 @@ class GroupService:
     async def start_stage(self, group_id: UUID, stage: str) -> dict:
         group = await self._get_group(group_id)
 
-        # Normalize stage type: the DB CHECK constraint uses underscores (ai_interview, live_interview)
-        # but the frontend may send hyphenated values (ai-interview, live-interview).
-        stage = stage.replace("-", "_")
+        # Normalize stage type: DB uses underscores but frontend can send mixed formatting.
+        stage = stage.strip().lower().replace(" ", "_").replace("-", "_")
 
         # Get stage config
         sc_res = await self.session.execute(
@@ -589,6 +727,13 @@ class GroupService:
             )
         )
         stage_config = sc_res.scalars().first()
+
+        required_config_stages = {"assessment", "ai_interview", "live_interview"}
+        resolved_config_id = await self._resolve_stage_config_id(group, stage, stage_config)
+        if stage in required_config_stages and not resolved_config_id:
+            raise BadRequestException(
+                f"Cannot start '{stage}'. Configure and assign its settings first."
+            )
 
         # Auto-create stage config if it doesn't exist yet
         if stage_config is None:
@@ -605,6 +750,7 @@ class GroupService:
                 stage_type=stage,
                 stage_order=max_order + 1,
                 stage_name=stage.replace("_", " ").title(),
+                config_id=resolved_config_id,
                 state="active",
                 started_at=datetime.utcnow(),
                 started_by_user_id=self.user.id,
@@ -614,6 +760,8 @@ class GroupService:
             await self.session.flush()
         else:
             # Update existing stage state
+            if resolved_config_id and not stage_config.config_id:
+                stage_config.config_id = resolved_config_id
             stage_config.state = "active"
             stage_config.started_at = datetime.utcnow()
             stage_config.started_by_user_id = self.user.id
@@ -629,8 +777,39 @@ class GroupService:
         )
         apps = apps_res.scalars().all()
 
+        # Determine stage position in the pipeline so we only advance eligible candidates.
+        flow_res = await self.session.execute(
+            select(GroupStageConfig)
+            .where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.state != "inactive",
+            )
+            .order_by(GroupStageConfig.stage_order.asc())
+        )
+        flow = flow_res.scalars().all()
+        stage_index = next((i for i, s in enumerate(flow) if s.stage_id == stage_config.stage_id), -1)
+        prev_stage_id = flow[stage_index - 1].stage_id if stage_index > 0 else None
+
+        # First stage: include all non-rejected applications.
+        if prev_stage_id is None:
+            eligible_app_ids = {app.id for app in apps if app.status != "rejected"}
+            progressed_from_prev: set[UUID] = set()
+        else:
+            # Candidates that passed/completed the previous stage.
+            prev_passed_res = await self.session.execute(
+                select(CandidateStageProgress.application_id).where(
+                    CandidateStageProgress.stage_id == prev_stage_id,
+                    CandidateStageProgress.status.in_(["passed", "completed"]),
+                )
+            )
+            progressed_from_prev = set(prev_passed_res.scalars().all())
+            eligible_app_ids = progressed_from_prev
+
         invitations_sent = 0
         for app in apps:
+            if app.id not in eligible_app_ids:
+                continue
+
             # Create or unlock the stage progress entry
             prog_res = await self.session.execute(
                 select(CandidateStageProgress).where(
@@ -648,6 +827,11 @@ class GroupService:
                     self.session.add(prog)
                     invitations_sent += 1
             else:
+                # For non-first stages, never auto-create progress for candidates that didn't
+                # progress from the previous stage.
+                if prev_stage_id is not None and app.id not in progressed_from_prev:
+                    continue
+
                 new_prog = CandidateStageProgress(
                     application_id=app.id,
                     stage_id=stage_config.stage_id,
@@ -674,8 +858,7 @@ class GroupService:
                         )
                         self.session.add(new_assessment)
                 
-                elif stage in ("ai_interview", "live_interview"):
-                    int_type = "recorded" if stage == "ai_interview" else "live_ai"
+                elif stage == "ai_interview":
                     existing = await self.session.execute(select(OngoingInterview).where(
                         OngoingInterview.application_id == app.id,
                         OngoingInterview.config_id == stage_config.config_id
@@ -685,7 +868,7 @@ class GroupService:
                             config_id=stage_config.config_id,
                             application_id=app.id,
                             organization_id=self.org_id,
-                            interview_type=int_type,
+                            interview_type="recorded",
                             status="not_started"
                         )
                         self.session.add(new_interview)
@@ -775,8 +958,8 @@ class GroupService:
     async def close_stage(self, group_id: UUID, stage: str) -> dict:
         await self._get_group(group_id)
 
-        # Normalize hyphenated frontend stage names to underscore DB format
-        stage = stage.replace("-", "_")
+        # Normalize frontend stage names to underscore DB format
+        stage = stage.strip().lower().replace(" ", "_").replace("-", "_")
 
         # Find the active stage config
         sc_res = await self.session.execute(
@@ -929,9 +1112,9 @@ class GroupService:
                 # Just moving them along in the 'Review' flow context
                 new_status = "In Progress"
             elif action == 'reject':
-                new_status = "Rejected"
+                new_status = "rejected"
             elif action == 'hold':
-                new_status = "On Hold"
+                new_status = "screening"
 
             if old_status != new_status:
                 app.status = new_status
@@ -1113,7 +1296,7 @@ class GroupService:
             await self.session.execute(
                 update(CandidateApplication)
                 .where(CandidateApplication.group_id == group_id)
-                .values(status="Rejected", group_id=None)
+                .values(status="rejected", group_id=None)
             )
         elif request.action == "transfer" and request.transfer_group_id:
             # Move to another group
@@ -1350,6 +1533,7 @@ class GroupService:
             criteria = sc.acceptance_criteria or {}
             criteria["interview_config_id"] = str(config_id)
             sc.acceptance_criteria = criteria
+            sc.config_id = config_id
             self.session.add(sc)
 
         # Log
@@ -1710,7 +1894,7 @@ class GroupService:
             await self.session.execute(
                 update(CandidateApplication)
                 .where(CandidateApplication.group_id == group_id)
-                .values(status="Rejected", group_id=None)
+                .values(status="rejected", group_id=None)
             )
         elif request.action == "transfer" and request.transfer_group_id:
             # Move to another group
@@ -1925,11 +2109,11 @@ class GroupService:
             return
 
         status_map = {
-            "progress": "In Pipeline",
-            "reject": "Rejected",
-            "hold": "On Hold"
+            "progress": "in_pipeline",
+            "reject": "rejected",
+            "hold": "screening"
         }
-        new_status = status_map.get(action, "In Pipeline")
+        new_status = status_map.get(action, "in_pipeline")
         
         # 1. Identify the source stage
         source_stage = None

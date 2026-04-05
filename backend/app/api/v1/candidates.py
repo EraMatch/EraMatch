@@ -53,6 +53,7 @@ async def _queue_github_analysis_job(
 
     github_url = profile.github_url
     jd_text = ""
+    cv_projects: list[dict] = []
 
     if latest_app:
         cv_result = await session.execute(
@@ -63,6 +64,23 @@ async def _queue_github_analysis_job(
             profile_obj = cv.github_profile.get("profile")
             if isinstance(profile_obj, dict):
                 github_url = github_url or profile_obj.get("html_url")
+
+        if cv and isinstance(cv.parsed_data, dict):
+            parsed = cv.parsed_data
+            raw_projects = parsed.get("projects") if isinstance(parsed.get("projects"), list) else []
+            for project in raw_projects[:12]:
+                if not isinstance(project, dict):
+                    continue
+                name = str(project.get("name") or project.get("title") or "").strip()
+                description = str(project.get("description") or project.get("summary") or "").strip()
+                tech = project.get("technologies") or project.get("tools") or []
+                technologies = [str(t).strip() for t in tech if str(t).strip()] if isinstance(tech, list) else []
+                if name or description:
+                    cv_projects.append({
+                        "name": name,
+                        "description": description,
+                        "technologies": technologies,
+                    })
 
         pos_result = await session.execute(select(Position).where(Position.id == latest_app.position_id))
         position = pos_result.scalar_one_or_none()
@@ -119,6 +137,7 @@ async def _queue_github_analysis_job(
         jd_text,
         "",
         questions_to_generate,
+        cv_projects,
     )
 
     return {

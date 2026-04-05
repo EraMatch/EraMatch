@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -120,14 +121,298 @@ def extract_text_from_csv_xlsx(file_bytes: bytes, filename: str) -> str:
         if filename.lower().endswith(".csv"):
             df = pd.read_csv(io.BytesIO(file_bytes))
         else:
-            df = pd.read_excel(io.BytesIO(file_bytes))
+            excel_engine = "xlrd" if filename.lower().endswith(".xls") else "openpyxl"
+            df = pd.read_excel(io.BytesIO(file_bytes), engine=excel_engine)
         # Represent as text: header + rows
         lines = ["\t".join(str(c) for c in df.columns)]
         for _, row in df.iterrows():
             lines.append("\t".join(str(v) for v in row.values))
         return "\n".join(lines)
     except ImportError:
-        raise RuntimeError("pandas/openpyxl not installed. Run: pip install pandas openpyxl")
+        raise RuntimeError("Spreadsheet dependencies missing. Run: pip install pandas openpyxl xlrd")
+
+
+def _normalize_column_name(value: str) -> str:
+    lowered = str(value or "").strip().lower()
+    lowered = re.sub(r"[^a-z0-9]+", "_", lowered)
+    return lowered.strip("_")
+
+
+def _build_template_column_map(columns: list[str]) -> dict[str, str]:
+    aliases = {
+        "type": ["type", "question_type", "q_type", "questiontype"],
+        "text": ["text", "question", "question_text", "prompt", "question_prompt"],
+        "difficulty": ["difficulty", "level"],
+        "category": ["category", "topic", "domain", "skill"],
+        "tags": ["tags", "tag", "keywords", "keyword"],
+        "options": ["options", "choices", "answers", "mcq_options"],
+        "correct_answer": [
+            "correct_answer",
+            "answer",
+            "correct",
+            "correct_option",
+            "answer_index",
+            "correct_index",
+        ],
+        "evidence": ["evidence", "source_evidence", "source"],
+        "reference_answer": ["reference_answer", "reference", "model_answer", "expected_answer"],
+        "explanation": ["explanation", "rationale", "reasoning"],
+        "rubric": ["rubric", "grading_rubric", "scoring_rubric"],
+        "max_words": ["max_words", "word_limit", "max_word_count"],
+    }
+
+    normalized_to_original: dict[str, str] = {}
+    for col in columns:
+        normalized_to_original[_normalize_column_name(col)] = col
+
+    mapped: dict[str, str] = {}
+    for canonical, alias_list in aliases.items():
+        for alias in alias_list:
+            key = _normalize_column_name(alias)
+            if key in normalized_to_original:
+                mapped[canonical] = normalized_to_original[key]
+                break
+
+    return mapped
+
+
+def _value_to_text(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        import pandas as pd
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return str(value).strip()
+
+
+def _parse_question_type(raw_value: object) -> str:
+    raw = _value_to_text(raw_value).lower().replace("-", " ").replace("_", " ")
+    if raw in {"mcq", "multiple choice", "multiplechoice", "true false", "true/false"}:
+        return "mcq"
+    if raw in {"essay", "open ended", "open-ended", "long answer"}:
+        return "essay"
+    if raw in {"code", "coding", "programming"}:
+        return "code"
+    return "essay"
+
+
+def _parse_difficulty(raw_value: object) -> str:
+    value = _value_to_text(raw_value).capitalize()
+    if value in {"Easy", "Medium", "Hard"}:
+        return value
+    return "Medium"
+
+
+def _parse_tags(raw_value: object) -> list[str]:
+    text = _value_to_text(raw_value)
+    if not text:
+        return []
+    parts = re.split(r"[,|]", text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _parse_options(raw_value: object) -> list[str]:
+    text = _value_to_text(raw_value)
+    if not text:
+        return []
+
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        except Exception:
+            pass
+
+    if "|" in text:
+        parts = text.split("|")
+    elif ";" in text:
+        parts = text.split(";")
+    elif "\n" in text:
+        parts = text.splitlines()
+    else:
+        parts = [text]
+
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _parse_correct_answer(raw_value: object, options: list[str]) -> int | None:
+    text = _value_to_text(raw_value)
+    if not text:
+        return None
+
+    if re.fullmatch(r"\d+", text):
+        idx = int(text)
+        return idx if 0 <= idx < len(options) else None
+
+    if re.fullmatch(r"[A-Za-z]", text):
+        idx = ord(text.upper()) - ord("A")
+        return idx if 0 <= idx < len(options) else None
+
+    lowered = text.lower()
+    for idx, option in enumerate(options):
+        if option.strip().lower() == lowered:
+            return idx
+
+    return None
+
+def parse_spreadsheet_template_questions(
+    file_bytes: bytes,
+    filename: str,
+    sheet_name: str | None = None,
+    column_mapping_override: dict[str, str] | None = None,
+    apply_auto_fixes: bool = False,
+) -> tuple[list[dict], list[dict], list[dict], bool]:
+    """
+    Deterministic parser for EraMatch spreadsheet template.
+    Returns (questions, row_errors, auto_fix_actions, deterministic_used).
+    deterministic_used=False means required columns were not mapped and caller may fallback to AI.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        logger.warning("[QuestionImport] pandas/openpyxl missing for spreadsheet parsing")
+        return [], [], [], False
+
+    try:
+        if filename.lower().endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(file_bytes), dtype=object)
+        else:
+            excel_engine = "xlrd" if filename.lower().endswith(".xls") else "openpyxl"
+            if sheet_name:
+                df = pd.read_excel(io.BytesIO(file_bytes), dtype=object, sheet_name=sheet_name, engine=excel_engine)
+            else:
+                df = pd.read_excel(io.BytesIO(file_bytes), dtype=object, engine=excel_engine)
+    except ImportError as exc:
+        logger.warning(f"[QuestionImport] Missing Excel parser dependency: {exc}")
+        return [], [], [], False
+    except Exception as exc:
+        logger.warning(f"[QuestionImport] Failed reading spreadsheet for template parsing: {exc}")
+        return [], [], [], False
+
+    if df.empty:
+        return [], [], [], True
+
+    base_map = _build_template_column_map([str(c) for c in df.columns])
+    col_map: dict[str, str] = dict(base_map)
+
+    if column_mapping_override:
+        valid_cols = {str(c) for c in df.columns}
+        for key, value in column_mapping_override.items():
+            if not value:
+                continue
+            col_name = str(value)
+            if col_name in valid_cols:
+                col_map[key] = col_name
+
+    if "type" not in col_map or "text" not in col_map:
+        return [], [], [], False
+
+    parsed_questions: list[dict] = []
+    row_errors: list[dict] = []
+    auto_fix_actions: list[dict] = []
+
+    for row_idx, row in enumerate(df.iterrows(), start=2):
+        _, row_data = row
+        q_text = _value_to_text(row_data.get(col_map["text"]))
+        q_type = _parse_question_type(row_data.get(col_map["type"]))
+
+        if not q_text:
+            row_errors.append({"row": row_idx, "error": "Question text is empty", "question_type": q_type, "question_text": ""})
+            continue
+
+        difficulty = _parse_difficulty(row_data.get(col_map.get("difficulty", "")))
+        category = _value_to_text(row_data.get(col_map.get("category", ""))) or "General"
+        tags = _parse_tags(row_data.get(col_map.get("tags", "")))
+
+        evidence = _value_to_text(row_data.get(col_map.get("evidence", ""))) or None
+        reference_answer = _value_to_text(row_data.get(col_map.get("reference_answer", ""))) or None
+        explanation = _value_to_text(row_data.get(col_map.get("explanation", ""))) or None
+        rubric = _value_to_text(row_data.get(col_map.get("rubric", ""))) or None
+
+        max_words_value = _value_to_text(row_data.get(col_map.get("max_words", "")))
+        max_words: int | None = None
+        if max_words_value and re.fullmatch(r"\d+", max_words_value):
+            max_words = int(max_words_value)
+
+        options: list[str] | None = None
+        correct_answer: int | None = None
+
+        if q_type == "mcq":
+            options = _parse_options(row_data.get(col_map.get("options", "")))
+            if len(options) < 2:
+                if apply_auto_fixes and len(options) == 1:
+                    auto_fix_actions.append(
+                        {
+                            "row": row_idx,
+                            "error": "MCQ requires at least 2 options",
+                            "fix_applied": "Converted question type to essay due to single option",
+                        }
+                    )
+                    q_type = "essay"
+                    options = None
+                    correct_answer = None
+                else:
+                    row_errors.append({
+                        "row": row_idx,
+                        "error": "MCQ requires at least 2 options",
+                        "question_type": q_type,
+                        "question_text": q_text[:300],
+                    })
+                    continue
+
+            if q_type == "mcq":
+                correct_answer = _parse_correct_answer(row_data.get(col_map.get("correct_answer", "")), options or [])
+                if correct_answer is None:
+                    if apply_auto_fixes and options and len(options) >= 2:
+                        correct_answer = 0
+                        auto_fix_actions.append(
+                            {
+                                "row": row_idx,
+                                "error": "MCQ correct_answer is missing or invalid",
+                                "fix_applied": "Set correct_answer to first option (index 0)",
+                            }
+                        )
+                    else:
+                        row_errors.append({
+                            "row": row_idx,
+                            "error": "MCQ correct_answer is missing or invalid",
+                            "question_type": q_type,
+                            "question_text": q_text[:300],
+                        })
+                        continue
+        elif q_type == "essay":
+            if max_words is None:
+                max_words = 500
+
+        parsed_questions.append(
+            {
+                "type": q_type,
+                "text": q_text,
+                "difficulty": difficulty,
+                "category": category,
+                "tags": tags,
+                "options": options,
+                "correct_answer": correct_answer,
+                "evidence": evidence,
+                "reference_answer": reference_answer,
+                "explanation": explanation,
+                "rubric": rubric,
+                "max_words": max_words,
+                "rubric_yes_no_checks": None,
+                "needs_review": False,
+                "critic_score": 1.0,
+                "critic_weighted_score": 1.0,
+                "critic_feedback": None,
+                "critic_checks": [],
+                "retry_count": 0,
+            }
+        )
+
+    return parsed_questions, row_errors[:500], auto_fix_actions[:500], True
 
 
 def extract_text(
@@ -240,6 +525,9 @@ def run_question_import(
     page_end: int | None = None,
     chunk_index: int | None = None,
     chunk_count: int | None = None,
+    sheet_name: str | None = None,
+    column_mapping_json: str | None = None,
+    apply_auto_fixes: bool = False,
 ):
     """
     Background task that:
@@ -287,7 +575,7 @@ def run_question_import(
         raw_text = raw_text[:MAX_EXTRACT_CHARS]
         logger.info(f"[QuestionImport] Extracted {len(raw_text)} chars from {detected_type}")
 
-        # ── 4. Call AI Service ─────────────────────────────────────────────
+        # ── 4. Build draft questions ───────────────────────────────────────
         if import_type == "generative":
             ai_result = call_ai_generate(
                 raw_text,
@@ -306,12 +594,56 @@ def run_question_import(
                 essay_medium_count=essay_medium_count,
                 essay_hard_count=essay_hard_count,
             )
-        else:
-            # Both "extraction" and "csv" go through the extract endpoint
-            ai_result = call_ai_extract(raw_text)
+            questions = ai_result.get("questions", [])
+            critic_stats = ai_result.get("critic_stats", {})
+        elif import_type == "csv":
+            column_mapping: dict[str, str] | None = None
+            if column_mapping_json:
+                try:
+                    parsed_mapping = json.loads(column_mapping_json)
+                    if isinstance(parsed_mapping, dict):
+                        column_mapping = {
+                            str(k): str(v)
+                            for k, v in parsed_mapping.items()
+                            if v is not None and str(v).strip()
+                        }
+                except Exception:
+                    column_mapping = None
 
-        questions = ai_result.get("questions", [])
-        critic_stats = ai_result.get("critic_stats", {})
+            questions, row_errors, auto_fix_actions, deterministic_used = parse_spreadsheet_template_questions(
+                file_bytes,
+                filename,
+                sheet_name=sheet_name,
+                column_mapping_override=column_mapping,
+                apply_auto_fixes=bool(apply_auto_fixes),
+            )
+
+            if deterministic_used:
+                logger.info(
+                    f"[QuestionImport] job={job_id} spreadsheet parsed deterministically with {len(questions)} question(s), row_errors={len(row_errors)}"
+                )
+                critic_stats = {
+                    "approved": len(questions),
+                    "flagged": 0,
+                    "rejected": 0,
+                    "total_retries": 0,
+                    "row_error_count": len(row_errors),
+                    "row_errors": row_errors,
+                    "auto_fix_enabled": bool(apply_auto_fixes),
+                    "auto_fix_count": len(auto_fix_actions),
+                    "auto_fix_actions": auto_fix_actions,
+                    "sheet_name": sheet_name,
+                }
+            else:
+                logger.info(f"[QuestionImport] job={job_id} spreadsheet template columns not detected, falling back to AI mapping")
+                ai_result = call_ai_extract(raw_text)
+                questions = ai_result.get("questions", [])
+                critic_stats = ai_result.get("critic_stats", {})
+        else:
+            # "extraction" goes through extract endpoint
+            ai_result = call_ai_extract(raw_text)
+            questions = ai_result.get("questions", [])
+            critic_stats = ai_result.get("critic_stats", {})
 
         total_generated = len(questions)
         total_flagged = critic_stats.get("flagged", 0) + critic_stats.get("rejected", 0)

@@ -12,13 +12,14 @@
 import { useState, useRef } from 'react';
 import {
   X, Upload, Sparkles, FileText, Table2, ChevronRight,
-  Loader2, CheckCircle2, AlertTriangle, FileUp
+  Loader2, CheckCircle2, AlertTriangle, FileUp, Download
 } from 'lucide-react';
 import { api } from '../../../services/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ImportPath = 'generative' | 'extraction' | 'csv';
 type Step = 1 | 2 | 3;
+type ImportSubPage = 'generation' | 'existing';
 
 interface ImportPreflightInfo {
   is_pdf: boolean;
@@ -28,6 +29,21 @@ interface ImportPreflightInfo {
   chunk_page_size: number;
   chunk_count: number;
   message: string;
+}
+
+interface SpreadsheetPreflightInfo {
+  sheets: string[];
+  selected_sheet: string | null;
+  columns: string[];
+  mapping: Record<string, string | null>;
+  confidence: Record<string, number>;
+  uncertain_fields: string[];
+  valid_rows: number;
+  invalid_rows: number;
+  row_errors_preview: Array<{ row: number; error: string }>;
+  auto_fix_suggestions_preview: Array<{ row: number; error: string; suggestion: string; auto_fixable: boolean }>;
+  auto_fixable_count: number;
+  unfixable_count: number;
 }
 
 interface Props {
@@ -72,9 +88,15 @@ const LIMITS: Record<ImportPath, string> = {
   csv: 'Max 5 MB',
 };
 
+const CSV_CANONICAL_FIELDS: string[] = [
+  'type', 'text', 'difficulty', 'category', 'tags', 'options', 'correct_answer',
+  'evidence', 'reference_answer', 'explanation', 'rubric', 'max_words',
+];
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export function QuestionImportModal({ onClose, onJobQueued }: Props) {
   const [step, setStep] = useState<Step>(1);
+  const [subPage, setSubPage] = useState<ImportSubPage>('generation');
   const [selectedPath, setSelectedPath] = useState<ImportPath | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [mcqCount, setMcqCount] = useState(5);
@@ -92,6 +114,11 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
   const [isPreflighting, setIsPreflighting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preflight, setPreflight] = useState<ImportPreflightInfo | null>(null);
+  const [spreadsheetPreflight, setSpreadsheetPreflight] = useState<SpreadsheetPreflightInfo | null>(null);
+  const [csvSelectedSheet, setCsvSelectedSheet] = useState<string>('');
+  const [csvMapping, setCsvMapping] = useState<Record<string, string>>({});
+  const [confirmUncertainMapping, setConfirmUncertainMapping] = useState(false);
+  const [applyAutoFixes, setApplyAutoFixes] = useState(false);
   const [chunkPageSize, setChunkPageSize] = useState(20);
   const [approveChunking, setApproveChunking] = useState(false);
   const [queuedSummary, setQueuedSummary] = useState<{ chunked: boolean; chunkCount: number } | null>(null);
@@ -118,6 +145,31 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
     }
   };
 
+  const runSpreadsheetPreflight = async (f: File, selectedSheet?: string) => {
+    setIsPreflighting(true);
+    try {
+      const info = await api.recruiter.preflightSpreadsheetImport(f, selectedSheet || undefined);
+      setSpreadsheetPreflight(info);
+      if (info.selected_sheet) {
+        setCsvSelectedSheet(info.selected_sheet);
+      }
+      const nextMapping: Record<string, string> = {};
+      for (const field of CSV_CANONICAL_FIELDS) {
+        const mapped = info.mapping?.[field];
+        if (mapped) nextMapping[field] = mapped;
+      }
+      setCsvMapping(nextMapping);
+      setConfirmUncertainMapping(false);
+      setApplyAutoFixes(false);
+      setError(null);
+    } catch (err: any) {
+      setSpreadsheetPreflight(null);
+      setError(err.message || 'Failed to inspect spreadsheet columns.');
+    } finally {
+      setIsPreflighting(false);
+    }
+  };
+
   const handleFileChange = async (f: File) => {
     if (f.size > 5 * 1024 * 1024) {
       setError('File exceeds the 5 MB limit. Please upload a smaller file.');
@@ -126,8 +178,14 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
     setError(null);
     setFile(f);
     setQueuedSummary(null);
+    setSpreadsheetPreflight(null);
+    setCsvMapping({});
+    setConfirmUncertainMapping(false);
+    setApplyAutoFixes(false);
 
-    if (isPdfFile(f)) {
+    if (selectedPath === 'csv') {
+      await runSpreadsheetPreflight(f, csvSelectedSheet || undefined);
+    } else if (isPdfFile(f)) {
       await runPreflight(f, chunkPageSize);
     } else {
       setPreflight(null);
@@ -141,6 +199,15 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
     const dropped = e.dataTransfer.files[0];
     if (dropped) {
       void handleFileChange(dropped);
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      setError(null);
+      await api.recruiter.downloadQuestionImportTemplate();
+    } catch (err: any) {
+      setError(err.message || 'Failed to download template. Please try again.');
     }
   };
 
@@ -169,6 +236,21 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
       }
       if (essayDifficultySum !== essayCount) {
         setError('Essay difficulty counts must add up to Essay total count.');
+        return;
+      }
+    }
+
+    if (selectedPath === 'csv') {
+      if (!spreadsheetPreflight) {
+        setError('Please wait for spreadsheet preflight before starting import.');
+        return;
+      }
+      if (!csvMapping.type || !csvMapping.text) {
+        setError('Spreadsheet mapping must include both type and text columns.');
+        return;
+      }
+      if (spreadsheetPreflight.uncertain_fields.length > 0 && !confirmUncertainMapping) {
+        setError('Please confirm uncertain column mappings before continuing.');
         return;
       }
     }
@@ -205,6 +287,9 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
         essayHardCount,
         Boolean(preflight?.requires_chunking),
         chunkPageSize,
+        selectedPath === 'csv' ? (csvSelectedSheet || undefined) : undefined,
+        selectedPath === 'csv' ? csvMapping : undefined,
+        selectedPath === 'csv' ? applyAutoFixes : false,
       );
       setQueuedSummary({
         chunked: Boolean(result.chunked),
@@ -218,6 +303,35 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
       setIsUploading(false);
     }
   };
+
+  const isCsvBlocked = selectedPath === 'csv' && (
+    !file ||
+    !spreadsheetPreflight ||
+    !csvMapping.type ||
+    !csvMapping.text ||
+    (spreadsheetPreflight.uncertain_fields.length > 0 && !confirmUncertainMapping)
+  );
+
+  const csvBlockReasons: string[] = [];
+  if (selectedPath === 'csv') {
+    if (!file) csvBlockReasons.push('Upload a spreadsheet file first.');
+    if (file && !spreadsheetPreflight) csvBlockReasons.push('Wait for spreadsheet preflight to finish.');
+    if (spreadsheetPreflight && !csvMapping.type) csvBlockReasons.push("Map required field 'type'.");
+    if (spreadsheetPreflight && !csvMapping.text) csvBlockReasons.push("Map required field 'text'.");
+    if (spreadsheetPreflight && spreadsheetPreflight.uncertain_fields.length > 0 && !confirmUncertainMapping) {
+      csvBlockReasons.push(`Confirm uncertain mappings (${spreadsheetPreflight.uncertain_fields.join(', ')}) to continue.`);
+    }
+  }
+
+  const csvBlockedButtonLabel = (() => {
+    if (selectedPath !== 'csv' || !isCsvBlocked) return '';
+    if (file && !spreadsheetPreflight) return 'Inspecting Spreadsheet...';
+    if (spreadsheetPreflight && (!csvMapping.type || !csvMapping.text)) return 'Map Required Fields (type, text)';
+    if (spreadsheetPreflight && spreadsheetPreflight.uncertain_fields.length > 0 && !confirmUncertainMapping) {
+      return `Confirm ${spreadsheetPreflight.uncertain_fields.length} Uncertain Mapping(s)`;
+    }
+    return 'Resolve Mapping to Continue';
+  })();
 
   // ── Renders ───────────────────────────────────────────────────────────────
 
@@ -257,7 +371,54 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
           {/* Step 1: Choose path */}
           {step === 1 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '0.5rem',
+                  padding: '0.35rem',
+                  borderRadius: '0.65rem',
+                  border: '1px solid var(--border, rgba(255,255,255,0.1))',
+                  background: 'var(--card-bg-secondary, rgba(255,255,255,0.03))',
+                }}
+              >
+                <button
+                  onClick={() => setSubPage('generation')}
+                  style={{
+                    padding: '0.55rem 0.65rem',
+                    borderRadius: '0.5rem',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    background: subPage === 'generation' ? 'rgba(139,92,246,0.22)' : 'transparent',
+                    color: subPage === 'generation' ? '#ddd6fe' : 'var(--text-muted, #888)',
+                  }}
+                >
+                  Question Generation
+                </button>
+                <button
+                  onClick={() => setSubPage('existing')}
+                  style={{
+                    padding: '0.55rem 0.65rem',
+                    borderRadius: '0.5rem',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    background: subPage === 'existing' ? 'rgba(59,130,246,0.22)' : 'transparent',
+                    color: subPage === 'existing' ? '#bfdbfe' : 'var(--text-muted, #888)',
+                  }}
+                >
+                  Existing Questions Import
+                </button>
+              </div>
+
               {PATHS.map(path => (
+                (subPage === 'generation' && path.id !== 'generative') ||
+                (subPage === 'existing' && path.id === 'generative')
+                  ? null
+                  :
                 <button
                   key={path.id}
                   onClick={() => { setSelectedPath(path.id); setStep(2); }}
@@ -296,6 +457,11 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                   setFile(null);
                   setError(null);
                   setPreflight(null);
+                  setSpreadsheetPreflight(null);
+                  setCsvSelectedSheet('');
+                  setCsvMapping({});
+                  setConfirmUncertainMapping(false);
+                  setApplyAutoFixes(false);
                   setApproveChunking(false);
                   setQueuedSummary(null);
                 }}
@@ -395,6 +561,153 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                 </>
               )}
 
+              {selectedPath === 'csv' && (
+                <>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.75rem',
+                      padding: '0.9rem',
+                      borderRadius: '0.7rem',
+                      border: '1px solid rgba(16,185,129,0.35)',
+                      background: 'rgba(16,185,129,0.08)',
+                    }}
+                  >
+                    <div style={{ fontSize: '0.84rem', color: '#a7f3d0', lineHeight: 1.5 }}>
+                      Recommended: use the EraMatch template for deterministic import and cleaner review.
+                      If headers do not match the template, we will fallback to AI-assisted mapping.
+                    </div>
+                    <button
+                      onClick={handleDownloadTemplate}
+                      style={{
+                        alignSelf: 'flex-start',
+                        padding: '0.5rem 0.75rem',
+                        borderRadius: '0.5rem',
+                        border: '1px solid rgba(16,185,129,0.45)',
+                        background: 'rgba(16,185,129,0.14)',
+                        color: '#6ee7b7',
+                        fontSize: '0.82rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.45rem',
+                      }}
+                    >
+                      <Download className="w-4 h-4" />
+                      Download Template (CSV)
+                    </button>
+                  </div>
+
+                  {spreadsheetPreflight && (
+                    <div style={{ border: '1px solid rgba(96,165,250,0.35)', background: 'rgba(59,130,246,0.08)', borderRadius: '0.7rem', padding: '0.9rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                        <div style={{ fontSize: '0.8rem', color: '#bfdbfe' }}>
+                          Rows preview: <strong>{spreadsheetPreflight.valid_rows}</strong> valid / <strong>{spreadsheetPreflight.invalid_rows}</strong> invalid
+                        </div>
+                        {spreadsheetPreflight.sheets.length > 0 && (
+                          <div>
+                            <label style={{ fontSize: '0.75rem', color: '#bfdbfe', marginRight: '0.35rem' }}>Sheet</label>
+                            <select
+                              value={csvSelectedSheet}
+                              onChange={async (e) => {
+                                const next = e.target.value;
+                                setCsvSelectedSheet(next);
+                                if (file) {
+                                  await runSpreadsheetPreflight(file, next);
+                                }
+                              }}
+                              style={{ padding: '0.35rem 0.5rem', borderRadius: '0.4rem', border: '1px solid rgba(191,219,254,0.35)', background: 'rgba(255,255,255,0.04)', color: '#dbeafe', fontSize: '0.78rem' }}
+                            >
+                              {spreadsheetPreflight.sheets.map((sheet) => (
+                                <option key={sheet} value={sheet} style={{ backgroundColor: '#0f172a', color: '#e2e8f0' }}>{sheet}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', maxHeight: '220px', overflowY: 'auto', paddingRight: '0.15rem' }}>
+                        {CSV_CANONICAL_FIELDS.map((field) => {
+                          const conf = spreadsheetPreflight.confidence[field] ?? 0;
+                          const isUncertain = spreadsheetPreflight.uncertain_fields.includes(field);
+                          return (
+                            <div key={field} style={{ border: '1px solid rgba(191,219,254,0.2)', borderRadius: '0.45rem', padding: '0.45rem' }}>
+                              <div style={{ fontSize: '0.72rem', color: '#bfdbfe', marginBottom: '0.25rem' }}>
+                                {field} {conf > 0 ? `(${Math.round(conf * 100)}%)` : ''} {isUncertain ? '⚠️' : ''}
+                              </div>
+                              <select
+                                value={csvMapping[field] || ''}
+                                onChange={(e) => setCsvMapping(prev => ({ ...prev, [field]: e.target.value }))}
+                                style={{ width: '100%', padding: '0.35rem 0.45rem', borderRadius: '0.35rem', border: '1px solid rgba(191,219,254,0.35)', background: 'rgba(255,255,255,0.04)', color: '#dbeafe', fontSize: '0.75rem' }}
+                              >
+                                <option value="" style={{ backgroundColor: '#0f172a', color: '#e2e8f0' }}>Not mapped</option>
+                                {spreadsheetPreflight.columns.map((col) => (
+                                  <option key={`${field}-${col}`} value={col} style={{ backgroundColor: '#0f172a', color: '#e2e8f0' }}>{col}</option>
+                                ))}
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {spreadsheetPreflight.uncertain_fields.length > 0 && (
+                        <label style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.8rem', color: '#dbeafe' }}>
+                          <input
+                            type="checkbox"
+                            checked={confirmUncertainMapping}
+                            onChange={(e) => setConfirmUncertainMapping(e.target.checked)}
+                            style={{ marginTop: '2px' }}
+                          />
+                          I reviewed and confirm uncertain mappings before queueing this import.
+                        </label>
+                      )}
+
+                      {spreadsheetPreflight.auto_fix_suggestions_preview.length > 0 && (
+                        <div style={{ marginTop: '0.75rem', borderTop: '1px solid rgba(191,219,254,0.25)', paddingTop: '0.6rem' }}>
+                          <div style={{ fontSize: '0.8rem', color: '#bbf7d0', marginBottom: '0.35rem' }}>
+                            Auto-fix suggestions: {spreadsheetPreflight.auto_fixable_count} fixable / {spreadsheetPreflight.unfixable_count} manual
+                          </div>
+                          <label style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.78rem', color: '#d1fae5' }}>
+                            <input
+                              type="checkbox"
+                              checked={applyAutoFixes}
+                              onChange={(e) => setApplyAutoFixes(e.target.checked)}
+                            />
+                            One-click apply auto-fix suggestions before review
+                          </label>
+
+                          <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
+                            {spreadsheetPreflight.auto_fix_suggestions_preview.slice(0, 8).map((s, idx) => (
+                              <div key={`row-fix-${s.row}-${idx}`} style={{ fontSize: '0.74rem', marginBottom: '0.25rem' }}>
+                                <span style={{ color: '#bfdbfe' }}>Row {s.row}</span>
+                                <span style={{ color: '#fecaca' }}> · {s.error}</span>
+                                <span style={{ color: '#d1fae5' }}> · {s.suggestion}</span>
+                                <span style={{ color: s.auto_fixable ? '#86efac' : '#fcd34d' }}> ({s.auto_fixable ? 'auto-fixable' : 'manual'})</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {spreadsheetPreflight.row_errors_preview.length > 0 && (
+                        <div style={{ marginTop: '0.75rem', borderTop: '1px solid rgba(191,219,254,0.25)', paddingTop: '0.6rem' }}>
+                          <div style={{ fontSize: '0.75rem', color: '#bfdbfe', marginBottom: '0.35rem' }}>Validation preview errors</div>
+                          <div style={{ maxHeight: '110px', overflowY: 'auto' }}>
+                            {spreadsheetPreflight.row_errors_preview.slice(0, 8).map((r) => (
+                              <div key={`row-error-${r.row}-${r.error}`} style={{ fontSize: '0.74rem', color: '#fecaca', marginBottom: '0.2rem' }}>
+                                Row {r.row}: {r.error}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
               {/* File drop zone */}
               <div>
                 <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
@@ -442,7 +755,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                   background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)',
                   color: '#60a5fa', fontSize: '0.82rem'
                 }}>
-                  <Loader2 className="w-4 h-4 animate-spin" /> Checking document pages...
+                  <Loader2 className="w-4 h-4 animate-spin" /> {selectedPath === 'csv' ? 'Inspecting spreadsheet columns...' : 'Checking document pages...'}
                 </div>
               )}
 
@@ -518,13 +831,22 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                 </div>
               )}
 
+              {selectedPath === 'csv' && isCsvBlocked && csvBlockReasons.length > 0 && (
+                <div style={{ padding: '0.75rem', borderRadius: '0.5rem', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)', color: '#fde68a', fontSize: '0.8rem' }}>
+                  <div style={{ fontWeight: 700, marginBottom: '0.35rem' }}>Import is blocked until these are resolved:</div>
+                  {csvBlockReasons.map((reason, idx) => (
+                    <div key={`csv-block-reason-${idx}`} style={{ marginBottom: '0.18rem' }}>• {reason}</div>
+                  ))}
+                </div>
+              )}
+
               {/* Submit */}
               <button
                 onClick={handleSubmit}
-                disabled={!file || isUploading || isPreflighting || (preflight?.requires_chunking && !approveChunking)}
+                disabled={!file || isUploading || isPreflighting || (preflight?.requires_chunking && !approveChunking) || isCsvBlocked}
                 style={{
                   padding: '0.75rem', borderRadius: '0.6rem', border: 'none',
-                  background: !file || isUploading || isPreflighting || (preflight?.requires_chunking && !approveChunking)
+                  background: !file || isUploading || isPreflighting || (preflight?.requires_chunking && !approveChunking) || isCsvBlocked
                     ? 'var(--border, rgba(255,255,255,0.1))'
                     : 'var(--accent-purple, #8b5cf6)',
                   color: '#fff', fontWeight: 600, fontSize: '0.95rem', cursor: !file || isUploading ? 'not-allowed' : 'pointer',
@@ -535,6 +857,8 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                   <><Loader2 className="w-4 h-4 animate-spin" /> Uploading…</>
                 ) : isPreflighting ? (
                   <><Loader2 className="w-4 h-4 animate-spin" /> Checking…</>
+                ) : selectedPath === 'csv' && isCsvBlocked ? (
+                  <>{csvBlockedButtonLabel}</>
                 ) : preflight?.requires_chunking && !approveChunking ? (
                   <>Approve Chunking to Continue</>
                 ) : (

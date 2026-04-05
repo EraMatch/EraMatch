@@ -66,7 +66,7 @@ class CandidateService:
         return result.scalars().all()
 
     async def get_profile(self, candidate_id: UUID) -> CandidateResponse:
-        from app.models import CVAnalysis, GitHubAnalysis, CandidateStageProgress, Position, Project, Assessment, AIInterviewConfig, CandidateGroup
+        from app.models import CVAnalysis, GitHubAnalysis, CandidateStageProgress, Position, Project, Assessment, AIInterviewConfig, CandidateGroup, OngoingAssessment, CandidateAssignedQuestion
         from sqlalchemy import func
 
         # 1. Fetch base profile
@@ -117,6 +117,12 @@ class CandidateService:
             "questions": [],
             "audit": [],
             "contributionStats": None,
+            "repoSelection": None,
+            "metricSources": None,
+            "repoConfidence": None,
+            "dataFreshness": None,
+            "questionDelivery": None,
+            "assignedQuestionStats": None,
         }
         github_personalization = {
             "source": "none",
@@ -242,6 +248,12 @@ class CandidateService:
                         "recentActivity": analysis_data.get("recent_activity") if isinstance(analysis_data.get("recent_activity"), list) else [],
                         "qualityIndicators": analysis_data.get("quality_indicators") if isinstance(analysis_data.get("quality_indicators"), dict) else None,
                         "overallScore": analysis_data.get("overall_github_score"),
+                        "repoSelection": analysis_data.get("tournament") if isinstance(analysis_data.get("tournament"), dict) else None,
+                        "metricSources": analysis_data.get("metric_sources") if isinstance(analysis_data.get("metric_sources"), dict) else None,
+                        "repoConfidence": analysis_data.get("repo_confidence") if isinstance(analysis_data.get("repo_confidence"), dict) else None,
+                        "dataFreshness": analysis_data.get("data_freshness") if isinstance(analysis_data.get("data_freshness"), dict) else None,
+                        "questionDelivery": analysis_data.get("question_delivery") if isinstance(analysis_data.get("question_delivery"), dict) else None,
+                        "assignedQuestionStats": None,
                     }
 
                     top_repos = analysis_data.get("top_repositories") or analysis_data.get("topRepos")
@@ -257,6 +269,47 @@ class CandidateService:
                     "source": "github_analysis",
                     "keywords": github_personalization.get("keywords", []),
                     "matched_topics": github_personalization.get("matched_topics", []),
+                }
+
+            latest_assessment_res = await self.session.execute(
+                select(OngoingAssessment)
+                .where(OngoingAssessment.application_id == app.id)
+                .order_by(OngoingAssessment.started_at.desc())
+                .limit(1)
+            )
+            latest_assessment = latest_assessment_res.scalar_one_or_none()
+            if latest_assessment:
+                assigned_res = await self.session.execute(
+                    select(CandidateAssignedQuestion)
+                    .where(CandidateAssignedQuestion.session_id == latest_assessment.id)
+                )
+                assigned_rows = assigned_res.scalars().all()
+                github_assigned_count = 0
+                github_assigned_questions = []
+                for row in assigned_rows:
+                    snapshot = row.question_snapshot if isinstance(row.question_snapshot, dict) else {}
+                    ctx = snapshot.get("assignment_context") if isinstance(snapshot.get("assignment_context"), dict) else {}
+                    if str(ctx.get("selection_strategy") or "").strip().lower() == "github_analysis":
+                        github_assigned_count += 1
+                        github_assigned_questions.append(
+                            {
+                                "assignmentId": str(row.id),
+                                "order": int(row.display_order or 0),
+                                "questionId": str(snapshot.get("question_id") or ""),
+                                "questionType": str(snapshot.get("question_type") or "essay"),
+                                "questionText": str(snapshot.get("question_text") or ""),
+                                "points": int(snapshot.get("points") or 10),
+                            }
+                        )
+
+                github_assigned_questions.sort(key=lambda item: item.get("order", 0))
+
+                github_analysis["assignedQuestionStats"] = {
+                    "sessionId": str(latest_assessment.id),
+                    "assessmentStatus": latest_assessment.status,
+                    "totalAssigned": len(assigned_rows),
+                    "githubAssigned": github_assigned_count,
+                    "githubQuestions": github_assigned_questions,
                 }
 
             # Fetch pipeline stage names from GroupStageConfig (filtration_flow removed from model)

@@ -375,7 +375,7 @@ async def upload_candidates_zip(
     service = CandidateService(session, current_user.organization_id)
     result = await service.process_zip_upload(content, position_id)
 
-    queued_jobs: list[tuple[str, str, str, str]] = []
+    queued_jobs: list[tuple[str, str, str, str, list[dict]]] = []
     for created in result.created_candidates:
         profile_res = await session.execute(
             select(CandidateProfile).where(
@@ -411,6 +411,26 @@ async def upload_candidates_zip(
                 if isinstance(profile_obj, dict):
                     github_url = str(profile_obj.get("html_url") or "").strip()
 
+        cv_projects: list[dict] = []
+        cv_res = await session.execute(select(CVAnalysis).where(CVAnalysis.application_id == application.id))
+        cv = cv_res.scalar_one_or_none()
+        if cv and isinstance(cv.parsed_data, dict):
+            parsed = cv.parsed_data
+            raw_projects = parsed.get("projects") if isinstance(parsed.get("projects"), list) else []
+            for project in raw_projects[:12]:
+                if not isinstance(project, dict):
+                    continue
+                name = str(project.get("name") or project.get("title") or "").strip()
+                description = str(project.get("description") or project.get("summary") or "").strip()
+                tech = project.get("technologies") or project.get("tools") or []
+                technologies = [str(t).strip() for t in tech if str(t).strip()] if isinstance(tech, list) else []
+                if name or description:
+                    cv_projects.append({
+                        "name": name,
+                        "description": description,
+                        "technologies": technologies,
+                    })
+
         if not github_url:
             continue
 
@@ -437,11 +457,11 @@ async def upload_candidates_zip(
         )
         session.add(job)
         await session.flush()
-        queued_jobs.append((str(job.id), str(profile.id), github_url, jd_text))
+        queued_jobs.append((str(job.id), str(profile.id), github_url, jd_text, cv_projects))
 
     await session.commit()
 
-    for job_id, candidate_id, github_url, jd_text in queued_jobs:
+    for job_id, candidate_id, github_url, jd_text, cv_projects in queued_jobs:
         run_github_analysis.delay(
             job_id,
             candidate_id,
@@ -450,6 +470,7 @@ async def upload_candidates_zip(
             jd_text,
             "",
             10,
+            cv_projects,
         )
 
     return result

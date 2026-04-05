@@ -2,6 +2,9 @@ from typing import List
 import json
 from uuid import UUID
 import httpx
+from fastapi.responses import Response
+from difflib import SequenceMatcher
+import csv as csv_lib
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -13,12 +16,261 @@ from app.services.questions import QuestionService
 
 router = APIRouter(tags=["Questions"])
 
+QUESTION_IMPORT_TEMPLATE_CSV = """type,text,difficulty,category,tags,options,correct_answer,evidence,reference_answer,explanation,rubric,max_words
+mcq,What is the time complexity of binary search?,Medium,Algorithms,"search,complexity","O(n)|O(log n)|O(n log n)|O(1)",1,Array is sorted,Binary search halves the search space each step,Option index starts at 0,,
+essay,Explain the Single Responsibility Principle.,Medium,Software Design,"oop,solid",,,Relates to maintainable classes,A class should have one reason to change,,Assess clarity and practical examples,250
+"""
+
 # Temporary schemas for inline responses
 class FavoriteResponse(BaseModel):
     isFavorite: bool
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class SpreadsheetPreflightRowError(BaseModel):
+    row: int
+    error: str
+
+
+class SpreadsheetAutoFixSuggestion(BaseModel):
+    row: int
+    error: str
+    suggestion: str
+    auto_fixable: bool
+
+
+class SpreadsheetMappingPreflightResponse(BaseModel):
+    sheets: list[str]
+    selected_sheet: str | None
+    columns: list[str]
+    mapping: dict[str, str | None]
+    confidence: dict[str, float]
+    uncertain_fields: list[str]
+    valid_rows: int
+    invalid_rows: int
+    row_errors_preview: list[SpreadsheetPreflightRowError]
+    auto_fix_suggestions_preview: list[SpreadsheetAutoFixSuggestion]
+    auto_fixable_count: int
+    unfixable_count: int
+
+
+QUESTION_IMPORT_CANONICAL_FIELDS: list[str] = [
+    "type",
+    "text",
+    "difficulty",
+    "category",
+    "tags",
+    "options",
+    "correct_answer",
+    "evidence",
+    "reference_answer",
+    "explanation",
+    "rubric",
+    "max_words",
+]
+
+
+QUESTION_IMPORT_HEADER_ALIASES: dict[str, list[str]] = {
+    "type": ["type", "question_type", "q_type", "questiontype"],
+    "text": ["text", "question", "question_text", "prompt", "question_prompt"],
+    "difficulty": ["difficulty", "level"],
+    "category": ["category", "topic", "domain", "skill"],
+    "tags": ["tags", "tag", "keywords", "keyword"],
+    "options": ["options", "choices", "answers", "mcq_options"],
+    "correct_answer": ["correct_answer", "answer", "correct", "correct_option", "answer_index", "correct_index"],
+    "evidence": ["evidence", "source_evidence", "source"],
+    "reference_answer": ["reference_answer", "reference", "model_answer", "expected_answer"],
+    "explanation": ["explanation", "rationale", "reasoning"],
+    "rubric": ["rubric", "grading_rubric", "scoring_rubric"],
+    "max_words": ["max_words", "word_limit", "max_word_count"],
+}
+
+
+def _normalize_header(value: str) -> str:
+    import re
+
+    lowered = str(value or "").strip().lower()
+    lowered = re.sub(r"[^a-z0-9]+", "_", lowered)
+    return lowered.strip("_")
+
+
+def _to_row_dict(headers: list[str], row_values: list[object]) -> dict[str, str]:
+    def as_text(v: object) -> str:
+        if v is None:
+            return ""
+        return str(v).strip()
+
+    return {
+        headers[i]: as_text(row_values[i]) if i < len(row_values) else ""
+        for i in range(len(headers))
+    }
+
+
+def _detect_best_column_mapping(headers: list[str]) -> tuple[dict[str, str | None], dict[str, float], list[str]]:
+    normalized_headers = {_normalize_header(h): h for h in headers}
+
+    mapping: dict[str, str | None] = {}
+    confidence: dict[str, float] = {}
+
+    for field in QUESTION_IMPORT_CANONICAL_FIELDS:
+        aliases = QUESTION_IMPORT_HEADER_ALIASES.get(field, [field])
+        best_col: str | None = None
+        best_score = 0.0
+
+        for header in headers:
+            hn = _normalize_header(header)
+            for alias in aliases:
+                an = _normalize_header(alias)
+                if hn == an:
+                    score = 1.0
+                elif hn in normalized_headers and an in hn:
+                    score = 0.9
+                else:
+                    score = SequenceMatcher(None, hn, an).ratio()
+
+                if score > best_score:
+                    best_score = score
+                    best_col = header
+
+        if best_score < 0.55:
+            mapping[field] = None
+            confidence[field] = 0.0
+        else:
+            mapping[field] = best_col
+            confidence[field] = round(best_score, 3)
+
+    uncertain_fields = [
+        f for f, col in mapping.items()
+        if col and confidence.get(f, 0.0) < 0.85
+    ]
+
+    return mapping, confidence, uncertain_fields
+
+
+def _parse_mcq_options(text: str) -> list[str]:
+    if not text:
+        return []
+    if "|" in text:
+        parts = text.split("|")
+    elif ";" in text:
+        parts = text.split(";")
+    elif "\n" in text:
+        parts = text.splitlines()
+    else:
+        parts = [text]
+    return [p.strip() for p in parts if p and p.strip()]
+
+
+def _is_valid_correct_answer(raw: str, options: list[str]) -> bool:
+    if not raw:
+        return False
+    if raw.isdigit():
+        idx = int(raw)
+        return 0 <= idx < len(options)
+    if len(raw) == 1 and raw.isalpha():
+        idx = ord(raw.upper()) - ord("A")
+        return 0 <= idx < len(options)
+    return any(opt.strip().lower() == raw.strip().lower() for opt in options)
+
+
+def _validate_spreadsheet_rows(
+    headers: list[str],
+    rows: list[list[object]],
+    mapping: dict[str, str | None],
+) -> tuple[int, int, list[SpreadsheetPreflightRowError], list[SpreadsheetAutoFixSuggestion]]:
+    type_col = mapping.get("type")
+    text_col = mapping.get("text")
+    options_col = mapping.get("options")
+    correct_col = mapping.get("correct_answer")
+
+    if not type_col or not text_col:
+        invalid = len(rows)
+        base_error = [SpreadsheetPreflightRowError(row=2, error="Missing required mapping for type/text")] if rows else []
+        base_suggestion = [
+            SpreadsheetAutoFixSuggestion(
+                row=2,
+                error="Missing required mapping for type/text",
+                suggestion="Map both 'type' and 'text' columns before continuing.",
+                auto_fixable=False,
+            )
+        ] if rows else []
+        return 0, invalid, base_error, base_suggestion
+
+    valid_rows = 0
+    invalid_rows = 0
+    errors: list[SpreadsheetPreflightRowError] = []
+    suggestions: list[SpreadsheetAutoFixSuggestion] = []
+
+    for idx, values in enumerate(rows):
+        row_number = idx + 2
+        row = _to_row_dict(headers, values)
+
+        q_type = (row.get(type_col) or "").strip().lower().replace("_", " ").replace("-", " ")
+        text = (row.get(text_col) or "").strip()
+
+        if not text:
+            invalid_rows += 1
+            errors.append(SpreadsheetPreflightRowError(row=row_number, error="Question text is empty"))
+            suggestions.append(
+                SpreadsheetAutoFixSuggestion(
+                    row=row_number,
+                    error="Question text is empty",
+                    suggestion="Add question text manually (cannot auto-fix).",
+                    auto_fixable=False,
+                )
+            )
+            continue
+
+        normalized_type = "mcq" if q_type in {"mcq", "multiple choice", "multiplechoice", "true false", "true/false"} else ("essay" if q_type in {"essay", "open ended", "open ended question", "long answer"} else ("code" if q_type in {"code", "coding", "programming"} else "essay"))
+
+        if normalized_type == "mcq":
+            options = _parse_mcq_options((row.get(options_col) or "").strip() if options_col else "")
+            correct = (row.get(correct_col) or "").strip() if correct_col else ""
+            if len(options) < 2:
+                invalid_rows += 1
+                errors.append(SpreadsheetPreflightRowError(row=row_number, error="MCQ requires at least 2 options"))
+                suggestions.append(
+                    SpreadsheetAutoFixSuggestion(
+                        row=row_number,
+                        error="MCQ requires at least 2 options",
+                        suggestion="Auto-fix can convert single-option MCQ rows to essay; otherwise add options manually.",
+                        auto_fixable=len(options) == 1,
+                    )
+                )
+                continue
+            if not _is_valid_correct_answer(correct, options):
+                invalid_rows += 1
+                errors.append(SpreadsheetPreflightRowError(row=row_number, error="MCQ correct_answer is missing or invalid"))
+                suggestions.append(
+                    SpreadsheetAutoFixSuggestion(
+                        row=row_number,
+                        error="MCQ correct_answer is missing or invalid",
+                        suggestion="Auto-fix can default correct_answer to the first option.",
+                        auto_fixable=True,
+                    )
+                )
+                continue
+
+        valid_rows += 1
+
+    return valid_rows, invalid_rows, errors[:50], suggestions[:80]
+
+
+@router.get("/import/template")
+async def download_question_import_template(
+    current_user: RecruiterUser,
+):
+    """Download the EraMatch spreadsheet template for question import."""
+    _ = current_user
+    return Response(
+        content=QUESTION_IMPORT_TEMPLATE_CSV,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": 'attachment; filename="eramatch_question_import_template.csv"'
+        },
+    )
 
 
 @router.get("/bank", response_model=List[QuestionBankResponseItem])
@@ -311,6 +563,86 @@ async def preflight_question_import(
     )
 
 
+@router.post("/import/spreadsheet/preflight", response_model=SpreadsheetMappingPreflightResponse)
+async def preflight_spreadsheet_mapping(
+    file: UploadFile = File(...),
+    sheet_name: str = Form(""),
+):
+    """Inspect spreadsheet headers/sheets and return suggested mapping + confidence + row validation preview."""
+    file_bytes = await file.read()
+
+    if len(file_bytes) > MAX_IMPORT_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({len(file_bytes) // (1024*1024):.1f} MB). Maximum is 5 MB.",
+        )
+
+    filename = (file.filename or "").lower()
+    if not (filename.endswith(".csv") or filename.endswith(".xlsx") or filename.endswith(".xls")):
+        raise HTTPException(status_code=422, detail="Only CSV/XLSX/XLS are supported for spreadsheet preflight")
+
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="Spreadsheet preflight requires pandas/openpyxl on backend") from exc
+
+    sheets: list[str] = []
+    selected_sheet: str | None = None
+    headers: list[str] = []
+    rows: list[list[object]] = []
+
+    try:
+        if filename.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(file_bytes), dtype=object)
+            selected_sheet = None
+            headers = [str(c) for c in df.columns]
+            rows = df.head(200).fillna("").values.tolist()
+        else:
+            excel_engine = "xlrd" if filename.endswith(".xls") else "openpyxl"
+            try:
+                workbook = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None, dtype=object, engine=excel_engine)
+            except ImportError as exc:
+                required_pkg = "xlrd" if excel_engine == "xlrd" else "openpyxl"
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Excel parsing dependency missing on backend: install '{required_pkg}'",
+                ) from exc
+            sheets = list(workbook.keys())
+            if not sheets:
+                raise HTTPException(status_code=422, detail="Spreadsheet has no sheets")
+            if sheet_name and sheet_name in sheets:
+                selected_sheet = sheet_name
+            else:
+                selected_sheet = sheets[0]
+            df = workbook[selected_sheet]
+            headers = [str(c) for c in df.columns]
+            rows = df.head(200).fillna("").values.tolist()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Unable to parse spreadsheet: {exc}") from exc
+
+    mapping, confidence, uncertain_fields = _detect_best_column_mapping(headers)
+    valid_rows, invalid_rows, row_errors, auto_fix_suggestions = _validate_spreadsheet_rows(headers, rows, mapping)
+    auto_fixable_count = len([s for s in auto_fix_suggestions if s.auto_fixable])
+    unfixable_count = len([s for s in auto_fix_suggestions if not s.auto_fixable])
+
+    return SpreadsheetMappingPreflightResponse(
+        sheets=sheets,
+        selected_sheet=selected_sheet,
+        columns=headers,
+        mapping=mapping,
+        confidence=confidence,
+        uncertain_fields=uncertain_fields,
+        valid_rows=valid_rows,
+        invalid_rows=invalid_rows,
+        row_errors_preview=row_errors,
+        auto_fix_suggestions_preview=auto_fix_suggestions,
+        auto_fixable_count=auto_fixable_count,
+        unfixable_count=unfixable_count,
+    )
+
+
 @router.post("/import", status_code=202)
 async def start_question_import(
     session: DbSession,
@@ -333,6 +665,9 @@ async def start_question_import(
     essay_hard_count: int = Form(0),
     process_in_chunks: bool = Form(False),
     chunk_page_size: int = Form(MAX_PDF_PAGES),
+    sheet_name: str = Form(""),
+    column_mapping: str = Form(""),
+    apply_auto_fixes: bool = Form(False),
 ):
     """
     Upload a file and queue a background AI question import job.
@@ -456,6 +791,9 @@ async def start_question_import(
             page_end=end_page,
             chunk_index=(idx + 1) if len(chunks) > 1 else None,
             chunk_count=len(chunks) if len(chunks) > 1 else None,
+            sheet_name=sheet_name.strip() or None,
+            column_mapping_json=column_mapping.strip() or None,
+            apply_auto_fixes=apply_auto_fixes,
         )
 
     primary_job = created_jobs[0]
@@ -485,6 +823,29 @@ async def list_import_jobs(
         .order_by(QuestionImportJob.created_at.desc())
     )
     jobs = result.scalars().all()
+    def _risk_priority(job: QuestionImportJob) -> float:
+        generated = max(1, int(job.total_generated or 0))
+        flagged = int(job.total_flagged or 0)
+        flagged_ratio = flagged / generated
+        status = (job.status or "").lower()
+        status_weight = 0
+        if status == "failed":
+            status_weight = 100
+        elif status == "completed":
+            status_weight = 40
+        elif status == "processing":
+            status_weight = 20
+        return status_weight + (flagged * 2.5) + (flagged_ratio * 35.0)
+
+    ranked_jobs = sorted(
+        jobs,
+        key=lambda j: (
+            _risk_priority(j),
+            j.created_at or datetime.min.replace(tzinfo=timezone.utc),
+        ),
+        reverse=True,
+    )
+
     return [
         ImportJobResponse(
             job_id=j.id,
@@ -498,7 +859,7 @@ async def list_import_jobs(
             created_at=j.created_at,
             completed_at=j.completed_at,
         )
-        for j in jobs
+        for j in ranked_jobs
     ]
 
 
@@ -716,5 +1077,51 @@ async def approve_import_questions(
         imported_count=imported,
         skipped_count=skipped,
         message=f"Successfully imported {imported} question(s) into the bank.",
+    )
+
+
+@router.get("/import/jobs/{job_id}/row-errors-report")
+async def download_import_row_errors_report(
+    job_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Download CSV row-level validation report for spreadsheet imports (when available)."""
+    job = await session.get(QuestionImportJob, job_id)
+    if not job or job.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Import job not found")
+
+    stats = job.critic_stats or {}
+    if isinstance(stats, str):
+        try:
+            stats = json.loads(stats)
+        except Exception:
+            stats = {}
+
+    row_errors = stats.get("row_errors") if isinstance(stats, dict) else None
+    if not isinstance(row_errors, list) or len(row_errors) == 0:
+        raise HTTPException(status_code=404, detail="No row-level errors report available for this import job")
+
+    out = io.StringIO()
+    writer = csv_lib.writer(out)
+    writer.writerow(["row", "error", "question_type", "question_text"])
+
+    for err in row_errors:
+        if not isinstance(err, dict):
+            continue
+        writer.writerow([
+            err.get("row") or "",
+            err.get("error") or "",
+            err.get("question_type") or "",
+            err.get("question_text") or "",
+        ])
+
+    csv_content = out.getvalue()
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="import_row_errors_{job_id}.csv"'
+        },
     )
 

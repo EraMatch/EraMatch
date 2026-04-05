@@ -218,6 +218,7 @@ class GitHubAnalysisRequest(BaseModel):
     github_url: str
     jd_text: str = ""
     github_token: str = ""
+    cv_projects: list[dict[str, Any]] = []
 
 
 class GitHubAnalysisResponse(BaseModel):
@@ -307,6 +308,10 @@ async def _fetch_profile(username: str, token: str = "") -> dict:
 
     async with httpx.AsyncClient(timeout=_http_timeout()) as client:
         resp = await client.get(f"{GITHUB_API}/users/{username}", headers=headers)
+    if resp.status_code == 404:
+        raise HTTPException(status_code=422, detail=f"GitHub username '{username}' was not found")
+    if resp.status_code in (401, 403):
+        raise HTTPException(status_code=502, detail="GitHub API authentication/rate-limit error while fetching profile")
     if resp.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"GitHub profile fetch failed: {resp.status_code}")
     return resp.json()
@@ -319,6 +324,10 @@ async def _fetch_repos(username: str, token: str = "") -> list[RepoSummary]:
 
     async with httpx.AsyncClient(timeout=_http_timeout()) as client:
         resp = await client.get(f"{GITHUB_API}/users/{username}/repos?sort=updated&per_page=100", headers=headers)
+    if resp.status_code == 404:
+        raise HTTPException(status_code=422, detail=f"GitHub repositories for '{username}' were not found")
+    if resp.status_code in (401, 403):
+        raise HTTPException(status_code=502, detail="GitHub API authentication/rate-limit error while fetching repositories")
     if resp.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"GitHub repos fetch failed: {resp.status_code}")
 
@@ -365,9 +374,25 @@ def _rank_repos_by_heuristics(
     repos: list[RepoSummary],
     jd_text: str,
     target_repos: list[str] | None = None,
+    cv_projects: list[dict[str, Any]] | None = None,
 ) -> list[RepoSummary]:
     jd_lower = (jd_text or "").lower()
     boosted_names = {name.lower() for name in (target_repos or [])}
+    project_keywords: set[str] = set()
+    for project in (cv_projects or []):
+        if not isinstance(project, dict):
+            continue
+        name = str(project.get("name") or "").strip().lower()
+        description = str(project.get("description") or "").strip().lower()
+        technologies = project.get("technologies") if isinstance(project.get("technologies"), list) else []
+        if name:
+            project_keywords.update([token for token in name.replace("-", " ").replace("_", " ").split() if len(token) > 2])
+        if description:
+            project_keywords.update([token for token in description.replace("-", " ").replace("_", " ").split() if len(token) > 3])
+        for tech in technologies:
+            token = str(tech).strip().lower()
+            if len(token) > 1:
+                project_keywords.add(token)
 
     def score_repo(repo: RepoSummary) -> int:
         score = 0
@@ -383,6 +408,11 @@ def _rank_repos_by_heuristics(
             if len(kw) > 2 and kw.lower() in jd_lower:
                 score += 20
                 break
+
+        repo_blob = f"{repo.name} {repo.description} {' '.join(repo.topics)} {repo.language}".lower()
+        keyword_hits = sum(1 for kw in project_keywords if kw in repo_blob)
+        if keyword_hits > 0:
+            score += min(35, keyword_hits * 8)
 
         if repo.size > 500:
             score += 15
@@ -441,6 +471,7 @@ async def _evaluate_repo_relevance(
             "relevance": relevance if isinstance(relevance, dict) else {},
             "tree_files": files,
             "readme": readme,
+            "error": None,
         }
     except Exception:
         return {
@@ -449,6 +480,7 @@ async def _evaluate_repo_relevance(
             "relevance": {},
             "tree_files": [],
             "readme": "",
+            "error": "relevance_evaluation_failed",
         }
 
 
@@ -458,7 +490,13 @@ async def _fetch_contribution_stats(username: str, token: str = "") -> dict[str,
         if gql_stats:
             return gql_stats
 
-    return await _fetch_contributions_from_events(username, token)
+        event_stats = await _fetch_contributions_from_events(username, token)
+        event_stats["fallback_reason"] = "graphql_unavailable_or_rate_limited"
+        return event_stats
+
+    event_stats = await _fetch_contributions_from_events(username, token)
+    event_stats["fallback_reason"] = "no_github_token_public_events_fallback"
+    return event_stats
 
 
 async def _fetch_contributions_graphql(username: str, token: str) -> dict[str, Any] | None:
@@ -506,6 +544,10 @@ async def _fetch_contributions_graphql(username: str, token: str) -> dict[str, A
         "source": "graphql",
         "estimated": False,
         "window_days": 365,
+        "fetched_at": now.isoformat(),
+        "last_successful_fetch_at": now.isoformat(),
+        "source_freshness_hours": 0.0,
+        "fallback_reason": None,
     }
 
 
@@ -595,6 +637,15 @@ async def _fetch_contributions_from_events(username: str, token: str = "") -> di
     if review_durations_hours:
         avg_review_time = round(sum(review_durations_hours) / len(review_durations_hours), 1)
 
+    freshest_event_at = recent_activity[0].get("timestamp") if recent_activity else None
+    freshness_hours = None
+    if freshest_event_at:
+        try:
+            freshest_dt = datetime.fromisoformat(str(freshest_event_at).replace("Z", "+00:00"))
+            freshness_hours = round(max(0.0, (now - freshest_dt).total_seconds() / 3600.0), 2)
+        except Exception:
+            freshness_hours = None
+
     return {
         "contributions_last_year": total,
         "source": "events_public",
@@ -603,6 +654,10 @@ async def _fetch_contributions_from_events(username: str, token: str = "") -> di
         "breakdown": breakdown,
         "recent_activity": recent_activity,
         "avg_pr_review_time_hours": avg_review_time,
+        "fetched_at": now.isoformat(),
+        "last_successful_fetch_at": now.isoformat(),
+        "freshest_event_at": freshest_event_at,
+        "source_freshness_hours": freshness_hours,
     }
 
 
@@ -672,17 +727,24 @@ async def analyze_github_profile(request: GitHubAnalysisRequest):
     logger.info("github_analysis fetched profile_repos=%s", len(repos))
 
     # Phase 1: fast heuristic pre-filter before pillar extraction.
-    pre_filtered_repos = _rank_repos_by_heuristics(repos, request.jd_text)[:30]
+    pre_filtered_repos = _rank_repos_by_heuristics(repos, request.jd_text, cv_projects=request.cv_projects)[:30]
     repo_lines = "\n".join(
         f"- {r.name}: {r.description[:300]} (Lang: {r.language}, Topics: {r.topics})"
         for r in pre_filtered_repos
+    )
+
+    cv_projects_context = "\n".join(
+        f"- {str(p.get('name') or '').strip()}: {str(p.get('description') or '').strip()} | tech={', '.join([str(t) for t in (p.get('technologies') or [])])}"
+        for p in (request.cv_projects or [])[:12]
+        if isinstance(p, dict)
     )
 
     profile_context = (
         f"Candidate: {profile.get('name') or profile.get('login')} (@{profile.get('login')})\n"
         f"Bio: {profile.get('bio') or ''}\n"
         f"Location: {profile.get('location') or ''}\n"
-        f"Repos: {profile.get('public_repos') or 0}, Followers: {profile.get('followers') or 0}"
+        f"Repos: {profile.get('public_repos') or 0}, Followers: {profile.get('followers') or 0}\n"
+        f"CV Projects:\n{cv_projects_context or 'None provided'}"
     )
 
     # Stage 1: categorization / mandate mapping (filter model)
@@ -699,13 +761,19 @@ async def analyze_github_profile(request: GitHubAnalysisRequest):
         pillar_report = {"pillars": [], "error": str(exc)}
 
     target_repos = _extract_target_repo_names(pillar_report)
-    repos_to_scout = _rank_repos_by_heuristics(repos, request.jd_text, target_repos)[: max(1, int(settings.GH_ANALYSIS_REPO_SCOUT_LIMIT))]
+    repos_to_scout = _rank_repos_by_heuristics(
+        repos,
+        request.jd_text,
+        target_repos,
+        request.cv_projects,
+    )[: max(1, int(settings.GH_ANALYSIS_REPO_SCOUT_LIMIT))]
 
     # Stage 2: tournament-style relevance scoring in batches.
     best_repo: RepoSummary | None = None
     best_score = -1
     relevance_payload: dict[str, Any] = {}
     best_repo_tree: list[str] = []
+    repo_confidence_items: list[dict[str, Any]] = []
 
     batch_size = 4 if ":cloud" in (FILTER_MODEL or "").lower() else 2
     for idx in range(0, len(repos_to_scout), batch_size):
@@ -724,6 +792,23 @@ async def analyze_github_profile(request: GitHubAnalysisRequest):
         )
         for result in results:
             score = int(result.get("score") or 0)
+            relevance_obj = result.get("relevance") if isinstance(result.get("relevance"), dict) else {}
+            reasoning = str(
+                relevance_obj.get("reason")
+                or relevance_obj.get("summary")
+                or relevance_obj.get("justification")
+                or ""
+            ).strip()
+            confidence = round(_clamp((score / 100.0) + (0.12 if reasoning else 0.0), 0.0, 1.0), 3)
+            repo_confidence_items.append(
+                {
+                    "repo": result["repo"].name,
+                    "relevance_score": score,
+                    "confidence": confidence,
+                    "reason": reasoning,
+                    "fallback_reason": result.get("error"),
+                }
+            )
             if score > best_score:
                 best_score = score
                 best_repo = result["repo"]
@@ -856,6 +941,11 @@ async def analyze_github_profile(request: GitHubAnalysisRequest):
             "best_score": best_score,
             "repos_considered": [r.name for r in repos_to_scout],
         },
+        "repo_confidence": {
+            "selected_repo": best_repo.name if best_repo else None,
+            "selected_repo_confidence": next((item.get("confidence") for item in repo_confidence_items if item.get("repo") == (best_repo.name if best_repo else None)), 0.0),
+            "items": sorted(repo_confidence_items, key=lambda item: float(item.get("confidence") or 0.0), reverse=True)[:20],
+        },
         "key_files": key_files_payload,
         "audit": audit_items,
         "synthesis": synthesis_payload,
@@ -863,6 +953,27 @@ async def analyze_github_profile(request: GitHubAnalysisRequest):
         "recent_activity": contribution_stats.get("recent_activity") or [],
         "quality_indicators": quality_indicators,
         "overall_github_score": quality_indicators.get("overall_github_score"),
+        "metric_sources": {
+            "overall_github_score": "0.45*quality + 0.35*activity + 0.20*community",
+            "quality_score_inputs": "assessment.correctness/sustainability/knowledge from synthesis",
+            "activity_score_inputs": "contributions_last_year from GraphQL or public events",
+            "community_score_inputs": "followers and total_stars",
+            "review_speed": "PullRequestReviewEvent timestamp delta from PR creation",
+            "documentation_and_test_estimates": "heuristics over audited evidence snippets and assessment weights",
+            "contribution_source": contribution_stats.get("source") or "unknown",
+            "contribution_estimated": bool(contribution_stats.get("estimated")),
+            "contribution_fallback_reason": contribution_stats.get("fallback_reason"),
+            "contribution_last_successful_fetch_at": contribution_stats.get("last_successful_fetch_at"),
+            "contribution_source_freshness_hours": contribution_stats.get("source_freshness_hours"),
+        },
+        "data_freshness": {
+            "contribution_source": contribution_stats.get("source") or "unknown",
+            "last_successful_fetch_at": contribution_stats.get("last_successful_fetch_at"),
+            "fetched_at": contribution_stats.get("fetched_at"),
+            "source_freshness_hours": contribution_stats.get("source_freshness_hours"),
+            "freshest_event_at": contribution_stats.get("freshest_event_at"),
+            "fallback_reason": contribution_stats.get("fallback_reason"),
+        },
         "profile": {
             "login": profile.get("login"),
             "name": profile.get("name"),

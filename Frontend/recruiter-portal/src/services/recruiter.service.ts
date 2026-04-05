@@ -463,6 +463,7 @@ export const recruiterService = {
 
     // Background Tasks
     getBackgroundTasks: async () => fetchAPI<any[]>('/background-tasks/'),
+    getBackgroundTaskSloHealth: async () => fetchAPI<any>('/background-tasks/slo-health'),
     getTaskLogs: async (taskId: string) => fetchAPI<any>(`/background-tasks/${taskId}/logs`),
     stopAllVideoTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-video', { method: 'POST' }),
     stopAllQuestionImportTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-question-import', { method: 'POST' }),
@@ -507,7 +508,10 @@ export const recruiterService = {
         essayMediumCount: number = 0,
         essayHardCount: number = 0,
         processInChunks: boolean = false,
-        chunkPageSize: number = 20
+        chunkPageSize: number = 20,
+        sheetName?: string,
+        columnMapping?: Record<string, string>,
+        applyAutoFixes: boolean = false
     ) => {
         const formData = new FormData();
         formData.append('file', file);
@@ -528,6 +532,13 @@ export const recruiterService = {
         formData.append('essay_hard_count', String(essayHardCount));
         formData.append('process_in_chunks', processInChunks ? 'true' : 'false');
         formData.append('chunk_page_size', String(chunkPageSize));
+        if (sheetName) {
+            formData.append('sheet_name', sheetName);
+        }
+        if (columnMapping && Object.keys(columnMapping).length > 0) {
+            formData.append('column_mapping', JSON.stringify(columnMapping));
+        }
+        formData.append('apply_auto_fixes', applyAutoFixes ? 'true' : 'false');
         return fetchAPI<{ job_id: string; status: string; message: string; chunked?: boolean; chunk_count?: number; job_ids?: string[] }>(
             '/questions/import',
             { method: 'POST', body: formData }
@@ -549,12 +560,82 @@ export const recruiterService = {
         }>('/questions/import/preflight', { method: 'POST', body: formData });
     },
 
+    preflightSpreadsheetImport: async (file: File, sheetName?: string) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        if (sheetName) {
+            formData.append('sheet_name', sheetName);
+        }
+        return fetchAPI<{
+            sheets: string[];
+            selected_sheet: string | null;
+            columns: string[];
+            mapping: Record<string, string | null>;
+            confidence: Record<string, number>;
+            uncertain_fields: string[];
+            valid_rows: number;
+            invalid_rows: number;
+            row_errors_preview: Array<{ row: number; error: string }>;
+            auto_fix_suggestions_preview: Array<{ row: number; error: string; suggestion: string; auto_fixable: boolean }>;
+            auto_fixable_count: number;
+            unfixable_count: number;
+        }>('/questions/import/spreadsheet/preflight', { method: 'POST', body: formData });
+    },
+
+    downloadQuestionImportTemplate: async () => {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/questions/import/template`, {
+            method: 'GET',
+            headers: {
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            },
+        });
+
+        if (!res.ok) {
+            throw new Error(`Failed to download template: ${res.statusText}`);
+        }
+
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'eramatch_question_import_template.csv';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+    },
+
     /** List all import jobs for the current organization. */
     listImportJobs: async () => fetchAPI<any[]>('/questions/import/jobs'),
 
     /** Get draft questions for a completed import job (staging review). */
     getDraftQuestions: async (jobId: string) =>
         fetchAPI<any>(`/questions/import/jobs/${jobId}/draft`),
+
+    downloadImportRowErrorsReport: async (jobId: string) => {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/questions/import/jobs/${jobId}/row-errors-report`, {
+            method: 'GET',
+            headers: {
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            },
+        });
+
+        if (!res.ok) {
+            throw new Error(`Failed to download row error report: ${res.statusText}`);
+        }
+
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `import_row_errors_${jobId}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+    },
 
     /** Commit approved draft questions into the live Question Bank. */
     approveImportQuestions: async (jobId: string, questions: any[]) =>

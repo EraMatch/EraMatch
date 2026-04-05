@@ -26,6 +26,8 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
   const [showVideoResponse, setShowVideoResponse] = useState<number | null>(null);
   const [showVideoTranscript, setShowVideoTranscript] = useState<number | null>(null);
   const [showLiveInterviewTranscript, setShowLiveInterviewTranscript] = useState(false);
+  const [showGithubAssignedQuestions, setShowGithubAssignedQuestions] = useState(false);
+  const [githubQuestionTypeFilter, setGithubQuestionTypeFilter] = useState<'all' | 'mcq' | 'essay' | 'coding'>('all');
 
   const [candidate, setCandidate] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -218,6 +220,8 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
   const githubAssessment = candidate.githubAnalysis?.assessment || {};
   const qualityIndicators = candidate.githubAnalysis?.qualityIndicators || {};
   const contributionBreakdown = candidate.githubAnalysis?.contributionStats?.breakdown || {};
+  const repoConfidence = candidate.githubAnalysis?.repoConfidence || {};
+  const dataFreshness = candidate.githubAnalysis?.dataFreshness || {};
   const fallbackRecentActivity = Object.entries(contributionBreakdown)
     .filter(([, value]) => Number(value) > 0)
     .slice(0, 4)
@@ -249,6 +253,25 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
   const overallGithubScore = Number.isFinite(Number(candidate.githubAnalysis?.overallScore))
     ? Number(candidate.githubAnalysis.overallScore)
     : (Number.isFinite(Number(qualityIndicators?.overall_github_score)) ? Number(qualityIndicators.overall_github_score) : Number(candidate.scores.github || 0));
+  const githubQuestionDelivery = candidate.githubAnalysis?.questionDelivery || {};
+  const githubAssignedStats = candidate.githubAnalysis?.assignedQuestionStats || {};
+  const githubAssignedFromSession = Number(githubAssignedStats?.githubAssigned);
+  const githubAssignedFromDelivery = Number(githubQuestionDelivery?.count);
+  const githubAssignedCount = Number.isFinite(githubAssignedFromSession)
+    ? githubAssignedFromSession
+    : (Number.isFinite(githubAssignedFromDelivery) ? githubAssignedFromDelivery : 0);
+  const githubAssignedTotal = Number.isFinite(Number(githubAssignedStats?.totalAssigned))
+    ? Number(githubAssignedStats.totalAssigned)
+    : 0;
+  const githubAssignmentSessionId = typeof githubAssignedStats?.sessionId === 'string' ? githubAssignedStats.sessionId : '';
+  const githubAssignmentSessionShort = githubAssignmentSessionId ? `${githubAssignmentSessionId.slice(0, 8)}...` : 'N/A';
+  const githubAssignedQuestionList = Array.isArray(githubAssignedStats?.githubQuestions) ? githubAssignedStats.githubQuestions : [];
+  const filteredGithubAssignedQuestionList = githubAssignedQuestionList.filter((q: any) => {
+    if (githubQuestionTypeFilter === 'all') return true;
+    const normalizedType = String(q?.questionType || '').trim().toLowerCase();
+    if (githubQuestionTypeFilter === 'coding') return normalizedType === 'coding' || normalizedType === 'code';
+    return normalizedType === githubQuestionTypeFilter;
+  });
 
   const hasGithubProfile = Boolean(candidate.github_url);
   const githubAnalysisReady = Boolean(candidate.githubAnalysis?.summary)
@@ -722,6 +745,45 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                   </div>
                 </div>
 
+                {/* GitHub Question Assignment Indicator */}
+                <div className="bg-white border border-[#e5e7eb] rounded-lg p-5">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <h4 className="text-[#111827] text-sm font-medium">GitHub Questions Routed to Assessment</h4>
+                    <span className="text-[11px] px-2 py-1 rounded-full border border-[#c7d2fe] bg-[#eef2ff] text-[#4338ca]">
+                      Candidate-scoped
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">GitHub Questions Assigned</div>
+                      <div className="text-2xl font-semibold text-[#111827]">{githubAssignedCount}</div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Total Questions in Session</div>
+                      <div className="text-2xl font-semibold text-[#111827]">{githubAssignedTotal}</div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Assessment Session</div>
+                      <div className="text-sm font-semibold text-[#111827]">{githubAssignmentSessionShort}</div>
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-xs text-[#6b7280]">
+                    Delivery mode: {githubQuestionDelivery?.mode || 'assigned_on_assessment_start'}
+                  </p>
+
+                  <div className="mt-3">
+                    <Button
+                      onClick={() => setShowGithubAssignedQuestions(true)}
+                      variant="outline"
+                      className="border-indigo-600 text-indigo-600 hover:bg-indigo-50"
+                    >
+                      View Assigned GitHub Questions
+                    </Button>
+                  </div>
+                </div>
+
                 {/* Contribution Data Quality */}
                 <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
                   <div className="flex items-center justify-between mb-3">
@@ -769,6 +831,47 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                           </div>
                         ))}
                       </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Repository Confidence & Freshness */}
+                <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-[#111827] text-sm font-medium">Repository Confidence & Source Freshness</h4>
+                    <span className="text-[11px] px-2 py-1 rounded-full border border-[#e5e7eb] bg-[#f8fafc] text-[#475569]">
+                      Trust Signals
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Selected Repo</div>
+                      <div className="text-sm font-semibold text-[#111827]">{repoConfidence?.selected_repo || 'N/A'}</div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Selection Confidence</div>
+                      <div className="text-sm font-semibold text-[#111827]">
+                        {Number.isFinite(Number(repoConfidence?.selected_repo_confidence))
+                          ? `${Math.round(Number(repoConfidence.selected_repo_confidence) * 100)}%`
+                          : 'N/A'}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Contribution Source</div>
+                      <div className="text-sm font-semibold text-[#111827]">{dataFreshness?.contribution_source || 'unknown'}</div>
+                    </div>
+                  </div>
+
+                  <div className="text-[12px] text-[#6b7280]">
+                    Last successful fetch: {dataFreshness?.last_successful_fetch_at || 'N/A'}
+                  </div>
+                  <div className="text-[12px] text-[#6b7280]">
+                    Source freshness (hours): {dataFreshness?.source_freshness_hours ?? 'N/A'}
+                  </div>
+                  {dataFreshness?.fallback_reason && (
+                    <div className="mt-2 text-[12px] text-amber-700">
+                      Fallback reason: {dataFreshness.fallback_reason}
                     </div>
                   )}
                 </div>
@@ -1636,6 +1739,82 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                   })}
                 </div>
               </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* GitHub Assigned Questions Modal */}
+        <Dialog open={showGithubAssignedQuestions} onOpenChange={setShowGithubAssignedQuestions}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Assigned GitHub Questions</DialogTitle>
+            </DialogHeader>
+            <div className="mt-2 space-y-4">
+              <div className="rounded-lg border border-[#e5e7eb] bg-[#f8fafc] p-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <div className="text-[11px] text-[#6b7280]">Session</div>
+                    <div className="text-sm font-semibold text-[#111827]">{githubAssignmentSessionShort}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-[#6b7280]">GitHub Assigned</div>
+                    <div className="text-sm font-semibold text-[#111827]">{githubAssignedCount}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-[#6b7280]">Assessment Status</div>
+                    <div className="text-sm font-semibold text-[#111827]">{githubAssignedStats?.assessmentStatus || 'N/A'}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => setGithubQuestionTypeFilter('all')}
+                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${githubQuestionTypeFilter === 'all' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'}`}
+                >
+                  All ({githubAssignedQuestionList.length})
+                </button>
+                <button
+                  onClick={() => setGithubQuestionTypeFilter('mcq')}
+                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${githubQuestionTypeFilter === 'mcq' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'}`}
+                >
+                  MCQ
+                </button>
+                <button
+                  onClick={() => setGithubQuestionTypeFilter('essay')}
+                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${githubQuestionTypeFilter === 'essay' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'}`}
+                >
+                  Essay
+                </button>
+                <button
+                  onClick={() => setGithubQuestionTypeFilter('coding')}
+                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${githubQuestionTypeFilter === 'coding' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'}`}
+                >
+                  Coding
+                </button>
+              </div>
+
+              {filteredGithubAssignedQuestionList.length > 0 ? (
+                <div className="space-y-3">
+                  {filteredGithubAssignedQuestionList.map((q: any, idx: number) => (
+                    <div key={q.assignmentId || idx} className="rounded-lg border border-[#e5e7eb] p-4">
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        <div className="text-sm font-medium text-[#111827]">
+                          Q{q.order || idx + 1} • {(q.questionType || 'essay').toUpperCase()}
+                        </div>
+                        <div className="text-xs px-2 py-1 rounded-full border border-[#e5e7eb] bg-[#fafafa] text-[#374151]">
+                          {q.points || 10} pts
+                        </div>
+                      </div>
+                      <p className="text-sm text-[#374151] whitespace-pre-wrap">{q.questionText || 'No question text available.'}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-[#e5e7eb] p-4 text-sm text-[#6b7280]">
+                  No questions found for the selected filter.
+                </div>
+              )}
             </div>
           </DialogContent>
         </Dialog>

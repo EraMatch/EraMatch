@@ -148,6 +148,7 @@ def run_github_analysis(
     jd_text: str = "",
     github_token: str = "",
     questions_to_generate: int = 10,
+    cv_projects: list[dict] | None = None,
 ):
     logger.info("[GitHubAnalysis] Starting job %s candidate=%s", job_id, candidate_id)
     conn = None
@@ -167,6 +168,7 @@ def run_github_analysis(
                 "github_url": github_url,
                 "jd_text": jd_text,
                 "github_token": effective_github_token,
+                "cv_projects": cv_projects or [],
             },
             timeout=420,
         )
@@ -214,34 +216,13 @@ def run_github_analysis(
                 }
             )
 
-        created_by_user_id = None
-        with conn.cursor() as cur:
-            cur.execute("SELECT created_by_user_id FROM github_analysis_jobs WHERE job_id = %s", (job_id,))
-            row = cur.fetchone()
-            if row:
-                created_by_user_id = row[0]
-
-        if created_by_user_id and normalized_questions:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO question_import_jobs
-                    (job_id, organization_id, created_by_user_id, status, import_type, source_filename,
-                     draft_questions, critic_stats, total_generated, total_flagged, total_approved, completed_at)
-                    VALUES
-                    (gen_random_uuid(), %s, %s, 'completed', 'generative', %s,
-                     %s::jsonb, %s::jsonb, %s, 0, 0, NOW())
-                    """,
-                    (
-                        org_id,
-                        created_by_user_id,
-                        f"GitHub generated questions: {github_url}",
-                        json.dumps(normalized_questions),
-                        json.dumps({"source": "github_analysis", "note": "Auto-ingested from GitHub analysis job"}),
-                        len(normalized_questions),
-                    ),
-                )
-            conn.commit()
+        if isinstance(payload.get("analysis_data"), dict):
+            payload["analysis_data"]["question_delivery"] = {
+                "count": len(normalized_questions),
+                "target": "candidate_assessment",
+                "mode": "assigned_on_assessment_start",
+                "source": "github_analysis",
+            }
 
         update_job_status(
             conn,
@@ -253,7 +234,12 @@ def run_github_analysis(
             completed_at=datetime.now(timezone.utc),
         )
 
-        return {"job_id": job_id, "status": "completed", "total_generated": len(generated_questions)}
+        return {
+            "job_id": job_id,
+            "status": "completed",
+            "total_generated": len(generated_questions),
+            "delivery_target": "candidate_assessment",
+        }
 
     except Exception as exc:
         logger.error("[GitHubAnalysis] job=%s failed: %s", job_id, exc)
@@ -268,6 +254,13 @@ def run_github_analysis(
                 )
             except Exception:
                 pass
+
+        if isinstance(exc, requests.HTTPError):
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            # Client-side GitHub errors (invalid username/url/auth) should fail fast without retries.
+            if isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 429:
+                raise
+
         raise self.retry(exc=exc)
     finally:
         if conn:
