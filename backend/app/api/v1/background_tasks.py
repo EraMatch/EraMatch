@@ -190,7 +190,8 @@ async def get_background_task_slo_health(
 ):
     """Return SLO metrics and triggered alerts for core background pipelines."""
     now = datetime.now(timezone.utc)
-    since = now - timedelta(hours=SLO_WINDOW_HOURS)
+    # DB columns are TIMESTAMP WITHOUT TIME ZONE, so use naive UTC for comparisons.
+    since = (now - timedelta(hours=SLO_WINDOW_HOURS)).replace(tzinfo=None)
     alerts: list[dict] = []
 
     # Question import metrics
