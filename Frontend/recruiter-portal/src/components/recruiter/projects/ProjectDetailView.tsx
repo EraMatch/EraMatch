@@ -27,7 +27,7 @@ interface Position {
 }
 
 interface ProjectDetailViewProps {
-  projectTitle: string;
+  projectId: string;
   projectDescription?: string;
   projectStatus?: 'Draft' | 'Active' | 'Complete' | 'Archived' | 'Pending';
   completionDate?: string;
@@ -36,29 +36,29 @@ interface ProjectDetailViewProps {
   onCreateAssessment?: () => void;
   pendingAssessment?: any;
   onAssessmentConsumed?: () => void;
-  onViewDashboard?: (projectTitle: string, positionTitle: string) => void;
+  onViewDashboard?: () => void;
   onViewGroup?: (groupId: string) => void;
+  onViewPosition?: (positionId: string) => void;
   returnToGroupsTab?: boolean;
-  initialPosition?: string;
-  onPositionSelect?: (positionTitle: string) => void;
   onArchiveProject?: () => void;
   onCompleteProject?: (data: ProjectCompletionData) => void;
 }
 
-export function ProjectDetailView({ projectTitle, projectDescription, projectStatus, completionDate, onBack, backLabel = 'Back', onCreateAssessment, pendingAssessment, onAssessmentConsumed, onViewDashboard, onViewGroup, returnToGroupsTab, initialPosition, onPositionSelect, onArchiveProject, onCompleteProject }: ProjectDetailViewProps) {
+export function ProjectDetailView({ projectId, projectDescription, projectStatus, completionDate, onBack, backLabel = 'Back', onCreateAssessment, pendingAssessment, onAssessmentConsumed, onViewDashboard, onViewGroup, onViewPosition, returnToGroupsTab, onArchiveProject, onCompleteProject }: ProjectDetailViewProps) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [projectTitle, setProjectTitle] = useState<string>('');
 
   useEffect(() => {
     const fetchProjectData = async () => {
       try {
         setIsLoading(true);
-        // Find project ID from title to filter positions
-        const allProjects = await api.recruiter.getProjects();
-        const project = allProjects.find(p => p.projectName === projectTitle);
+        // Fetch project details by ID directly
+        const project = await api.recruiter.getProjectDetails(String(projectId)) as any;
 
         if (project) {
-          setProjectId(project.id);
+          setProjectTitle(project.projectName || project.name || 'Project');
+          setProjectIdState(project.id);
           // Update internal status based on API status
           if (project.status === 'pending') {
             setInternalProjectStatus('Pending');
@@ -92,9 +92,9 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
     };
 
     fetchProjectData();
-  }, [projectTitle]);
+  }, [projectId]);
 
-  const [projectId, setProjectId] = useState<number | string | undefined>();
+  const [projectIdState, setProjectIdState] = useState<number | string | undefined>(projectId);
   const [viewingPosition, setViewingPosition] = useState<Position | null>(null);
   const [activeTab, setActiveTab] = useState<'positions' | 'analytics'>('positions');
 
@@ -178,18 +178,15 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
   };
 
   const handleViewPosition = (position: Position) => {
-    setViewingPosition(position);
-    if (onPositionSelect) {
-      onPositionSelect(position.title);
+    if (onViewPosition) {
+      onViewPosition(position.id);
+    } else {
+      setViewingPosition(position);
     }
   };
 
   const handleBackToPositionsList = () => {
-    if (onPositionSelect) {
-      onPositionSelect('');
-    } else {
-      setViewingPosition(null);
-    }
+    setViewingPosition(null);
   };
 
   const handleSaveFromPositionView = (title: string, description: string, screening: string, isOpen: boolean) => {
@@ -230,20 +227,10 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
     }
   }, [viewingPosition, pendingAssessment]);
 
-  // Auto-navigate to initialPosition (URL param) if provided
-  useEffect(() => {
-    if (initialPosition) {
-      const positionToView = positions.find(p => p.title === initialPosition);
-      if (positionToView && viewingPosition?.title !== positionToView.title) {
-        setViewingPosition(positionToView);
-      }
-    } else if (viewingPosition) {
-      // If URL param is cleared, close the view
-      setViewingPosition(null);
-    }
-  }, [initialPosition, positions, viewingPosition]);
+  // Auto-navigate to initial position if needed (for returnToGroupsTab use case)
+  // Note: initialPosition via URL params is no longer used; positions have their own route now
 
-  // If viewing a specific position, show the position detail view
+  // If viewing a specific position (fallback for components that don't use onViewPosition routing)
   if (viewingPosition) {
     return (
       <PositionDetailView
@@ -263,7 +250,7 @@ export function ProjectDetailView({ projectTitle, projectDescription, projectSta
             [viewingPosition.id]: [...(positionAssessments[viewingPosition.id] || []), assessment]
           });
         }}
-        onViewDashboard={() => onViewDashboard?.(projectTitle, viewingPosition.title)}
+        onViewDashboard={() => onViewDashboard?.()}
         onViewGroup={onViewGroup}
         initialActiveTab={returnToGroupsTab ? 'groups' : undefined}
       />
