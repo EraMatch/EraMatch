@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     AI_SERVICE_URL: str = "http://127.0.0.1:8001"
     GITHUB_TOKEN: str = ""
 
+    # Google Drive Integration
+    GOOGLE_SERVICE_ACCOUNT_FILE: str = "credentials.json"
+
 
 @lru_cache
 def get_settings() -> Settings:

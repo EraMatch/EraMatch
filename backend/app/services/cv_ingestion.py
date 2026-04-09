@@ -1,0 +1,630 @@
+import io
+import logging
+import os
+import re
+import tempfile
+import zipfile
+import base64
+import uuid
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List
+from uuid import UUID
+
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+from sqlalchemy import select, update, create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.models import (
+    CVIngestionJob,
+    DriveIngestionSchedule,
+    CandidateProfile,
+    CandidateApplication
+)
+from worker.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
+
+# Google credentials path
+GOOGLE_SERVICE_ACCOUNT_FILE = getattr(settings, "GOOGLE_SERVICE_ACCOUNT_FILE", "credentials.json")
+
+
+class CVIngestionService:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def update_job_status(self, job_id: UUID, status: str, **extra_fields):
+        """Update a CVIngestionJob row."""
+        job = await self.session.get(CVIngestionJob, job_id)
+        if not job:
+            return
+
+        job.status = status
+        if status in ["completed", "failed"]:
+            job.completed_at = datetime.utcnow()
+
+        for key, value in extra_fields.items():
+            if hasattr(job, key):
+                setattr(job, key, value)
+            elif key == "processing_log": # Handle JSONB column explicitly if not direct matching
+                job.processing_log = value
+
+        self.session.add(job)
+        await self.session.commit()
+
+    async def create_zip_ingestion_job(self, organization_id: UUID, position_id: UUID, user_id: UUID, filename: str) -> CVIngestionJob:
+        job = CVIngestionJob(
+            organization_id=organization_id,
+            position_id=position_id,
+            created_by_user_id=user_id,
+            status="pending",
+            source_type="zip_upload",
+            source_filename=filename
+        )
+        self.session.add(job)
+        await self.session.commit()
+        await self.session.refresh(job)
+        return job
+
+    async def create_drive_schedule(self, organization_id: UUID, position_id: UUID, user_id: UUID, drive_folder_id: str, drive_folder_url: str, start_date: datetime, frequency_days: int, frequency_hours: int) -> DriveIngestionSchedule:
+        schedule = DriveIngestionSchedule(
+            organization_id=organization_id,
+            position_id=position_id,
+            created_by_user_id=user_id,
+            drive_folder_id=drive_folder_id,
+            drive_folder_url=drive_folder_url,
+            start_date=start_date,
+            next_run_at=start_date,
+            frequency_days=frequency_days,
+            frequency_hours=frequency_hours,
+            is_active=True
+        )
+        self.session.add(schedule)
+        await self.session.commit()
+        await self.session.refresh(schedule)
+
+        # Dispatch ETA Task
+        task = celery_app.send_task("cv_ingestion.run_drive_sync", args=[str(schedule.id)], eta=start_date)
+        schedule.celery_task_id = task.id
+        self.session.add(schedule)
+        await self.session.commit()
+        return schedule
+
+    async def cancel_drive_schedule(self, schedule_id: UUID, organization_id: UUID):
+        schedule = await self.session.get(DriveIngestionSchedule, schedule_id)
+        if not schedule or schedule.organization_id != organization_id:
+            raise ValueError("Schedule not found")
+
+        schedule.is_active = False
+        
+        if schedule.celery_task_id:
+            celery_app.control.revoke(schedule.celery_task_id, terminate=False)
+            schedule.next_run_at = None
+
+        self.session.add(schedule)
+        await self.session.commit()
+
+    async def get_or_create_candidate(self, organization_id: UUID, email: str, name: str) -> UUID:
+        """Gets existing candidate ID or creates a new candidate profile."""
+        stmt = select(CandidateProfile).where(
+            CandidateProfile.organization_id == organization_id,
+            CandidateProfile.email == email
+        )
+        res = await self.session.execute(stmt)
+        candidate = res.scalars().first()
+
+        if candidate:
+            return candidate.id
+
+        new_candidate = CandidateProfile(
+            organization_id=organization_id,
+            full_name=name,
+            email=email
+        )
+        self.session.add(new_candidate)
+        await self.session.commit()
+        await self.session.refresh(new_candidate)
+        return new_candidate.id
+
+    async def apply_for_position(self, organization_id: UUID, position_id: UUID, candidate_id: UUID, source: str) -> Optional[UUID]:
+        """Creates a job application if one doesn't exist for this role. Returns app_id or None if duplicate."""
+        stmt = select(CandidateApplication).where(
+            CandidateApplication.position_id == position_id,
+            CandidateApplication.candidate_id == candidate_id
+        )
+        res = await self.session.execute(stmt)
+        existing_app = res.scalars().first()
+
+        if existing_app:
+            return None  # Duplicate application
+
+        new_app = CandidateApplication(
+            organization_id=organization_id,
+            position_id=position_id,
+            candidate_id=candidate_id,
+            source=source
+        )
+        self.session.add(new_app)
+        await self.session.commit()
+        await self.session.refresh(new_app)
+        return new_app.id
+
+    def save_cv_file(self, app_id: UUID, file_name: str, file_content: bytes) -> str:
+        """Saves the CV into local storage organized by application_id."""
+        base_dir = os.path.join(os.getcwd(), "static", "cvs", str(app_id))
+        os.makedirs(base_dir, exist_ok=True)
+        file_path = os.path.join(base_dir, file_name)
+        with open(file_path, "wb") as f:
+            f.write(file_content)
+        return file_path
+
+    async def process_cv_file(self, organization_id: UUID, position_id: UUID, file_name: str, file_content: bytes, source: str) -> Dict[str, Any]:
+        """Processes a single CV file. Returns stats dict."""
+        # Placeholder name and email extraction since CV parsing is pending.
+        # We use a random UUID for email to ensure unique candidate creation if re-running.
+        base_name = os.path.splitext(file_name)[0]
+        email = f"{str(uuid.uuid4())}@example.com"
+        
+        candidate_id = await self.get_or_create_candidate(organization_id, email, base_name)
+        app_id = await self.apply_for_position(organization_id, position_id, candidate_id, source)
+        
+        if app_id:
+            self.save_cv_file(app_id, file_name, file_content)
+            # TODO: Trigger CV parsing async task here once implemented
+            return {"status": "processed", "file": file_name, "app_id": str(app_id)}
+        else:
+            return {"status": "skipped", "file": file_name, "reason": "Already applied"}
+
+    async def process_zip_ingestion(self, job_id: UUID, organization_id: UUID, position_id: UUID, zip_content: str):
+        """Processes an uploaded ZIP file of CVs."""
+        logger.info(f"Starting ZIP ingestion for Job {job_id}")
+        file_bytes = base64.b64decode(zip_content)
+        
+        processed = 0
+        skipped = 0
+        processing_log = []
+
+        try:
+            await self.update_job_status(job_id, "processing")
+            
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                # Filter standard files, ignore __MACOSX or hidden
+                valid_files = [f for f in z.namelist() if not f.startswith("__MACOSX/") and not f.startswith(".") and not f.endswith("/")]
+                
+                for file_name in valid_files:
+                    file_content = z.read(file_name)
+                    # Ignore very small or empty files
+                    if len(file_content) < 100:
+                        continue
+                        
+                    basename = os.path.basename(file_name)
+                    res = await self.process_cv_file(organization_id, position_id, basename, file_content, source="zip_upload")
+                    
+                    processing_log.append(res)
+                    if res["status"] == "processed":
+                        processed += 1
+                    else:
+                        skipped += 1
+                        
+            await self.update_job_status(
+                job_id, "completed", 
+                processed_files=processed, 
+                skipped_files=skipped, 
+                total_files=processed + skipped,
+                processing_log=processing_log
+            )
+            
+        except Exception as e:
+            logger.exception(f"ZIP Ingestion Failed: {job_id}")
+            try:
+                # The session's connection may be dirty — rollback before reuse
+                await self.session.rollback()
+                await self.update_job_status(job_id, "failed", error_message=str(e))
+            except Exception as inner_e:
+                logger.error(f"Failed to update job status to failed: {inner_e}")
+                # Worker task has a fallback that uses a fresh session
+                raise e  # Re-raise original so the worker-level handler can mark it failed
+
+    def _connect_google_drive(self):
+        creds = service_account.Credentials.from_service_account_file(
+            GOOGLE_SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive.readonly']
+        )
+        return build('drive', 'v3', credentials=creds)
+
+    async def run_drive_ingestion(self, schedule_id: UUID):
+        """Executes a Google Drive ingestion and schedules the next run if recurring."""
+        logger.info(f"Starting Drive Ingestion for Schedule {schedule_id}")
+        
+        try:
+            schedule = await self.session.get(DriveIngestionSchedule, schedule_id)
+            
+            if not schedule or not schedule.is_active:
+                logger.info("Schedule inactive or deleted.")
+                return
+
+            # 1. Create a tracking job for this run
+            job = CVIngestionJob(
+                organization_id=schedule.organization_id,
+                position_id=schedule.position_id,
+                created_by_user_id=schedule.created_by_user_id,
+                source_type="google_drive",
+                status="processing"
+            )
+            self.session.add(job)
+            await self.session.commit()
+            await self.session.refresh(job)
+
+            schedule.last_run_at = datetime.utcnow()
+            schedule.last_job_id = job.id
+            self.session.add(schedule)
+            await self.session.commit()
+
+            # 2. Fetch files from Drive
+            service = self._connect_google_drive()
+            folder_id = schedule.drive_folder_id
+            
+            # Only fetch pdf, docx etc. Example query:
+            query = f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false"
+            results = service.files().list(q=query, fields="files(id, name)").execute()
+            items = results.get('files', [])
+
+            processed = 0
+            skipped = 0
+            processing_log = []
+
+            for item in items:
+                request = service.files().get_media(fileId=item['id'])
+                fh = io.BytesIO()
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while done is False:
+                    status, done = downloader.next_chunk()
+                
+                file_content = fh.getvalue()
+                if len(file_content) > 0:
+                    res = await self.process_cv_file(schedule.organization_id, schedule.position_id, item['name'], file_content, source="google_drive")
+                    processing_log.append(res)
+                    if res["status"] == "processed":
+                        processed += 1
+                    else:
+                        skipped += 1
+
+            await self.update_job_status(
+                job.id, "completed", 
+                processed_files=processed, 
+                skipped_files=skipped, 
+                total_files=processed + skipped,
+                processing_log=processing_log
+            )
+
+            # 3. Handle Recurrence Scheduling
+            freq_days = schedule.frequency_days or 0
+            freq_hours = schedule.frequency_hours or 0
+            
+            if freq_days > 0 or freq_hours > 0:
+                next_run = datetime.utcnow() + timedelta(days=freq_days, hours=freq_hours)
+                
+                # Re-enqueue self using ETA
+                task = celery_app.send_task("cv_ingestion.run_drive_sync", args=[str(schedule_id)], eta=next_run)
+                
+                schedule.next_run_at = next_run
+                schedule.celery_task_id = task.id
+                self.session.add(schedule)
+                await self.session.commit()
+                logger.info(f"Re-enqueued Drive Schedule {schedule_id} for {next_run}")
+            else:
+                schedule.is_active = False
+                self.session.add(schedule)
+                await self.session.commit()
+                logger.info("One-time drive ingestion completed. Deactivated schedule.")
+
+        except Exception as e:
+            logger.exception(f"Drive Ingestion Failed: {schedule_id}")
+            try:
+                await self.session.rollback()
+                if 'job' in locals() and job.id:
+                    await self.update_job_status(job.id, "failed", error_message=str(e))
+            except Exception as inner_e:
+                logger.error(f"Failed to update job status to failed: {inner_e}")
+
+    async def recover_missed_schedules(self):
+        """
+        Called on worker startup to re-enqueue any Drive schedules whose
+        ETA passed while the Celery worker was down.
+        """
+        logger.info("Recovering missed Drive ingestion schedules...")
+        try:
+            stmt = select(DriveIngestionSchedule).where(
+                DriveIngestionSchedule.is_active == True,
+                DriveIngestionSchedule.next_run_at != None,
+                DriveIngestionSchedule.next_run_at <= datetime.utcnow()
+            )
+            res = await self.session.execute(stmt)
+            missed_schedules = res.scalars().all()
+            
+            for schedule in missed_schedules:
+                logger.info(f"Recovering missed schedule {schedule.id}")
+                # Immediately enqueue
+                task = celery_app.send_task("cv_ingestion.run_drive_sync", args=[str(schedule.id)])
+                
+                # Note: We let the task itself calculate its NEXT next_run_at when it finishes.
+                schedule.celery_task_id = task.id
+                self.session.add(schedule)
+            
+            if missed_schedules:    
+                await self.session.commit()
+        except Exception as e:
+            logger.exception("Failed to recover missed schedules")
+
+
+class CVIngestionWorkerService:
+    """Synchronous version of CVIngestionService for use in Celery workers."""
+    
+    def __init__(self, session: Session):
+        self.session = session
+
+    def update_job_status(self, job_id: UUID, status: str, **extra_fields):
+        """Update a CVIngestionJob row (Synchronous)."""
+        job = self.session.get(CVIngestionJob, job_id)
+        if not job:
+            return
+
+        job.status = status
+        if status in ["completed", "failed"]:
+            job.completed_at = datetime.utcnow()
+
+        for key, value in extra_fields.items():
+            if hasattr(job, key):
+                setattr(job, key, value)
+            elif key == "processing_log":
+                job.processing_log = value
+
+        self.session.add(job)
+        self.session.commit()
+
+    def get_or_create_candidate(self, organization_id: UUID, email: str, name: str) -> UUID:
+        """Gets existing candidate ID or creates a new candidate profile (Synchronous)."""
+        stmt = select(CandidateProfile).where(
+            CandidateProfile.organization_id == organization_id,
+            CandidateProfile.email == email
+        )
+        candidate = self.session.execute(stmt).scalars().first()
+
+        if candidate:
+            return candidate.id
+
+        new_candidate = CandidateProfile(
+            organization_id=organization_id,
+            full_name=name,
+            email=email
+        )
+        self.session.add(new_candidate)
+        self.session.commit()
+        self.session.refresh(new_candidate)
+        return new_candidate.id
+
+    def apply_for_position(self, organization_id: UUID, position_id: UUID, candidate_id: UUID, source: str) -> Optional[UUID]:
+        """Creates a job application if one doesn't exist for this role (Synchronous)."""
+        stmt = select(CandidateApplication).where(
+            CandidateApplication.position_id == position_id,
+            CandidateApplication.candidate_id == candidate_id
+        )
+        existing_app = self.session.execute(stmt).scalars().first()
+
+        if existing_app:
+            return None
+
+        new_app = CandidateApplication(
+            organization_id=organization_id,
+            position_id=position_id,
+            candidate_id=candidate_id,
+            source=source
+        )
+        self.session.add(new_app)
+        self.session.commit()
+        self.session.refresh(new_app)
+        return new_app.id
+
+    def process_cv_file(self, organization_id: UUID, position_id: UUID, file_name: str, file_content: bytes, source: str) -> Dict[str, Any]:
+        """Processes a single CV file (Synchronous)."""
+        base_name = os.path.splitext(file_name)[0]
+        email = f"{str(uuid.uuid4())}@example.com"
+        
+        logger.info(f"Processing CV: {file_name} for email {email}")
+        candidate_id = self.get_or_create_candidate(organization_id, email, base_name)
+        app_id = self.apply_for_position(organization_id, position_id, candidate_id, source)
+        
+        if app_id:
+            logger.info(f"Created new application {app_id} for {file_name}")
+            # save_cv_file logic duplicated here to stay sync
+            base_dir = os.path.join(os.getcwd(), "static", "cvs", str(app_id))
+            os.makedirs(base_dir, exist_ok=True)
+            file_path = os.path.join(base_dir, file_name)
+            with open(file_path, "wb") as f:
+                f.write(file_content)
+            
+            return {"status": "processed", "file": file_name, "app_id": str(app_id)}
+        else:
+            logger.info(f"Skipping {file_name}: Application already exists for this candidate/position.")
+            return {"status": "skipped", "file": file_name, "reason": "Already applied"}
+
+    def process_zip_ingestion(self, job_id: UUID, organization_id: UUID, position_id: UUID, zip_content: str):
+        """Processes an uploaded ZIP file of CVs (Synchronous)."""
+        logger.info(f"Starting ZIP ingestion for Job {job_id} (Sync)")
+        file_bytes = base64.b64decode(zip_content)
+        
+        processed = 0
+        skipped = 0
+        processing_log = []
+
+        try:
+            self.update_job_status(job_id, "processing")
+            
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                valid_files = [f for f in z.namelist() if not f.startswith("__MACOSX/") and not f.startswith(".") and not f.endswith("/")]
+                
+                for file_name in valid_files:
+                    file_content = z.read(file_name)
+                    if len(file_content) < 100:
+                        continue
+                        
+                    basename = os.path.basename(file_name)
+                    res = self.process_cv_file(organization_id, position_id, basename, file_content, source="zip_upload")
+                    
+                    processing_log.append(res)
+                    if res["status"] == "processed":
+                        processed += 1
+                    else:
+                        skipped += 1
+                        
+            self.update_job_status(
+                job_id, "completed", 
+                processed_files=processed, 
+                skipped_files=skipped, 
+                total_files=processed + skipped,
+                processing_log=processing_log
+            )
+            
+        except Exception as e:
+            logger.exception(f"ZIP Ingestion Failed: {job_id}")
+            try:
+                self.session.rollback()
+                self.update_job_status(job_id, "failed", error_message=str(e))
+            except Exception as inner_e:
+                logger.error(f"Failed to update job status to failed: {inner_e}")
+                raise e
+
+    def _connect_google_drive(self):
+        creds = service_account.Credentials.from_service_account_file(
+            GOOGLE_SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/drive.readonly']
+        )
+        return build('drive', 'v3', credentials=creds)
+
+    def run_drive_ingestion(self, schedule_id: UUID):
+        """Executes a Google Drive ingestion (Synchronous)."""
+        logger.info(f"Starting Drive Ingestion for Schedule {schedule_id} (Sync)")
+        
+        try:
+            schedule = self.session.get(DriveIngestionSchedule, schedule_id)
+            if not schedule or not schedule.is_active:
+                logger.info("Schedule inactive or deleted.")
+                return
+
+            job = CVIngestionJob(
+                organization_id=schedule.organization_id,
+                position_id=schedule.position_id,
+                created_by_user_id=schedule.created_by_user_id,
+                source_type="google_drive",
+                status="processing"
+            )
+            self.session.add(job)
+            self.session.commit()
+            self.session.refresh(job)
+
+            schedule.last_run_at = datetime.utcnow()
+            schedule.last_job_id = job.id
+            self.session.add(schedule)
+            self.session.commit()
+
+            service = self._connect_google_drive()
+            folder_id = schedule.drive_folder_id
+            
+            # Robustness: Extract ID from URL if necessary
+            if "drive.google.com" in folder_id:
+                match = re.search(r"folders/([a-zA-Z0-9-_]+)", folder_id)
+                if match:
+                    folder_id = match.group(1)
+
+            query = f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false"
+            results = service.files().list(q=query, fields="files(id, name, mimeType)").execute()
+            items = results.get('files', [])
+            
+            logger.info(f"Drive Ingestion: Found {len(items)} files in folder {folder_id}")
+
+            processed = 0
+            skipped = 0
+            processing_log = []
+
+            for item in items:
+                logger.info(f"Processing Drive file: {item['name']} (ID: {item['id']}, Mime: {item.get('mimeType')})")
+                try:
+                    request = service.files().get_media(fileId=item['id'])
+                    fh = io.BytesIO()
+                    downloader = MediaIoBaseDownload(fh, request)
+                    done = False
+                    while done is False:
+                        status, done = downloader.next_chunk()
+                    
+                    file_content = fh.getvalue()
+                    if len(file_content) > 0:
+                        res = self.process_cv_file(schedule.organization_id, schedule.position_id, item['name'], file_content, source="google_drive")
+                        logger.info(f"Process CV File result for {item['name']}: {res['status']}")
+                        processing_log.append(res)
+                        if res["status"] == "processed":
+                            processed += 1
+                        else:
+                            skipped += 1
+                    else:
+                        logger.warning(f"File {item['name']} is empty, skipping.")
+                        skipped += 1
+                except Exception as file_e:
+                    logger.error(f"Failed to download/process Drive file {item['name']}: {file_e}")
+                    processing_log.append({"status": "error", "file": item['name'], "error": str(file_e)})
+                    skipped += 1
+
+            self.update_job_status(
+                job.id, "completed", 
+                processed_files=processed, 
+                skipped_files=skipped, 
+                total_files=processed + skipped,
+                processing_log=processing_log
+            )
+
+            freq_days = schedule.frequency_days or 0
+            freq_hours = schedule.frequency_hours or 0
+            
+            if freq_days > 0 or freq_hours > 0:
+                next_run = datetime.utcnow() + timedelta(days=freq_days, hours=freq_hours)
+                task = celery_app.send_task("cv_ingestion.run_drive_sync", args=[str(schedule_id)], eta=next_run)
+                schedule.next_run_at = next_run
+                schedule.celery_task_id = task.id
+                self.session.add(schedule)
+                self.session.commit()
+            else:
+                schedule.is_active = False
+                self.session.add(schedule)
+                self.session.commit()
+
+        except Exception as e:
+            logger.exception(f"Drive Ingestion Failed: {schedule_id}")
+            try:
+                self.session.rollback()
+                if 'job' in locals():
+                    self.update_job_status(job.id, "failed", error_message=str(e))
+            except Exception as inner_e:
+                logger.error(f"Failed to update job status to failed: {inner_e}")
+
+    def recover_missed_schedules(self):
+        """Recover missed schedules (Synchronous)."""
+        logger.info("Recovering missed Drive ingestion schedules (Sync)...")
+        try:
+            stmt = select(DriveIngestionSchedule).where(
+                DriveIngestionSchedule.is_active == True,
+                DriveIngestionSchedule.next_run_at != None,
+                DriveIngestionSchedule.next_run_at <= datetime.utcnow()
+            )
+            missed_schedules = self.session.execute(stmt).scalars().all()
+            
+            for schedule in missed_schedules:
+                logger.info(f"Recovering missed schedule {schedule.id}")
+                task = celery_app.send_task("cv_ingestion.run_drive_sync", args=[str(schedule.id)])
+                schedule.celery_task_id = task.id
+                self.session.add(schedule)
+            
+            if missed_schedules:    
+                self.session.commit()
+        except Exception as e:
+            logger.exception("Failed to recover missed schedules")
