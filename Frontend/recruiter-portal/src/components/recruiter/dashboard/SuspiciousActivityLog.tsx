@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Search, Filter, AlertTriangle, ChevronDown, ChevronRight, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { Search, Filter, AlertTriangle, ChevronDown, ChevronRight, AlertCircle, CheckCircle, Clock, BarChart3 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { api } from '../../../services/api';
 
 interface SuspiciousRecord {
@@ -27,6 +28,7 @@ interface SuspiciousActivityLogProps {
 
 export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
     const navigate = useNavigate();
+    const [activeSubpage, setActiveSubpage] = useState<'activity' | 'insights'>('activity');
     const [searchQuery, setSearchQuery] = useState('');
     const [showFilters, setShowFilters] = useState(false);
     const [sortField, setSortField] = useState<keyof SuspiciousRecord>('detectedAt');
@@ -354,6 +356,49 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
         return { totalCandidates, totalEvents, highRiskCandidates, todayEvents };
     }, [records]);
 
+    const chartData = useMemo(() => {
+        const date = insightRows.date
+            .slice(0, 10)
+            .map((row) => ({ name: row.key, candidates: row.candidates, events: row.events }));
+        const project = insightRows.project
+            .slice(0, 8)
+            .map((row) => ({ name: row.key, candidates: row.candidates, events: row.events }));
+        const position = insightRows.position
+            .slice(0, 8)
+            .map((row) => ({ name: row.key, candidates: row.candidates, events: row.events }));
+        const group = insightRows.group
+            .slice(0, 8)
+            .map((row) => ({ name: row.key, candidates: row.candidates, events: row.events }));
+
+        return { date, project, position, group };
+    }, [insightRows]);
+
+    const clearDrillFilters = () => {
+        setSelectedDate(null);
+        setSelectedProject(null);
+        setSelectedPosition(null);
+        setSelectedGroup(null);
+    };
+
+    const openActivityWithFilter = (dimension: 'date' | 'project' | 'position' | 'group', value: string) => {
+        if (!value) return;
+        clearDrillFilters();
+        if (dimension === 'date') setSelectedDate(value);
+        if (dimension === 'project') setSelectedProject(value);
+        if (dimension === 'position') setSelectedPosition(value);
+        if (dimension === 'group') setSelectedGroup(value);
+        setActiveSubpage('activity');
+    };
+
+    const extractChartLabel = (event: any): string => {
+        if (!event) return '';
+        if (typeof event?.name === 'string') return event.name;
+        if (typeof event?.activeLabel === 'string') return event.activeLabel;
+        if (typeof event?.payload?.name === 'string') return event.payload.name;
+        if (typeof event?.activePayload?.[0]?.payload?.name === 'string') return event.activePayload[0].payload.name;
+        return '';
+    };
+
     return (
         <div className="min-h-screen flex flex-col">
             <div className="px-8 py-6 w-full">
@@ -369,23 +414,137 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                 </div>
 
                 <div className="max-w-[1400px] mx-auto">
-                    {/* Insights Summary */}
-                    <div className="grid grid-cols-4 gap-4 mb-6">
-                        {[
-                            { label: 'Candidates Flagged', value: overallStats.totalCandidates, tone: 'text-[#1d4ed8] bg-[#eff6ff] border-[#bfdbfe]' },
-                            { label: 'Total Suspicious Events', value: overallStats.totalEvents, tone: 'text-[#9a3412] bg-[#fff7ed] border-[#fed7aa]' },
-                            { label: 'High-Risk Candidates', value: overallStats.highRiskCandidates, tone: 'text-[#991b1b] bg-[#fef2f2] border-[#fecaca]' },
-                            { label: 'Events Today', value: overallStats.todayEvents, tone: 'text-[#166534] bg-[#f0fdf4] border-[#bbf7d0]' },
-                        ].map((card) => (
-                            <div key={card.label} className={`rounded-[12px] border p-4 ${card.tone}`}>
-                                <p className="font-['Arimo',sans-serif] text-[12px] opacity-80 mb-1">{card.label}</p>
-                                <p className="font-['Arimo',sans-serif] text-[24px] font-semibold">{card.value}</p>
-                            </div>
-                        ))}
+                    <div className="mb-6 flex items-center justify-between">
+                        <div className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                            {activeSubpage === 'activity' ? 'Candidate-level suspicious feed' : 'Analytics subpage with chart breakdowns'}
+                        </div>
+                        <button
+                            onClick={() => setActiveSubpage((prev) => (prev === 'activity' ? 'insights' : 'activity'))}
+                            className="h-[40px] px-4 rounded-[10px] border border-[#d1d5db] text-[#111827] font-['Arimo',sans-serif] text-[13px] font-medium hover:bg-[#f9fafb] transition-colors flex items-center gap-2"
+                        >
+                            <BarChart3 size={16} />
+                            {activeSubpage === 'activity' ? 'Open Insights Subpage' : 'Back To Activity Feed'}
+                        </button>
                     </div>
 
-                    {/* Search and Filters */}
-                    <div className="mb-6 space-y-4">
+                    {activeSubpage === 'insights' && (
+                        <>
+                            <div className="grid grid-cols-4 gap-4 mb-6">
+                                {[
+                                    { label: 'Candidates Flagged', value: overallStats.totalCandidates, tone: 'text-[#1d4ed8] bg-[#eff6ff] border-[#bfdbfe]' },
+                                    { label: 'Total Suspicious Events', value: overallStats.totalEvents, tone: 'text-[#9a3412] bg-[#fff7ed] border-[#fed7aa]' },
+                                    { label: 'High-Risk Candidates', value: overallStats.highRiskCandidates, tone: 'text-[#991b1b] bg-[#fef2f2] border-[#fecaca]' },
+                                    { label: 'Events Today', value: overallStats.todayEvents, tone: 'text-[#166534] bg-[#f0fdf4] border-[#bbf7d0]' },
+                                ].map((card) => (
+                                    <div key={card.label} className={`rounded-[12px] border p-4 ${card.tone}`}>
+                                        <p className="font-['Arimo',sans-serif] text-[12px] opacity-80 mb-1">{card.label}</p>
+                                        <p className="font-['Arimo',sans-serif] text-[24px] font-semibold">{card.value}</p>
+                                    </div>
+                                ))}
+                            </div>
+
+                                    <div className="mb-4 text-[12px] text-[#6b7280] font-['Arimo',sans-serif]">
+                                        Click any chart bar/point to open the Activity Feed filtered by that dimension.
+                                    </div>
+
+                            <div className="grid grid-cols-2 gap-6 mb-6">
+                                <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4 h-[340px]">
+                                    <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Date Trend (Candidates vs Events)</h3>
+                                    <ResponsiveContainer width="100%" height="90%">
+                                                <LineChart
+                                                    data={chartData.date}
+                                                    onClick={(state) => {
+                                                        const label = extractChartLabel(state);
+                                                        if (label) openActivityWithFilter('date', label);
+                                                    }}
+                                                >
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                                            <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                                            <YAxis tick={{ fontSize: 11 }} />
+                                            <Tooltip />
+                                            <Legend />
+                                            <Line type="monotone" dataKey="events" stroke="#f97316" strokeWidth={2} dot={false} name="Events" />
+                                            <Line type="monotone" dataKey="candidates" stroke="#2563eb" strokeWidth={2} dot={false} name="Candidates" />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4 h-[340px]">
+                                    <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Project Breakdown</h3>
+                                    <ResponsiveContainer width="100%" height="90%">
+                                        <BarChart data={chartData.project} margin={{ top: 8, right: 8, left: 0, bottom: 42 }}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                                            <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-20} textAnchor="end" interval={0} height={56} />
+                                            <YAxis tick={{ fontSize: 11 }} />
+                                            <Tooltip />
+                                            <Legend />
+                                            <Bar
+                                                dataKey="events"
+                                                fill="#0ea5e9"
+                                                name="Events"
+                                                radius={[4, 4, 0, 0]}
+                                                onClick={(entry) => {
+                                                    const label = extractChartLabel(entry);
+                                                    if (label) openActivityWithFilter('project', label);
+                                                }}
+                                            />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4 h-[340px]">
+                                    <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Position Breakdown</h3>
+                                    <ResponsiveContainer width="100%" height="90%">
+                                        <BarChart data={chartData.position} margin={{ top: 8, right: 8, left: 0, bottom: 42 }}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                                            <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-20} textAnchor="end" interval={0} height={56} />
+                                            <YAxis tick={{ fontSize: 11 }} />
+                                            <Tooltip />
+                                            <Legend />
+                                            <Bar
+                                                dataKey="events"
+                                                fill="#f59e0b"
+                                                name="Events"
+                                                radius={[4, 4, 0, 0]}
+                                                onClick={(entry) => {
+                                                    const label = extractChartLabel(entry);
+                                                    if (label) openActivityWithFilter('position', label);
+                                                }}
+                                            />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4 h-[340px]">
+                                    <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Group Breakdown</h3>
+                                    <ResponsiveContainer width="100%" height="90%">
+                                        <BarChart data={chartData.group} margin={{ top: 8, right: 8, left: 0, bottom: 42 }}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                                            <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-20} textAnchor="end" interval={0} height={56} />
+                                            <YAxis tick={{ fontSize: 11 }} />
+                                            <Tooltip />
+                                            <Legend />
+                                            <Bar
+                                                dataKey="events"
+                                                fill="#10b981"
+                                                name="Events"
+                                                radius={[4, 4, 0, 0]}
+                                                onClick={(entry) => {
+                                                    const label = extractChartLabel(entry);
+                                                    if (label) openActivityWithFilter('group', label);
+                                                }}
+                                            />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    {activeSubpage === 'activity' && (
+                        <>
+                            {/* Search and Filters */}
+                            <div className="mb-6 space-y-4">
                         <div className="flex items-center gap-4">
                             <div className="flex-1 relative">
                                 <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#9ca3af]" />
@@ -419,10 +578,7 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                                 {selectedGroup && <span className="px-2 py-1 rounded bg-[#fdf2f8] text-[#be185d] text-[12px]">Group: {selectedGroup}</span>}
                                 <button
                                     onClick={() => {
-                                        setSelectedDate(null);
-                                        setSelectedProject(null);
-                                        setSelectedPosition(null);
-                                        setSelectedGroup(null);
+                                        clearDrillFilters();
                                     }}
                                     className="px-2 py-1 rounded border border-[#e5e7eb] text-[12px] text-[#374151] hover:bg-[#f9fafb]"
                                 >
@@ -469,107 +625,8 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                         )}
                     </div>
 
-                    {/* Insights Tables */}
-                    <div className="grid grid-cols-2 gap-6 mb-6">
-                        <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4">
-                            <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Date Breakdown</h3>
-                            <div className="max-h-[220px] overflow-auto">
-                                <table className="w-full">
-                                    <thead>
-                                        <tr className="text-left text-[#6b7280] text-[12px]">
-                                            <th className="py-2">Date</th>
-                                            <th className="py-2">Candidates</th>
-                                            <th className="py-2">Events</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {insightRows.date.slice(0, 8).map((row) => (
-                                            <tr key={row.key} className="border-t border-[#f3f4f6] cursor-pointer hover:bg-[#f9fafb]" onClick={() => setSelectedDate(row.key)}>
-                                                <td className="py-2 text-[13px] text-[#111827]">{row.key}</td>
-                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.candidates}</td>
-                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.events}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4">
-                            <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Project Breakdown</h3>
-                            <div className="max-h-[220px] overflow-auto">
-                                <table className="w-full">
-                                    <thead>
-                                        <tr className="text-left text-[#6b7280] text-[12px]">
-                                            <th className="py-2">Project</th>
-                                            <th className="py-2">Candidates</th>
-                                            <th className="py-2">Events</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {insightRows.project.slice(0, 8).map((row) => (
-                                            <tr key={row.key} className="border-t border-[#f3f4f6] cursor-pointer hover:bg-[#f9fafb]" onClick={() => setSelectedProject(row.key)}>
-                                                <td className="py-2 text-[13px] text-[#111827]">{row.key}</td>
-                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.candidates}</td>
-                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.events}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4">
-                            <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Position Breakdown</h3>
-                            <div className="max-h-[220px] overflow-auto">
-                                <table className="w-full">
-                                    <thead>
-                                        <tr className="text-left text-[#6b7280] text-[12px]">
-                                            <th className="py-2">Position</th>
-                                            <th className="py-2">Candidates</th>
-                                            <th className="py-2">Events</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {insightRows.position.slice(0, 8).map((row) => (
-                                            <tr key={row.key} className="border-t border-[#f3f4f6] cursor-pointer hover:bg-[#f9fafb]" onClick={() => setSelectedPosition(row.key)}>
-                                                <td className="py-2 text-[13px] text-[#111827]">{row.key}</td>
-                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.candidates}</td>
-                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.events}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4">
-                            <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Group Breakdown</h3>
-                            <div className="max-h-[220px] overflow-auto">
-                                <table className="w-full">
-                                    <thead>
-                                        <tr className="text-left text-[#6b7280] text-[12px]">
-                                            <th className="py-2">Group</th>
-                                            <th className="py-2">Candidates</th>
-                                            <th className="py-2">Events</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {insightRows.group.slice(0, 8).map((row) => (
-                                            <tr key={row.key} className="border-t border-[#f3f4f6] cursor-pointer hover:bg-[#f9fafb]" onClick={() => setSelectedGroup(row.key)}>
-                                                <td className="py-2 text-[13px] text-[#111827]">{row.key}</td>
-                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.candidates}</td>
-                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.events}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Table */}
-                    <div className="bg-white rounded-[16px] border border-[#e5e7eb] overflow-hidden shadow-sm">
+                            {/* Table */}
+                            <div className="bg-white rounded-[16px] border border-[#e5e7eb] overflow-hidden shadow-sm">
                         <table className="w-full">
                             <thead className="bg-[#f9fafb] border-b border-[#e5e7eb]">
                                 <tr>
@@ -674,7 +731,9 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                                 <p className="font-['Arimo',sans-serif] text-[16px] text-[#6b7280]">Loading suspicious activity feed...</p>
                             </div>
                         )}
-                    </div>
+                            </div>
+                        </>
+                    )}
                 </div>
             </div>
         </div>
