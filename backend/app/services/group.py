@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -1787,6 +1788,225 @@ class GroupService:
                 for f in flags
             ]
         )
+
+    async def get_group_integrity_alerts(
+        self,
+        group_id: UUID,
+        since: datetime | None = None,
+        limit: int = 25,
+    ) -> list[dict]:
+        await self._get_group(group_id)
+
+        where_since = ""
+        params: dict[str, object] = {
+            "group_id": group_id,
+            "org_id": self.org_id,
+            "limit": limit,
+        }
+        if since is not None:
+            where_since = " AND pf.created_at > :since "
+            params["since"] = since
+
+        query = text(
+            f"""
+            SELECT
+                pf.flag_id,
+                pf.application_id,
+                ca.candidate_id,
+                cp.full_name AS candidate_name,
+                pf.session_id,
+                pf.session_type,
+                pf.event_type,
+                pf.severity,
+                pf.status,
+                pf.evidence,
+                pf.created_at
+            FROM proctoring_flags pf
+            JOIN candidate_applications ca
+              ON ca.application_id = pf.application_id
+            JOIN candidate_profiles cp
+              ON cp.candidate_id = ca.candidate_id
+            WHERE ca.group_id = :group_id
+              AND ca.organization_id = :org_id
+              AND pf.severity IN ('high', 'medium')
+              {where_since}
+            ORDER BY pf.created_at ASC
+            LIMIT :limit
+            """
+        )
+
+        res = await self.session.execute(query, params)
+        rows = res.mappings().all()
+        return [
+            {
+                "flag_id": str(r["flag_id"]),
+                "application_id": str(r["application_id"]),
+                "candidate_id": str(r["candidate_id"]),
+                "candidate_name": r["candidate_name"],
+                "session_id": str(r["session_id"]),
+                "session_type": r["session_type"],
+                "event_type": r["event_type"],
+                "severity": r["severity"],
+                "status": r["status"],
+                "evidence": r["evidence"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    async def get_group_integrity_metrics(
+        self,
+        group_id: UUID,
+        window_minutes: int = 60,
+    ) -> dict:
+        await self._get_group(group_id)
+
+        summary_res = await self.session.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) AS total_flags,
+                    COUNT(*) FILTER (WHERE pf.severity = 'high') AS high_flags,
+                    COUNT(*) FILTER (WHERE pf.severity = 'medium') AS medium_flags,
+                    COUNT(*) FILTER (WHERE pf.severity = 'low') AS low_flags,
+                    COUNT(*) FILTER (WHERE pf.session_type = 'assessment') AS assessment_flags,
+                    COUNT(*) FILTER (WHERE pf.session_type = 'ai_interview') AS interview_flags
+                FROM proctoring_flags pf
+                JOIN candidate_applications ca
+                  ON ca.application_id = pf.application_id
+                WHERE ca.group_id = :group_id
+                  AND ca.organization_id = :org_id
+                  AND pf.created_at >= NOW() - (:window_minutes || ' minutes')::INTERVAL
+                """
+            ),
+            {
+                "group_id": group_id,
+                "org_id": self.org_id,
+                "window_minutes": str(window_minutes),
+            },
+        )
+        summary = summary_res.mappings().first() or {}
+
+        top_events_res = await self.session.execute(
+            text(
+                """
+                SELECT pf.event_type, COUNT(*) AS count
+                FROM proctoring_flags pf
+                JOIN candidate_applications ca
+                  ON ca.application_id = pf.application_id
+                WHERE ca.group_id = :group_id
+                  AND ca.organization_id = :org_id
+                  AND pf.created_at >= NOW() - (:window_minutes || ' minutes')::INTERVAL
+                GROUP BY pf.event_type
+                ORDER BY count DESC
+                LIMIT 5
+                """
+            ),
+            {
+                "group_id": group_id,
+                "org_id": self.org_id,
+                "window_minutes": str(window_minutes),
+            },
+        )
+        top_events = [
+            {
+                "event_type": row["event_type"],
+                "count": int(row["count"]),
+            }
+            for row in top_events_res.mappings().all()
+        ]
+
+        return {
+            "window_minutes": window_minutes,
+            "summary": {
+                "total_flags": int(summary.get("total_flags") or 0),
+                "high_flags": int(summary.get("high_flags") or 0),
+                "medium_flags": int(summary.get("medium_flags") or 0),
+                "low_flags": int(summary.get("low_flags") or 0),
+                "assessment_flags": int(summary.get("assessment_flags") or 0),
+                "interview_flags": int(summary.get("interview_flags") or 0),
+            },
+            "top_events": top_events,
+        }
+
+    async def get_org_suspicious_activity(
+        self,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        where_since = ""
+        params: dict[str, object] = {
+            "org_id": self.org_id,
+            "limit": limit,
+        }
+        if since is not None:
+            where_since = " AND pf.created_at > :since "
+            params["since"] = since
+
+        query = text(
+            f"""
+            SELECT
+                pf.flag_id,
+                pf.application_id,
+                ca.candidate_id,
+                ca.group_id,
+                cp.full_name AS candidate_name,
+                COALESCE(pr.name, 'Unknown Project') AS project_title,
+                COALESCE(p.job_title, 'Unknown Position') AS position_title,
+                COALESCE(cg.group_name, 'Unknown Group') AS group_name,
+                pf.event_type,
+                pf.severity,
+                pf.status,
+                pf.evidence,
+                pf.created_at
+            FROM proctoring_flags pf
+            JOIN candidate_applications ca
+              ON ca.application_id = pf.application_id
+            JOIN candidate_profiles cp
+              ON cp.candidate_id = ca.candidate_id
+            LEFT JOIN candidate_groups cg
+              ON cg.group_id = ca.group_id
+            LEFT JOIN positions p
+              ON p.position_id = ca.position_id
+                        LEFT JOIN projects pr
+                            ON pr.project_id = p.project_id
+            WHERE ca.organization_id = :org_id
+              AND pf.severity IN ('high', 'medium', 'low')
+              {where_since}
+            ORDER BY pf.created_at DESC
+            LIMIT :limit
+            """
+        )
+
+        res = await self.session.execute(query, params)
+        rows = res.mappings().all()
+        feed: list[dict] = []
+        for r in rows:
+            evidence = r["evidence"]
+            if isinstance(evidence, str):
+                try:
+                    evidence = json.loads(evidence)
+                except json.JSONDecodeError:
+                    evidence = {"raw": evidence}
+
+            feed.append(
+                {
+                    "flag_id": str(r["flag_id"]),
+                    "application_id": str(r["application_id"]),
+                    "candidate_id": str(r["candidate_id"]),
+                    "group_id": str(r["group_id"]) if r["group_id"] else None,
+                    "candidate_name": r["candidate_name"],
+                    "project_title": r["project_title"],
+                    "position_title": r["position_title"],
+                    "group_name": r["group_name"],
+                    "event_type": r["event_type"],
+                    "severity": r["severity"],
+                    "status": r["status"],
+                    "evidence": evidence,
+                    "created_at": r["created_at"],
+                }
+            )
+        return feed
 
     async def create_group(self, data: GroupCreateRequest) -> CandidateGroup:
         """Create a new candidate group."""

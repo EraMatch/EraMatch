@@ -81,7 +81,9 @@ graph TB
 ### 1. Install Dependencies
 ```bash
 cd ai-service
-uv sync
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
 ### 2. Configure `.env`
@@ -99,7 +101,20 @@ Real question generation now uses Ollama by default. Keep `USE_MOCK=false` and s
 
 ### 3. Start Service
 ```bash
-uv run uvicorn main:app --reload --port 8001
+source .venv/bin/activate
+uvicorn main:app --reload --port 8001
+```
+
+### 4. Proctoring Inference Readiness
+
+- Wiring status: `GET /beta/proctoring/wiring-status`
+- Dependency + model readiness: `GET /beta/proctoring/inference-readiness`
+
+### 5. Proctoring Integration Test
+
+```bash
+source .venv/bin/activate
+pytest -q tests/test_proctoring_integration.py
 ```
 
 ---

@@ -6,7 +6,10 @@ interface ModuleMonitoringDashboardProps {
   candidates: any[];
   activeFlow?: string[]; // Pass active filtration flow to determine subpages
   pipelineSteps?: any[]; // Pass pipeline steps to check stage status
+  liveAlertsConnected?: boolean;
+  integrityMetrics?: any;
   onClose: () => void;
+  onManualRefresh?: () => void;
   onViewCandidate: (candidateId: number) => void;
   onAddVerdict: (candidateId: number) => void;
   onReviewFlags: (candidateId: number) => void;
@@ -29,7 +32,10 @@ export function ModuleMonitoringDashboard({
   candidates,
   activeFlow = [],
   pipelineSteps = [],
+  liveAlertsConnected = false,
+  integrityMetrics,
   onClose,
+  onManualRefresh,
   onViewCandidate,
   onAddVerdict,
   onReviewFlags
@@ -126,6 +132,12 @@ export function ModuleMonitoringDashboard({
     ? (completed.filter(c => c.meetsCriteria).length / completed.length) * 100
     : 0;
 
+  const dbSummary = integrityMetrics?.db_metrics?.summary || {};
+  const inProcessTotals = integrityMetrics?.in_process_metrics?.totals || {};
+  const droppedTotal = Number(inProcessTotals?.dropped || 0);
+  const droppedRateLimited = Number(inProcessTotals?.dropped_rate_limited || 0);
+  const droppedDuplicate = Number(inProcessTotals?.dropped_duplicate || 0);
+
   return (
     <div className="fixed inset-0 z-[200] bg-white flex flex-col overflow-hidden">
       {/* Header */}
@@ -145,11 +157,17 @@ export function ModuleMonitoringDashboard({
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <span className={`px-3 py-1 rounded-[8px] text-[12px] font-medium ${liveAlertsConnected ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+              {liveAlertsConnected ? 'Live Alerts: Connected' : 'Live Alerts: Polling'}
+            </span>
             <button className="flex items-center gap-2 px-4 py-2 rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-gray-50 transition-colors">
               <Download size={16} className="text-[#6b7280]" />
               <span className="text-[14px] text-[#111827]">Export</span>
             </button>
-            <button className="flex items-center gap-2 px-4 py-2 rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-gray-50 transition-colors">
+            <button
+              onClick={onManualRefresh}
+              className="flex items-center gap-2 px-4 py-2 rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-gray-50 transition-colors"
+            >
               <RefreshCw size={16} className="text-[#6b7280]" />
               <span className="text-[14px] text-[#111827]">Refresh</span>
             </button>
@@ -261,6 +279,26 @@ export function ModuleMonitoringDashboard({
             </div>
             <div className="text-[28px] font-bold text-red-900">{flagged.length}</div>
             <div className="text-[12px] text-red-700">Flagged</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-4 mt-4">
+          <div className="p-4 bg-white rounded-[12px] border border-[#e5e7eb]">
+            <div className="text-[12px] text-[#6b7280]">Integrity Flags (Window)</div>
+            <div className="text-[24px] font-bold text-[#111827]">{Number(dbSummary.total_flags || 0)}</div>
+          </div>
+          <div className="p-4 bg-white rounded-[12px] border border-red-200 bg-red-50">
+            <div className="text-[12px] text-red-700">High Severity Flags</div>
+            <div className="text-[24px] font-bold text-red-900">{Number(dbSummary.high_flags || 0)}</div>
+          </div>
+          <div className="p-4 bg-white rounded-[12px] border border-amber-200 bg-amber-50">
+            <div className="text-[12px] text-amber-700">Dropped Events (In Process)</div>
+            <div className="text-[24px] font-bold text-amber-900">{droppedTotal}</div>
+          </div>
+          <div className="p-4 bg-white rounded-[12px] border border-[#e5e7eb]">
+            <div className="text-[12px] text-[#6b7280]">Dropped Reasons</div>
+            <div className="text-[13px] text-[#111827] mt-2">Rate-limited: {droppedRateLimited}</div>
+            <div className="text-[13px] text-[#111827]">Duplicate: {droppedDuplicate}</div>
           </div>
         </div>
       </div>

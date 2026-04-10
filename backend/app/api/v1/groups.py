@@ -16,11 +16,15 @@ Endpoints implemented:
   GET  /candidate/integrity-flags                             → integrity flags
 """
 from uuid import UUID
+from datetime import datetime
+import asyncio
+import json
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import DbSession, RecruiterUser
+from app.core.integrity_metrics import integrity_metrics
 from app.services.group import GroupService
 from app.schemas.group import (
     GroupDetailResponse,
@@ -324,6 +328,186 @@ async def get_integrity_flags(
     application."""
     svc = GroupService(session, current_user)
     return await svc.get_integrity_flags(application_id)
+
+
+@router.get("/recruiter/suspicious-activity/poll")
+async def poll_suspicious_activity(
+    session: DbSession,
+    current_user: RecruiterUser,
+    since: str | None = Query(default=None, description="ISO datetime cursor"),
+    limit: int = Query(default=100, ge=1, le=300),
+):
+    svc = GroupService(session, current_user)
+    since_dt = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            since_dt = None
+
+    rows = await svc.get_org_suspicious_activity(since=since_dt, limit=limit)
+    cursor = rows[0]["created_at"].isoformat() if rows else since
+    return {
+        "records": [
+            {
+                **row,
+                "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+            }
+            for row in rows
+        ],
+        "cursor": cursor,
+        "server_time": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@router.get("/recruiter/suspicious-activity/stream")
+async def stream_suspicious_activity(
+    request: Request,
+    session: DbSession,
+    current_user: RecruiterUser,
+    since: str | None = Query(default=None, description="ISO datetime cursor"),
+):
+    svc = GroupService(session, current_user)
+    since_dt = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            since_dt = None
+
+    async def event_generator():
+        cursor = since_dt
+        while True:
+            if await request.is_disconnected():
+                break
+
+            rows = await svc.get_org_suspicious_activity(since=cursor, limit=100)
+            if rows:
+                cursor = rows[0]["created_at"]
+                payload = {
+                    "records": [
+                        {
+                            **row,
+                            "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+                        }
+                        for row in rows
+                    ],
+                    "cursor": cursor.isoformat(),
+                }
+                yield f"event: suspicious\ndata: {json.dumps(payload)}\n\n"
+            else:
+                yield "event: heartbeat\ndata: {}\n\n"
+
+            await asyncio.sleep(3)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/recruiter/groups/{group_id}/alerts/poll")
+async def poll_group_alerts(
+    group_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+    since: str | None = Query(default=None, description="ISO datetime cursor"),
+    limit: int = Query(default=25, ge=1, le=100),
+):
+    """Polling endpoint for recruiter integrity alerts (fallback when stream is unavailable)."""
+    svc = GroupService(session, current_user)
+    since_dt = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            since_dt = None
+
+    alerts = await svc.get_group_integrity_alerts(group_id=group_id, since=since_dt, limit=limit)
+    cursor = alerts[-1]["created_at"].isoformat() if alerts else since
+    return {
+        "alerts": alerts,
+        "cursor": cursor,
+        "server_time": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@router.get("/recruiter/groups/{group_id}/alerts/stream")
+async def stream_group_alerts(
+    request: Request,
+    group_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+    since: str | None = Query(default=None, description="ISO datetime cursor"),
+):
+    """SSE stream that pushes recruiter integrity alerts; frontend should fallback to polling if stream fails."""
+    svc = GroupService(session, current_user)
+    since_dt = None
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            since_dt = None
+
+    async def event_generator():
+        cursor = since_dt
+        while True:
+            if await request.is_disconnected():
+                break
+
+            alerts = await svc.get_group_integrity_alerts(group_id=group_id, since=cursor, limit=50)
+            if alerts:
+                cursor = alerts[-1]["created_at"]
+                payload = {
+                    "alerts": [
+                        {
+                            **a,
+                            "created_at": a["created_at"].isoformat(),
+                        }
+                        for a in alerts
+                    ],
+                    "cursor": cursor.isoformat(),
+                }
+                yield f"event: alerts\ndata: {json.dumps(payload)}\n\n"
+            else:
+                yield "event: heartbeat\ndata: {}\n\n"
+
+            await asyncio.sleep(3)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/recruiter/groups/{group_id}/integrity/metrics")
+async def get_group_integrity_metrics(
+    group_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+    window_minutes: int = Query(default=60, ge=5, le=24 * 60),
+):
+    """Aggregated integrity metrics for recruiter monitoring dashboard."""
+    svc = GroupService(session, current_user)
+    db_metrics = await svc.get_group_integrity_metrics(group_id=group_id, window_minutes=window_minutes)
+    in_process_metrics = integrity_metrics.snapshot()
+    return {
+        "group_id": str(group_id),
+        "window_minutes": window_minutes,
+        "db_metrics": db_metrics,
+        "in_process_metrics": in_process_metrics,
+        "server_time": datetime.utcnow().isoformat() + "Z",
+    }
 
 # ─── Final Offers ─────────────────────────────────────────────────────────────
 

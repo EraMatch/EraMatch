@@ -3,7 +3,8 @@ Candidate endpoints.
 """
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from app.api.deps import DbSession, CurrentUser
@@ -19,6 +20,12 @@ from app.schemas import (
 from worker.tasks.github_analysis import run_github_analysis
 
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
+
+
+class PersistSuspectArtifactsRequest(BaseModel):
+    application_id: UUID | None = None
+    suspicious_timestamps: list[int] = Field(default_factory=list)
+    window_seconds: int = Field(default=5, ge=1, le=30)
 
 
 async def _queue_github_analysis_job(
@@ -253,13 +260,38 @@ async def list_candidate_applications(
     """List applications for a candidate."""
     service = CandidateService(session, current_user.organization_id)
     return await service.list_applications_by_candidate(candidate_id)
-@router.get("/{candidate_id}/suspect-review", response_model=list[dict])
+@router.get("/{candidate_id}/suspect-review", response_model=dict)
 async def get_suspect_review(
-    candidate_id: UUID, session: DbSession, current_user: CurrentUser
+    candidate_id: UUID,
+    session: DbSession,
+    current_user: CurrentUser,
+    application_id: UUID | None = Query(default=None),
 ):
     """Get suspect review activities for a candidate."""
     service = CandidateService(session, current_user.organization_id)
-    return await service.get_suspect_review(candidate_id)
+    return await service.get_suspect_review(candidate_id, application_id)
+
+
+@router.post("/{candidate_id}/suspect-review/decompression-artifacts", response_model=dict)
+async def persist_suspect_review_artifacts(
+    candidate_id: UUID,
+    data: PersistSuspectArtifactsRequest,
+    session: DbSession,
+    current_user: CurrentUser,
+):
+    """Persist decompressed suspect segments as review artifacts linked to proctoring flags."""
+    service = CandidateService(session, current_user.organization_id)
+    reviewer_user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
+    if reviewer_user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid authenticated recruiter context")
+
+    return await service.persist_suspect_review_artifacts(
+        candidate_id=candidate_id,
+        reviewer_user_id=reviewer_user_id,
+        suspicious_timestamps=data.suspicious_timestamps,
+        application_id=data.application_id,
+        window_seconds=data.window_seconds,
+    )
 
 
 @router.get("/{candidate_id}/knowledge-graph", response_model=dict)

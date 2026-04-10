@@ -1,16 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Search, Filter, AlertTriangle, ChevronDown, ChevronRight, AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { api } from '../../../services/api';
 
 interface SuspiciousRecord {
-    id: number;
+    id: string;
+    candidateId: string;
+    applicationId: string;
     candidateName: string;
+    project: string;
     position: string;
     group: string;
     issueType: string;
     confidenceScore: number;
     detectedAt: string;
     status: 'Pending' | 'Resolved' | 'Dismissed';
+    severity: 'high' | 'medium' | 'low';
+    eventCount: number;
+    seenFlagIds: string[];
+    issueSamples: string[];
 }
 
 interface SuspiciousActivityLogProps {
@@ -25,60 +33,216 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
     const [severityFilter, setSeverityFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
     const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+    const [records, setRecords] = useState<SuspiciousRecord[]>([]);
+    const [selectedDate, setSelectedDate] = useState<string | null>(null);
+    const [selectedProject, setSelectedProject] = useState<string | null>(null);
+    const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
+    const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [streamConnected, setStreamConnected] = useState(false);
+    const cursorRef = useRef<string | null>(null);
 
-    // Mock data - would normally come from API
-    const [records, setRecords] = useState<SuspiciousRecord[]>([
-        {
-            id: 1,
-            candidateName: "Michael Chen",
-            position: "Senior React Developer",
-            group: "Group A",
-            issueType: "Tab Switching / Focus Loss",
-            confidenceScore: 85,
-            detectedAt: "2024-02-03T14:30:00",
-            status: 'Pending'
-        },
-        {
-            id: 2,
-            candidateName: "Sarah Jones",
-            position: "Product Manager",
-            group: "PM Group 1",
-            issueType: "Multiple Voices Detected",
-            confidenceScore: 92,
-            detectedAt: "2024-02-02T10:15:00",
-            status: 'Pending'
-        },
-        {
-            id: 3,
-            candidateName: "David Kim",
-            position: "Data Scientist",
-            group: "DS Screen",
-            issueType: "Unusual Typing Patterns",
-            confidenceScore: 65,
-            detectedAt: "2024-02-01T16:45:00",
-            status: 'Resolved'
-        },
-        {
-            id: 4,
-            candidateName: "Emily Wong",
-            position: "UX Designer",
-            group: "Design 2024",
-            issueType: "Background Object Detected",
-            confidenceScore: 45,
-            detectedAt: "2024-01-30T09:20:00",
-            status: 'Dismissed'
-        },
-        {
-            id: 5,
-            candidateName: "James Wilson",
-            position: "Backend Engineer",
-            group: "BE Group 2",
-            issueType: "Unidentified Person Detected",
-            confidenceScore: 95,
-            detectedAt: new Date().toISOString(), // Today
-            status: 'Pending'
-        }
-    ]);
+    useEffect(() => {
+        let cancelled = false;
+        let pollInterval: number | null = null;
+
+        const mapSeverityToScore = (severity: string) => {
+            const value = (severity || '').toLowerCase();
+            if (value === 'high') return 95;
+            if (value === 'medium') return 78;
+            return 55;
+        };
+
+        const titleizeIssue = (eventType: string) => {
+            return (eventType || 'unknown_event')
+                .replaceAll('_', ' ')
+                .replace(/\b\w/g, (m) => m.toUpperCase());
+        };
+
+        const normalizeStatus = (status: string): 'Pending' | 'Resolved' | 'Dismissed' => {
+            const v = (status || '').toLowerCase();
+            if (v === 'confirmed' || v === 'resolved') return 'Resolved';
+            if (v === 'dismissed') return 'Dismissed';
+            return 'Pending';
+        };
+
+        const severityRank = (value: string) => {
+            const v = (value || '').toLowerCase();
+            if (v === 'high') return 3;
+            if (v === 'medium') return 2;
+            return 1;
+        };
+
+        const mergeStatus = (
+            current: 'Pending' | 'Resolved' | 'Dismissed',
+            next: 'Pending' | 'Resolved' | 'Dismissed',
+        ): 'Pending' | 'Resolved' | 'Dismissed' => {
+            if (current === 'Pending' || next === 'Pending') return 'Pending';
+            if (current === 'Resolved' || next === 'Resolved') return 'Resolved';
+            return 'Dismissed';
+        };
+
+        const mergeRecords = (incoming: any[]) => {
+            if (!incoming?.length) return;
+
+            setRecords((prev) => {
+                const byCandidate = new Map(prev.map((r) => [r.id, { ...r }]));
+                for (const row of incoming) {
+                    const flagId = String(row.flag_id);
+                    const candidateId = String(row.candidate_id || 'unknown');
+                    const aggregateKey = candidateId;
+                    const nextIssue = titleizeIssue(row.event_type);
+                    const nextSeverity = (row.severity || 'low').toLowerCase() as 'high' | 'medium' | 'low';
+                    const nextScore = mapSeverityToScore(row.severity);
+                    const nextStatus = normalizeStatus(row.status);
+                    const nextDetectedAt = String(row.created_at || new Date().toISOString());
+
+                    const existing = byCandidate.get(aggregateKey) || {
+                        id: aggregateKey,
+                        candidateId,
+                        applicationId: String(row.application_id || ''),
+                        candidateName: row.candidate_name || 'Unknown Candidate',
+                        project: row.project_title || 'Unknown Project',
+                        position: row.position_title || 'Unknown Position',
+                        group: row.group_name || 'Unknown Group',
+                        issueType: nextIssue,
+                        confidenceScore: nextScore,
+                        detectedAt: nextDetectedAt,
+                        status: nextStatus,
+                        severity: nextSeverity,
+                        eventCount: 0,
+                        seenFlagIds: [],
+                        issueSamples: [],
+                    };
+
+                    if (existing.seenFlagIds.includes(flagId)) {
+                        continue;
+                    }
+
+                    const isNewer = new Date(nextDetectedAt).getTime() >= new Date(existing.detectedAt).getTime();
+                    const mergedIssues = existing.issueSamples.includes(nextIssue)
+                        ? existing.issueSamples
+                        : [...existing.issueSamples, nextIssue];
+                    const mergedEventCount = existing.eventCount + 1;
+                    const headlineIssue = isNewer ? nextIssue : existing.issueSamples[0] || nextIssue;
+                    const issueType = mergedEventCount > 1
+                        ? `${headlineIssue} (+${mergedEventCount - 1} more)`
+                        : headlineIssue;
+
+                    byCandidate.set(aggregateKey, {
+                        ...existing,
+                        applicationId: isNewer ? String(row.application_id || existing.applicationId) : existing.applicationId,
+                        candidateName: row.candidate_name || existing.candidateName,
+                        project: isNewer ? (row.project_title || existing.project) : existing.project,
+                        position: isNewer ? (row.position_title || existing.position) : existing.position,
+                        group: isNewer ? (row.group_name || existing.group) : existing.group,
+                        issueType,
+                        confidenceScore: Math.max(existing.confidenceScore, nextScore),
+                        detectedAt: isNewer ? nextDetectedAt : existing.detectedAt,
+                        status: mergeStatus(existing.status, nextStatus),
+                        severity: severityRank(nextSeverity) >= severityRank(existing.severity) ? nextSeverity : existing.severity,
+                        eventCount: mergedEventCount,
+                        seenFlagIds: [...existing.seenFlagIds, flagId],
+                        issueSamples: mergedIssues,
+                    });
+                }
+
+                return Array.from(byCandidate.values()).sort(
+                    (a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime(),
+                );
+            });
+        };
+
+        const pollOnce = async () => {
+            try {
+                const payload = await api.recruiter.getSuspiciousActivity(cursorRef.current || undefined, 120) as any;
+                if (payload?.cursor) {
+                    cursorRef.current = payload.cursor;
+                }
+                mergeRecords(payload?.records || []);
+            } catch (error) {
+                console.error('Failed to poll suspicious activity:', error);
+            } finally {
+                if (!cancelled) setIsLoading(false);
+            }
+        };
+
+        const startPollingFallback = () => {
+            setStreamConnected(false);
+            void pollOnce();
+            pollInterval = window.setInterval(pollOnce, 8000);
+        };
+
+        const connectStream = async () => {
+            const { url, token } = api.recruiter.getSuspiciousActivityStreamUrl(cursorRef.current || undefined);
+            if (!token) {
+                startPollingFallback();
+                return;
+            }
+
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: 'text/event-stream',
+                },
+            });
+
+            if (!response.ok || !response.body) {
+                throw new Error(`Suspicious stream unavailable (${response.status})`);
+            }
+
+            setStreamConnected(true);
+            if (!cancelled) setIsLoading(false);
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (!cancelled) {
+                const { value, done } = await reader.read();
+                if (done) throw new Error('Suspicious stream closed');
+
+                buffer += decoder.decode(value, { stream: true });
+                let boundary = buffer.indexOf('\n\n');
+                while (boundary !== -1) {
+                    const chunk = buffer.slice(0, boundary);
+                    buffer = buffer.slice(boundary + 2);
+
+                    const lines = chunk.split('\n');
+                    const eventLine = lines.find((line) => line.startsWith('event: '));
+                    const dataLine = lines.find((line) => line.startsWith('data: '));
+
+                    if (eventLine?.includes('suspicious') && dataLine) {
+                        try {
+                            const payload = JSON.parse(dataLine.slice(6));
+                            if (payload?.cursor) {
+                                cursorRef.current = payload.cursor;
+                            }
+                            mergeRecords(payload?.records || []);
+                        } catch (parseErr) {
+                            console.error('Failed parsing suspicious stream payload:', parseErr);
+                        }
+                    }
+
+                    boundary = buffer.indexOf('\n\n');
+                }
+            }
+        };
+
+        connectStream().catch((error) => {
+            console.error('Stream unavailable, using polling fallback for suspicious activity:', error);
+            startPollingFallback();
+        });
+
+        return () => {
+            cancelled = true;
+            setStreamConnected(false);
+            if (pollInterval) {
+                window.clearInterval(pollInterval);
+            }
+        };
+    }, []);
 
     const filteredRecords = records.filter(record => {
         // Search Filter
@@ -87,11 +251,16 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
             record.issueType.toLowerCase().includes(searchQuery.toLowerCase()) ||
             record.position.toLowerCase().includes(searchQuery.toLowerCase());
 
+        const matchesDateDrill = !selectedDate || new Date(record.detectedAt).toLocaleDateString() === selectedDate;
+        const matchesProjectDrill = !selectedProject || record.project === selectedProject;
+        const matchesPositionDrill = !selectedPosition || record.position === selectedPosition;
+        const matchesGroupDrill = !selectedGroup || record.group === selectedGroup;
+
         // Severity Filter
         let matchesSeverity = true;
-        if (severityFilter === 'high') matchesSeverity = record.confidenceScore >= 90;
-        else if (severityFilter === 'medium') matchesSeverity = record.confidenceScore >= 70 && record.confidenceScore < 90;
-        else if (severityFilter === 'low') matchesSeverity = record.confidenceScore < 70;
+        if (severityFilter !== 'all') {
+            matchesSeverity = record.severity === severityFilter;
+        }
 
         // Date Filter
         let matchesDate = true;
@@ -110,7 +279,7 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
             }
         }
 
-        return matchesSearch && matchesSeverity && matchesDate;
+        return matchesSearch && matchesSeverity && matchesDate && matchesDateDrill && matchesProjectDrill && matchesPositionDrill && matchesGroupDrill;
     });
 
     const sortedRecords = [...filteredRecords].sort((a, b) => {
@@ -134,6 +303,57 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
         return 'text-yellow-600 bg-yellow-50 border-yellow-200';
     };
 
+    const insightRows = useMemo(() => {
+        const byDate = new Map<string, { key: string; candidates: number; events: number }>();
+        const byProject = new Map<string, { key: string; candidates: number; events: number }>();
+        const byPosition = new Map<string, { key: string; candidates: number; events: number }>();
+        const byGroup = new Map<string, { key: string; candidates: number; events: number }>();
+
+        for (const row of records) {
+            const events = Math.max(1, row.eventCount || 1);
+            const dateKey = new Date(row.detectedAt).toLocaleDateString();
+
+            const currDate = byDate.get(dateKey) || { key: dateKey, candidates: 0, events: 0 };
+            currDate.candidates += 1;
+            currDate.events += events;
+            byDate.set(dateKey, currDate);
+
+            const currProject = byProject.get(row.project) || { key: row.project, candidates: 0, events: 0 };
+            currProject.candidates += 1;
+            currProject.events += events;
+            byProject.set(row.project, currProject);
+
+            const currPosition = byPosition.get(row.position) || { key: row.position, candidates: 0, events: 0 };
+            currPosition.candidates += 1;
+            currPosition.events += events;
+            byPosition.set(row.position, currPosition);
+
+            const currGroup = byGroup.get(row.group) || { key: row.group, candidates: 0, events: 0 };
+            currGroup.candidates += 1;
+            currGroup.events += events;
+            byGroup.set(row.group, currGroup);
+        }
+
+        const descByEvents = (a: { events: number }, b: { events: number }) => b.events - a.events;
+        return {
+            date: Array.from(byDate.values()).sort(descByEvents),
+            project: Array.from(byProject.values()).sort(descByEvents),
+            position: Array.from(byPosition.values()).sort(descByEvents),
+            group: Array.from(byGroup.values()).sort(descByEvents),
+        };
+    }, [records]);
+
+    const overallStats = useMemo(() => {
+        const totalCandidates = records.length;
+        const totalEvents = records.reduce((sum, row) => sum + Math.max(1, row.eventCount || 1), 0);
+        const highRiskCandidates = records.filter((row) => row.severity === 'high').length;
+        const today = new Date().toDateString();
+        const todayEvents = records
+            .filter((row) => new Date(row.detectedAt).toDateString() === today)
+            .reduce((sum, row) => sum + Math.max(1, row.eventCount || 1), 0);
+        return { totalCandidates, totalEvents, highRiskCandidates, todayEvents };
+    }, [records]);
+
     return (
         <div className="min-h-screen flex flex-col">
             <div className="px-8 py-6 w-full">
@@ -143,9 +363,27 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                     <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                         Review potential integrity violations across all assessments
                     </p>
+                    <p className="font-['Arimo',sans-serif] text-[13px] mt-2" style={{ color: streamConnected ? '#047857' : '#b45309' }}>
+                        {streamConnected ? 'Live stream connected' : 'Live stream unavailable, polling every 8s'}
+                    </p>
                 </div>
 
                 <div className="max-w-[1400px] mx-auto">
+                    {/* Insights Summary */}
+                    <div className="grid grid-cols-4 gap-4 mb-6">
+                        {[
+                            { label: 'Candidates Flagged', value: overallStats.totalCandidates, tone: 'text-[#1d4ed8] bg-[#eff6ff] border-[#bfdbfe]' },
+                            { label: 'Total Suspicious Events', value: overallStats.totalEvents, tone: 'text-[#9a3412] bg-[#fff7ed] border-[#fed7aa]' },
+                            { label: 'High-Risk Candidates', value: overallStats.highRiskCandidates, tone: 'text-[#991b1b] bg-[#fef2f2] border-[#fecaca]' },
+                            { label: 'Events Today', value: overallStats.todayEvents, tone: 'text-[#166534] bg-[#f0fdf4] border-[#bbf7d0]' },
+                        ].map((card) => (
+                            <div key={card.label} className={`rounded-[12px] border p-4 ${card.tone}`}>
+                                <p className="font-['Arimo',sans-serif] text-[12px] opacity-80 mb-1">{card.label}</p>
+                                <p className="font-['Arimo',sans-serif] text-[24px] font-semibold">{card.value}</p>
+                            </div>
+                        ))}
+                    </div>
+
                     {/* Search and Filters */}
                     <div className="mb-6 space-y-4">
                         <div className="flex items-center gap-4">
@@ -172,6 +410,27 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                             </button>
                         </div>
 
+                        {(selectedDate || selectedProject || selectedPosition || selectedGroup) && (
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Active insight filters:</span>
+                                {selectedDate && <span className="px-2 py-1 rounded bg-[#eef2ff] text-[#4338ca] text-[12px]">Date: {selectedDate}</span>}
+                                {selectedProject && <span className="px-2 py-1 rounded bg-[#ecfdf5] text-[#047857] text-[12px]">Project: {selectedProject}</span>}
+                                {selectedPosition && <span className="px-2 py-1 rounded bg-[#fff7ed] text-[#c2410c] text-[12px]">Position: {selectedPosition}</span>}
+                                {selectedGroup && <span className="px-2 py-1 rounded bg-[#fdf2f8] text-[#be185d] text-[12px]">Group: {selectedGroup}</span>}
+                                <button
+                                    onClick={() => {
+                                        setSelectedDate(null);
+                                        setSelectedProject(null);
+                                        setSelectedPosition(null);
+                                        setSelectedGroup(null);
+                                    }}
+                                    className="px-2 py-1 rounded border border-[#e5e7eb] text-[12px] text-[#374151] hover:bg-[#f9fafb]"
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                        )}
+
                         {showFilters && (
                             <div className="p-4 bg-white rounded-[10px] border border-[#e5e7eb] grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-200">
                                 <div>
@@ -183,9 +442,9 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                                             onChange={(e) => setSeverityFilter(e.target.value as any)}
                                         >
                                             <option value="all">All Severities</option>
-                                            <option value="high">High (&gt;90%)</option>
-                                            <option value="medium">Medium (70-90%)</option>
-                                            <option value="low">Low (&lt;70%)</option>
+                                            <option value="high">High</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="low">Low</option>
                                         </select>
                                         <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af] pointer-events-none" />
                                     </div>
@@ -208,6 +467,105 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                                 </div>
                             </div>
                         )}
+                    </div>
+
+                    {/* Insights Tables */}
+                    <div className="grid grid-cols-2 gap-6 mb-6">
+                        <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4">
+                            <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Date Breakdown</h3>
+                            <div className="max-h-[220px] overflow-auto">
+                                <table className="w-full">
+                                    <thead>
+                                        <tr className="text-left text-[#6b7280] text-[12px]">
+                                            <th className="py-2">Date</th>
+                                            <th className="py-2">Candidates</th>
+                                            <th className="py-2">Events</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {insightRows.date.slice(0, 8).map((row) => (
+                                            <tr key={row.key} className="border-t border-[#f3f4f6] cursor-pointer hover:bg-[#f9fafb]" onClick={() => setSelectedDate(row.key)}>
+                                                <td className="py-2 text-[13px] text-[#111827]">{row.key}</td>
+                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.candidates}</td>
+                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.events}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4">
+                            <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Project Breakdown</h3>
+                            <div className="max-h-[220px] overflow-auto">
+                                <table className="w-full">
+                                    <thead>
+                                        <tr className="text-left text-[#6b7280] text-[12px]">
+                                            <th className="py-2">Project</th>
+                                            <th className="py-2">Candidates</th>
+                                            <th className="py-2">Events</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {insightRows.project.slice(0, 8).map((row) => (
+                                            <tr key={row.key} className="border-t border-[#f3f4f6] cursor-pointer hover:bg-[#f9fafb]" onClick={() => setSelectedProject(row.key)}>
+                                                <td className="py-2 text-[13px] text-[#111827]">{row.key}</td>
+                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.candidates}</td>
+                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.events}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4">
+                            <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Position Breakdown</h3>
+                            <div className="max-h-[220px] overflow-auto">
+                                <table className="w-full">
+                                    <thead>
+                                        <tr className="text-left text-[#6b7280] text-[12px]">
+                                            <th className="py-2">Position</th>
+                                            <th className="py-2">Candidates</th>
+                                            <th className="py-2">Events</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {insightRows.position.slice(0, 8).map((row) => (
+                                            <tr key={row.key} className="border-t border-[#f3f4f6] cursor-pointer hover:bg-[#f9fafb]" onClick={() => setSelectedPosition(row.key)}>
+                                                <td className="py-2 text-[13px] text-[#111827]">{row.key}</td>
+                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.candidates}</td>
+                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.events}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-4">
+                            <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827] mb-3">Group Breakdown</h3>
+                            <div className="max-h-[220px] overflow-auto">
+                                <table className="w-full">
+                                    <thead>
+                                        <tr className="text-left text-[#6b7280] text-[12px]">
+                                            <th className="py-2">Group</th>
+                                            <th className="py-2">Candidates</th>
+                                            <th className="py-2">Events</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {insightRows.group.slice(0, 8).map((row) => (
+                                            <tr key={row.key} className="border-t border-[#f3f4f6] cursor-pointer hover:bg-[#f9fafb]" onClick={() => setSelectedGroup(row.key)}>
+                                                <td className="py-2 text-[13px] text-[#111827]">{row.key}</td>
+                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.candidates}</td>
+                                                <td className="py-2 text-[13px] text-[#4b5563]">{row.events}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
 
                     {/* Table */}
@@ -254,7 +612,7 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                                 {sortedRecords.map((record) => (
                                     <tr
                                         key={record.id}
-                                        onClick={() => navigate(`/recruiter/suspect-review?id=${record.id}`)}
+                                        onClick={() => navigate(`/recruiter/suspect-review?candidateId=${record.candidateId}&applicationId=${record.applicationId}`)}
                                         className="border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors cursor-pointer group"
                                     >
                                         <td className="p-4">
@@ -277,6 +635,7 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                                         </td>
                                         <td className="p-4">
                                             <div>
+                                                <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{record.project}</div>
                                                 <div className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">{record.position}</div>
                                                 <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{record.group}</div>
                                             </div>
@@ -301,12 +660,18 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                             </tbody>
                         </table>
 
-                        {sortedRecords.length === 0 && (
+                        {!isLoading && sortedRecords.length === 0 && (
                             <div className="text-center py-12">
                                 <CheckCircle size={48} className="text-[#d1d5db] mx-auto mb-4" />
                                 <p className="font-['Arimo',sans-serif] text-[16px] text-[#6b7280]">
                                     No suspicious activity detected
                                 </p>
+                            </div>
+                        )}
+                        {isLoading && (
+                            <div className="text-center py-12">
+                                <Clock size={30} className="text-[#9ca3af] mx-auto mb-4 animate-pulse" />
+                                <p className="font-['Arimo',sans-serif] text-[16px] text-[#6b7280]">Loading suspicious activity feed...</p>
                             </div>
                         )}
                     </div>

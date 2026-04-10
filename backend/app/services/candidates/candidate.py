@@ -1,10 +1,13 @@
 from uuid import UUID
+from uuid import uuid4
 import zipfile
 import io
 import os
+import json
 from datetime import datetime, timezone
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
+from sqlalchemy import text
 
 from app.models import CandidateProfile, CandidateApplication, User
 from app.schemas import CandidateCreate, CandidateUpdate, ApplicationCreate, CandidateResponse, CandidateUploadResponse
@@ -461,18 +464,310 @@ class CandidateService:
             ]
         }
 
-    async def get_suspect_review(self, candidate_id: UUID) -> list[dict]:
-        """Get suspect review activities (for anti-cheating)."""
-        # Normally fetches from CandidateStageProgress acceptance_result or audit logs
-        return [
-            {
-                "id": "1",
-                "type": "tab-switch",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "severity": "medium",
-                "description": "Candidate switched tabs during assessment"
+    async def get_suspect_review(self, candidate_id: UUID, application_id: UUID | None = None) -> dict:
+        """Get real suspect-review timeline from proctoring flags."""
+        app_filter = ""
+        params: dict[str, object] = {
+            "candidate_id": candidate_id,
+            "org_id": self.organization_id,
+        }
+        if application_id is not None:
+            app_filter = " AND ca.application_id = :application_id "
+            params["application_id"] = application_id
+
+        candidate_row = await self.session.execute(
+            text(
+                f"""
+                SELECT
+                  cp.candidate_id,
+                  cp.full_name,
+                  COALESCE(cg.group_name, 'Unknown Group') AS group_name,
+                  COALESCE(p.job_title, 'Unknown Position') AS position_title,
+                  ca.application_id
+                FROM candidate_profiles cp
+                JOIN candidate_applications ca
+                  ON ca.candidate_id = cp.candidate_id
+                LEFT JOIN candidate_groups cg
+                  ON cg.group_id = ca.group_id
+                LEFT JOIN positions p
+                  ON p.position_id = ca.position_id
+                WHERE cp.candidate_id = :candidate_id
+                  AND ca.organization_id = :org_id
+                  AND ca.is_deleted = false
+                  {app_filter}
+                ORDER BY ca.applied_at DESC
+                LIMIT 1
+                """
+            ),
+            params,
+        )
+        candidate = candidate_row.mappings().first()
+        if not candidate:
+            return {
+                "candidate_id": str(candidate_id),
+                "candidate_name": "Unknown Candidate",
+                "group_name": "Unknown Group",
+                "position_title": "Unknown Position",
+                "current_module": "Assessment",
+                "recording_url": None,
+                "duration": 0,
+                "suspicious_timestamps": [],
+                "flags": [],
             }
-        ]
+
+        app_id = application_id or candidate["application_id"]
+        recording_row = await self.session.execute(
+            text(
+                """
+                SELECT oa.recording_url
+                FROM ongoing_assessments oa
+                WHERE oa.application_id = :application_id
+                  AND oa.recording_url IS NOT NULL
+                ORDER BY COALESCE(oa.submitted_at, oa.started_at) DESC
+                LIMIT 1
+                """
+            ),
+            {"application_id": app_id},
+        )
+        recording = recording_row.mappings().first()
+
+        flags_row = await self.session.execute(
+            text(
+                """
+                SELECT
+                  pf.flag_id,
+                  pf.timestamp_seconds,
+                  pf.event_type,
+                  pf.severity,
+                  pf.session_type,
+                  pf.evidence,
+                  pf.status,
+                  pf.created_at
+                FROM proctoring_flags pf
+                WHERE pf.application_id = :application_id
+                ORDER BY COALESCE(pf.timestamp_seconds, 0) ASC, pf.created_at ASC
+                """
+            ),
+            {"application_id": app_id},
+        )
+        rows = flags_row.mappings().all()
+
+        max_ts = 0
+        suspicious_timestamp_buckets: set[int] = set()
+        mapped_flags: list[dict] = []
+        for row in rows:
+            ts = int(row["timestamp_seconds"] or 0)
+            max_ts = max(max_ts, ts)
+            suspicious_timestamp_buckets.add((ts // 5) * 5)
+
+            module = "Assessment" if row["session_type"] == "assessment" else "AI Interview"
+            event = str(row["event_type"] or "unknown_event").replace("_", " ").title()
+
+            evidence_obj = row["evidence"]
+            if isinstance(evidence_obj, str):
+                try:
+                    evidence_obj = json.loads(evidence_obj)
+                except json.JSONDecodeError:
+                    evidence_obj = {"raw": evidence_obj}
+
+            note = ""
+            evidence_text = ""
+            metadata_payload: dict | None = None
+            proof_payload: dict | None = None
+            if isinstance(evidence_obj, dict):
+                metadata = evidence_obj.get("metadata") if isinstance(evidence_obj.get("metadata"), dict) else {}
+                proof = metadata.get("proof") if isinstance(metadata.get("proof"), dict) else {}
+                metadata_payload = metadata if metadata else None
+                proof_payload = proof if proof else None
+                note = str(proof.get("adapter_mode") or evidence_obj.get("evidence") or "").strip()
+                if proof:
+                    evidence_text = f"model_backed={proof.get('model_backed')} mode={proof.get('adapter_mode')}"
+                elif evidence_obj.get("source"):
+                    evidence_text = f"source={evidence_obj.get('source')}"
+
+            mapped_flags.append(
+                {
+                    "id": str(row["flag_id"]),
+                    "timestamp": ts,
+                    "timeDisplay": f"{ts // 60}:{str(ts % 60).zfill(2)}",
+                    "event": event,
+                    "severity": str(row["severity"] or "low").lower(),
+                    "module": module,
+                    "evidence": evidence_text or "No structured evidence",
+                    "metadata": metadata_payload,
+                    "proof": proof_payload,
+                    "notes": note,
+                    "status": str(row["status"] or "pending").lower(),
+                }
+            )
+
+        current_module = "Assessment"
+        if rows:
+            latest_session_type = rows[-1]["session_type"]
+            current_module = "Assessment" if latest_session_type == "assessment" else "AI Interview"
+
+        return {
+            "candidate_id": str(candidate["candidate_id"]),
+            "application_id": str(app_id),
+            "candidate_name": candidate["full_name"],
+            "group_name": candidate["group_name"],
+            "position_title": candidate["position_title"],
+            "current_module": current_module,
+            "recording_url": recording["recording_url"] if recording else None,
+            "duration": max(60, max_ts + 30 if max_ts > 0 else 0),
+            "suspicious_timestamps": sorted(suspicious_timestamp_buckets),
+            "flags": mapped_flags,
+        }
+
+    async def persist_suspect_review_artifacts(
+        self,
+        candidate_id: UUID,
+        reviewer_user_id: UUID,
+        suspicious_timestamps: list[int],
+        application_id: UUID | None = None,
+        window_seconds: int = 5,
+    ) -> dict:
+        if not suspicious_timestamps:
+            return {
+                "saved_segments": 0,
+                "updated_flags": 0,
+                "application_id": str(application_id) if application_id else None,
+                "artifacts": [],
+            }
+
+        app_filter = ""
+        params: dict[str, object] = {
+            "candidate_id": candidate_id,
+            "org_id": self.organization_id,
+        }
+        if application_id is not None:
+            app_filter = " AND ca.application_id = :application_id "
+            params["application_id"] = application_id
+
+        app_row = await self.session.execute(
+            text(
+                f"""
+                SELECT ca.application_id
+                FROM candidate_applications ca
+                WHERE ca.candidate_id = :candidate_id
+                  AND ca.organization_id = :org_id
+                  AND ca.is_deleted = false
+                  {app_filter}
+                ORDER BY ca.applied_at DESC
+                LIMIT 1
+                """
+            ),
+            params,
+        )
+        resolved_app = app_row.mappings().first()
+        if not resolved_app:
+            return {
+                "saved_segments": 0,
+                "updated_flags": 0,
+                "application_id": str(application_id) if application_id else None,
+                "artifacts": [],
+            }
+
+        resolved_application_id = resolved_app["application_id"]
+        flag_rows = await self.session.execute(
+            text(
+                """
+                SELECT pf.flag_id, pf.timestamp_seconds, pf.evidence
+                FROM proctoring_flags pf
+                WHERE pf.application_id = :application_id
+                ORDER BY COALESCE(pf.timestamp_seconds, 0) ASC, pf.created_at ASC
+                """
+            ),
+            {"application_id": resolved_application_id},
+        )
+        flags = flag_rows.mappings().all()
+        if not flags:
+            return {
+                "saved_segments": 0,
+                "updated_flags": 0,
+                "application_id": str(resolved_application_id),
+                "artifacts": [],
+            }
+
+        safe_window = max(1, int(window_seconds or 5))
+        normalized_timestamps = sorted({max(0, int(ts)) for ts in suspicious_timestamps})
+
+        artifacts: list[dict] = []
+        updates_by_flag: dict[UUID, dict] = {}
+
+        for ts in normalized_timestamps:
+            chosen_flag = min(
+                flags,
+                key=lambda row: abs(int(row["timestamp_seconds"] or 0) - ts),
+            )
+            artifact = {
+                "artifact_id": str(uuid4()),
+                "artifact_type": "decompressed_segment",
+                "segment_start_second": ts,
+                "segment_end_second": ts + safe_window,
+                "timestamp_bucket_seconds": safe_window,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_by_user_id": str(reviewer_user_id),
+                "linked_flag_id": str(chosen_flag["flag_id"]),
+            }
+            artifacts.append(artifact)
+
+            flag_id = chosen_flag["flag_id"]
+            existing_evidence = updates_by_flag.get(flag_id)
+            if existing_evidence is None:
+                raw = chosen_flag["evidence"]
+                if isinstance(raw, str):
+                    try:
+                        existing_evidence = json.loads(raw)
+                    except json.JSONDecodeError:
+                        existing_evidence = {"raw": raw}
+                elif isinstance(raw, dict):
+                    existing_evidence = raw
+                else:
+                    existing_evidence = {}
+            if not isinstance(existing_evidence, dict):
+                existing_evidence = {}
+
+            metadata = existing_evidence.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+
+            review_artifacts = metadata.get("review_artifacts")
+            if not isinstance(review_artifacts, list):
+                review_artifacts = []
+
+            review_artifacts.append(artifact)
+            metadata["review_artifacts"] = review_artifacts
+            metadata["suspect_timestamps"] = normalized_timestamps
+            existing_evidence["metadata"] = metadata
+            updates_by_flag[flag_id] = existing_evidence
+
+        for flag_id, payload in updates_by_flag.items():
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE proctoring_flags
+                    SET evidence = :evidence,
+                        reviewed_by_user_id = :reviewed_by,
+                        status = CASE WHEN status = 'pending' THEN 'reviewed' ELSE status END
+                    WHERE flag_id = :flag_id
+                    """
+                ),
+                {
+                    "flag_id": flag_id,
+                    "evidence": json.dumps(payload),
+                    "reviewed_by": reviewer_user_id,
+                },
+            )
+
+        await self.session.commit()
+
+        return {
+            "saved_segments": len(artifacts),
+            "updated_flags": len(updates_by_flag),
+            "application_id": str(resolved_application_id),
+            "artifacts": artifacts,
+        }
 
     # Bulk Upload
     async def process_zip_upload(self, file_content: bytes, position_id: UUID) -> CandidateUploadResponse:

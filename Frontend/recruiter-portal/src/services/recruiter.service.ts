@@ -111,7 +111,42 @@ export const recruiterService = {
             method: 'POST'
         }),
 
-    getSuspectReview: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/suspect-review`),
+    getSuspectReview: async (candidateId: string, applicationId?: string) => {
+        const query = applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : '';
+        return fetchAPI(`/candidates/${candidateId}/suspect-review${query}`);
+    },
+
+    persistSuspectDecompressionArtifacts: async (
+        candidateId: string,
+        payload: {
+            application_id?: string;
+            suspicious_timestamps: number[];
+            window_seconds?: number;
+        },
+    ) => {
+        return fetchAPI(`/candidates/${candidateId}/suspect-review/decompression-artifacts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    },
+
+    getSuspiciousActivity: async (since?: string, limit = 100) => {
+        const query = new URLSearchParams();
+        if (since) query.set('since', since);
+        query.set('limit', String(limit));
+        const suffix = query.toString() ? `?${query.toString()}` : '';
+        return fetchAPI<{ records: any[]; cursor: string | null; server_time: string }>(`/recruiter/suspicious-activity/poll${suffix}`);
+    },
+
+    getSuspiciousActivityStreamUrl: (since?: string) => {
+        const token = localStorage.getItem('token');
+        const query = since ? `?since=${encodeURIComponent(since)}` : '';
+        return {
+            url: `${API_URL}/recruiter/suspicious-activity/stream${query}`,
+            token,
+        };
+    },
 
     getKnowledgeGraphData: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/knowledge-graph`),
 
@@ -304,6 +339,18 @@ export const recruiterService = {
     // Activity Log
     getGroupActivityLog: async (groupId: string) => {
         return fetchAPI(`/recruiter/groups/${groupId}/activity`);
+    },
+
+    // Live Integrity Alerts (polling fallback)
+    pollGroupAlerts: async (groupId: string, since?: string) => {
+        const query = since ? `?since=${encodeURIComponent(since)}` : '';
+        return fetchAPI<{ alerts: any[]; cursor: string | null; server_time: string }>(
+            `/recruiter/groups/${groupId}/alerts/poll${query}`
+        );
+    },
+
+    getGroupIntegrityMetrics: async (groupId: string, windowMinutes = 60) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/integrity/metrics?window_minutes=${windowMinutes}`);
     },
 
     // Interview Assignment

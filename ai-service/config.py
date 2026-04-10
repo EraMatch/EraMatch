@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     # HuggingFace settings
     HUGGINGFACE_TOKEN: str = ""
     MODELS_DIR: str = "./models"
+    PROCTORING_DRAFTS_DIR: str = "gp-assessment-env-drafts"
+    PROCTORING_REQUIRE_MODEL: bool = True
     
     # Mock mode is opt-in for local testing only.
     USE_MOCK: bool = False

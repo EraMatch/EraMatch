@@ -42,8 +42,38 @@ export const candidateService = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }),
+    uploadAssessmentRecording: async (sessionId: string, recording: Blob) => {
+        const form = new FormData();
+        form.append('session_id', sessionId);
+        form.append('recording', recording, `assessment-${sessionId}.webm`);
+        return fetchAPI<{ recording_url: string; message: string }>('/assessment/recording', {
+            method: 'POST',
+            body: form,
+        });
+    },
     heartbeat: async (sessionId: string) =>
         fetchAPI(`/assessment/heartbeat/${sessionId}`),
+    reportIntegrityEvent: async (data: {
+        session_id: string;
+        event_type: string;
+        severity?: 'low' | 'medium' | 'high';
+        source?: string;
+        confidence?: number;
+        timestamp_seconds?: number;
+        evidence?: string;
+        metadata?: Record<string, unknown>;
+    }) =>
+        fetchAPI<{
+            flag_id: string;
+            status: string;
+            message: string;
+            enforcement_action?: 'none' | 'warn' | 'pause' | 'terminate';
+            enforcement_reason?: string | null;
+        }>('/assessment/integrity-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }),
 
     // Interview endpoints
     getInterviewConfig: async () => fetchAPI('/interview/config'),
@@ -57,6 +87,27 @@ export const candidateService = {
         fetchAPI(`/interview/status/${sessionId}`),
     completeInterview: async (data: { session_id: string }) =>
         fetchAPI('/interview/complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }),
+    reportInterviewIntegrityEvent: async (data: {
+        session_id: string;
+        event_type: string;
+        severity?: 'low' | 'medium' | 'high';
+        source?: string;
+        confidence?: number;
+        timestamp_seconds?: number;
+        evidence?: string;
+        metadata?: Record<string, unknown>;
+    }) =>
+        fetchAPI<{
+            flag_id: string;
+            status: string;
+            message: string;
+            enforcement_action?: 'none' | 'warn' | 'pause' | 'terminate';
+            enforcement_reason?: string | null;
+        }>('/interview/integrity-event', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),

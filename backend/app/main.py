@@ -4,10 +4,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
+from app.core.integrity_metrics import integrity_metrics
 from app.db.session import init_db
 
 # Configure logging
@@ -80,6 +82,12 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": settings.PROJECT_NAME}
+
+
+@app.get("/metrics", tags=["Observability"], response_class=PlainTextResponse)
+async def prometheus_metrics():
+    """Prometheus scrape endpoint for in-process integrity counters."""
+    return integrity_metrics.as_prometheus_text()
 
 
 @app.get("/", tags=["Root"])
