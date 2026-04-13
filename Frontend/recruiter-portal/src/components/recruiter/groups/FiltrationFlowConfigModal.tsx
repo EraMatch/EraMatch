@@ -76,6 +76,7 @@ export function FiltrationFlowConfigModal({
     return DEFAULT_MODULES;
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
   const [githubQuestionsCount, setGithubQuestionsCount] = useState<number>(() => {
     const parsed = Number(groupData?.github_questions_count ?? 10);
     if (!Number.isFinite(parsed)) return 10;
@@ -112,6 +113,24 @@ export function FiltrationFlowConfigModal({
 
   const handleDragEnd = () => {
     setDraggedModule(null);
+    // After drag, validate ordering constraint
+    setOrderError(null);
+  };
+
+  /**
+   * Validate that live-interview (if enabled) is always the last enabled stage.
+   * This is a hard constraint — the Live Interview must be final so the agent
+   * has access to all prior stage context (assessment scores, recorded answers).
+   */
+  const validateOrdering = (modules: FiltrationModule[]): string | null => {
+    const enabled = modules
+      .filter(m => m.enabled)
+      .sort((a, b) => a.order - b.order);
+    const liveIdx = enabled.findIndex(m => m.type === 'live-interview');
+    if (liveIdx !== -1 && liveIdx !== enabled.length - 1) {
+      return 'Live Interview must always be the last stage — the AI interviewer uses prior stage context to tailor questions.';
+    }
+    return null;
   };
 
   const handleSave = async () => {
@@ -119,6 +138,14 @@ export function FiltrationFlowConfigModal({
       .filter(m => m.enabled)
       .sort((a, b) => a.order - b.order)
       .map(m => m.type);
+
+    // Ordering constraint: live-interview must be last
+    const error = validateOrdering(filtrationModules);
+    if (error) {
+      setOrderError(error);
+      return;
+    }
+    setOrderError(null);
 
     try {
       setIsSaving(true);
@@ -263,6 +290,14 @@ export function FiltrationFlowConfigModal({
           </p>
         </div>
 
+        {/* Ordering constraint error */}
+        {orderError && (
+          <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-[8px] mb-3 text-amber-800">
+            <span className="text-amber-500 mt-0.5 flex-shrink-0">⚠</span>
+            <p className="font-['Arimo',sans-serif] text-[12px]">{orderError}</p>
+          </div>
+        )}
+
         <div className="flex gap-3">
           <button
             onClick={onClose}
@@ -285,6 +320,7 @@ export function FiltrationFlowConfigModal({
             )}
           </button>
         </div>
+
       </div>
     </div>
   );

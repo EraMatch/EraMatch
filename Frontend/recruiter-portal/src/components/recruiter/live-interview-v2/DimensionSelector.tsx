@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Save, Plus, Trash2, AlertCircle, Loader2 } from 'lucide-react';
+import { Sparkles, Save, Plus, Trash2, AlertCircle, Loader2, Clock } from 'lucide-react';
 import { api } from '../../../../services/api';
 
 interface Dimension {
@@ -15,10 +15,20 @@ interface DimensionSelectorProps {
   onSave: (rubricId: string) => void;
 }
 
+// Fixed preset options — maps cleanly to pillar count and agent time budget
+const DURATION_PRESETS: { label: string; value: number; hint: string }[] = [
+  { label: '5 min',  value: 5,  hint: '1–2 pillars' },
+  { label: '10 min', value: 10, hint: '2–3 pillars' },
+  { label: '15 min', value: 15, hint: '3–4 pillars' },
+  { label: '20 min', value: 20, hint: '4–5 pillars' },
+  { label: '30 min', value: 30, hint: '5–6 pillars' },
+];
+
 export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: DimensionSelectorProps) {
   const [dimensions, setDimensions] = useState<Dimension[]>([
     { name: '', weight: 0, description: '' }
   ]);
+  const [timeBudget, setTimeBudget] = useState<number>(20);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +45,9 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
       const res = await api.client.get(`/live-interview-v2/rubric/group/${groupId}`);
       if (res && res.dimensions && res.dimensions.length > 0) {
         setDimensions(res.dimensions);
+      }
+      if (res && res.time_budget_minutes) {
+        setTimeBudget(res.time_budget_minutes);
       }
     } catch (e) {
       console.error(e);
@@ -86,33 +99,37 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
       return;
     }
     if (dimensions.length < 3) {
-      setError("Please add at least 3 dimensions.");
+      setError('Please add at least 3 dimensions.');
       return;
     }
     if (dimensions.some(d => !d.name.trim())) {
-      setError("All dimensions must have a name.");
+      setError('All dimensions must have a name.');
       return;
     }
 
     try {
       setIsSaving(true);
       setError(null);
-      
+
       let res;
       if (rubricId) {
         res = await api.client.put(`/live-interview-v2/rubric/${rubricId}`, {
-           dimensions
+          dimensions,
+          time_budget_minutes: timeBudget,
         });
       } else {
         res = await api.client.post('/live-interview-v2/rubric', {
-           group_id: groupId,
-           organization_id: "00000000-0000-0000-0000-000000000000", // Will be filled by backend CurrentUser
-           dimensions
+          group_id: groupId,
+          organization_id: '00000000-0000-0000-0000-000000000000', // filled by backend CurrentUser
+          dimensions,
+          time_budget_minutes: timeBudget,
+          language: 'en',
+          include_weak_topics: false,
         });
       }
-      
+
       if (res && res.rubric_id) {
-         onSave(res.rubric_id);
+        onSave(res.rubric_id);
       }
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Failed to save dimensions');
@@ -123,12 +140,52 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
 
   return (
     <div className="space-y-6">
+      {/* ── Duration Preset Section ── */}
+      <div className="p-4 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-100">
+        <div className="flex items-center gap-2 mb-3">
+          <Clock className="w-4 h-4 text-indigo-600" />
+          <h3 className="text-sm font-semibold text-indigo-900">Interview Duration</h3>
+          {isFrozen && (
+            <span className="ml-auto text-xs text-indigo-500 font-medium">Locked</span>
+          )}
+        </div>
+        <p className="text-xs text-indigo-700 mb-3">
+          Controls how long the AI agent will interview each candidate. The agent adapts question depth to stay within this window.
+        </p>
+        <div className="flex gap-2 flex-wrap">
+          {DURATION_PRESETS.map((preset) => (
+            <button
+              key={preset.value}
+              type="button"
+              disabled={isFrozen}
+              onClick={() => setTimeBudget(preset.value)}
+              className={`
+                flex flex-col items-center px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all
+                ${timeBudget === preset.value
+                  ? 'border-indigo-600 bg-indigo-600 text-white shadow-md'
+                  : isFrozen
+                    ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'
+                    : 'border-indigo-200 bg-white text-indigo-700 hover:border-indigo-400 hover:bg-indigo-50'
+                }
+              `}
+              title={preset.hint}
+            >
+              {preset.label}
+              <span className={`text-[10px] mt-0.5 font-normal ${timeBudget === preset.value ? 'text-indigo-200' : 'text-indigo-400'}`}>
+                {preset.hint}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Dimensions Section ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-medium text-gray-900">Configure Dimensions</h3>
           <p className="text-sm text-gray-500">Define the core competencies the AI should evaluate.</p>
         </div>
-        
+
         {!isFrozen && (
           <button
             onClick={handleSuggest}
@@ -220,7 +277,7 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
             <span className="text-xs text-red-500 ml-2">(Must equal 100%)</span>
           )}
         </div>
-        
+
         <button
           onClick={handleSave}
           disabled={isSaving || isFrozen}
@@ -239,5 +296,4 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
   );
 }
 
-// Ensure ChevronRight is imported (or replace with local SVG if missing)
 import { ChevronRight } from 'lucide-react';

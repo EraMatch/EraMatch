@@ -1,0 +1,431 @@
+/**
+ * LiveInterviewMonitor.tsx
+ *
+ * Real-time session monitoring dashboard for Live Interview V2.
+ * Displays all sessions for a group with reconstructed event timelines,
+ * judge pipeline status, and live candidate name + score indicators.
+ *
+ * Polling: every 3s when sessions are active, every 10s when all done.
+ */
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  X, RefreshCw, CircleDot, UserCheck, Bot, MessageSquare,
+  CheckCircle, Zap, Star, AlertTriangle, Clock,
+  ChevronDown, ChevronRight, Activity, Users, Brain, AlertCircle,
+} from 'lucide-react';
+import { api } from '../../../../services/api';
+
+// ─── Types ─────────────────────────────────────────────────────────────────
+
+interface SessionEvent {
+  time: string;
+  type: string;
+  icon: string;
+  label: string;
+  detail: string;
+  level: 'info' | 'success' | 'warning' | 'error';
+}
+
+interface SessionRow {
+  session_id: string;
+  candidate_id: string;
+  candidate_name: string;
+  room_name: string | null;
+  state: string;
+  transcript_turns: number;
+  duration_seconds: number | null;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+  judge_status: 'pending' | 'running' | 'complete';
+  evaluation: {
+    overall_score_pct: number | null;
+    auto_verdict: string | null;
+    evaluation_confidence: string | null;
+    judged_at: string | null;
+  } | null;
+  events: SessionEvent[];
+}
+
+interface MonitorData {
+  group_id: string;
+  summary: {
+    active: number;
+    judging: number;
+    completed: number;
+    failed: number;
+    total: number;
+  };
+  sessions: SessionRow[];
+}
+
+interface LiveInterviewMonitorProps {
+  groupId: string;
+  groupName?: string;
+  onClose: () => void;
+}
+
+// ─── Icon resolver ──────────────────────────────────────────────────────────
+const EventIcon = ({ type, level }: { type: string; level: string }) => {
+  const cls = `w-3.5 h-3.5 flex-shrink-0 ${
+    level === 'success' ? 'text-emerald-500' :
+    level === 'warning' ? 'text-amber-500' :
+    level === 'error'   ? 'text-red-500' :
+    'text-blue-400'
+  }`;
+  switch (type) {
+    case 'session_created':   return <CircleDot className={cls} />;
+    case 'candidate_joined':  return <UserCheck className={cls} />;
+    case 'agent_dispatched':  return <Bot className={cls} />;
+    case 'transcript_turns':  return <MessageSquare className={cls} />;
+    case 'session_completed': return <CheckCircle className={cls} />;
+    case 'judge_queued':      return <Zap className={cls} />;
+    case 'evaluation_complete':return <Star className={cls} />;
+    default:                  return <CircleDot className={cls} />;
+  }
+};
+
+// ─── Verdict badge ──────────────────────────────────────────────────────────
+const VerdictBadge = ({ verdict }: { verdict: string | null }) => {
+  if (!verdict) return null;
+  const map: Record<string, string> = {
+    strong_pass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    pass:        'bg-blue-100 text-blue-800 border-blue-200',
+    borderline:  'bg-amber-100 text-amber-800 border-amber-200',
+    fail:        'bg-red-100 text-red-800 border-red-200',
+  };
+  return (
+    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${map[verdict] || 'bg-gray-100 text-gray-600 border-gray-200'}`}>
+      {verdict.replace('_', ' ').toUpperCase()}
+    </span>
+  );
+};
+
+// ─── State badge ─────────────────────────────────────────────────────────────
+const StateBadge = ({ state, judgeStatus }: { state: string; judgeStatus: string }) => {
+  if (state === 'in_progress') {
+    return (
+      <span className="flex items-center gap-1 text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+        LIVE
+      </span>
+    );
+  }
+  if (state === 'completed' && judgeStatus === 'running') {
+    return (
+      <span className="flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+        <Brain className="w-3 h-3 animate-pulse" />
+        GRADING
+      </span>
+    );
+  }
+  if (state === 'completed' && judgeStatus === 'complete') {
+    return (
+      <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+        <CheckCircle className="w-3 h-3" />
+        GRADED
+      </span>
+    );
+  }
+  if (state === 'failed') {
+    return (
+      <span className="text-[10px] font-semibold text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">
+        FAILED
+      </span>
+    );
+  }
+  return (
+    <span className="text-[10px] font-semibold text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded">
+      {state.toUpperCase()}
+    </span>
+  );
+};
+
+// ─── Format helpers ──────────────────────────────────────────────────────────
+const fmtTime = (iso: string | null) => {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+};
+const fmtDuration = (secs: number | null) => {
+  if (!secs) return '—';
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}m ${s}s`;
+};
+
+// ─── Main Component ──────────────────────────────────────────────────────────
+export function LiveInterviewMonitor({ groupId, groupName, onClose }: LiveInterviewMonitorProps) {
+  const [data, setData] = useState<MonitorData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [lastPoll, setLastPoll] = useState<Date | null>(null);
+  const [expandedSession, setExpandedSession] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const logRef = useRef<HTMLDivElement | null>(null);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await api.client.get(`/live-interview-v2/group/${groupId}/sessions-monitor`);
+      setData(res);
+      setLastPoll(new Date());
+      setError(null);
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Failed to fetch monitoring data');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [groupId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Adaptive polling: 3s if active sessions, 10s if all done
+  useEffect(() => {
+    const hasActive = data?.sessions.some(s =>
+      s.state === 'in_progress' || s.judge_status === 'running'
+    );
+    const interval = hasActive ? 3000 : 10000;
+
+    pollRef.current = setTimeout(() => fetchData(), interval);
+    return () => { if (pollRef.current) clearTimeout(pollRef.current); };
+  }, [data, fetchData]);
+
+  // Auto-scroll log area when expanded session's events change
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [expandedSession, data]);
+
+  if (isLoading) {
+    return (
+      <div className="fixed inset-0 z-50 bg-gray-950/95 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-white">
+          <Activity className="w-8 h-8 animate-pulse text-blue-400" />
+          <p className="text-sm text-gray-400">Connecting to session monitor...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const expandedData = expandedSession
+    ? data?.sessions.find(s => s.session_id === expandedSession)
+    : null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-gray-950/98 flex flex-col font-mono">
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 bg-gray-900/80">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center">
+            <Activity className="w-4 h-4 text-blue-400" />
+          </div>
+          <div>
+            <h2 className="text-white font-semibold text-sm tracking-wide">
+              Live Interview Monitor
+              {groupName && <span className="text-gray-400 font-normal ml-2">— {groupName}</span>}
+            </h2>
+            <p className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
+              Live · polling every {(data?.sessions.some(s => s.state === 'in_progress' || s.judge_status === 'running') ? 3 : 10)}s
+              {lastPoll && <span className="text-gray-600">· last: {fmtTime(lastPoll.toISOString())}</span>}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={fetchData}
+            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            title="Refresh now"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Summary Cards ── */}
+      {data && (
+        <div className="flex gap-3 px-6 py-4 border-b border-gray-800/60">
+          {[
+            { label: 'Live Now',   value: data.summary.active,    color: 'text-blue-400',   bg: 'bg-blue-500/10',   icon: <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" /> },
+            { label: 'Grading',   value: data.summary.judging,   color: 'text-amber-400',  bg: 'bg-amber-500/10',  icon: <Brain className="w-3 h-3 text-amber-400 animate-pulse" /> },
+            { label: 'Graded',    value: data.summary.completed, color: 'text-emerald-400',bg: 'bg-emerald-500/10',icon: <CheckCircle className="w-3 h-3 text-emerald-400" /> },
+            { label: 'Failed',    value: data.summary.failed,    color: 'text-red-400',    bg: 'bg-red-500/10',    icon: <AlertTriangle className="w-3 h-3 text-red-400" /> },
+            { label: 'Total',     value: data.summary.total,     color: 'text-gray-300',   bg: 'bg-gray-500/10',   icon: <Users className="w-3 h-3 text-gray-400" /> },
+          ].map(card => (
+            <div key={card.label} className={`flex items-center gap-3 ${card.bg} border border-white/5 rounded-lg px-4 py-2.5 flex-1`}>
+              {card.icon}
+              <div>
+                <div className={`text-xl font-bold ${card.color} leading-none`}>{card.value}</div>
+                <div className="text-[10px] text-gray-500 mt-0.5 uppercase tracking-wider">{card.label}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Error banner ── */}
+      {error && (
+        <div className="mx-6 mt-4 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-2 text-red-400 text-xs">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {/* ── Session List ── */}
+      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+        {!data || data.sessions.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 text-gray-600">
+            <Bot className="w-10 h-10 mb-3" />
+            <p className="text-sm">No sessions started for this group yet.</p>
+            <p className="text-xs mt-1">Sessions will appear here once candidates join.</p>
+          </div>
+        ) : (
+          data.sessions.map((session) => {
+            const isExpanded = expandedSession === session.session_id;
+            return (
+              <div
+                key={session.session_id}
+                className={`bg-gray-900 border rounded-xl overflow-hidden transition-all ${
+                  session.state === 'in_progress'
+                    ? 'border-blue-500/40 shadow-blue-500/10 shadow-lg'
+                    : 'border-gray-700/50'
+                }`}
+              >
+                {/* Session row header */}
+                <button
+                  className="w-full flex items-center gap-4 px-5 py-3.5 hover:bg-gray-800/50 transition-colors text-left"
+                  onClick={() => setExpandedSession(isExpanded ? null : session.session_id)}
+                >
+                  <div className="flex-1 flex items-center gap-3 min-w-0">
+                    <StateBadge state={session.state} judgeStatus={session.judge_status} />
+                    <span className="text-sm text-white font-medium truncate">
+                      {session.candidate_name}
+                    </span>
+                    {session.evaluation?.auto_verdict && (
+                      <VerdictBadge verdict={session.evaluation.auto_verdict} />
+                    )}
+                    {session.evaluation?.overall_score_pct != null && (
+                      <span className="text-xs text-gray-400 font-mono">
+                        {session.evaluation.overall_score_pct}%
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-4 text-xs text-gray-500 flex-shrink-0">
+                    {session.transcript_turns > 0 && (
+                      <span className="flex items-center gap-1">
+                        <MessageSquare className="w-3 h-3" />
+                        {session.transcript_turns} turns
+                      </span>
+                    )}
+                    {session.duration_seconds && (
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {fmtDuration(session.duration_seconds)}
+                      </span>
+                    )}
+                    <span className="font-mono text-gray-600 text-[10px] truncate max-w-[120px]">
+                      {session.room_name}
+                    </span>
+                    {isExpanded ? (
+                      <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                    ) : (
+                      <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
+                    )}
+                  </div>
+                </button>
+
+                {/* Expanded event log */}
+                {isExpanded && (
+                  <div className="border-t border-gray-700/50">
+                    <div
+                      ref={isExpanded ? logRef : null}
+                      className="max-h-64 overflow-y-auto px-5 py-4 space-y-2 text-xs bg-gray-950/50"
+                    >
+                      {session.events.length === 0 ? (
+                        <p className="text-gray-600">No events recorded yet.</p>
+                      ) : (
+                        session.events.map((ev, i) => (
+                          <div key={i} className="flex items-start gap-3">
+                            <span className="font-mono text-gray-600 w-[84px] flex-shrink-0 text-[10px] tabular-nums pt-0.5">
+                              {fmtTime(ev.time)}
+                            </span>
+                            <EventIcon type={ev.type} level={ev.level} />
+                            <div>
+                              <span className={`font-medium ${
+                                ev.level === 'success' ? 'text-emerald-400' :
+                                ev.level === 'warning' ? 'text-amber-400' :
+                                ev.level === 'error'   ? 'text-red-400'   :
+                                'text-blue-300'
+                              }`}>
+                                {ev.label}
+                              </span>
+                              {ev.detail && (
+                                <span className="text-gray-500 ml-2">· {ev.detail}</span>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+
+                      {/* Live indicator for in-progress sessions */}
+                      {session.state === 'in_progress' && (
+                        <div className="flex items-center gap-3 pt-1">
+                          <span className="font-mono text-gray-700 w-[84px] text-[10px]">now</span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse flex-shrink-0" />
+                          <span className="text-blue-400 animate-pulse">Interview in progress…</span>
+                        </div>
+                      )}
+
+                      {/* Judge running indicator */}
+                      {session.state === 'completed' && session.judge_status === 'running' && (
+                        <div className="flex items-center gap-3 pt-1">
+                          <span className="font-mono text-gray-700 w-[84px] text-[10px]">now</span>
+                          <Brain className="w-3.5 h-3.5 text-amber-400 animate-pulse flex-shrink-0" />
+                          <span className="text-amber-400 animate-pulse">Judge pipeline running…</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Session metadata strip */}
+                    <div className="flex items-center gap-4 px-5 py-2.5 border-t border-gray-700/30 text-[10px] text-gray-600 font-mono">
+                      <span>ID: {session.session_id.slice(0, 8)}…</span>
+                      <span>·</span>
+                      <span>Created: {fmtTime(session.created_at)}</span>
+                      {session.started_at && <><span>·</span><span>Started: {fmtTime(session.started_at)}</span></>}
+                      {session.ended_at && <><span>·</span><span>Ended: {fmtTime(session.ended_at)}</span></>}
+                      {session.evaluation?.judged_at && (
+                        <><span>·</span><span>Judged: {fmtTime(session.evaluation.judged_at)}</span></>
+                      )}
+                      {session.evaluation?.evaluation_confidence && (
+                        <><span>·</span><span>Confidence: {session.evaluation.evaluation_confidence}</span></>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* ── Footer ── */}
+      <div className="px-6 py-3 border-t border-gray-800 bg-gray-900/60 flex items-center justify-between text-[10px] text-gray-600 font-mono">
+        <span>Group: {groupId.slice(0, 8)}…</span>
+        <span>
+          {data?.sessions.length ?? 0} sessions · Polling every {
+            (data?.sessions.some(s => s.state === 'in_progress' || s.judge_status === 'running') ? 3 : 10)
+          }s
+        </span>
+      </div>
+    </div>
+  );
+}

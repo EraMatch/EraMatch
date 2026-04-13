@@ -15,6 +15,8 @@ import { FiltrationFlowConfigModal } from './FiltrationFlowConfigModal';
 import { StageReviewPage } from './StageReviewPage';
 import { FinalDecisionPage } from './FinalDecisionPage';
 import { ConfigWizardV2 } from '../live-interview-v2/ConfigWizardV2';
+import { LiveInterviewMonitor } from '../live-interview-v2/LiveInterviewMonitor';
+
 import { ActivityLogPanel } from './ActivityLogPanel';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
@@ -177,6 +179,7 @@ export function EnhancedGroupOverviewV2({
 
   // NEW: Live Interview V2 Setup
   const [showLiveInterviewV2Setup, setShowLiveInterviewV2Setup] = useState(false);
+  const [showLiveMonitor, setShowLiveMonitor] = useState(false);
 
   // NEW: Stage-gated state
   const [currentStage, setCurrentStage] = useState<string>(filtrationFlow[0] || 'assessment');
@@ -1389,36 +1392,7 @@ export function EnhancedGroupOverviewV2({
                       </span>
                     </button>
                   )}
-                  {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
-                    <button
-                      onClick={() => {
-                        if (stageConfigLocked) {
-                          showToast('Cannot modify configuration - stage is active');
-                          return;
-                        }
-                        const hasLive = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');
-                        const hasRecorded = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');
-                        if (hasLive) {
-                          setShowLiveInterviewV2Setup(true);
-                        } else if (hasRecorded) {
-                          setShowUnifiedAIInterviewSetup(true);
-                        }
-                      }}
-                      disabled={stageConfigLocked}
-                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {activeFlow.includes('live-interview') ? <Sparkles size={16} /> : <Activity size={16} />}
-                      <span className="font-['Arimo',sans-serif] text-[14px]">
-                        {activeFlow.includes('live-interview') ? 'AI Interview V2 Settings' : interviewConfigId ? 'Edit AI Interview Settings' : 'AI Interview Settings'}
-                      </span>
-                      {(!activeFlow.includes('live-interview') && interviewConfigId) && <CheckCircle size={16} className="text-white ml-1" />}
-                    </button>
-                  )}
-                </div>
-
-              </div>
-            )}
-          </div>
+                  )}\n                  {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (\n                    <button\n                      onClick={() => {\n                        if (stageConfigLocked) {\n                          showToast('Cannot modify configuration - stage is active');\n                          return;\n                        }\n                        const hasLive = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');\n                        const hasRecorded = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');\n                        if (hasLive) {\n                          setShowLiveInterviewV2Setup(true);\n                        } else if (hasRecorded) {\n                          setShowUnifiedAIInterviewSetup(true);\n                        }\n                      }}\n                      disabled={stageConfigLocked}\n                      className=\"flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed\"\n                    >\n                      {activeFlow.includes('live-interview') ? <Sparkles size={16} /> : <Activity size={16} />}\n                      <span className=\"font-['Arimo',sans-serif] text-[14px]\">\n                        {activeFlow.includes('live-interview') ? 'AI Interview V2 Settings' : interviewConfigId ? 'Edit AI Interview Settings' : 'AI Interview Settings'}\n                      </span>\n                      {(!activeFlow.includes('live-interview') && interviewConfigId) && <CheckCircle size={16} className=\"text-white ml-1\" />}\n                    </button>\n                  )}\n\n                  {/* Session Monitor button — only for Live Interview V2 groups */}\n                  {(activeFlow.includes('live-interview') || activeFlow.includes('live_interview')) && (\n                    <button\n                      onClick={() => setShowLiveMonitor(true)}\n                      className=\"flex items-center justify-center gap-2 h-[40px] px-[14px] rounded-[8px] bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors\"\n                      title=\"Open real-time session monitoring dashboard\"\n                    >\n                      <Activity size={16} />\n                      <span className=\"font-['Arimo',sans-serif] text-[14px]\">Monitor</span>\n                    </button>\n                  )}\n                </div>\n\n              </div>\n            )}\n          </div>\n
 
           {/* Display Created Assessments (Technical Recruiter Only) */}
           {userRole === 'technical' && (
@@ -2443,6 +2417,15 @@ export function EnhancedGroupOverviewV2({
           onSchedule={handleScheduleInterview}
           candidateName={selectedCandidateForSchedule.name}
           applicationId={selectedCandidateForSchedule.id}
+        />
+      )}
+
+      {/* Live Interview V2 Monitor Overlay */}
+      {showLiveMonitor && (
+        <LiveInterviewMonitor
+          groupId={groupId}
+          groupName={groupName}
+          onClose={() => setShowLiveMonitor(false)}
         />
       )}
     </div>
