@@ -122,3 +122,26 @@ CREATE TABLE li_v2_evaluations (
 ```
 
 **Rows affected**: 0 (DDL only, no data)
+
+---
+
+## Phase 5 — Live Interview V2 Config Fields
+**Date**: 2026-04-13
+**Apply in**: Supabase SQL Editor → gcdvpmqmwagusenewrie
+
+```sql
+-- Add interview config fields to li_v2_rubrics
+ALTER TABLE li_v2_rubrics
+  ADD COLUMN IF NOT EXISTS language VARCHAR(5) NOT NULL DEFAULT 'en',
+  ADD COLUMN IF NOT EXISTS include_weak_topics BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Add agent context snapshot to li_v2_sessions
+ALTER TABLE li_v2_sessions
+  ADD COLUMN IF NOT EXISTS context_pool JSONB;
+
+COMMENT ON COLUMN li_v2_rubrics.language IS 'Interview language code (en|ar).';
+COMMENT ON COLUMN li_v2_rubrics.include_weak_topics IS 'If true, agent receives candidate weak assessment topics as context.';
+COMMENT ON COLUMN li_v2_sessions.context_pool IS 'JSONB snapshot of context injected into agent at session start.';
+```
+
+**Rows affected**: 0 (DDL only)

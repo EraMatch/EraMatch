@@ -115,8 +115,15 @@ async def interviewer_session(ctx: agents.JobContext):
     session_id     = metadata.get("session_id", "unknown")
     candidate_name = metadata.get("candidate_name", "Candidate")
     bank_id        = metadata.get("bank_id", "")
+    time_budget    = metadata.get("time_budget_minutes", 30)
+    language       = metadata.get("language", "en")
+    context        = metadata.get("context", {})
 
-    logger.info(f"Session {session_id}: agent joining room for {candidate_name}")
+    logger.info(
+        f"Session {session_id}: agent joining room for {candidate_name} "
+        f"(lang={language}, budget={time_budget}min, "
+        f"context_keys={list(context.keys()) if context else []})"
+    )
 
     vad = ctx.proc.userdata["vad"]
 
@@ -149,7 +156,7 @@ async def interviewer_session(ctx: agents.JobContext):
         ),
     )
 
-    # --- Instantiate our stateful agent ---
+    # --- Instantiate our stateful agent (with context from token dispatch) ---
     interviewer = InterviewerAgent(metadata=metadata)
 
     # Store bank items in userdata so on_session_start can access them

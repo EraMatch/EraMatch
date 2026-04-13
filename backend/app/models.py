@@ -926,6 +926,8 @@ class LiV2Rubric(BaseModel, table=True):
     # dimensions: [{dimension_id, name, weight, anchors: {substandard, proficient, excellent}}]
     state: str = Field(default="draft", max_length=20)  # draft | frozen
     time_budget_minutes: int = Field(default=30)
+    language: str = Field(default="en", max_length=5)  # en | ar (arabic support future)
+    include_weak_topics: bool = Field(default=False)    # inject candidate's weak assessment topics into agent context
     created_at: datetime = Field(default_factory=datetime.utcnow)
     frozen_at: datetime | None = Field(default=None)
     created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")

@@ -1,6 +1,24 @@
+"""
+EraMatch Live Interview V2 — Stateful Interviewer Agent.
+
+State machine:
+  welcome → topic → probe → bridge → closing → done
+
+Time enforcement:
+  - Per-pillar budget = time_budget_minutes * 60 / num_pillars
+  - If elapsed > 90% of total budget → force closing regardless of pillar count
+  - If elapsed > per_pillar budget for current pillar → skip probe, advance pillar
+
+Context injection:
+  - Position title + JD excerpt → opening prompt (always)
+  - CV skills list → opening prompt (always)
+  - Weak assessment topics → opening prompt modifier (recruiter opt-in)
+  - Language → TTS voice and prompt language instruction
+"""
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
@@ -20,11 +38,17 @@ except ImportError:
 
 logger = logging.getLogger("eramatch.interviewer")
 
-# config for now oonlyy — override in .env for prod
+# config for now only — override in .env for prod
 _INTERVIEWER_MODEL = os.getenv("INTERVIEWER_PRIMARY_MODEL", "gemini-2.5-flash-lite")
 _COVERAGE_MODEL    = os.getenv("COVERAGE_CHECK_MODEL", "qwen3.5:4b-cloud")
 _COVERAGE_BASEURL  = os.getenv("OLLAMA_HOST", "https://ollama.com") + "/v1"
 _COVERAGE_API_KEY  = os.getenv("OLLAMA_API_KEY", "")
+
+# Language config
+_LANGUAGE_VOICE_MAP = {
+    "en": os.getenv("TTS_PRIMARY_VOICE", "en-US-Wavenet-D"),
+    "ar": os.getenv("TTS_ARABIC_VOICE", "ar-XA-Wavenet-A"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +102,9 @@ def _build_pillars_from_bank(bank_items: list[dict]) -> list[PillarState]:
     return pillars
 
 
-# Inline coverage checker (small agent for now)
+# ---------------------------------------------------------------------------
+# Inline coverage checker (small fast model)
+# ---------------------------------------------------------------------------
 async def _check_coverage(candidate_utterance: str, sub_criteria: list[str]) -> dict:
     """
     Lightweight structured LLM call to determine which sub-criteria the
@@ -121,16 +147,67 @@ async def _check_coverage(candidate_utterance: str, sub_criteria: list[str]) -> 
 # ---------------------------------------------------------------------------
 # Prompt helpers
 # ---------------------------------------------------------------------------
-def _opening_prompt(candidate_name: str, time_budget: int) -> str:
-    return (
+
+def _opening_prompt(
+    candidate_name: str,
+    time_budget: int,
+    context: dict | None = None,
+    language: str = "en",
+) -> str:
+    """Build the system prompt for the interviewer agent, injecting context if available."""
+    lang_instruction = (
+        "Conduct the entire interview in Arabic (Modern Standard Arabic). "
+        if language == "ar"
+        else "Conduct the entire interview in English. "
+    )
+
+    base = (
         f"You are a professional AI interviewer for EraMatch. "
         f"The candidate's name is {candidate_name}. "
         f"You have approximately {time_budget} minutes. "
+        f"{lang_instruction}"
         "Your style is warm, professional, and conversational — NOT robotic Q&A. "
         "Acknowledge what the candidate says before moving to the next topic. "
         "Do NOT reveal the sub-criteria or rubric to the candidate. "
-        "When transitioning topics, use natural bridging phrases."
+        "When transitioning topics, use natural bridging phrases. "
+        "When you are running low on time, naturally consolidate remaining questions."
     )
+
+    # ── Context injection block ──────────────────────────────────────────
+    if context:
+        lines = []
+
+        if context.get("position_title"):
+            lines.append(f"Role being interviewed for: {context['position_title']}")
+
+        if context.get("job_description_excerpt"):
+            lines.append(
+                f"Job description context:\n{context['job_description_excerpt']}"
+            )
+
+        skills = context.get("cv_skills", [])
+        if skills:
+            skills_str = ", ".join(skills[:15])
+            lines.append(
+                f"Candidate's listed skills (from their CV): {skills_str}. "
+                "Use this to calibrate the depth of technical questions — don't ask questions "
+                "about skills they've clearly not listed unless testing adaptability."
+            )
+
+        weak = context.get("weak_topics")
+        if weak:
+            weak_str = ", ".join(weak)
+            lines.append(
+                f"Areas where the candidate previously scored low in assessments: {weak_str}. "
+                "When these topics naturally arise within the interview dimensions, "
+                "probe a bit deeper — but do NOT directly reference the assessment or scores."
+            )
+
+        if lines:
+            context_block = "\n\n".join(lines)
+            base += f"\n\n--- CANDIDATE BACKGROUND ---\n{context_block}\n--- END BACKGROUND ---"
+
+    return base
 
 
 def _topic_intro_prompt(pillar: PillarState) -> str:
@@ -167,28 +244,52 @@ def _closing_prompt(candidate_name: str) -> str:
     )
 
 
+def _time_warning_closing_prompt(candidate_name: str, remaining_pillars: int) -> str:
+    """Used when time budget forces early close."""
+    return (
+        f"We are approaching the end of our scheduled time. "
+        f"Briefly acknowledge there {'are' if remaining_pillars > 1 else 'is'} "
+        f"{remaining_pillars} more {'topics' if remaining_pillars > 1 else 'topic'} "
+        "we didn't have time to fully explore. "
+        f"Thank {candidate_name} warmly and wrap up professionally."
+    )
+
+
 # ---------------------------------------------------------------------------
 # The Agent
 # ---------------------------------------------------------------------------
 class InterviewerAgent(Agent):
     """
       on_session_start → set system prompt, generate greeting
-      on_user_turn_completed → check coverage, decide next action
+      on_user_turn_completed → check coverage, enforce time, decide next action
     """
 
     def __init__(self, metadata: dict):
         self.session_id      = metadata.get("session_id", "unknown")
         self.candidate_name  = metadata.get("candidate_name", "Candidate")
         self.time_budget     = metadata.get("time_budget_minutes", 30)
+        self.language        = metadata.get("language", "en")
+        self.context         = metadata.get("context", {})
+
         # Runtime state — filled after bank is fetched
         self.pillars: list[PillarState] = []
         self.current_pillar_idx: int = 0
         self.phase: str = "welcome"   # welcome | topic | probe | closing | done
+
+        # Time tracking
+        self.session_start_time: float = 0.0
+        self.time_per_pillar: float = 0.0  # computed after pillars are loaded
+
         # Transcript for post-session judge
         self.transcript: list[dict] = []
 
         super().__init__(
-            instructions=_opening_prompt(self.candidate_name, self.time_budget)
+            instructions=_opening_prompt(
+                self.candidate_name,
+                self.time_budget,
+                self.context,
+                self.language,
+            )
         )
 
     # ------------------------------------------------------------------
@@ -197,6 +298,7 @@ class InterviewerAgent(Agent):
     async def on_session_start(self, session: AgentSession):
         """Called by LiveKit when the agent joins the room and is ready."""
         logger.info(f"[{self.session_id}] Session start — loading bank from context")
+        self.session_start_time = time.time()
 
         # bank_items are passed via the session's userdata by agent_server.py
         bank_items = session.userdata.get("bank_items", [])
@@ -212,10 +314,25 @@ class InterviewerAgent(Agent):
                 sub_criteria=["Describes a specific challenge", "Explains how it was resolved", "Reflects on learnings"],
             )]
 
+        # Compute per-pillar time budget (seconds)
+        total_seconds = self.time_budget * 60
+        self.time_per_pillar = total_seconds / max(len(self.pillars), 1)
+        logger.info(
+            f"[{self.session_id}] Time budget: {self.time_budget}min "
+            f"({total_seconds}s total, ~{self.time_per_pillar:.0f}s/pillar)"
+        )
+
         # Generate opening greeting
+        cv_mention = ""
+        if self.context.get("cv_skills"):
+            cv_mention = (
+                "You've seen the candidate's profile. "
+                "Greet them naturally by name only — no mention of their CV. "
+            )
         await session.generate_reply(
             instructions=(
                 f"Welcome {self.candidate_name} warmly to the EraMatch live interview. "
+                f"{cv_mention}"
                 "Tell them the interview will feel like a natural conversation. "
                 "Briefly explain how it works (you ask, they answer, natural back-and-forth). "
                 "Then ask them to introduce themselves."
@@ -223,7 +340,26 @@ class InterviewerAgent(Agent):
         )
         self.phase = "topic"
 
+    # ------------------------------------------------------------------
+    # Time enforcement helpers
+    # ------------------------------------------------------------------
+    def _elapsed(self) -> float:
+        """Seconds since session started."""
+        return time.time() - self.session_start_time if self.session_start_time else 0.0
 
+    def _is_time_over_budget(self) -> bool:
+        """Returns True if we've used 90%+ of the total time budget."""
+        total_seconds = self.time_budget * 60
+        return self._elapsed() >= total_seconds * 0.90
+
+    def _is_pillar_over_time(self) -> bool:
+        """Returns True if we've spent more than the per-pillar budget on the current pillar."""
+        pillar_start = (
+            self.session_start_time + self.current_pillar_idx * self.time_per_pillar
+        )
+        return time.time() - pillar_start > self.time_per_pillar
+
+    # ------------------------------------------------------------------
     # Every time the candidate finishes speaking
     # ------------------------------------------------------------------
     async def on_user_turn_completed(self, session: AgentSession, turn_ctx: ChatContext):
@@ -232,6 +368,16 @@ class InterviewerAgent(Agent):
         This is the core decision loop.
         """
         if self.phase in ("closing", "done"):
+            return
+
+        # ── Time enforcement: force close if over 90% budget ──────────────
+        if self._is_time_over_budget():
+            remaining = len(self.pillars) - self.current_pillar_idx - 1
+            logger.info(
+                f"[{self.session_id}] Time budget at 90% ({self._elapsed():.0f}s). "
+                f"Forcing close. {remaining} pillars skipped."
+            )
+            await self._close(session, forced=True, remaining_pillars=remaining)
             return
 
         # Extract last candidate utterance
@@ -247,6 +393,7 @@ class InterviewerAgent(Agent):
             "text": candidate_utterance,
             "pillar_idx": self.current_pillar_idx,
             "phase": self.phase,
+            "elapsed_seconds": round(self._elapsed()),
         })
 
         if not self.pillars or self.current_pillar_idx >= len(self.pillars):
@@ -255,16 +402,24 @@ class InterviewerAgent(Agent):
 
         pillar = self.pillars[self.current_pillar_idx]
 
-        # --- Inline coverage check (non-spoken, fast Qwen3.5) --------
+        # --- Inline coverage check (non-spoken, fast Qwen3.5) ------------
         coverage = await _check_coverage(candidate_utterance, pillar.sub_criteria)
         pillar.covered.update(coverage.get("covered", []))
         pillar.partial.update(coverage.get("partial", []))
         logger.info(
             f"[{self.session_id}] Pillar {self.current_pillar_idx} coverage: "
-            f"covered={len(pillar.covered)}/{len(pillar.sub_criteria)}"
+            f"covered={len(pillar.covered)}/{len(pillar.sub_criteria)} "
+            f"elapsed={self._elapsed():.0f}s"
         )
 
-        if pillar.is_complete:
+        # ── Time enforcement: skip probe if pillar is over time ────────────
+        advance_due_to_time = self._is_pillar_over_time() and not pillar.is_complete
+
+        if pillar.is_complete or advance_due_to_time:
+            if advance_due_to_time:
+                logger.info(
+                    f"[{self.session_id}] Pillar {self.current_pillar_idx} over time budget — advancing"
+                )
             # Advance to next pillar
             self.current_pillar_idx += 1
             if self.current_pillar_idx >= len(self.pillars):
@@ -279,12 +434,21 @@ class InterviewerAgent(Agent):
             await session.generate_reply(instructions=_probe_prompt(pillar))
             self.phase = "probe"
 
-    async def _close(self, session: AgentSession):
+    async def _close(self, session: AgentSession, forced: bool = False, remaining_pillars: int = 0):
         """Generate closing statement and signal the backend."""
         self.phase = "closing"
-        await session.generate_reply(instructions=_closing_prompt(self.candidate_name))
+        if forced and remaining_pillars > 0:
+            await session.generate_reply(
+                instructions=_time_warning_closing_prompt(self.candidate_name, remaining_pillars)
+            )
+        else:
+            await session.generate_reply(instructions=_closing_prompt(self.candidate_name))
         self.phase = "done"
-        logger.info(f"[{self.session_id}] Interview complete. Transcript has {len(self.transcript)} turns.")
+        logger.info(
+            f"[{self.session_id}] Interview complete. "
+            f"Transcript: {len(self.transcript)} turns. "
+            f"Total time: {self._elapsed():.0f}s"
+        )
         # Phase 4: persist transcript for the Judge Agent via session userdata
         session.userdata["transcript"] = self.transcript
         session.userdata["session_complete"] = True

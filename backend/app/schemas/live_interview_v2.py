@@ -23,6 +23,9 @@ class RubricCreate(BaseModel):
     group_id: UUID
     organization_id: UUID
     dimensions: List[RubricDimension]
+    time_budget_minutes: Optional[int] = Field(default=30, ge=5, le=60)
+    language: Optional[str] = Field(default="en")
+    include_weak_topics: Optional[bool] = Field(default=False)
 
 class RubricUpdate(BaseModel):
     dimensions: Optional[List[RubricDimension]] = None
@@ -33,6 +36,9 @@ class RubricResponse(BaseModel):
     organization_id: UUID
     dimensions: List[RubricDimension]
     state: LiV2State
+    time_budget_minutes: int = 30
+    language: str = "en"
+    include_weak_topics: bool = False
     created_at: datetime
     updated_at: datetime
 

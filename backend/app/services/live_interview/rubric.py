@@ -143,8 +143,14 @@ async def create_rubric_service(
         if existing.state == LiV2State.FROZEN:
             raise HTTPException(status_code=400, detail="Cannot update a frozen rubric")
         
-        # Update existing
+        # Update existing — preserve config fields if not provided
         existing.dimensions = [d.model_dump() for d in rubric_in.dimensions]
+        if rubric_in.time_budget_minutes is not None:
+            existing.time_budget_minutes = rubric_in.time_budget_minutes
+        if rubric_in.language is not None:
+            existing.language = rubric_in.language
+        if rubric_in.include_weak_topics is not None:
+            existing.include_weak_topics = rubric_in.include_weak_topics
         existing.updated_at = datetime.utcnow()
         await db.commit()
         await db.refresh(existing)
@@ -155,6 +161,9 @@ async def create_rubric_service(
         group_id=rubric_in.group_id,
         organization_id=rubric_in.organization_id,
         dimensions=[d.model_dump() for d in rubric_in.dimensions],
+        time_budget_minutes=rubric_in.time_budget_minutes or 30,
+        language=rubric_in.language or "en",
+        include_weak_topics=rubric_in.include_weak_topics or False,
         state=LiV2State.DRAFT
     )
     db.add(new_rubric)
