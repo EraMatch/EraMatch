@@ -14,6 +14,7 @@ import { FinalDecisionModal } from './FinalDecisionModal';
 import { FiltrationFlowConfigModal } from './FiltrationFlowConfigModal';
 import { StageReviewPage } from './StageReviewPage';
 import { FinalDecisionPage } from './FinalDecisionPage';
+import { ConfigWizardV2 } from '../live-interview-v2/ConfigWizardV2';
 import { ActivityLogPanel } from './ActivityLogPanel';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
@@ -173,6 +174,9 @@ export function EnhancedGroupOverviewV2({
   const [groupAssessments, setGroupAssessments] = useState<any[]>([]);
   const [groupInterviews, setGroupInterviews] = useState<any[]>([]);
   const [editingInterviewData, setEditingInterviewData] = useState<any>(null);
+
+  // NEW: Live Interview V2 Setup
+  const [showLiveInterviewV2Setup, setShowLiveInterviewV2Setup] = useState(false);
 
   // NEW: Stage-gated state
   const [currentStage, setCurrentStage] = useState<string>(filtrationFlow[0] || 'assessment');
@@ -1394,18 +1398,20 @@ export function EnhancedGroupOverviewV2({
                         }
                         const hasLive = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');
                         const hasRecorded = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');
-                        if (hasRecorded || hasLive) {
+                        if (hasLive) {
+                          setShowLiveInterviewV2Setup(true);
+                        } else if (hasRecorded) {
                           setShowUnifiedAIInterviewSetup(true);
                         }
                       }}
                       disabled={stageConfigLocked}
                       className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Activity size={16} />
+                      {activeFlow.includes('live-interview') ? <Sparkles size={16} /> : <Activity size={16} />}
                       <span className="font-['Arimo',sans-serif] text-[14px]">
-                        {interviewConfigId ? 'Edit AI Interview Settings' : 'AI Interview Settings'}
+                        {activeFlow.includes('live-interview') ? 'AI Interview V2 Settings' : interviewConfigId ? 'Edit AI Interview Settings' : 'AI Interview Settings'}
                       </span>
-                      {interviewConfigId && <CheckCircle size={16} className="text-white ml-1" />}
+                      {(!activeFlow.includes('live-interview') && interviewConfigId) && <CheckCircle size={16} className="text-white ml-1" />}
                     </button>
                   )}
                 </div>
