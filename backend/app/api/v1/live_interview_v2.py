@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Optional
 from uuid import UUID
 
-from app.api.deps import DbSession, CurrentUser
+from app.api.deps import DbSession, CurrentUser, CurrentCandidate
 from app.schemas.live_interview_v2 import (
-    RubricCreate, RubricUpdate, RubricResponse,
+    RubricCreate, RubricUpdate, RubricResponse, RubricDimension,
     BankCreate, BankUpdate, BankResponse,
     DimensionSuggestionRequest, DimensionSuggestionResponse,
     AnchorGenerationRequest, BankGenerationRequest, FreezeResponse
@@ -17,6 +17,8 @@ from app.services.live_interview.bank import (
     generate_bank_service, create_bank_service,
     get_bank_service, freeze_bank_service
 )
+from app.services.live_interview.token import generate_session_token_service
+
 
 router = APIRouter()
 
@@ -153,3 +155,48 @@ async def freeze_bank(
 ):
     """Validate and freeze a question bank."""
     return await freeze_bank_service(db, bank_id)
+
+
+# --- Candidate Session Endpoints ---
+
+class SessionTokenResponse(APIRouter):
+    token: str
+    url: str
+    room_name: str
+    session_id: str
+
+
+from pydantic import BaseModel as PydanticBaseModel
+
+class SessionTokenOut(PydanticBaseModel):
+    token: str
+    url: str
+    room_name: str
+    session_id: str
+
+
+@router.get("/session/token", response_model=SessionTokenOut)
+async def get_session_token(
+    db: DbSession,
+    current_candidate: CurrentCandidate,
+):
+    """
+    Candidate endpoint: generate a LiveKit room token for the live interview.
+
+    The backend will:
+    1. Verify the candidate's group has a frozen question bank.
+    2. Create (or reuse) a LiV2Session record.
+    3. Return a signed LiveKit JWT so the candidate can join the room.
+    4. Dispatch the EraMatch Interviewer agent to the room.
+
+    # TODO (Phase 3 hardening): Before issuing the token, validate that the
+    # candidate's face embedding stored from earlier stages (assessment, recorded
+    # interview) matches the current camera feed via the AI service. This prevents
+    # impersonation across pipeline stages.
+    """
+    return await generate_session_token_service(
+        db=db,
+        application_id=current_candidate.application_id,
+        candidate_id=current_candidate.candidate_id,
+        organization_id=current_candidate.organization_id,
+    )
