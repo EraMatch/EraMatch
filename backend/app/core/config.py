@@ -64,6 +64,67 @@ class Settings(BaseSettings):
     AI_SERVICE_URL: str = "http://localhost:8001"
     GITHUB_TOKEN: str = ""
 
+    # =========================================================================
+    # LIVE INTERVIEW V2 — LiveKit
+    # =========================================================================
+    LIVEKIT_URL: str = ""              # wss://your-project.livekit.cloud
+    LIVEKIT_API_KEY: str = ""
+    LIVEKIT_API_SECRET: str = ""
+
+    # =========================================================================
+    # LIVE INTERVIEW V2 — Role-based LLM Providers
+    # Each role can use a different provider/model with fallback chain
+    # =========================================================================
+    # Interviewer (live conversation — needs fast model)
+    INTERVIEWER_PRIMARY_PROVIDER: str = "gemini"
+    INTERVIEWER_PRIMARY_MODEL: str = "gemini-2.5-flash-lite"
+    INTERVIEWER_SECONDARY_PROVIDER: str = ""
+    INTERVIEWER_SECONDARY_MODEL: str = ""
+    INTERVIEWER_TERTIARY_PROVIDER: str = ""
+    INTERVIEWER_TERTIARY_MODEL: str = ""
+
+    # Judge (async scoring — needs strong reasoning)
+    JUDGE_PRIMARY_PROVIDER: str = "gemini"
+    JUDGE_PRIMARY_MODEL: str = "gemini-2.5-pro"
+    JUDGE_SECONDARY_PROVIDER: str = ""
+    JUDGE_SECONDARY_MODEL: str = ""
+
+    # Helper (classification, tags — needs fast model)
+    HELPER_PRIMARY_PROVIDER: str = "gemini"
+    HELPER_PRIMARY_MODEL: str = "gemini-2.5-flash-lite"
+    HELPER_SECONDARY_PROVIDER: str = ""
+    HELPER_SECONDARY_MODEL: str = ""
+
+    # Rubric builder (one-time generation — needs strong model)
+    RUBRIC_BUILDER_PRIMARY_PROVIDER: str = "gemini"
+    RUBRIC_BUILDER_PRIMARY_MODEL: str = "gemini-2.5-pro"
+    RUBRIC_BUILDER_SECONDARY_PROVIDER: str = ""
+    RUBRIC_BUILDER_SECONDARY_MODEL: str = ""
+
+    # =========================================================================
+    # LIVE INTERVIEW V2 — TTS Providers
+    # =========================================================================
+    TTS_PRIMARY_PROVIDER: str = "google_tts"
+    TTS_PRIMARY_VOICE: str = "en-US-Wavenet-D"
+    TTS_SECONDARY_PROVIDER: str = "elevenlabs"
+    TTS_SECONDARY_VOICE: str = "Rachel"
+    TTS_TERTIARY_PROVIDER: str = "edge_tts"
+
+    # =========================================================================
+    # LIVE INTERVIEW V2 — STT Providers
+    # =========================================================================
+    STT_PRIMARY_PROVIDER: str = "google_stt"
+    STT_PRIMARY_MODEL: str = "chirp_2"
+    STT_SECONDARY_PROVIDER: str = "faster_whisper_local"
+    STT_SECONDARY_MODEL: str = "distil-large-v3"
+
+    # =========================================================================
+    # LIVE INTERVIEW V2 — External API Keys
+    # =========================================================================
+    GOOGLE_APPLICATION_CREDENTIALS: str = ""   # Path to service account JSON for STT/TTS
+    ELEVEN_API_KEY: str = ""                   # ElevenLabs TTS
+    OPENAI_API_KEY: str = ""                   # OpenAI (if used as provider)
+
 
 @lru_cache
 def get_settings() -> Settings:

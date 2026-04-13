@@ -97,7 +97,7 @@ def _get_gemini_llm(model: str | None, temperature: float) -> BaseChatModel:
     from langchain_google_genai import ChatGoogleGenerativeAI
     
     return ChatGoogleGenerativeAI(
-        model=model or "gemini-2.0-flash",
+        model=model or "gemini-2.5-flash-lite",
         temperature=temperature,
         google_api_key=settings.GOOGLE_API_KEY,
     )

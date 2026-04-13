@@ -911,6 +911,91 @@ class ApprovalRequest(BaseModel, table=True):
 
 
 # =============================================================================
+# SECTION 15: LIVE INTERVIEW V2 — AI-POWERED (4 Tables)
+# =============================================================================
+
+class LiV2Rubric(BaseModel, table=True):
+    """Live Interview V2 rubric — defines competency dimensions with behavioral anchors."""
+    __tablename__ = "li_v2_rubrics"
+    
+    id: UUID = Field(default_factory=uuid4, alias="rubric_id", sa_column=Column("rubric_id", PG_UUID(as_uuid=True), primary_key=True))
+    group_id: UUID = Field(foreign_key="candidate_groups.group_id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    version: int = Field(default=1)
+    dimensions: list = Field(default_factory=list, sa_column=Column(JSONB))
+    # dimensions: [{dimension_id, name, weight, anchors: {substandard, proficient, excellent}}]
+    state: str = Field(default="draft", max_length=20)  # draft | frozen
+    time_budget_minutes: int = Field(default=30)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    frozen_at: datetime | None = Field(default=None)
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+
+
+class LiV2Bank(BaseModel, table=True):
+    """Live Interview V2 question bank — approved questions with per-question rubrics."""
+    __tablename__ = "li_v2_banks"
+    
+    id: UUID = Field(default_factory=uuid4, alias="bank_id", sa_column=Column("bank_id", PG_UUID(as_uuid=True), primary_key=True))
+    rubric_id: UUID = Field(foreign_key="li_v2_rubrics.rubric_id")
+    group_id: UUID = Field(foreign_key="candidate_groups.group_id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    version: int = Field(default=1)
+    items: list = Field(default_factory=list, sa_column=Column(JSONB))
+    # items: [{bank_item_id, text, primary_dimension_id, secondary_dimension_ids, difficulty,
+    #          is_mandatory, is_approved, estimated_duration_seconds, question_rubric: {sub_criteria: [...]}}]
+    state: str = Field(default="draft", max_length=20)  # draft | frozen
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    frozen_at: datetime | None = Field(default=None)
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+
+
+class LiV2Session(BaseModel, table=True):
+    """Live Interview V2 session — one candidate interview with the AI agent."""
+    __tablename__ = "li_v2_sessions"
+    
+    id: UUID = Field(default_factory=uuid4, alias="session_id", sa_column=Column("session_id", PG_UUID(as_uuid=True), primary_key=True))
+    candidate_id: UUID = Field(foreign_key="candidate_profiles.candidate_id")
+    application_id: UUID = Field(foreign_key="candidate_applications.application_id")
+    group_id: UUID = Field(foreign_key="candidate_groups.group_id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    rubric_id: UUID = Field(foreign_key="li_v2_rubrics.rubric_id")
+    bank_id: UUID = Field(foreign_key="li_v2_banks.bank_id")
+    room_name: str | None = Field(default=None, max_length=255)
+    state: str = Field(default="pending", max_length=20)
+    # pending | in_progress | completed | failed | cancelled
+    started_at: datetime | None = Field(default=None)
+    ended_at: datetime | None = Field(default=None)
+    duration_seconds: int | None = Field(default=None)
+    context_pool: dict | None = Field(default=None, sa_column=Column(JSONB))
+    recording_url: str | None = Field(default=None, max_length=500)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LiV2Evaluation(BaseModel, table=True):
+    """Live Interview V2 evaluation — judge pipeline results for a session."""
+    __tablename__ = "li_v2_evaluations"
+    
+    id: UUID = Field(default_factory=uuid4, alias="evaluation_id", sa_column=Column("evaluation_id", PG_UUID(as_uuid=True), primary_key=True))
+    session_id: UUID = Field(foreign_key="li_v2_sessions.session_id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    overall_score: Decimal | None = Field(default=None)          # 0.0 to 1.0
+    overall_score_pct: int | None = Field(default=None)          # 0 to 100
+    auto_verdict: str | None = Field(default=None, max_length=20)
+    # strong_pass | pass | borderline | fail
+    meets_criteria: bool | None = Field(default=None)
+    coverage_ratio: Decimal | None = Field(default=None)         # fraction of dimensions covered
+    per_question_results: dict | None = Field(default=None, sa_column=Column(JSONB))
+    dimension_scores: dict | None = Field(default=None, sa_column=Column(JSONB))
+    auto_tags: dict | None = Field(default=None, sa_column=Column(JSONB))
+    # strong_on, weak_on, cv_verified, etc.
+    integrity_flags: dict | None = Field(default=None, sa_column=Column(JSONB))
+    # injection attempts, anomalies
+    evaluation_confidence: str | None = Field(default=None, max_length=10)
+    # high | medium | low
+    judged_at: datetime | None = Field(default=None)
+
+
+# =============================================================================
 # TYPE ALIASES FOR BACKWARD COMPATIBILITY
 # =============================================================================
 

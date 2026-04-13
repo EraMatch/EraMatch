@@ -88,5 +88,23 @@ backend/uv.lock
 backend/uv.lock
 
 
+# Non-dev markdown files (agent notes, memory docs, QWEN exports)
+answers.md
+QWEN.md
+logic-verifier.md
+main-coder.md
+unit-test-agent.md
+live-video-interview-prompts.md
+memory-liveVideo.md
+memory-livekit.md
+pr-description.md
+issues.md
+seed-candidates-plan.md
+db_changes_log.md
+
+# OpenCode config (not project code)
+.opencode/
+agents/
+
 # testing reports
 tests/recruiter-view/unit_testing/logs/reports

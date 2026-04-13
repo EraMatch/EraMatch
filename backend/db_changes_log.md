@@ -49,3 +49,76 @@ FROM candidate_applications ca WHERE ca.group_id = 'b57e93a2-...' AND NOT EXISTS
 
 **Reason**: All 14 candidates in Main Pipeline group now have `unlocked` progress on the active assessment stage.  
 **1 already existed** (test1@eramatch.com), **13 new** rows created.
+
+---
+
+## 2026-04-12 — Live Interview V2: Create 4 new tables
+
+**Reason**: New AI-powered live video interview feature requires dedicated tables separate from existing human interview tables (`live_interview_configs`, `live_interview_sessions`).  
+**Tables created**: `li_v2_rubrics`, `li_v2_banks`, `li_v2_sessions`, `li_v2_evaluations`
+
+**SQL**:
+```sql
+CREATE TABLE li_v2_rubrics (
+    rubric_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id        UUID NOT NULL REFERENCES candidate_groups(group_id),
+    organization_id UUID NOT NULL REFERENCES organizations(organization_id),
+    version         INT NOT NULL DEFAULT 1,
+    dimensions      JSONB NOT NULL DEFAULT '[]',
+    state           VARCHAR(20) NOT NULL DEFAULT 'draft',
+    time_budget_minutes INT NOT NULL DEFAULT 30,
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    frozen_at       TIMESTAMPTZ,
+    created_by_user_id UUID REFERENCES organization_users(user_id)
+);
+
+CREATE TABLE li_v2_banks (
+    bank_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    rubric_id       UUID NOT NULL REFERENCES li_v2_rubrics(rubric_id),
+    group_id        UUID NOT NULL REFERENCES candidate_groups(group_id),
+    organization_id UUID NOT NULL REFERENCES organizations(organization_id),
+    version         INT NOT NULL DEFAULT 1,
+    items           JSONB NOT NULL DEFAULT '[]',
+    state           VARCHAR(20) NOT NULL DEFAULT 'draft',
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    frozen_at       TIMESTAMPTZ,
+    created_by_user_id UUID REFERENCES organization_users(user_id)
+);
+
+CREATE TABLE li_v2_sessions (
+    session_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    candidate_id    UUID NOT NULL REFERENCES candidate_profiles(candidate_id),
+    application_id  UUID NOT NULL REFERENCES candidate_applications(application_id),
+    group_id        UUID NOT NULL REFERENCES candidate_groups(group_id),
+    organization_id UUID NOT NULL REFERENCES organizations(organization_id),
+    rubric_id       UUID NOT NULL REFERENCES li_v2_rubrics(rubric_id),
+    bank_id         UUID NOT NULL REFERENCES li_v2_banks(bank_id),
+    room_name       VARCHAR(255),
+    state           VARCHAR(20) NOT NULL DEFAULT 'pending',
+    started_at      TIMESTAMPTZ,
+    ended_at        TIMESTAMPTZ,
+    duration_seconds INT,
+    context_pool    JSONB,
+    recording_url   VARCHAR(500),
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE li_v2_evaluations (
+    evaluation_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id          UUID NOT NULL REFERENCES li_v2_sessions(session_id),
+    organization_id     UUID NOT NULL REFERENCES organizations(organization_id),
+    overall_score       NUMERIC,
+    overall_score_pct   INT,
+    auto_verdict        VARCHAR(20),
+    meets_criteria      BOOLEAN,
+    coverage_ratio      NUMERIC,
+    per_question_results JSONB,
+    dimension_scores    JSONB,
+    auto_tags           JSONB,
+    integrity_flags     JSONB,
+    evaluation_confidence VARCHAR(10),
+    judged_at           TIMESTAMPTZ
+);
+```
+
+**Rows affected**: 0 (DDL only, no data)
