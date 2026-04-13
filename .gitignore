@@ -108,3 +108,7 @@ agents/
 
 # testing reports
 tests/recruiter-view/unit_testing/logs/reports
+# EraMatch Project Metadata
+AGENTS.md
+**/*.json
+.serena/
