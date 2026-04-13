@@ -155,7 +155,7 @@ async def interviewer_session(ctx: agents.JobContext):
     # Store bank items in userdata so on_session_start can access them
     ctx.proc.userdata["bank_items"] = bank_items
 
-    # --- Shutdown callback: persist transcript to DB (Phase 4) ---
+    # --- Shutdown callback: persist transcript to DB, trigger Judge Agent ---
     async def on_shutdown():
         transcript = ctx.proc.userdata.get("transcript", [])
         session_complete = ctx.proc.userdata.get("session_complete", False)
@@ -163,8 +163,24 @@ async def interviewer_session(ctx: agents.JobContext):
             f"Session {session_id}: shutting down. "
             f"complete={session_complete}, turns={len(transcript)}"
         )
-        # TODO Phase 4: POST transcript to backend /li-v2/session/{session_id}/complete
-        # so the Judge Agent can begin grading.
+
+        if transcript:
+            backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+            endpoint = f"{backend_url}/api/v1/li-v2/session/{session_id}/complete"
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.post(
+                        endpoint,
+                        json={"transcript": transcript},
+                        headers={"Content-Type": "application/json"},
+                    )
+                    resp.raise_for_status()
+                    logger.info(f"Session {session_id}: transcript POSTed to backend ({len(transcript)} turns)")
+            except Exception as e:
+                logger.error(f"Session {session_id}: failed to POST transcript to backend: {e}")
+        else:
+            logger.warning(f"Session {session_id}: no transcript to save")
 
     ctx.add_shutdown_callback(on_shutdown)
 

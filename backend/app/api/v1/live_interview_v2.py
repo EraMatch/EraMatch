@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from typing import List, Optional
 from uuid import UUID
 
@@ -18,6 +18,10 @@ from app.services.live_interview.bank import (
     get_bank_service, freeze_bank_service
 )
 from app.services.live_interview.token import generate_session_token_service
+from app.services.live_interview.session import (
+    complete_session_service, get_session_with_evaluation
+)
+from pydantic import BaseModel as PydanticBaseModel
 
 
 router = APIRouter()
@@ -200,3 +204,101 @@ async def get_session_token(
         candidate_id=current_candidate.candidate_id,
         organization_id=current_candidate.organization_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Session Completion (called by agent on_shutdown)
+# ---------------------------------------------------------------------------
+
+class SessionCompleteIn(PydanticBaseModel):
+    """Payload from the LiveKit agent when the interview ends."""
+    transcript: list[dict]
+
+
+class SessionCompleteOut(PydanticBaseModel):
+    status: str
+    session_id: str
+    duration_seconds: Optional[int] = None
+    transcript_turns: Optional[int] = None
+
+
+@router.post("/session/{session_id}/complete", response_model=SessionCompleteOut)
+async def complete_session(
+    session_id: UUID,
+    payload: SessionCompleteIn,
+    db: DbSession,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Called by the LiveKit Interviewer Agent on shutdown.
+    Saves the transcript, transitions state to 'completed', and
+    enqueues the Judge Agent pipeline as a background task.
+
+    This endpoint is NOT protected by candidate/recruiter auth because it is
+    called server-to-server from the LiveKit worker. The session_id in the URL
+    serves as a capability token (it's a UUID only the agent knows).
+    """
+    return await complete_session_service(
+        db=db,
+        session_id=session_id,
+        transcript=payload.transcript,
+        background_tasks=background_tasks,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Session Results (for recruiter dashboard)
+# ---------------------------------------------------------------------------
+
+@router.get("/session/{session_id}")
+async def get_session(
+    session_id: UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    """
+    Recruiter endpoint: fetch session state, transcript, and Judge evaluation.
+    Returns evaluation as soon as it is available (may be null if judge is still running).
+    """
+    return await get_session_with_evaluation(db=db, session_id=session_id)
+
+
+@router.get("/group/{group_id}/sessions")
+async def list_group_sessions(
+    group_id: UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+):
+    """
+    Recruiter endpoint: list all sessions (with evaluation summaries) for a group.
+    Used to populate the results table in the recruiter dashboard.
+    """
+    from sqlmodel import select
+    from app.models import LiV2Session, LiV2Evaluation
+
+    sessions_result = await db.execute(
+        select(LiV2Session).where(LiV2Session.group_id == group_id)
+        .order_by(LiV2Session.created_at.desc())
+    )
+    sessions = sessions_result.scalars().all()
+
+    rows = []
+    for s in sessions:
+        eval_result = await db.execute(
+            select(LiV2Evaluation).where(LiV2Evaluation.session_id == s.id)
+        )
+        ev = eval_result.scalar_one_or_none()
+        rows.append({
+            "session_id": str(s.id),
+            "candidate_id": str(s.candidate_id),
+            "state": s.state,
+            "started_at": s.started_at.isoformat() if s.started_at else None,
+            "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+            "duration_seconds": s.duration_seconds,
+            "overall_score_pct": ev.overall_score_pct if ev else None,
+            "auto_verdict": ev.auto_verdict if ev else None,
+            "meets_criteria": ev.meets_criteria if ev else None,
+            "evaluation_confidence": ev.evaluation_confidence if ev else None,
+        })
+
+    return {"group_id": str(group_id), "sessions": rows}

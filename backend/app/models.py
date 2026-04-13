@@ -967,6 +967,8 @@ class LiV2Session(BaseModel, table=True):
     ended_at: datetime | None = Field(default=None)
     duration_seconds: int | None = Field(default=None)
     context_pool: dict | None = Field(default=None, sa_column=Column(JSONB))
+    transcript: list | None = Field(default=None, sa_column=Column(JSONB))
+    # transcript: [{role, text, pillar_idx, phase, timestamp}] — saved by agent on shutdown
     recording_url: str | None = Field(default=None, max_length=500)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
