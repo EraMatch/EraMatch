@@ -97,6 +97,13 @@ from app.schemas.recruiter_extra import (
     AIRefineQuestionRequest,
 )
 
+from app.schemas.live_interview_v2 import (
+    RubricDimension, RubricCreate, RubricUpdate, RubricResponse,
+    BankItem, SubCriterion, BankCreate, BankUpdate, BankResponse,
+    DimensionSuggestionRequest, DimensionSuggestionResponse,
+    AnchorGenerationRequest, BankGenerationRequest, FreezeResponse
+)
+
 __all__ = [
     # Auth
     "LoginRequest",
@@ -195,4 +202,9 @@ __all__ = [
     "FilterTemplateCreate",
     "AIGenerateQuestionRequest",
     "AIRefineQuestionRequest",
+    # Live Interview V2
+    "RubricDimension", "RubricCreate", "RubricUpdate", "RubricResponse",
+    "BankItem", "SubCriterion", "BankCreate", "BankUpdate", "BankResponse",
+    "DimensionSuggestionRequest", "DimensionSuggestionResponse",
+    "AnchorGenerationRequest", "BankGenerationRequest", "FreezeResponse"
 ]

@@ -19,6 +19,7 @@ from app.api.v1.assessments import router as assessments_router
 from app.api.v1.questions import router as questions_router
 from app.api.v1.background_tasks import router as background_tasks_router
 from app.routers.monitoring import router as monitoring_router
+from app.api.v1.live_interview_v2 import router as live_interview_v2_router
 
 router = APIRouter()
 
@@ -38,3 +39,4 @@ router.include_router(groups_router)
 router.include_router(assessments_router)
 router.include_router(questions_router, prefix="/questions", tags=["Questions"])
 router.include_router(background_tasks_router)
+router.include_router(live_interview_v2_router, prefix="/live-interview-v2", tags=["Live Interview V2"])
