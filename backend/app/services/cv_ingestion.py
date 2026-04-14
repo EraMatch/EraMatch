@@ -172,8 +172,13 @@ class CVIngestionService:
         app_id = await self.apply_for_position(organization_id, position_id, candidate_id, source)
         
         if app_id:
-            self.save_cv_file(app_id, file_name, file_content)
-            # TODO: Trigger CV parsing async task here once implemented
+            file_path = self.save_cv_file(app_id, file_name, file_content)
+            # Dispatch AI CV parsing as a background task (PDF only)
+            if file_name.lower().endswith(".pdf"):
+                celery_app.send_task(
+                    "cv_parsing.parse_cv",
+                    args=[str(app_id), str(organization_id), file_path],
+                )
             return {"status": "processed", "file": file_name, "app_id": str(app_id)}
         else:
             return {"status": "skipped", "file": file_name, "reason": "Already applied"}
@@ -445,6 +450,13 @@ class CVIngestionWorkerService:
             file_path = os.path.join(base_dir, file_name)
             with open(file_path, "wb") as f:
                 f.write(file_content)
+            
+            # Dispatch AI CV parsing as a background task (PDF only)
+            if file_name.lower().endswith(".pdf"):
+                celery_app.send_task(
+                    "cv_parsing.parse_cv",
+                    args=[str(app_id), str(organization_id), file_path],
+                )
             
             return {"status": "processed", "file": file_name, "app_id": str(app_id)}
         else:

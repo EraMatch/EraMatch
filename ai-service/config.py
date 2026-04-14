@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     OLLAMA_API_KEY: str = ""
     OLLAMA_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_QUESTION_IMPORT_MODEL: str = "deepseek-v3.1:671b-cloud"
+    OLLAMA_CV_PARSING_MODEL: str = "gemma4:31b-cloud"
     OLLAMA_GH_FILTER_MODEL: str = "kimi-k2.5:cloud"
     OLLAMA_GH_MAP_MODEL: str = "kimi-k2.5:cloud"
     OLLAMA_GH_AUDIT_MODEL: str = "deepseek-v3.1:671b-cloud"

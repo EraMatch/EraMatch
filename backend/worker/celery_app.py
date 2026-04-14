@@ -13,7 +13,8 @@ celery_app = Celery(
         "worker.tasks.video", 
         "worker.tasks.question_import", 
         "worker.tasks.github_analysis",
-        "worker.tasks.cv_ingestion"
+        "worker.tasks.cv_ingestion",
+        "worker.tasks.cv_parsing",
     ],
 )
 
