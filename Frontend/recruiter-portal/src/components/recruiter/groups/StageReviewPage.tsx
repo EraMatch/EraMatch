@@ -83,7 +83,7 @@ export function StageReviewPage({
     const [flagsFilter, setFlagsFilter] = useState<'all' | 'none' | 'has-flags'>('all');
     const [meetsCriteriaFilter, setMeetsCriteriaFilter] = useState<'all' | 'yes' | 'no'>('all');
     const [verdictFilter, setVerdictFilter] = useState<'all' | 'pass' | 'fail' | 'conditional'>('all');
-    const [progressionFilter, setProgressionFilter] = useState<'all' | 'active' | 'selected' | 'rejected' | 'on-hold'>('all');
+    const [progressionFilter, setProgressionFilter] = useState<'all' | 'active' | 'selected' | 'rejected' | 'on-hold'>('active');
     const [sortBy, setSortBy] = useState<SortField>('score-desc');
 
     // ─── Collapsible sections ────────────────────────────────────────

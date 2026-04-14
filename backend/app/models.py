@@ -22,10 +22,11 @@ class UserRole(str, Enum):
 class ApplicationStatus(str, Enum):
     APPLIED = "applied"
     SCREENING = "screening"
-    IN_PIPELINE = "in_pipeline"
     OFFERED = "offered"
     HIRED = "hired"
     REJECTED = "rejected"
+    HOLDED = "holded"
+    WITHDRAWN = "withdrawn"
 
 
 class PositionStatus(str, Enum):
