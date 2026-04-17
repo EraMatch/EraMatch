@@ -1,4 +1,4 @@
-"""Beta proctoring endpoints for anti-cheating signal adapters.
+"""Production proctoring endpoints for anti-cheating signal adapters.
 
 These endpoints expose stable contracts while model integrations are still
 being productionized.
@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from config import settings
 
-from services.proctoring_beta import (
+from services.proctoring import (
     REGISTRY,
     evaluate_face_signal,
     evaluate_voice_signal,
@@ -19,13 +19,13 @@ from services.proctoring_beta import (
 router = APIRouter()
 
 
-class BetaSignalResponse(BaseModel):
+class ProctoringSignalResponse(BaseModel):
     signal_type: str
     event_type: str
     severity: str
     risk_score: float = Field(..., ge=0.0, le=1.0)
     confidence: float = Field(..., ge=0.0, le=1.0)
-    adapter_mode: str = "beta"
+    adapter_mode: str = "production"
     recommendation: str
     metadata: dict = Field(default_factory=dict)
 
@@ -109,8 +109,8 @@ async def proctoring_inference_readiness():
     return inference_readiness()
 
 
-@router.post("/face", response_model=BetaSignalResponse)
-async def beta_face_signal(request: FaceSignalRequest):
+@router.post("/face", response_model=ProctoringSignalResponse)
+async def face_signal(request: FaceSignalRequest):
     result = evaluate_face_signal(
         faces_detected=request.faces_detected,
         multiple_faces=request.multiple_faces,
@@ -120,7 +120,7 @@ async def beta_face_signal(request: FaceSignalRequest):
         frame_b64=request.frame_b64,
     )
     proof = _enforce_model_and_proof("face", result, request.frame_b64 is not None)
-    return BetaSignalResponse(
+    return ProctoringSignalResponse(
         signal_type="face",
         event_type=result["event_type"],
         severity=result["severity"],
@@ -143,8 +143,8 @@ async def beta_face_signal(request: FaceSignalRequest):
     )
 
 
-@router.post("/voice", response_model=BetaSignalResponse)
-async def beta_voice_signal(request: VoiceSignalRequest):
+@router.post("/voice", response_model=ProctoringSignalResponse)
+async def voice_signal(request: VoiceSignalRequest):
     result = evaluate_voice_signal(
         speaker_match_score=request.speaker_match_score,
         voice_switch_detected=request.voice_switch_detected,
@@ -156,7 +156,7 @@ async def beta_voice_signal(request: VoiceSignalRequest):
         audio_sample_rate=request.audio_sample_rate,
     )
     proof = _enforce_model_and_proof("voice", result, request.audio_waveform is not None or request.voice_embedding is not None)
-    return BetaSignalResponse(
+    return ProctoringSignalResponse(
         signal_type="voice",
         event_type=result["event_type"],
         severity=result["severity"],
@@ -181,8 +181,8 @@ async def beta_voice_signal(request: VoiceSignalRequest):
     )
 
 
-@router.post("/gaze", response_model=BetaSignalResponse)
-async def beta_gaze_signal(request: GazeSignalRequest):
+@router.post("/gaze", response_model=ProctoringSignalResponse)
+async def gaze_signal(request: GazeSignalRequest):
     result = evaluate_gaze_signal(
         off_screen_ratio=request.off_screen_ratio,
         away_duration_seconds=request.away_duration_seconds,
@@ -191,7 +191,7 @@ async def beta_gaze_signal(request: GazeSignalRequest):
         frame_b64=request.frame_b64,
     )
     proof = _enforce_model_and_proof("gaze", result, request.frame_b64 is not None)
-    return BetaSignalResponse(
+    return ProctoringSignalResponse(
         signal_type="gaze",
         event_type=result["event_type"],
         severity=result["severity"],
@@ -213,8 +213,8 @@ async def beta_gaze_signal(request: GazeSignalRequest):
     )
 
 
-@router.post("/emotion", response_model=BetaSignalResponse)
-async def beta_emotion_signal(request: EmotionSignalRequest):
+@router.post("/emotion", response_model=ProctoringSignalResponse)
+async def emotion_signal(request: EmotionSignalRequest):
     result = evaluate_emotion_signal(
         stress_score=request.stress_score,
         negative_ratio=request.negative_ratio,
@@ -223,7 +223,7 @@ async def beta_emotion_signal(request: EmotionSignalRequest):
         frame_b64=request.frame_b64,
     )
     proof = _enforce_model_and_proof("emotion", result, request.frame_b64 is not None)
-    return BetaSignalResponse(
+    return ProctoringSignalResponse(
         signal_type="emotion",
         event_type=result["event_type"],
         severity=result["severity"],

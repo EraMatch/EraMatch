@@ -107,8 +107,8 @@ uvicorn main:app --reload --port 8001
 
 ### 4. Proctoring Inference Readiness
 
-- Wiring status: `GET /beta/proctoring/wiring-status`
-- Dependency + model readiness: `GET /beta/proctoring/inference-readiness`
+- Wiring status: `GET /proctoring/wiring-status`
+- Dependency + model readiness: `GET /proctoring/inference-readiness`
 
 ### 5. Proctoring Integration Test
 

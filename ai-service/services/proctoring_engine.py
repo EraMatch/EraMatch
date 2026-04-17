@@ -51,6 +51,8 @@ class _ModelRegistry:
         self._speaker_profiles: dict[str, np.ndarray] | None = None
         self._emotion_loader_error: str | None = None
         self._voice_loader_error: str | None = None
+        self._face_loader_error: str | None = None
+        self._gaze_loader_error: str | None = None
         self._emotion_model: Any | None = None
         self._emotion_labels = [
             "anger",
@@ -62,8 +64,14 @@ class _ModelRegistry:
             "surprise",
         ]
         self._face_cascade: Any | None = None
+        self._eye_cascade: Any | None = None
+        self._face_tflite_interpreter: Any | None = None
+        self._face_tflite_input_details: list[dict[str, Any]] | None = None
+        self._face_tflite_output_details: list[dict[str, Any]] | None = None
+        self._face_reference_embedding: np.ndarray | None = None
         self._voice_feature_extractor: Any | None = None
         self._voice_model: Any | None = None
+        self._gaze_model: Any | None = None
 
     def wired_status(self) -> dict[str, Any]:
         return {
@@ -75,6 +83,8 @@ class _ModelRegistry:
             "speaker_profiles_present": self.speaker_profiles_dir.exists(),
             "emotion_loader_error": self._emotion_loader_error,
             "voice_loader_error": self._voice_loader_error,
+            "face_loader_error": self._face_loader_error,
+            "gaze_loader_error": self._gaze_loader_error,
         }
 
     def get_face_cascade(self) -> Any | None:
@@ -88,6 +98,18 @@ class _ModelRegistry:
         if self._face_cascade.empty():
             return None
         return self._face_cascade
+
+    def get_eye_cascade(self) -> Any | None:
+        cv2 = _get_cv2()
+        if cv2 is None:
+            return None
+        if self._eye_cascade is None:
+            self._eye_cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_eye_tree_eyeglasses.xml"
+            )
+        if self._eye_cascade.empty():
+            return None
+        return self._eye_cascade
 
     def get_emotion_model(self) -> Any | None:
         if self._emotion_model is not None:
@@ -123,6 +145,98 @@ class _ModelRegistry:
             return self._voice_feature_extractor, self._voice_model
         except Exception as exc:
             self._voice_loader_error = str(exc)
+            return None
+
+    def get_face_embedder(self) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]] | None:
+        if (
+            self._face_tflite_interpreter is not None
+            and self._face_tflite_input_details is not None
+            and self._face_tflite_output_details is not None
+        ):
+            return (
+                self._face_tflite_interpreter,
+                self._face_tflite_input_details,
+                self._face_tflite_output_details,
+            )
+
+        if not self.face_tflite_file.exists():
+            self._face_loader_error = "face_tflite_file_not_found"
+            return None
+
+        try:
+            tf = importlib.import_module("tensorflow")
+            interpreter = tf.lite.Interpreter(model_path=str(self.face_tflite_file))
+            interpreter.allocate_tensors()
+            self._face_tflite_interpreter = interpreter
+            self._face_tflite_input_details = interpreter.get_input_details()
+            self._face_tflite_output_details = interpreter.get_output_details()
+            self._face_loader_error = None
+            return (
+                interpreter,
+                self._face_tflite_input_details,
+                self._face_tflite_output_details,
+            )
+        except Exception as exc:
+            self._face_loader_error = str(exc)
+            return None
+
+    def get_gaze_model(self) -> Any | None:
+        if self._gaze_model is not None:
+            return self._gaze_model
+
+        if not self.gaze_weights_file.exists():
+            self._gaze_loader_error = "gaze_weights_file_not_found"
+            return None
+
+        try:
+            torch = importlib.import_module("torch")
+            nn = importlib.import_module("torch.nn")
+
+            class GazeNet(nn.Module):
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.conv1 = nn.Conv2d(2, 32, kernel_size=3, padding=1)
+                    self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+                    self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+                    self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+                    self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+                    self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)
+                    self.fc_eye = nn.Linear(128 * 4 * 7, 256)
+                    self.fc_combined = nn.Linear(256 + 3, 128)
+                    self.fc_out = nn.Linear(128, 3)
+                    self.dropout = nn.Dropout(0.2)
+                    self.relu = nn.ReLU()
+
+                def forward(self, eye_input: Any, head_pose: Any) -> Any:
+                    x = self.relu(self.conv1(eye_input))
+                    x = self.pool1(x)
+                    x = self.relu(self.conv2(x))
+                    x = self.pool2(x)
+                    x = self.relu(self.conv3(x))
+                    x = self.pool3(x)
+                    x = x.view(x.size(0), -1)
+                    x = self.relu(self.fc_eye(x))
+                    x = self.dropout(x)
+                    x = torch.cat([x, head_pose], dim=1)
+                    x = self.relu(self.fc_combined(x))
+                    x = self.dropout(x)
+                    gaze = self.fc_out(x)
+                    gaze = gaze / torch.norm(gaze, dim=1, keepdim=True)
+                    return gaze
+
+            model = GazeNet()
+            checkpoint = torch.load(str(self.gaze_weights_file), map_location=torch.device("cpu"), weights_only=False)
+            state = checkpoint.get("model_state_dict") if isinstance(checkpoint, dict) else checkpoint
+            if state is None:
+                raise ValueError("Invalid gaze checkpoint format")
+
+            model.load_state_dict(state, strict=False)
+            model.eval()
+            self._gaze_model = model
+            self._gaze_loader_error = None
+            return self._gaze_model
+        except Exception as exc:
+            self._gaze_loader_error = str(exc)
             return None
 
     def get_speaker_profile(self, profile_id: str | None) -> np.ndarray | None:
@@ -248,6 +362,151 @@ def _emotion_from_frame(frame_bgr: np.ndarray | None) -> tuple[float | None, str
     return _clamp(stress), dominant, distribution
 
 
+def _face_embedding_from_frame(frame_bgr: np.ndarray | None) -> tuple[np.ndarray | None, float | None]:
+    cv2 = _get_cv2()
+    if cv2 is None or frame_bgr is None:
+        return None, None
+
+    face_embedder = REGISTRY.get_face_embedder()
+    cascade = REGISTRY.get_face_cascade()
+    if face_embedder is None or cascade is None:
+        return None, None
+
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    faces = cascade.detectMultiScale(gray, 1.2, 5)
+    if len(faces) == 0:
+        return None, None
+
+    x, y, w, h = max(faces, key=lambda item: item[2] * item[3])
+    face = frame_bgr[y : y + h, x : x + w]
+    if face.size == 0:
+        return None, None
+
+    interpreter, input_details, output_details = face_embedder
+    input_shape = input_details[0].get("shape", [1, 112, 112, 3])
+    target_h = int(input_shape[1]) if len(input_shape) > 2 else 112
+    target_w = int(input_shape[2]) if len(input_shape) > 2 else 112
+
+    prepared = cv2.resize(face, (target_w, target_h)).astype(np.float32)
+    prepared = (prepared - 127.5) / 128.0
+    prepared = np.expand_dims(prepared, axis=0)
+
+    interpreter.set_tensor(input_details[0]["index"], prepared)
+    interpreter.invoke()
+    embedding = interpreter.get_tensor(output_details[0]["index"])[0]
+    embedding = np.asarray(embedding, dtype=np.float32)
+
+    norm = float(np.linalg.norm(embedding))
+    if norm <= 0:
+        return None, None
+
+    embedding = embedding / norm
+
+    if REGISTRY._face_reference_embedding is None:
+        REGISTRY._face_reference_embedding = embedding
+        similarity = 1.0
+    else:
+        similarity = _clamp((_cosine_similarity(embedding, REGISTRY._face_reference_embedding) + 1) / 2)
+        ref = (REGISTRY._face_reference_embedding * 0.92) + (embedding * 0.08)
+        ref_norm = float(np.linalg.norm(ref))
+        if ref_norm > 0:
+            REGISTRY._face_reference_embedding = ref / ref_norm
+
+    return embedding, similarity
+
+
+def _gaze_offscreen_score_from_frame(frame_bgr: np.ndarray | None) -> float | None:
+    cv2 = _get_cv2()
+    if cv2 is None or frame_bgr is None:
+        return None
+
+    gaze_model = REGISTRY.get_gaze_model()
+    if gaze_model is None:
+        return None
+
+    try:
+        torch = importlib.import_module("torch")
+    except Exception as exc:
+        REGISTRY._gaze_loader_error = str(exc)
+        return None
+
+    cascade = REGISTRY.get_face_cascade()
+    if cascade is None:
+        return None
+
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    faces = cascade.detectMultiScale(gray, 1.2, 5)
+    if len(faces) == 0:
+        return 1.0
+
+    x, y, w, h = max(faces, key=lambda item: item[2] * item[3])
+    face_gray = gray[y : y + h, x : x + w]
+    if face_gray.size == 0:
+        return None
+
+    mid = max(1, face_gray.shape[1] // 2)
+    left_eye = face_gray[:, :mid]
+    right_eye = face_gray[:, mid:]
+
+    left_eye = cv2.resize(left_eye, (60, 36), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+    right_eye = cv2.resize(right_eye, (60, 36), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+
+    eye_stack = np.expand_dims(np.stack([left_eye, right_eye]), axis=0)
+    eye_input = torch.from_numpy(eye_stack)
+    pose_input = torch.zeros((1, 3), dtype=torch.float32)
+
+    with torch.no_grad():
+        gaze_vec = gaze_model(eye_input, pose_input).squeeze().cpu().numpy()
+
+    gaze_vec = np.asarray(gaze_vec, dtype=np.float32).flatten()
+    if gaze_vec.size < 2:
+        return None
+
+    off_axis = float(np.linalg.norm(gaze_vec[:2]))
+    return _clamp(off_axis)
+
+
+def _blink_from_frame(frame_bgr: np.ndarray | None) -> tuple[float | None, bool | None, int | None]:
+    cv2 = _get_cv2()
+    if cv2 is None or frame_bgr is None:
+        return None, None, None
+
+    face_cascade = REGISTRY.get_face_cascade()
+    eye_cascade = REGISTRY.get_eye_cascade()
+    if face_cascade is None or eye_cascade is None:
+        return None, None, None
+
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, 1.2, 5)
+    if len(faces) == 0:
+        return None, None, 0
+
+    x, y, w, h = max(faces, key=lambda item: item[2] * item[3])
+    roi = gray[y : y + h, x : x + w]
+    if roi.size == 0:
+        return None, None, 0
+
+    eyes = eye_cascade.detectMultiScale(roi, scaleFactor=1.1, minNeighbors=6, minSize=(18, 12))
+    eye_count = int(len(eyes))
+    if eye_count == 0:
+        # No visible eyes can indicate a blink or strong occlusion.
+        return 1.0, True, 0
+
+    openness = []
+    for _, _, ew, eh in eyes:
+        if ew > 0:
+            openness.append(float(eh) / float(ew))
+
+    if not openness:
+        return None, None, eye_count
+
+    mean_openness = float(np.mean(openness))
+    # Typical open eye ratio is roughly >= 0.22 on this detector; lower implies blink/closed eyes.
+    blink_score = _clamp((0.23 - mean_openness) / 0.23)
+    blink_detected = bool(blink_score >= 0.55)
+    return blink_score, blink_detected, eye_count
+
+
 def _voice_embedding_from_waveform(
     audio_waveform: list[float] | None,
     audio_sample_rate: int | None,
@@ -276,7 +535,7 @@ def _voice_embedding_from_waveform(
     return emb.astype(np.float32)
 
 
-def _frame_face_observations(frame_b64: str | None) -> dict[str, float | int | bool] | None:
+def _frame_face_observations(frame_b64: str | None) -> dict[str, float | int | bool | None] | None:
     cv2 = _get_cv2()
     if cv2 is None:
         return None
@@ -290,6 +549,10 @@ def _frame_face_observations(frame_b64: str | None) -> dict[str, float | int | b
     faces_detected = int(len(faces))
 
     liveness_score = 0.0
+    face_model_score = None
+    blink_score = None
+    blink_detected = None
+    eyes_detected = None
     if faces_detected > 0:
         x, y, w, h = max(faces, key=lambda item: item[2] * item[3])
         roi = gray[y : y + h, x : x + w]
@@ -298,10 +561,17 @@ def _frame_face_observations(frame_b64: str | None) -> dict[str, float | int | b
             variance = float(cv2.Laplacian(roi, cv2.CV_64F).var())
             liveness_score = _clamp(variance / 220.0)
 
+    _, face_model_score = _face_embedding_from_frame(frame)
+    blink_score, blink_detected, eyes_detected = _blink_from_frame(frame)
+
     return {
         "faces_detected": faces_detected,
         "multiple_faces": faces_detected > 1,
         "liveness_score": liveness_score,
+        "face_model_score": face_model_score,
+        "blink_score": blink_score,
+        "blink_detected": blink_detected,
+        "eyes_detected": eyes_detected,
     }
 
 
@@ -313,8 +583,19 @@ def inference_readiness() -> dict[str, Any]:
     transformers_available = _dependency_available("transformers")
     tensorflow_available = _dependency_available("tensorflow")
 
-    face_ready = bool(cv2_available and wiring["face_weights_present"])
-    gaze_ready = bool(cv2_available and wiring["gaze_weights_present"])
+    eye_blink_ready = bool(cv2_available and REGISTRY.get_eye_cascade() is not None)
+    face_ready = bool(
+        cv2_available
+        and tensorflow_available
+        and wiring["face_weights_present"]
+        and not wiring.get("face_loader_error")
+    )
+    gaze_ready = bool(
+        cv2_available
+        and torch_available
+        and wiring["gaze_weights_present"]
+        and not wiring.get("gaze_loader_error")
+    )
     emotion_ready = bool(
         cv2_available
         and tensorflow_available
@@ -330,7 +611,7 @@ def inference_readiness() -> dict[str, Any]:
     )
 
     return {
-        "ready": face_ready and gaze_ready and emotion_ready and voice_ready,
+        "ready": face_ready and gaze_ready and emotion_ready and voice_ready and eye_blink_ready,
         "dependencies": {
             "cv2": cv2_available,
             "tensorflow": tensorflow_available,
@@ -341,6 +622,9 @@ def inference_readiness() -> dict[str, Any]:
             "face": {
                 "ready": face_ready,
                 "weights_present": wiring["face_weights_present"],
+            },
+            "eye_blink": {
+                "ready": eye_blink_ready,
             },
             "gaze": {
                 "ready": gaze_ready,
@@ -385,12 +669,27 @@ def evaluate_face_signal(
     resolved_faces_detected = faces_detected
     resolved_multiple_faces = multiple_faces
     resolved_liveness = liveness_score
+    resolved_blink_score: float | None = None
+    resolved_blink_detected: bool | None = None
+    resolved_eyes_detected: int | None = None
 
     inferred = _frame_face_observations(frame_b64)
     if inferred is not None:
         resolved_faces_detected = int(inferred["faces_detected"])
         resolved_multiple_faces = bool(inferred["multiple_faces"])
         resolved_liveness = float(inferred["liveness_score"])
+        inferred_face_model = inferred.get("face_model_score")
+        if inferred_face_model is not None:
+            resolved_face_match = float(inferred_face_model)
+        inferred_blink_score = inferred.get("blink_score")
+        if inferred_blink_score is not None:
+            resolved_blink_score = float(inferred_blink_score)
+        inferred_blink_detected = inferred.get("blink_detected")
+        if inferred_blink_detected is not None:
+            resolved_blink_detected = bool(inferred_blink_detected)
+        inferred_eyes_detected = inferred.get("eyes_detected")
+        if inferred_eyes_detected is not None:
+            resolved_eyes_detected = int(inferred_eyes_detected)
         used_weighted_input = True
 
     if face_model_score is not None:
@@ -413,6 +712,17 @@ def evaluate_face_signal(
         if event_type == "face_ok":
             event_type = "low_liveness"
 
+    if (
+        resolved_liveness is not None
+        and resolved_liveness < 0.5
+        and resolved_blink_score is not None
+        and resolved_blink_score < 0.2
+        and (resolved_eyes_detected is None or resolved_eyes_detected >= 1)
+    ):
+        risk += 0.2
+        if event_type in {"face_ok", "low_liveness"}:
+            event_type = "eye_blink_irregular"
+
     risk = _clamp(risk)
     confidence = _clamp(0.58 + (risk * 0.38))
 
@@ -428,6 +738,9 @@ def evaluate_face_signal(
             "multiple_faces": resolved_multiple_faces,
             "liveness_score": resolved_liveness,
             "face_match_score": resolved_face_match,
+            "blink_score": resolved_blink_score,
+            "blink_detected": resolved_blink_detected,
+            "eyes_detected": resolved_eyes_detected,
             "used_frame_inference": inferred is not None,
         },
     }
@@ -512,11 +825,11 @@ def evaluate_gaze_signal(
     used_weighted_input = False
 
     resolved_off_screen_ratio = off_screen_ratio
+    inferred_gaze_offscreen_score = None
     if gaze_model_score is None and frame_b64:
-        inferred = _frame_face_observations(frame_b64)
-        if inferred is not None:
-            # Missing face in frame is treated as fully off-screen.
-            resolved_off_screen_ratio = 1.0 if int(inferred["faces_detected"]) == 0 else 0.2
+        inferred_gaze_offscreen_score = _gaze_offscreen_score_from_frame(_decode_image(frame_b64))
+        if inferred_gaze_offscreen_score is not None:
+            resolved_off_screen_ratio = _clamp((resolved_off_screen_ratio * 0.5) + (inferred_gaze_offscreen_score * 0.5))
             used_weighted_input = True
 
     if resolved_off_screen_ratio >= 0.6:
@@ -551,6 +864,7 @@ def evaluate_gaze_signal(
             "away_duration_seconds": away_duration_seconds,
             "rapid_shift_count": rapid_shift_count,
             "used_frame_inference": frame_b64 is not None,
+            "inferred_gaze_offscreen_score": inferred_gaze_offscreen_score,
         },
     }
 

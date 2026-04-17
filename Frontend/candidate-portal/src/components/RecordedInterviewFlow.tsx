@@ -13,7 +13,7 @@ const BIOMETRIC_ANALYSIS_INTERVAL_MS = Number((import.meta as any).env?.VITE_BIO
 const BIOMETRIC_RISK_THRESHOLD = Number((import.meta as any).env?.VITE_BIOMETRIC_RISK_THRESHOLD || 0.45);
 const SPEAKER_PROFILE_ID = (import.meta as any).env?.VITE_SPEAKER_PROFILE_ID || 'yousef_said_wavlm';
 
-type BetaSignalResult = {
+type ProctoringSignalResult = {
   signal_type: 'face' | 'voice' | 'gaze' | 'emotion';
   event_type: string;
   severity: 'low' | 'medium' | 'high';
@@ -286,12 +286,12 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     }
   }, [sessionId, currentQuestion, questionTimer, questionsData, onCompletion]);
 
-  const postBetaSignal = useCallback(async (
+  const postProctoringSignal = useCallback(async (
     signal: 'face' | 'voice' | 'gaze' | 'emotion',
     payload: Record<string, unknown>,
-  ): Promise<BetaSignalResult | null> => {
+  ): Promise<ProctoringSignalResult | null> => {
     try {
-      const response = await fetch(`${AI_SERVICE_BASE_URL}/beta/proctoring/${signal}`, {
+      const response = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/${signal}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -310,13 +310,13 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
             metadata: {
               proof: errorPayload.detail.proof,
             },
-          } as BetaSignalResult;
+          } as ProctoringSignalResult;
         }
         return null;
       }
-      return await response.json() as BetaSignalResult;
+      return await response.json() as ProctoringSignalResult;
     } catch (error) {
-      console.error(`Failed beta ${signal} request:`, error);
+      console.error(`Failed proctoring ${signal} request:`, error);
       return null;
     }
   }, []);
@@ -512,7 +512,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
       ];
 
       for (const { signal, payload } of signalPayloads) {
-        const result = await postBetaSignal(signal, payload);
+        const result = await postProctoringSignal(signal, payload);
         if (!result || result.risk_score < BIOMETRIC_RISK_THRESHOLD) continue;
 
         void emitInterviewIntegrityEvent(
@@ -559,7 +559,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     inInterviewSession,
     measureFaceMotion,
     measureVoiceRms,
-    postBetaSignal,
+    postProctoringSignal,
     sessionId,
   ]);
 

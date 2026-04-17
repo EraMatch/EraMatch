@@ -74,6 +74,8 @@ export const candidateService = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }),
+    getAssessmentIntegrityDecision: async (sessionId: string) =>
+        fetchAPI(`/assessment/integrity-decision/${sessionId}`),
 
     // Interview endpoints
     getInterviewConfig: async () => fetchAPI('/interview/config'),
@@ -91,6 +93,27 @@ export const candidateService = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }),
+    uploadInterviewResponse: async (data: {
+        session_id: string;
+        question_id: string;
+        question_text: string;
+        video: Blob;
+        reference_answer?: string;
+    }) => {
+        const form = new FormData();
+        form.append('session_id', data.session_id);
+        form.append('question_id', data.question_id);
+        form.append('question_text', data.question_text);
+        if (data.reference_answer) {
+            form.append('reference_answer', data.reference_answer);
+        }
+        form.append('video', data.video, `${data.question_id}.webm`);
+
+        return fetchAPI('/interview/response', {
+            method: 'POST',
+            body: form,
+        });
+    },
     reportInterviewIntegrityEvent: async (data: {
         session_id: string;
         event_type: string;
@@ -112,4 +135,6 @@ export const candidateService = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }),
+    getInterviewIntegrityDecision: async (sessionId: string) =>
+        fetchAPI(`/interview/integrity-decision/${sessionId}`),
 };

@@ -13,7 +13,7 @@ if str(AI_SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(AI_SERVICE_ROOT))
 
 from main import app  # noqa: E402
-from services import proctoring_beta  # noqa: E402
+from services import proctoring_engine as proctoring  # noqa: E402
 
 
 def _frame_b64() -> str:
@@ -23,12 +23,12 @@ def _frame_b64() -> str:
 
 def test_proctoring_end_to_end_raw_payload_model_flags(monkeypatch):
     monkeypatch.setattr(
-        proctoring_beta,
+        proctoring,
         "_frame_face_observations",
         lambda _: {"faces_detected": 1, "multiple_faces": False, "liveness_score": 0.72},
     )
     monkeypatch.setattr(
-        proctoring_beta,
+        proctoring,
         "_emotion_from_frame",
         lambda _: (
             0.42,
@@ -44,10 +44,15 @@ def test_proctoring_end_to_end_raw_payload_model_flags(monkeypatch):
             },
         ),
     )
+    monkeypatch.setattr(
+        proctoring,
+        "_gaze_offscreen_score_from_frame",
+        lambda *_: 0.18,
+    )
 
     embedding = np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32)
-    monkeypatch.setattr(proctoring_beta, "_voice_embedding_from_waveform", lambda *_: embedding)
-    monkeypatch.setattr(proctoring_beta.REGISTRY, "get_speaker_profile", lambda *_: embedding)
+    monkeypatch.setattr(proctoring, "_voice_embedding_from_waveform", lambda *_: embedding)
+    monkeypatch.setattr(proctoring.REGISTRY, "get_speaker_profile", lambda *_: embedding)
 
     client = TestClient(app)
     sid = "session-it-raw-01"
@@ -55,7 +60,7 @@ def test_proctoring_end_to_end_raw_payload_model_flags(monkeypatch):
     audio_waveform = [0.01] * 1600
 
     face = client.post(
-        "/beta/proctoring/face",
+        "/proctoring/face",
         json={
             "session_id": sid,
             "faces_detected": 1,
@@ -70,7 +75,7 @@ def test_proctoring_end_to_end_raw_payload_model_flags(monkeypatch):
     assert face_json["metadata"]["resolved_inputs"]["used_frame_inference"] is True
 
     voice = client.post(
-        "/beta/proctoring/voice",
+        "/proctoring/voice",
         json={
             "session_id": sid,
             "silence_ratio": 0.1,
@@ -86,7 +91,7 @@ def test_proctoring_end_to_end_raw_payload_model_flags(monkeypatch):
     assert voice_json["metadata"]["resolved_inputs"]["used_raw_audio_inference"] is True
 
     gaze = client.post(
-        "/beta/proctoring/gaze",
+        "/proctoring/gaze",
         json={
             "session_id": sid,
             "off_screen_ratio": 0.2,
@@ -101,7 +106,7 @@ def test_proctoring_end_to_end_raw_payload_model_flags(monkeypatch):
     assert gaze_json["metadata"]["resolved_inputs"]["used_frame_inference"] is True
 
     emotion = client.post(
-        "/beta/proctoring/emotion",
+        "/proctoring/emotion",
         json={
             "session_id": sid,
             "stress_score": 0.1,

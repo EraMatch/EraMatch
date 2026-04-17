@@ -46,6 +46,7 @@ from app.schemas.group import (
     CandidateNoteResponse,
     CandidateDetailResponse,
     IntegrityFlagsResponse,
+    GroupIntegrityDecisionsResponse,
     SendOffersRequest,
     BulkProgressRequest,
     ScheduleInterviewRequest,
@@ -508,6 +509,18 @@ async def get_group_integrity_metrics(
         "in_process_metrics": in_process_metrics,
         "server_time": datetime.utcnow().isoformat() + "Z",
     }
+
+
+@router.get("/recruiter/groups/{group_id}/integrity/decisions", response_model=GroupIntegrityDecisionsResponse)
+async def get_group_integrity_decisions(
+    group_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+    stage: str | None = Query(default=None, description="Optional stage filter: assessment, ai_interview, live_interview"),
+):
+    """Candidate-level integrity decisions in a group, optionally scoped to one stage, with stage aggregates."""
+    svc = GroupService(session, current_user)
+    return await svc.get_group_integrity_decisions(group_id=group_id, stage=stage)
 
 # ─── Final Offers ─────────────────────────────────────────────────────────────
 

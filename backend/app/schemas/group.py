@@ -329,6 +329,43 @@ class IntegrityFlagDetail(BaseModel):
     timestamp: datetime
 class IntegrityFlagsResponse(BaseModel):
     flags: list[IntegrityFlagDetail] = []
+
+
+class GroupIntegrityDecisionCandidate(BaseModel):
+    application_id: str
+    candidate_id: str
+    candidate_name: str
+    stage: str
+    stage_status: str
+    stage_score: float | None = None
+    decision: str
+    cheating_detected: bool
+    total_flags: int
+    high_flags: int
+    medium_flags: int
+    low_flags: int
+    critical_flags: int
+    latest_event_type: str | None = None
+    latest_flag_at: str | None = None
+
+
+class GroupIntegrityStageAggregate(BaseModel):
+    stage: str
+    total_candidates: int
+    confirmed_cheating: int
+    suspicious_review: int
+    monitoring: int
+    clean: int
+
+
+class GroupIntegrityDecisionsResponse(BaseModel):
+    group_id: str
+    stage: str | None = None
+    candidates: list[GroupIntegrityDecisionCandidate] = []
+    summary: GroupIntegrityStageAggregate
+    stage_aggregates: list[GroupIntegrityStageAggregate] = []
+    updated_at: str
+
 # ─── Export (CSV is handled at the route level, this schema is for request) ─
 class ExportGroupRequest(BaseModel):
     id: UUID

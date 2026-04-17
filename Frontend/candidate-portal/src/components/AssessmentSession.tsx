@@ -13,7 +13,7 @@ const BIOMETRIC_ANALYSIS_INTERVAL_MS = Number((import.meta as any).env?.VITE_BIO
 const BIOMETRIC_RISK_THRESHOLD = Number((import.meta as any).env?.VITE_BIOMETRIC_RISK_THRESHOLD || 0.45);
 const SPEAKER_PROFILE_ID = (import.meta as any).env?.VITE_SPEAKER_PROFILE_ID || 'yousef_said_wavlm';
 
-type BetaSignalResult = {
+type ProctoringSignalResult = {
   signal_type: 'face' | 'voice' | 'gaze' | 'emotion';
   event_type: string;
   severity: 'low' | 'medium' | 'high';
@@ -322,12 +322,12 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     void uploadSystemScreenRecording();
   }, [assessmentComplete, sessionId, uploadSystemScreenRecording]);
 
-  const postBetaSignal = useCallback(async (
+  const postProctoringSignal = useCallback(async (
     signal: 'face' | 'voice' | 'gaze' | 'emotion',
     payload: Record<string, unknown>,
-  ): Promise<BetaSignalResult | null> => {
+  ): Promise<ProctoringSignalResult | null> => {
     try {
-      const response = await fetch(`${AI_SERVICE_BASE_URL}/beta/proctoring/${signal}`, {
+      const response = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/${signal}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -346,13 +346,13 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
             metadata: {
               proof: errorPayload.detail.proof,
             },
-          } as BetaSignalResult;
+          } as ProctoringSignalResult;
         }
         return null;
       }
-      return await response.json() as BetaSignalResult;
+      return await response.json() as ProctoringSignalResult;
     } catch (error) {
-      console.error(`Failed beta ${signal} request:`, error);
+      console.error(`Failed proctoring ${signal} request:`, error);
       return null;
     }
   }, []);
@@ -612,7 +612,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       const quantizedSecond = quantizeTimestampBucket(elapsedAssessmentSeconds, 5);
 
       const [faceResult, voiceResult, gazeResult, emotionResult] = await Promise.all([
-        postBetaSignal('face', {
+        postProctoringSignal('face', {
           session_id: sessionId,
           faces_detected: hasLiveVideo ? 1 : 0,
           multiple_faces: false,
@@ -628,7 +628,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
           client_capture_second: quantizedSecond,
           suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
         }),
-        postBetaSignal('voice', {
+        postProctoringSignal('voice', {
           session_id: sessionId,
           speaker_match_score: hasLiveAudio ? 0.78 : 0.2,
           voice_switch_detected: false,
@@ -644,7 +644,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
           client_capture_second: quantizedSecond,
           suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
         }),
-        postBetaSignal('gaze', {
+        postProctoringSignal('gaze', {
           session_id: sessionId,
           off_screen_ratio: offScreenRatio,
           away_duration_seconds: awayDurationSeconds,
@@ -654,7 +654,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
           client_capture_second: quantizedSecond,
           suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
         }),
-        postBetaSignal('emotion', {
+        postProctoringSignal('emotion', {
           session_id: sessionId,
           dominant_emotion: offScreenRatio > 0.55 ? 'fear' : 'neutral',
           stress_score: Math.max(0, Math.min(1, (offScreenRatio * 0.7) + (rapidShiftCount * 0.04))),
@@ -666,7 +666,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         }),
       ]);
 
-      const results = [faceResult, voiceResult, gazeResult, emotionResult].filter(Boolean) as BetaSignalResult[];
+      const results = [faceResult, voiceResult, gazeResult, emotionResult].filter(Boolean) as ProctoringSignalResult[];
       for (const result of results) {
         if (result.risk_score < BIOMETRIC_RISK_THRESHOLD) continue;
         const suspectBucket = quantizeTimestampBucket(elapsedAssessmentSeconds, 5);
@@ -683,11 +683,11 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
             timestamp_bucket_seconds: 5,
             suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
             source_signal: result.signal_type,
-            beta_risk_score: result.risk_score,
-            beta_confidence: result.confidence,
-            beta_mode: result.adapter_mode,
-            beta_recommendation: result.recommendation,
-            beta_metadata: result.metadata,
+            proctoring_risk_score: result.risk_score,
+            proctoring_confidence: result.confidence,
+            proctoring_mode: result.adapter_mode,
+            proctoring_recommendation: result.recommendation,
+            proctoring_metadata: result.metadata,
           },
           12000,
         );
@@ -728,7 +728,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         audioContextRef.current = null;
       }
     };
-  }, [sessionId, assessmentComplete, emitIntegrityEvent, postBetaSignal, measureFaceMotion, sampleAudioSilence]);
+  }, [sessionId, assessmentComplete, emitIntegrityEvent, postProctoringSignal, measureFaceMotion, sampleAudioSilence]);
 
   // Heartbeat sync - keeps timer accurate and survives tab freezes
   useEffect(() => {

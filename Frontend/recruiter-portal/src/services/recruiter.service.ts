@@ -353,6 +353,11 @@ export const recruiterService = {
         return fetchAPI<any>(`/recruiter/groups/${groupId}/integrity/metrics?window_minutes=${windowMinutes}`);
     },
 
+    getGroupIntegrityDecisions: async (groupId: string, stage?: string) => {
+        const query = stage ? `?stage=${encodeURIComponent(stage)}` : '';
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/integrity/decisions${query}`);
+    },
+
     // Interview Assignment
     assignInterview: async (groupId: string, data: {
         interview_type: 'live' | 'recorded';

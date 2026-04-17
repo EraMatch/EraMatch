@@ -8,6 +8,7 @@ interface ModuleMonitoringDashboardProps {
   pipelineSteps?: any[]; // Pass pipeline steps to check stage status
   liveAlertsConnected?: boolean;
   integrityMetrics?: any;
+  integrityDecisions?: any;
   onClose: () => void;
   onManualRefresh?: () => void;
   onViewCandidate: (candidateId: number) => void;
@@ -34,6 +35,7 @@ export function ModuleMonitoringDashboard({
   pipelineSteps = [],
   liveAlertsConnected = false,
   integrityMetrics,
+  integrityDecisions,
   onClose,
   onManualRefresh,
   onViewCandidate,
@@ -137,6 +139,28 @@ export function ModuleMonitoringDashboard({
   const droppedTotal = Number(inProcessTotals?.dropped || 0);
   const droppedRateLimited = Number(inProcessTotals?.dropped_rate_limited || 0);
   const droppedDuplicate = Number(inProcessTotals?.dropped_duplicate || 0);
+
+  const normalizeStageKey = (value: string) => (value || '').toLowerCase().replaceAll('-', '_');
+  const visibleStageAggregates = Array.isArray(integrityDecisions?.stage_aggregates)
+    ? integrityDecisions.stage_aggregates.filter((agg: any) => {
+      const stageKey = normalizeStageKey(agg?.stage || '');
+      if (moduleType === 'assessment') {
+        return stageKey === 'assessment';
+      }
+      if (showInterviewSubpages) {
+        return stageKey === 'ai_interview' || stageKey === 'live_interview';
+      }
+      return stageKey === 'ai_interview';
+    })
+    : [];
+
+  const stageLabel = (stage: string) => {
+    const key = normalizeStageKey(stage);
+    if (key === 'assessment') return 'Assessment';
+    if (key === 'ai_interview') return 'Recorded Interview';
+    if (key === 'live_interview') return 'Live Interview';
+    return stage;
+  };
 
   return (
     <div className="fixed inset-0 z-[200] bg-white flex flex-col overflow-hidden">
@@ -301,6 +325,32 @@ export function ModuleMonitoringDashboard({
             <div className="text-[13px] text-[#111827]">Duplicate: {droppedDuplicate}</div>
           </div>
         </div>
+
+        {visibleStageAggregates.length > 0 && (
+          <div className="mt-4">
+            <div className="text-[12px] text-[#6b7280] mb-2">Integrity Decisions By Stage</div>
+            <div className="grid grid-cols-2 gap-4">
+              {visibleStageAggregates.map((agg: any) => (
+                <div key={String(agg.stage)} className="p-4 bg-white rounded-[12px] border border-[#e5e7eb]">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-[13px] text-[#111827] font-semibold">{stageLabel(String(agg.stage || ''))}</div>
+                    <div className="text-[11px] text-[#6b7280]">{Number(agg.total_candidates || 0)} candidates</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-[8px] border border-red-200 bg-red-50 p-3">
+                      <div className="text-[11px] text-red-700">Confirmed Cheating</div>
+                      <div className="text-[20px] font-bold text-red-900">{Number(agg.confirmed_cheating || 0)}</div>
+                    </div>
+                    <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3">
+                      <div className="text-[11px] text-amber-700">Suspicious Review</div>
+                      <div className="text-[20px] font-bold text-amber-900">{Number(agg.suspicious_review || 0)}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Filters and Controls */}

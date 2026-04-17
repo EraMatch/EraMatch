@@ -232,6 +232,7 @@ export function EnhancedGroupOverviewV2({
   const [interviewConfigId, setInterviewConfigId] = useState<string | null>(null);
   const [liveAlertsConnected, setLiveAlertsConnected] = useState(false);
   const [integrityMetrics, setIntegrityMetrics] = useState<any>(null);
+  const [integrityDecisions, setIntegrityDecisions] = useState<any>(null);
   const liveAlertCursorRef = useRef<string | null>(null);
   const lastLiveAlertToastRef = useRef<number>(0);
 
@@ -403,10 +404,14 @@ export function EnhancedGroupOverviewV2({
 
     const refreshMetrics = async () => {
       try {
-        const metrics = await api.recruiter.getGroupIntegrityMetrics(groupId, 60);
+        const [metrics, decisions] = await Promise.all([
+          api.recruiter.getGroupIntegrityMetrics(groupId, 60),
+          api.recruiter.getGroupIntegrityDecisions(groupId),
+        ]);
         setIntegrityMetrics(metrics);
+        setIntegrityDecisions(decisions);
       } catch (error) {
-        console.error('Failed to load integrity metrics:', error);
+        console.error('Failed to load integrity monitoring payload:', error);
       }
     };
 
@@ -2354,10 +2359,17 @@ export function EnhancedGroupOverviewV2({
             pipelineSteps={pipelineSteps}
             liveAlertsConnected={liveAlertsConnected}
             integrityMetrics={integrityMetrics}
+            integrityDecisions={integrityDecisions}
             onClose={() => setShowModuleMonitoring(null)}
             onManualRefresh={() => {
               setRefreshKey(prev => prev + 1);
-              void api.recruiter.getGroupIntegrityMetrics(groupId, 60).then(setIntegrityMetrics).catch(() => {});
+              void Promise.all([
+                api.recruiter.getGroupIntegrityMetrics(groupId, 60),
+                api.recruiter.getGroupIntegrityDecisions(groupId),
+              ]).then(([metrics, decisions]) => {
+                setIntegrityMetrics(metrics);
+                setIntegrityDecisions(decisions);
+              }).catch(() => {});
             }}
             onViewCandidate={(candidateId) => {
               setShowModuleMonitoring(null);
