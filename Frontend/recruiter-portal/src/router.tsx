@@ -19,6 +19,7 @@ import { ProjectsPage } from './components/recruiter/projects/ProjectsPage';
 import { CandidatesPage } from './components/recruiter/candidates/CandidatesPage';
 import { QuestionBankPage } from './components/recruiter/assessments/QuestionBankPage';
 import { CandidateProfile } from './components/recruiter/candidates/CandidateProfile';
+import { CandidateQAGAuditPage } from './components/recruiter/candidates/CandidateQAGAuditPage';
 import { AlertsNotifications } from './components/common/AlertsNotifications';
 import { EnhancedGroupOverviewV2 } from './components/recruiter/groups/EnhancedGroupOverviewV2';
 import { LandingPage } from './components/common/LandingPage';
@@ -250,17 +251,29 @@ const GroupOverviewWrapper = () => {
 const CandidateProfileWrapper = () => {
     const { candidateId } = useParams();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
 
     // Pass candidateId as a string (UUID) directly
     const id = candidateId ?? '';
+    const applicationId = searchParams.get('applicationId') ?? undefined;
 
     return (
         <CandidateProfile
             candidateId={id}
+            applicationId={applicationId}
             onBack={() => navigate(-1)}
-            onViewKnowledgeGraph={() => console.log('View Knowledge Graph')}
         />
     );
+};
+
+const CandidateQAGAuditWrapper = () => {
+    const { candidateId } = useParams();
+    const [searchParams] = useSearchParams();
+
+    const id = candidateId ?? '';
+    const applicationId = searchParams.get('applicationId') ?? undefined;
+
+    return <CandidateQAGAuditPage candidateId={id} applicationId={applicationId} />;
 };
 
 export const router = createBrowserRouter([
@@ -500,6 +513,16 @@ export const router = createBrowserRouter([
             <RecruiterProtectedRoute>
                 <RecruiterLayout>
                     <CandidateProfileWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        ),
+    },
+    {
+        path: "/recruiter/candidates/:candidateId/qag-audit",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <CandidateQAGAuditWrapper />
                 </RecruiterLayout>
             </RecruiterProtectedRoute>
         ),

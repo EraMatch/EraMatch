@@ -49,3 +49,6 @@ async def init_db() -> None:
         await conn.execute(
             text("ALTER TABLE IF EXISTS cv_analysis ADD COLUMN IF NOT EXISTS github_profile JSONB")
         )
+        await conn.execute(
+            text("ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS jd_hdeval_qag JSONB")
+        )

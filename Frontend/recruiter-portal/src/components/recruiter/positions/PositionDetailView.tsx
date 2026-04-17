@@ -653,7 +653,12 @@ export function PositionDetailView({
                         </p>
                       </div>
                       <button
-                        onClick={() => navigate(`/recruiter/candidates/${candidate.id}`)}
+                        onClick={() => {
+                          const query = candidate.applicationId
+                            ? `?applicationId=${encodeURIComponent(String(candidate.applicationId))}`
+                            : '';
+                          navigate(`/recruiter/candidates/${candidate.id}${query}`);
+                        }}
                         className="h-[40px] px-[20px] rounded-[8px] bg-[#5b21b6] hover:bg-[#6d28d9] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
                       >
                         View Report

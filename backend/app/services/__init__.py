@@ -7,6 +7,7 @@ from app.services.semantic_anchors import SemanticAnchorService
 from app.services.evidence_extractor import EvidenceExtractionService
 from app.services.cross_verifier import CrossVerifierService
 from app.services.hierarchical_scorer import HierarchicalScoringService
+from app.services.prescore import PreScoreService
 
 __all__ = [
     "AuthService",
@@ -20,4 +21,5 @@ __all__ = [
     "EvidenceExtractionService",
     "CrossVerifierService",
     "HierarchicalScoringService",
+    "PreScoreService",
 ]

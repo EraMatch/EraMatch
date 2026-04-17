@@ -2,8 +2,12 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -53,6 +57,29 @@ async def log_requests(request, call_next):
     response = await call_next(request)
     logger.info(f"Outbound: {request.method} {request.url.path} - Status: {response.status_code}")
     return response
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    logger.warning(
+        "HTTPException: %s %s -> %s | detail=%s",
+        request.method,
+        request.url.path,
+        exc.status_code,
+        exc.detail,
+    )
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.warning(
+        "ValidationError: %s %s -> 422 | errors=%s",
+        request.method,
+        request.url.path,
+        exc.errors(),
+    )
+    return await request_validation_exception_handler(request, exc)
 
 # cors
 app.add_middleware(

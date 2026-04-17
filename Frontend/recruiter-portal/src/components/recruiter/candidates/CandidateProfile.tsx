@@ -1,24 +1,24 @@
 import { useState, useEffect } from 'react';
-import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, Network, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock } from 'lucide-react';
+import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock } from 'lucide-react';
 import LoadingSpinner from '../../common/LoadingSpinner';
-import { KnowledgeGraph } from './KnowledgeGraph';
 import { EnhancedAssessmentReport } from '../assessments/EnhancedAssessmentReport';
 import { EnhancedAIInterviewReport } from '../interviews/EnhancedAIInterviewReport';
 import { LiveInterviewTranscript } from '../interviews/LiveInterviewTranscript';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../ui/dialog';
 import { Button } from '../../ui/button';
 import { api } from '../../../services/api';
+import type { ApplicationScoreBreakdown } from '../../../services/types';
 
 interface CandidateProfileProps {
   candidateId: string;
+  applicationId?: string;
   onBack: () => void;
-  onViewKnowledgeGraph?: () => void;
   showFinalReport?: boolean;
 }
 
-type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'interview' | 'live-interview' | 'notes' | 'knowledge-graph' | 'final-report';
+type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'interview' | 'live-interview' | 'notes' | 'final-report';
 
-export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, showFinalReport = false }: CandidateProfileProps) {
+export function CandidateProfile({ candidateId, applicationId, onBack, showFinalReport = false }: CandidateProfileProps) {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [showTranscript, setShowTranscript] = useState<number | null>(null);
   const [showLiveTranscript, setShowLiveTranscript] = useState(false);
@@ -30,6 +30,8 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
   const [githubQuestionTypeFilter, setGithubQuestionTypeFilter] = useState<'all' | 'mcq' | 'essay' | 'coding'>('all');
 
   const [candidate, setCandidate] = useState<any>(null);
+  const [scoreBreakdown, setScoreBreakdown] = useState<ApplicationScoreBreakdown | null>(null);
+  const [scoreBreakdownLoading, setScoreBreakdownLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -47,6 +49,29 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     };
     fetchProfile();
   }, [candidateId]);
+
+  useEffect(() => {
+    const resolvedApplicationId = applicationId || candidate?.applicationId || candidate?.application_id;
+    if (!resolvedApplicationId) {
+      setScoreBreakdown(null);
+      return;
+    }
+
+    const fetchScoreBreakdown = async () => {
+      try {
+        setScoreBreakdownLoading(true);
+        const data = await api.recruiter.getApplicationScoreBreakdown(String(resolvedApplicationId));
+        setScoreBreakdown(data);
+      } catch (error) {
+        console.error('Failed to load score breakdown', error);
+        setScoreBreakdown(null);
+      } finally {
+        setScoreBreakdownLoading(false);
+      }
+    };
+
+    fetchScoreBreakdown();
+  }, [applicationId, candidate?.applicationId, candidate?.application_id]);
 
   if (isLoading || !candidate) {
     return (
@@ -128,7 +153,6 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
 
   baseTabs.push(
     { id: 'notes', label: 'Notes', icon: MessageSquare, locked: false },
-    { id: 'knowledge-graph', label: 'Knowledge Graph', icon: Network, locked: false },
     { id: 'final-report', label: 'Final Report', icon: CheckCircle, locked: !areAllStagesCompleted() }
   );
 
@@ -279,6 +303,55 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
     || Number(candidate.githubStats?.contributionsLastYear || 0) > 0;
   const showGithubProfileLock = hasGithubProfile && !githubAnalysisReady;
 
+  const formatScore = (value: unknown, digits = 1): string => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 'N/A';
+    return num.toFixed(digits);
+  };
+
+  const displayOverallScore = scoreBreakdown?.pre_score_final ?? scoreBreakdown?.match_score ?? candidate.scores.overall;
+  const displayAssessmentScore = candidate.scores.assessment;
+  const displayAIInterviewScore = candidate.scores.aiInterview;
+  const displayGithubScore = Number.isFinite(Number(candidate.githubAnalysis?.overallScore))
+    ? Number(candidate.githubAnalysis.overallScore)
+    : candidate.scores.github;
+
+  const pendingPipelineStages = [
+    { key: 'assessment', label: 'Technical Assessment' },
+    { key: 'aiInterview', label: 'AI Interview' },
+    { key: 'liveInterview', label: 'Live Interview' },
+  ].filter(({ key }) => {
+    const status = pipelineStatus[key as keyof typeof pipelineStatus]?.status;
+    return status !== 'completed';
+  }).map(item => item.label);
+
+  const strengths: string[] = [];
+  if (Number(candidate.experience || 0) > 0) strengths.push(`${candidate.experience} years of relevant experience`);
+  if (Array.isArray(candidate.skills) && candidate.skills.length > 0) strengths.push(`Core skills: ${candidate.skills.slice(0, 5).join(', ')}`);
+  if (scoreBreakdown?.semantic_fit_score != null) strengths.push(`Strong semantic fit (${formatScore(scoreBreakdown.semantic_fit_score, 1)})`);
+  if (scoreBreakdown?.skills_experience_score != null) strengths.push(`Skills/experience alignment at ${formatScore(scoreBreakdown.skills_experience_score, 1)}`);
+  if (Number.isFinite(Number(displayGithubScore)) && Number(displayGithubScore) > 0 && !showGithubProfileLock) {
+    strengths.push(`GitHub score ${formatScore(displayGithubScore, 1)} based on repository analysis`);
+  }
+
+  const developmentAreas: string[] = [];
+  if (scoreBreakdown?.jd_quality_cap_applied) {
+    developmentAreas.push(`JD quality cap applied at ${scoreBreakdown.jd_quality_cap ?? 'N/A'}; refine role rubric for more reliable ranking.`);
+  }
+  if (scoreBreakdown?.skills_experience_score != null && scoreBreakdown.skills_experience_score < 60) {
+    developmentAreas.push('Skills/experience alignment is below target threshold and should be validated in interview stages.');
+  }
+  if (showGithubProfileLock) {
+    developmentAreas.push('GitHub analysis is still processing; engineering-signal metrics are incomplete.');
+  }
+  if (pendingPipelineStages.length > 0) {
+    developmentAreas.push(`Pending stages: ${pendingPipelineStages.join(', ')}.`);
+  }
+
+  const recommendationReasons = Array.isArray(scoreBreakdown?.score_explanation)
+    ? scoreBreakdown!.score_explanation.slice(0, 3)
+    : [];
+
   return (
     <div className="h-full w-full overflow-auto bg-[#f9fafb] relative">
       <div className="max-w-[1400px] mx-auto px-[48px] py-[24px]">
@@ -331,7 +404,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
               <div className="grid grid-cols-4 gap-4">
                 <div className="bg-[#f9fafb] rounded-[8px] p-4">
                   <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Overall Score</div>
-                  <div className="text-[24px] text-[#111827]">{candidate.scores.overall}</div>
+                  <div className="text-[24px] text-[#111827]">{formatScore(displayOverallScore, 1)}</div>
                 </div>
                 <div
                   onClick={() => handleStageClick('assessment')}
@@ -342,7 +415,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                     Assessment
                     {!tabs.find(t => t.id === 'assessment')?.locked && <Eye size={12} className="text-indigo-400" />}
                   </div>
-                  <div className="text-[24px] text-[#111827]">{candidate.scores.assessment}</div>
+                  <div className="text-[24px] text-[#111827]">{formatScore(displayAssessmentScore, 1)}</div>
                 </div>
                 <div
                   onClick={() => handleStageClick('aiInterview')}
@@ -353,7 +426,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                     AI Interview
                     {!tabs.find(t => t.id === 'interview')?.locked && <Eye size={12} className="text-indigo-400" />}
                   </div>
-                  <div className="text-[24px] text-[#111827]">{candidate.scores.aiInterview}</div>
+                  <div className="text-[24px] text-[#111827]">{formatScore(displayAIInterviewScore, 1)}</div>
                 </div>
                 <div
                   onClick={() => handleStageClick('github')}
@@ -363,7 +436,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                     GitHub
                     <Eye size={12} className="text-gray-400" />
                   </div>
-                  <div className="text-[24px] text-[#111827]">{candidate.scores.github}</div>
+                  <div className="text-[24px] text-[#111827]">{showGithubProfileLock ? 'Pending' : formatScore(displayGithubScore, 1)}</div>
                 </div>
               </div>
 
@@ -456,11 +529,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                     key={tab.id}
                     onClick={() => {
                       if (tab.locked) return;
-                      if (tab.id === 'knowledge-graph') {
-                        onViewKnowledgeGraph?.();
-                      } else {
-                        setActiveTab(tab.id as TabType);
-                      }
+                      setActiveTab(tab.id as TabType);
                     }}
                     title={tab.locked ? 'This stage has not been reached yet' : undefined}
                     className={`flex items-center gap-2 px-[20px] py-[14px] font-['Arimo',sans-serif] text-[14px] border-b-2 transition-colors whitespace-nowrap ${tab.locked
@@ -483,6 +552,72 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
           <div className="p-8">
             {activeTab === 'overview' && (
               <div className="space-y-6">
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-[#111827]">Match Score Breakdown</h3>
+                    {applicationId && (
+                      <button
+                        onClick={() => window.open(`/recruiter/candidates/${candidateId}/qag-audit?applicationId=${applicationId}`, '_blank')}
+                        className="h-[34px] px-[12px] rounded-[8px] border border-[#d1d5db] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[12px] text-[#374151]"
+                      >
+                        Open QAG Audit
+                      </button>
+                    )}
+                  </div>
+                  <div className="bg-white border border-[#e5e7eb] rounded-xl p-6">
+                    {scoreBreakdownLoading ? (
+                      <div className="flex items-center gap-2 text-[#6b7280] font-['Arimo',sans-serif] text-[14px]">
+                        <Loader2 size={16} className="animate-spin" />
+                        Loading score breakdown...
+                      </div>
+                    ) : !scoreBreakdown ? (
+                      <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                        Score breakdown is unavailable for this candidate context.
+                      </p>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Final Pre-Score</p>
+                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.pre_score_final ?? scoreBreakdown.match_score, 1)}</p>
+                          </div>
+                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Semantic Fit</p>
+                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.semantic_fit_score, 1)}</p>
+                          </div>
+                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Skills + Experience</p>
+                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.skills_experience_score, 1)}</p>
+                          </div>
+                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">JD Quality</p>
+                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.jd_quality_score, 1)}</p>
+                          </div>
+                        </div>
+
+                        {scoreBreakdown.jd_quality_cap_applied && (
+                          <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3">
+                            <p className="font-['Arimo',sans-serif] text-[13px] text-amber-800">
+                              JD quality cap applied at {scoreBreakdown.jd_quality_cap ?? 'N/A'}.
+                            </p>
+                          </div>
+                        )}
+
+                        {Array.isArray(scoreBreakdown.score_explanation) && scoreBreakdown.score_explanation.length > 0 && (
+                          <div>
+                            <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] mb-2">Top reasons</p>
+                            <ul className="space-y-1">
+                              {scoreBreakdown.score_explanation.map((line, idx) => (
+                                <li key={idx} className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">• {line}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Recruitment Pipeline Progress */}
                 <div>
                   <h3 className="text-[#111827] mb-4">Recruitment Progress</h3>
@@ -876,75 +1011,53 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                   )}
                 </div>
 
-                {/* Contribution Activity Graph */}
+                {/* Contribution Activity Signals */}
                 <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
-                  <h4 className="text-[#111827] text-sm font-medium mb-4">Contribution Activity (Last 12 Months)</h4>
-                  <div className="space-y-2">
-                    {/* Simple contribution heat map */}
-                    <div className="flex items-center gap-1">
-                      <div className="text-xs text-[#6b7280] w-12">Mon</div>
-                      <div className="flex gap-1">
-                        {Array.from({ length: 52 }, (_, i) => (
-                          <div
-                            key={i}
-                            className="w-3 h-3 rounded-sm"
-                            style={{
-                              backgroundColor:
-                                i % 7 === 0 ? '#ebedf0' :
-                                  i % 5 === 0 ? '#9be9a8' :
-                                    i % 3 === 0 ? '#40c463' :
-                                      i % 2 === 0 ? '#30a14e' : '#216e39'
-                            }}
-                          />
-                        ))}
-                      </div>
+                  <h4 className="text-[#111827] text-sm font-medium mb-4">Contribution Activity Signals (Last 12 Months)</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Contributions</div>
+                      <div className="text-lg font-semibold text-[#111827]">{candidate.githubStats?.contributionsLastYear ?? 0}</div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <div className="text-xs text-[#6b7280] w-12">Wed</div>
-                      <div className="flex gap-1">
-                        {Array.from({ length: 52 }, (_, i) => (
-                          <div
-                            key={i}
-                            className="w-3 h-3 rounded-sm"
-                            style={{
-                              backgroundColor:
-                                i % 6 === 0 ? '#ebedf0' :
-                                  i % 4 === 0 ? '#9be9a8' :
-                                    i % 3 === 0 ? '#40c463' :
-                                      i % 2 === 0 ? '#30a14e' : '#216e39'
-                            }}
-                          />
-                        ))}
-                      </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Recent Events</div>
+                      <div className="text-lg font-semibold text-[#111827]">{recentGithubActivity.length}</div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <div className="text-xs text-[#6b7280] w-12">Fri</div>
-                      <div className="flex gap-1">
-                        {Array.from({ length: 52 }, (_, i) => (
-                          <div
-                            key={i}
-                            className="w-3 h-3 rounded-sm"
-                            style={{
-                              backgroundColor:
-                                i % 5 === 0 ? '#ebedf0' :
-                                  i % 4 === 0 ? '#9be9a8' :
-                                    i % 3 === 0 ? '#40c463' :
-                                      i % 2 === 0 ? '#30a14e' : '#216e39'
-                            }}
-                          />
-                        ))}
-                      </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Source</div>
+                      <div className="text-sm font-semibold text-[#111827]">{candidate.githubAnalysis?.contributionStats?.source || 'unknown'}</div>
+                    </div>
+                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                      <div className="text-[11px] text-[#6b7280]">Window</div>
+                      <div className="text-sm font-semibold text-[#111827]">{candidate.githubAnalysis?.contributionStats?.window_days || 365} days</div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 mt-4 text-xs text-[#6b7280]">
-                    <span>Less</span>
-                    <div className="w-3 h-3 rounded-sm bg-[#ebedf0]" />
-                    <div className="w-3 h-3 rounded-sm bg-[#9be9a8]" />
-                    <div className="w-3 h-3 rounded-sm bg-[#40c463]" />
-                    <div className="w-3 h-3 rounded-sm bg-[#30a14e]" />
-                    <div className="w-3 h-3 rounded-sm bg-[#216e39]" />
-                    <span>More</span>
-                  </div>
+
+                  {candidate.githubAnalysis?.contributionStats?.breakdown ? (
+                    <div className="space-y-2">
+                      {Object.entries(candidate.githubAnalysis.contributionStats.breakdown)
+                        .filter(([, value]) => Number(value || 0) > 0)
+                        .slice(0, 6)
+                        .map(([eventType, value]) => {
+                          const count = Number(value || 0);
+                          const maxBase = Math.max(1, Number(candidate.githubStats?.contributionsLastYear || count));
+                          const width = Math.max(4, Math.min(100, (count / maxBase) * 100));
+                          return (
+                            <div key={eventType}>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[12px] text-[#374151]">{eventType.replace('_', ' ')}</span>
+                                <span className="text-[12px] text-[#6b7280]">{count}</span>
+                              </div>
+                              <div className="w-full h-2 bg-[#f3f4f6] rounded-full overflow-hidden">
+                                <div className="h-full rounded-full bg-[#10b981]" style={{ width: `${width}%` }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-[#6b7280]">No contribution breakdown available yet.</p>
+                  )}
                 </div>
 
                 {/* Language Breakdown */}
@@ -1416,9 +1529,9 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                           <CheckCircle size={24} className="text-white" />
                         </div>
                         <div className="flex-1">
-                          <h3 className="text-emerald-900 mb-2">Hiring Decision: APPROVED</h3>
+                          <h3 className="text-emerald-900 mb-2">Final Decision: Completed</h3>
                           <p className="text-emerald-800 text-sm">
-                            Candidate has been approved and selected for the position based on comprehensive evaluation across all assessment criteria.
+                            This report is generated from recorded pipeline outcomes, scoring signals, and available analysis artifacts.
                           </p>
                         </div>
                       </div>
@@ -1445,6 +1558,14 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                           <div className="text-sm text-gray-500 mb-2">Position</div>
                           <div className="text-gray-900">{candidate.positionTitle || '—'}</div>
                         </div>
+                        <div>
+                          <div className="text-sm text-gray-500 mb-2">Pre-Score</div>
+                          <div className="text-gray-900">{formatScore(scoreBreakdown?.pre_score_final ?? scoreBreakdown?.match_score, 1)}</div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-500 mb-2">GitHub Score</div>
+                          <div className="text-gray-900">{showGithubProfileLock ? 'Pending' : formatScore(displayGithubScore, 1)}</div>
+                        </div>
                       </div>
                     </div>
 
@@ -1468,7 +1589,11 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                             />
                           </div>
                           <p className="text-xs text-gray-500 mt-1">
-                            Demonstrated exceptional proficiency in React, TypeScript, and system design
+                            {Number(candidate.scores.assessment || 0) >= 80
+                              ? 'Assessment performance is strong for this role.'
+                              : Number(candidate.scores.assessment || 0) >= 60
+                                ? 'Assessment performance is moderate and may need follow-up.'
+                                : 'Assessment performance is below target and requires deeper review.'}
                           </p>
                         </div>
 
@@ -1487,7 +1612,11 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                             />
                           </div>
                           <p className="text-xs text-gray-500 mt-1">
-                            Strong communication skills and cultural fit. Excellent problem-solving approach
+                            {Number(candidate.scores.aiInterview || 0) >= 80
+                              ? 'Interview signals indicate high communication and reasoning quality.'
+                              : Number(candidate.scores.aiInterview || 0) >= 60
+                                ? 'Interview signals are mixed; validate with live interview notes.'
+                                : 'Interview signals are currently weak and need additional verification.'}
                           </p>
                         </div>
 
@@ -1506,7 +1635,9 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                             />
                           </div>
                           <p className="text-xs text-gray-500 mt-1">
-                            Consistent contribution history with high-quality code reviews and documentation
+                            {showGithubProfileLock
+                              ? 'GitHub analysis is still pending.'
+                              : 'GitHub score is calculated from repository confidence, activity, and quality indicators.'}
                           </p>
                         </div>
                       </div>
@@ -1520,22 +1651,12 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                           <h3 className="text-[#111827]">Key Strengths</h3>
                         </div>
                         <ul className="space-y-2">
-                          <li className="flex items-start gap-2">
-                            <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                            <span className="text-sm text-gray-700">8+ years of React and TypeScript experience</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                            <span className="text-sm text-gray-700">Led microservices architecture serving 10M+ users</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                            <span className="text-sm text-gray-700">Strong system design and scalability expertise</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
-                            <span className="text-sm text-gray-700">Excellent communication and leadership skills</span>
-                          </li>
+                          {(strengths.length > 0 ? strengths : ['No verified strengths available from current data.']).map((item, idx) => (
+                            <li key={idx} className="flex items-start gap-2">
+                              <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                              <span className="text-sm text-gray-700">{item}</span>
+                            </li>
+                          ))}
                         </ul>
                       </div>
 
@@ -1545,18 +1666,12 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                           <h3 className="text-[#111827]">Development Areas</h3>
                         </div>
                         <ul className="space-y-2">
-                          <li className="flex items-start gap-2">
-                            <span className="w-4 h-4 rounded-full bg-amber-100 mt-0.5 flex-shrink-0" />
-                            <span className="text-sm text-gray-700">Could benefit from more Kubernetes hands-on experience</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <span className="w-4 h-4 rounded-full bg-amber-100 mt-0.5 flex-shrink-0" />
-                            <span className="text-sm text-gray-700">Limited exposure to our specific tech stack (Python/Django)</span>
-                          </li>
-                          <li className="flex items-start gap-2">
-                            <span className="w-4 h-4 rounded-full bg-amber-100 mt-0.5 flex-shrink-0" />
-                            <span className="text-sm text-gray-700">Recommend onboarding support for internal tools</span>
-                          </li>
+                          {(developmentAreas.length > 0 ? developmentAreas : ['No material development risks were detected from current data.']).map((item, idx) => (
+                            <li key={idx} className="flex items-start gap-2">
+                              <span className="w-4 h-4 rounded-full bg-amber-100 mt-0.5 flex-shrink-0" />
+                              <span className="text-sm text-gray-700">{item}</span>
+                            </li>
+                          ))}
                         </ul>
                       </div>
                     </div>
@@ -1565,13 +1680,25 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
                     <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
                       <h3 className="text-[#111827] mb-3">Final Recommendation</h3>
                       <p className="text-sm text-gray-700 leading-relaxed mb-4">
-                        After comprehensive evaluation across all assessment criteria, {candidate.name} has demonstrated exceptional technical proficiency, strong communication skills, and cultural alignment with our organization. The candidate's extensive experience with React and microservices architecture, combined with proven leadership in scaling systems to serve millions of users, makes them an ideal fit for the Senior Frontend Developer position.
+                        This recommendation is generated from current pipeline outcomes and score signals for {candidate.name}. Pre-score is {formatScore(scoreBreakdown?.pre_score_final ?? scoreBreakdown?.match_score, 1)}, assessment is {formatScore(candidate.scores.assessment, 1)}, AI interview is {formatScore(candidate.scores.aiInterview, 1)}, and GitHub is {showGithubProfileLock ? 'pending' : formatScore(displayGithubScore, 1)}.
                       </p>
-                      <p className="text-sm text-gray-700 leading-relaxed mb-4">
-                        While there are minor areas for development, particularly in Kubernetes and our internal tech stack, these can be easily addressed through our structured onboarding program. The candidate's strong learning ability and proven track record of quickly adapting to new technologies minimizes any concerns in this area.
-                      </p>
+                      {recommendationReasons.length > 0 && (
+                        <div className="mb-4">
+                          <p className="text-sm text-gray-700 mb-2"><strong>Top score reasons:</strong></p>
+                          <ul className="space-y-1">
+                            {recommendationReasons.map((reason, idx) => (
+                              <li key={idx} className="text-sm text-gray-700">• {reason}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <p className="text-sm text-gray-700 leading-relaxed">
-                        <strong>Recommendation:</strong> Strongly recommend proceeding with offer. Suggested salary range: $150,000 - $170,000 based on market benchmarks and candidate experience. Start date confirmed for March 15, 2024.
+                        <strong>Recommendation:</strong>{' '}
+                        {Number(scoreBreakdown?.pre_score_final ?? scoreBreakdown?.match_score ?? 0) >= 75
+                          ? 'Proceed to offer discussion, subject to final recruiter confirmation.'
+                          : Number(scoreBreakdown?.pre_score_final ?? scoreBreakdown?.match_score ?? 0) >= 60
+                            ? 'Proceed with caution and collect additional evaluation evidence before offer.'
+                            : 'Do not advance without a detailed manual review of weak scoring areas.'}
                       </p>
                     </div>
                   </>
@@ -1820,7 +1947,7 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
         </Dialog>
       </div>
 
-      {showGithubProfileLock && (
+      {showGithubProfileLock && activeTab === 'github' && (
         <div className="fixed inset-0 z-40 bg-black/35 backdrop-blur-[1px] flex items-center justify-center px-4">
           <div className="w-full max-w-[620px] rounded-2xl border border-[#e5e7eb] bg-white shadow-2xl p-8 text-center">
             <div className="mx-auto mb-4 w-14 h-14 rounded-full bg-[#eef2ff] flex items-center justify-center">

@@ -1,5 +1,5 @@
 import { API_URL, fetchAPI } from './client';
-import type { Project, JobPosition, PositionGroup, ClosedProject } from './types';
+import type { Project, JobPosition, PositionGroup, ClosedProject, ApplicationScoreBreakdown } from './types';
 
 export const recruiterService = {
     // Dashboard
@@ -106,6 +106,8 @@ export const recruiterService = {
     getGroupCandidates: async () => fetchAPI('/groups/candidates/all'),
 
     getCandidate: async (candidateId: string) => fetchAPI<any>(`/candidates/${candidateId}`),
+    getApplicationScoreBreakdown: async (applicationId: string) =>
+        fetchAPI<ApplicationScoreBreakdown>(`/recruiter/applications/${applicationId}/score-breakdown`),
     startCandidateGithubAnalysis: async (candidateId: string) =>
         fetchAPI<{ job_id: string; status: string; message: string }>(`/candidates/${candidateId}/github-analysis/start`, {
             method: 'POST'
@@ -147,8 +149,6 @@ export const recruiterService = {
             token,
         };
     },
-
-    getKnowledgeGraphData: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/knowledge-graph`),
 
     getCandidateSkills: async (candidateIds: number[]) => {
         const res = await fetch(`${API_URL}/candidates/skills`, {
@@ -257,6 +257,24 @@ export const recruiterService = {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status, review_notes: reviewNotes })
+        });
+    },
+
+    getPositionHDEvalQAG: async (positionId: string) => {
+        return fetchAPI<any>(`/recruiter/positions/${positionId}/hdeval-qag`);
+    },
+
+    updatePositionHDEvalQAG: async (positionId: string, questions: any[]) => {
+        return fetchAPI<any>(`/recruiter/positions/${positionId}/hdeval-qag`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ questions })
+        });
+    },
+
+    approvePositionHDEvalQAG: async (positionId: string) => {
+        return fetchAPI<any>(`/recruiter/positions/${positionId}/hdeval-qag/approve`, {
+            method: 'POST'
         });
     },
 
@@ -520,13 +538,16 @@ export const recruiterService = {
     stopAllVideoTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-video', { method: 'POST' }),
     stopAllQuestionImportTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-question-import', { method: 'POST' }),
     stopAllGithubAnalysisTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-github-analysis', { method: 'POST' }),
+    stopAllQagTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-qag', { method: 'POST' }),
     stopVideoTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-video/${taskId}`, { method: 'POST' }),
     stopQuestionImportTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-question-import/${taskId}`, { method: 'POST' }),
     stopGithubAnalysisTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-github-analysis/${taskId}`, { method: 'POST' }),
-    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import' | 'github_analysis') =>
+    stopQagTask: async (taskId: string) =>
+        fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-qag/${taskId}`, { method: 'POST' }),
+    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import' | 'github_analysis' | 'qag') =>
         fetchAPI<{ message: string }>(
             `/background-tasks/${taskId}?task_category=${encodeURIComponent(taskCategory)}`,
             { method: 'DELETE' }

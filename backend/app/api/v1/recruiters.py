@@ -28,6 +28,7 @@ from app.schemas import (
     RecruiterAnalyticsResponse,
     GroupCreateRequest,
     CandidateUploadResponse,
+    ApplicationScoreBreakdownResponse,
     GroupDetailResponse,
     FilterTemplateResponse,
     FilterTemplateCreate,
@@ -37,6 +38,7 @@ from app.schemas import (
 from app.services import CandidateService, GroupService
 from app.models import CandidateApplication, CandidateProfile, CVAnalysis, Position, GitHubAnalysisJob
 from worker.tasks.github_analysis import run_github_analysis
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/recruiter", tags=["Recruiters"])
 
@@ -229,6 +231,44 @@ async def get_position_groups(
     return await service.get_position_groups(position_id)
 
 
+class PositionQAGUpdateRequest(BaseModel):
+    questions: list[dict]
+
+
+@router.get("/positions/{position_id}/hdeval-qag", response_model=dict)
+async def get_position_hdeval_qag(
+    position_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Get generated 50 yes/no HD Eval + QAG questions for review."""
+    service = RecruiterService(session, current_user)
+    return await service.get_position_hdeval_qag(position_id)
+
+
+@router.put("/positions/{position_id}/hdeval-qag", response_model=dict)
+async def update_position_hdeval_qag(
+    position_id: UUID,
+    data: PositionQAGUpdateRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Edit generated yes/no question set before final approval."""
+    service = RecruiterService(session, current_user)
+    return await service.update_position_hdeval_qag(position_id, data.questions)
+
+
+@router.post("/positions/{position_id}/hdeval-qag/approve", response_model=dict)
+async def approve_position_hdeval_qag(
+    position_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Approve yes/no QAG set and recompute candidate scores."""
+    service = RecruiterService(session, current_user)
+    return await service.approve_position_hdeval_qag(position_id)
+
+
 # =============================================================================
 # APPLICATIONS
 # =============================================================================
@@ -260,6 +300,17 @@ async def update_application(
     """Update application status."""
     service = RecruiterService(session, current_user)
     return await service.update_application_status(application_id, data)
+
+
+@router.get("/applications/{application_id}/score-breakdown", response_model=ApplicationScoreBreakdownResponse)
+async def get_application_score_breakdown(
+    application_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Get dedicated pre-score breakdown for one application."""
+    service = RecruiterService(session, current_user)
+    return await service.get_application_score_breakdown(application_id)
 
 
 # =============================================================================
@@ -309,7 +360,6 @@ async def list_assigned_requests(
     return await service.list_assigned_requests()
 
 
-from pydantic import BaseModel
 class ReviewRequest(BaseModel):
     status: str
     review_notes: str | None = None

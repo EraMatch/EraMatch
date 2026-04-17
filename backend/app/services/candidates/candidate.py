@@ -9,10 +9,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from sqlalchemy import text
 
-from app.models import CandidateProfile, CandidateApplication, User
+from app.models import CandidateProfile, CandidateApplication, User, Position, CVAnalysis, GitHubAnalysis
 from app.schemas import CandidateCreate, CandidateUpdate, ApplicationCreate, CandidateResponse, CandidateUploadResponse
 from app.core.security import hash_password
 from app.services.email import EmailService
+from app.services.prescore import PreScoreService
 import secrets
 import string
 
@@ -160,7 +161,6 @@ class CandidateService:
             cv = cv_res.scalar_one_or_none()
             if cv:
                 cv_data = cv
-                scores["github"] = float(cv.match_score or 0.0) # Using match score as proxy for GH for now
                 parsed = cv.parsed_data or {}
                 github_profile = cv.github_profile or parsed.get("github_profile") or {}
 
@@ -259,6 +259,13 @@ class CandidateService:
                         "assignedQuestionStats": None,
                     }
 
+                    overall_from_analysis = analysis_data.get("overall_github_score")
+                    if overall_from_analysis is not None:
+                        try:
+                            scores["github"] = round(float(overall_from_analysis), 1)
+                        except Exception:
+                            pass
+
                     top_repos = analysis_data.get("top_repositories") or analysis_data.get("topRepos")
                     if isinstance(top_repos, list):
                         github_stats["topRepos"] = top_repos
@@ -273,6 +280,13 @@ class CandidateService:
                     "keywords": github_personalization.get("keywords", []),
                     "matched_topics": github_personalization.get("matched_topics", []),
                 }
+
+                # Fallback score when synthesis overall is absent.
+                if scores["github"] <= 0:
+                    contribution_score = gh.contribution_score if gh and gh.contribution_score is not None else 0
+                    code_quality_score = gh.code_quality_score if gh and gh.code_quality_score is not None else 0
+                    if contribution_score or code_quality_score:
+                        scores["github"] = round((float(contribution_score) + float(code_quality_score)) / 2.0, 1)
 
             latest_assessment_res = await self.session.execute(
                 select(OngoingAssessment)
@@ -439,6 +453,87 @@ class CandidateService:
         self.session.add(application)
         await self.session.commit()
         await self.session.refresh(application)
+
+        # Ensure we have an ingestion-time pre-score snapshot for this application.
+        position_res = await self.session.execute(
+            select(Position).where(
+                Position.id == data.position_id,
+                Position.organization_id == self.organization_id,
+                Position.is_deleted == False,
+            )
+        )
+        position = position_res.scalar_one_or_none()
+
+        candidate_res = await self.session.execute(
+            select(CandidateProfile).where(CandidateProfile.id == candidate_id)
+        )
+        candidate = candidate_res.scalar_one_or_none()
+
+        github_res = await self.session.execute(
+            select(GitHubAnalysis).where(
+                GitHubAnalysis.candidate_id == candidate_id,
+                GitHubAnalysis.organization_id == self.organization_id,
+            )
+        )
+        github = github_res.scalar_one_or_none()
+
+        if position and candidate:
+            cv_res = await self.session.execute(
+                select(CVAnalysis).where(CVAnalysis.application_id == application.id)
+            )
+            cv = cv_res.scalar_one_or_none()
+
+            if not cv:
+                cv = CVAnalysis(
+                    application_id=application.id,
+                    organization_id=self.organization_id,
+                    cv_file_url=data.resume_url,
+                    parsed_data={},
+                    skills=[],
+                    experience_years=0,
+                    match_score=0,
+                )
+
+            parsed_data = cv.parsed_data if isinstance(cv.parsed_data, dict) else {}
+            parsed_data.setdefault("contact_info", {})
+            parsed_data["contact_info"]["email"] = candidate.email
+            parsed_data.setdefault("summary", f"Candidate profile for {candidate.full_name}")
+
+            scorer = PreScoreService()
+            jd_critic_result = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else None
+            if not jd_critic_result:
+                jd_critic_result = await scorer.run_position_jd_critic(
+                    job_title=position.job_title,
+                    job_description=position.job_description,
+                    required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
+                    years_of_experience=position.years_of_experience,
+                )
+                position.jd_hdeval_qag = jd_critic_result
+                self.session.add(position)
+
+            prescore = await scorer.score_candidate_prescore(
+                job_title=position.job_title,
+                job_description=position.job_description,
+                required_skills=position.required_skills,
+                years_of_experience=position.years_of_experience,
+                candidate_skills=cv.skills or [],
+                candidate_experience_years=float(cv.experience_years or 0.0),
+                candidate_parsed_data=parsed_data,
+                github_analysis_data={
+                    "contribution_score": github.contribution_score if github else None,
+                    "code_quality_score": github.code_quality_score if github else None,
+                    "repo_count": github.repo_count if github else None,
+                },
+                jd_critic_result=jd_critic_result,
+            )
+
+            parsed_data["prescore_v2"] = prescore
+            cv.parsed_data = parsed_data
+            cv.match_score = prescore["pre_score_final"]
+            cv.analyzed_at = datetime.utcnow()
+
+            self.session.add(cv)
+            await self.session.commit()
         return application
 
     async def list_applications_by_candidate(self, candidate_id: UUID) -> list[CandidateApplication]:
@@ -448,21 +543,6 @@ class CandidateService:
         )
         result = await self.session.execute(query)
         return result.scalars().all()
-
-    async def get_knowledge_graph(self, candidate_id: UUID) -> dict:
-        """Get knowledge graph data for a candidate."""
-        return {
-            "nodes": [
-                {"id": "1", "label": "Python", "type": "skill", "value": 90},
-                {"id": "2", "label": "FastAPI", "type": "skill", "value": 85},
-                {"id": "3", "label": "React", "type": "skill", "value": 70},
-                {"id": "4", "label": "5 Years Exp", "type": "experience", "value": 100},
-            ],
-            "edges": [
-                {"source": "1", "target": "2", "label": "used in"},
-                {"source": "3", "target": "2", "label": "connects to"},
-            ]
-        }
 
     async def get_suspect_review(self, candidate_id: UUID, application_id: UUID | None = None) -> dict:
         """Get real suspect-review timeline from proctoring flags."""

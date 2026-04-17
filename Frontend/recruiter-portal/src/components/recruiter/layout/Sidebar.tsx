@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck, AlertTriangle, Activity, Video, User, ShieldAlert, WandSparkles, ChevronRight } from 'lucide-react';
+import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck, AlertTriangle, Activity, Video, User, ShieldAlert, WandSparkles, ChevronRight, Sparkles } from 'lucide-react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../../../services/api';
 import { authService } from '../../../services/auth.service';
@@ -106,6 +106,7 @@ export function Sidebar() {
   const runningTaskCounts = useMemo(() => {
     const videoTasks = runningTasks.filter((task) => task.task_category === 'video');
     const questionImportTasks = runningTasks.filter((task) => task.task_category === 'question_import' || task.task_category === 'github_analysis');
+    const qagTasks = runningTasks.filter((task) => task.task_category === 'qag');
 
     const profileTasks = questionImportTasks.filter((task) => !isGenerationTask(task) && !isExtractionTask(task));
     const questionGenerationAndExtraction = questionImportTasks.filter((task) => isGenerationTask(task) || isExtractionTask(task));
@@ -116,6 +117,7 @@ export function Sidebar() {
       profileProcessing: profileTasks.length,
       videoRecording: videoTasks.filter((task) => isAntiCheatingTask(task)).length,
       questionGenerationExtraction: questionGenerationAndExtraction.length,
+      qagProcessing: qagTasks.length,
     };
   }, [runningTasks]);
 
@@ -236,6 +238,13 @@ export function Sidebar() {
                       <span>Question Generation & Extraction</span>
                     </div>
                     <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.questionGenerationExtraction}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
+                    <div className="flex items-center gap-2 text-[13px] text-[#334155]">
+                      <Sparkles size={14} />
+                      <span>HD Eval + QAG</span>
+                    </div>
+                    <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.qagProcessing}</span>
                   </div>
                 </div>
 

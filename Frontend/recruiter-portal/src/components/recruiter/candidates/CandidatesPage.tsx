@@ -353,7 +353,9 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
                       onClick={(e) => {
                         // Prevent navigation if clicking checkbox
                         if ((e.target as HTMLElement).closest('input[type="checkbox"]')) return;
-                        navigate(`/recruiter/candidates/${candidate.id}`);
+                        const applicationId = candidate.applicationId || candidate.application_id;
+                        const query = applicationId ? `?applicationId=${encodeURIComponent(String(applicationId))}` : '';
+                        navigate(`/recruiter/candidates/${candidate.id}${query}`);
                       }}
                       className="border-b border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors cursor-pointer"
                     >

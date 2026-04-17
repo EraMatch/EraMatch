@@ -4,16 +4,24 @@ import { Switch } from '../../ui/switch';
 import { Badge } from '../../ui/badge';
 import { AdvancedFilterDrawer } from '../candidates/AdvancedFilterDrawer';
 import { api } from '../../../services/api';
+import type { ApplicationScoreBreakdown } from '../../../services/types';
 
 interface Candidate {
   id: string;
+  applicationId?: string;
   name: string;
   email: string;
   experience: number;
   location: string;
   skills: string[];
   match: number;
-  aiScore?: number;
+  pre_score_final?: number | null;
+  semantic_fit_score?: number | null;
+  skills_experience_score?: number | null;
+  optional_profile_boost?: number | null;
+  jd_quality_score?: number | null;
+  jd_quality_status?: string | null;
+  score_explanation?: string[];
   starred: boolean;
   // Detailed fields
   companies?: string[];
@@ -35,6 +43,11 @@ interface GroupCreationPageProps {
     aiRankingUsed: boolean;
     nlpQuery?: string;
   }) => void;
+}
+
+interface IntentConstraints {
+  minYears: number | null;
+  mustHaveSkills: string[];
 }
 
 export function GroupCreationPage({
@@ -95,6 +108,14 @@ export function GroupCreationPage({
   const [aiRankingEnabled, setAiRankingEnabled] = useState(false);
   const [nlpQuery, setNlpQuery] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const [aiSelectionInfo, setAiSelectionInfo] = useState('');
+
+  // View Why modal
+  const [viewWhyOpen, setViewWhyOpen] = useState(false);
+  const [viewWhyCandidate, setViewWhyCandidate] = useState<Candidate | null>(null);
+  const [viewWhyLoading, setViewWhyLoading] = useState(false);
+  const [viewWhyBreakdown, setViewWhyBreakdown] = useState<ApplicationScoreBreakdown | null>(null);
+  const [viewWhyError, setViewWhyError] = useState<string | null>(null);
 
   // Selection
   const [selectedCandidates, setSelectedCandidates] = useState<Set<string>>(new Set());
@@ -104,6 +125,169 @@ export function GroupCreationPage({
   // Group Details
   const [groupName, setGroupName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+
+  const clampScore = (value: number) => Math.max(0, Math.min(100, value));
+
+  const normalize = (value: string) => value.toLowerCase().trim();
+
+  const buildSkillLexicon = (source: Candidate[]) => {
+    const set = new Set<string>();
+    for (const c of source) {
+      for (const s of c.skills || []) {
+        const cleaned = normalize(String(s));
+        if (cleaned) set.add(cleaned);
+      }
+    }
+    return Array.from(set);
+  };
+
+  const tokenizeQuery = (query: string): string[] => {
+    const stopWords = new Set([
+      'the', 'a', 'an', 'for', 'with', 'and', 'or', 'to', 'of', 'in', 'on',
+      'candidate', 'candidates', 'want', 'need', 'looking', 'group', 'role', 'position'
+    ]);
+    return query
+      .toLowerCase()
+      .split(/[^a-z0-9+#.]+/)
+      .map(t => t.trim())
+      .filter(t => t.length >= 2 && !stopWords.has(t));
+  };
+
+  const extractIntentConstraints = (query: string, source: Candidate[]): IntentConstraints => {
+    if (!query.trim()) {
+      return { minYears: null, mustHaveSkills: [] };
+    }
+
+    const lexicon = buildSkillLexicon(source);
+    const lower = normalize(query);
+
+    const minYearsMatch = lower.match(/(?:at\s*least|min(?:imum)?|>=?)\s*(\d{1,2})\s*(?:\+)?\s*(?:years|yrs|year)/i)
+      || lower.match(/(\d{1,2})\s*(?:\+)?\s*(?:years|yrs|year)/i);
+    const minYears = minYearsMatch ? Number(minYearsMatch[1]) : null;
+
+    const mustSkillSet = new Set<string>();
+
+    // Detect explicit MUST/REQUIRED phrases and capture nearby text.
+    const explicitSegments = [
+      ...lower.matchAll(/(?:must have|required|required skills|need|needs)\s*[:\-]?\s*([^.;\n]+)/g),
+    ];
+
+    for (const seg of explicitSegments) {
+      const area = seg[1] || '';
+      for (const skill of lexicon) {
+        if (area.includes(skill)) mustSkillSet.add(skill);
+      }
+    }
+
+    // Also catch quoted phrases that map to skills.
+    const quotedSegments = [...lower.matchAll(/"([^"]+)"|'([^']+)'/g)]
+      .map(m => (m[1] || m[2] || '').trim())
+      .filter(Boolean);
+
+    for (const quoted of quotedSegments) {
+      for (const skill of lexicon) {
+        if (quoted.includes(skill) || skill.includes(quoted)) mustSkillSet.add(skill);
+      }
+    }
+
+    // Fallback: if explicit list not found, use top matching lexicon skills from query.
+    if (mustSkillSet.size === 0) {
+      const matchedSkills = lexicon.filter(skill => lower.includes(skill));
+      matchedSkills.slice(0, 6).forEach(skill => mustSkillSet.add(skill));
+    }
+
+    return {
+      minYears,
+      mustHaveSkills: Array.from(mustSkillSet),
+    };
+  };
+
+  const meetsHardConstraints = (candidate: Candidate, constraints: IntentConstraints) => {
+    const meetsYears = constraints.minYears == null || Number(candidate.experience || 0) >= constraints.minYears;
+    const candidateSkills = (candidate.skills || []).map(s => normalize(String(s)));
+    const meetsSkills = constraints.mustHaveSkills.every(requiredSkill =>
+      candidateSkills.some(cs => cs.includes(requiredSkill) || requiredSkill.includes(cs))
+    );
+    return meetsYears && meetsSkills;
+  };
+
+  const getSemanticScore = (candidate: Candidate, query: string): number => {
+    if (!query.trim()) return 0;
+
+    const tokens = tokenizeQuery(query);
+    if (tokens.length === 0) return 0;
+
+    const fields = {
+      skills: (candidate.skills || []).join(' ').toLowerCase(),
+      titles: (candidate.job_titles || []).join(' ').toLowerCase(),
+      companies: (candidate.companies || []).join(' ').toLowerCase(),
+      location: (candidate.location || '').toLowerCase(),
+      education: [ ...(candidate.universities || []), ...(candidate.degrees || []) ].join(' ').toLowerCase(),
+      profile: `${candidate.name} ${candidate.email}`.toLowerCase(),
+    };
+
+    const scoreField = (text: string, weight: number) => {
+      if (!text) return 0;
+      let hits = 0;
+      for (const token of tokens) {
+        if (text.includes(token)) hits += 1;
+      }
+      return (hits / tokens.length) * weight;
+    };
+
+    const minYearsMatch = query.match(/(\d{1,2})\s*\+?\s*(years|yrs|year)/i);
+    const yearsTarget = minYearsMatch ? Number(minYearsMatch[1]) : null;
+    const experienceScore = yearsTarget == null
+      ? 0
+      : (candidate.experience >= yearsTarget ? 10 : Math.max(0, (candidate.experience / Math.max(yearsTarget, 1)) * 10));
+
+    const weighted =
+      scoreField(fields.skills, 40) +
+      scoreField(fields.titles, 20) +
+      scoreField(fields.companies, 12) +
+      scoreField(fields.location, 10) +
+      scoreField(fields.education, 8) +
+      scoreField(fields.profile, 10) +
+      experienceScore;
+
+    return clampScore(weighted);
+  };
+
+  const getAiBaseScore = (candidate: Candidate) => {
+    if (candidate.pre_score_final == null) return null;
+    return clampScore(Number(candidate.pre_score_final));
+  };
+
+  const getDisplayScore = (candidate: Candidate) => {
+    if (aiRankingEnabled) {
+      const base = getAiBaseScore(candidate) ?? clampScore(Number(candidate.match || 0));
+      if (!nlpQuery.trim()) return base;
+      const semantic = getSemanticScore(candidate, nlpQuery);
+      return clampScore(base * 0.45 + semantic * 0.55);
+    }
+    return clampScore(Number(candidate.match || 0));
+  };
+
+  const rankCandidates = (source: Candidate[], useAi: boolean, query: string) => {
+    if (!useAi) {
+      return [...source].sort((a, b) => clampScore(Number(b.match || 0)) - clampScore(Number(a.match || 0)));
+    }
+    return [...source].sort((a, b) => {
+      const baseA = getAiBaseScore(a) ?? clampScore(Number(a.match || 0));
+      const baseB = getAiBaseScore(b) ?? clampScore(Number(b.match || 0));
+      if (!query.trim()) return baseB - baseA;
+      const semanticA = getSemanticScore(a, query);
+      const semanticB = getSemanticScore(b, query);
+      const aiA = clampScore(baseA * 0.45 + semanticA * 0.55);
+      const aiB = clampScore(baseB * 0.45 + semanticB * 0.55);
+      const aHard = meetsHardConstraints(a, intentConstraints);
+      const bHard = meetsHardConstraints(b, intentConstraints);
+
+      // Strict intent ranking: candidates satisfying hard constraints are prioritized.
+      if (aHard !== bHard) return aHard ? -1 : 1;
+      return aiB - aiA;
+    });
+  };
 
   // Apply manual filters from advanced drawer
   const filteredCandidates = useMemo(() => {
@@ -149,30 +333,66 @@ export function GroupCreationPage({
     return filtered;
   }, [allCandidates, advancedFilters]);
 
+  const intentConstraints = useMemo(
+    () => extractIntentConstraints(nlpQuery, filteredCandidates.length > 0 ? filteredCandidates : allCandidates),
+    [nlpQuery, filteredCandidates, allCandidates],
+  );
+
   // Apply AI ranking or default sorting
   const displayCandidates = useMemo(() => {
-    if (!aiRankingEnabled) {
-      // Sort by match score descending by default
-      return [...filteredCandidates].sort((a, b) => b.match - a.match);
-    }
+    return rankCandidates(filteredCandidates, aiRankingEnabled, nlpQuery);
+  }, [filteredCandidates, aiRankingEnabled, nlpQuery]);
 
-    // Simulate AI ranking by adding AI scores and reordering
-    const withAiScores = filteredCandidates.map(c => ({
-      ...c,
-      aiScore: c.match + Math.floor(Math.random() * 10) - 5 // Simulate AI adjustment
-    }));
-
-    return withAiScores.sort((a, b) => (b.aiScore || b.match) - (a.aiScore || a.match));
-  }, [filteredCandidates, aiRankingEnabled]);
-
-  const handleAiEnhance = () => {
+  const handleAiEnhance = async () => {
     if (!nlpQuery.trim()) return;
 
-    setIsAiProcessing(true);
-    setTimeout(() => {
+    try {
+      setIsAiProcessing(true);
       setAiRankingEnabled(true);
+
+      const ranked = rankCandidates(filteredCandidates, true, nlpQuery);
+      const strictlyCompatible = ranked.filter(c => meetsHardConstraints(c, intentConstraints));
+      const semanticallyCompatible = ranked.filter(c => {
+        const semantic = getSemanticScore(c, nlpQuery);
+        const aiScore = clampScore((getAiBaseScore(c) ?? clampScore(Number(c.match || 0))) * 0.45 + semantic * 0.55);
+        return semantic >= 35 || aiScore >= 70;
+      });
+      const compatible = strictlyCompatible.length > 0 ? strictlyCompatible : semanticallyCompatible;
+
+      const autoSelected = (compatible.length > 0 ? compatible : ranked).slice(0, Math.min(50, Math.max(10, compatible.length || 10)));
+      setSelectedCandidates(new Set(autoSelected.map(c => c.id)));
+      const hardParts: string[] = [];
+      if (intentConstraints.minYears != null) hardParts.push(`${intentConstraints.minYears}+ years`);
+      if (intentConstraints.mustHaveSkills.length > 0) {
+        hardParts.push(`must-have: ${intentConstraints.mustHaveSkills.slice(0, 4).join(', ')}${intentConstraints.mustHaveSkills.length > 4 ? '...' : ''}`);
+      }
+      const hardLabel = hardParts.length > 0 ? ` using strict constraints (${hardParts.join(' | ')})` : '';
+      setAiSelectionInfo(`Auto-selected ${autoSelected.length} compatible candidates for "${nlpQuery}"${hardLabel}.`);
+    } finally {
       setIsAiProcessing(false);
-    }, 1500);
+    }
+  };
+
+  const openViewWhy = async (candidate: Candidate) => {
+    setViewWhyCandidate(candidate);
+    setViewWhyOpen(true);
+    setViewWhyError(null);
+    setViewWhyBreakdown(null);
+
+    if (!candidate.applicationId) {
+      setViewWhyError('No application context found for this candidate.');
+      return;
+    }
+
+    try {
+      setViewWhyLoading(true);
+      const breakdown = await api.recruiter.getApplicationScoreBreakdown(String(candidate.applicationId));
+      setViewWhyBreakdown(breakdown);
+    } catch (error) {
+      setViewWhyError('Unable to load detailed score breakdown.');
+    } finally {
+      setViewWhyLoading(false);
+    }
   };
 
   const toggleSkillFilter = (skill: string) => {
@@ -253,6 +473,37 @@ export function GroupCreationPage({
     return '#ffa366';
   };
 
+  const formatScore = (value: unknown) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(1) : 'N/A';
+  };
+
+  const getZeroReason = (
+    metricKey: 'semantic_fit_score' | 'skills_experience_score' | 'jd_quality_score',
+    value: number,
+    breakdown: ApplicationScoreBreakdown | null,
+  ) => {
+    if (!Number.isFinite(value) || value > 0) return null;
+
+    if (!breakdown) {
+      return 'No backend score-breakdown payload returned for this application.';
+    }
+
+    if (!breakdown.prescore_version) {
+      return 'This application does not include a PreScore V2 version in stored analysis.';
+    }
+
+    if (metricKey === 'semantic_fit_score') {
+      return 'Backend semantic-fit component was computed as 0.0 (often due to weak JD-to-CV semantic evidence in stored analysis).';
+    }
+
+    if (metricKey === 'skills_experience_score') {
+      return 'Backend skills+experience component was computed as 0.0 (required skill/experience evidence not found in parsed CV data).';
+    }
+
+    return 'JD quality component was computed as 0.0 by backend JD critic output for this position/application context.';
+  };
+
   return (
     <div className="h-full w-full bg-[#edf0f8] flex flex-col">
       {/* Top Section - Discovery Engine */}
@@ -329,6 +580,31 @@ export function GroupCreationPage({
             <Sparkles size={16} className="text-[#15803d]" />
             <p className="font-['Arimo',sans-serif] text-[13px] text-[#15803d] font-medium">
               Active AI Context: "{nlpQuery}"
+            </p>
+          </div>
+        )}
+
+        {aiRankingEnabled && nlpQuery && (intentConstraints.minYears != null || intentConstraints.mustHaveSkills.length > 0) && (
+          <div className="mb-6 px-[16px] py-[10px] rounded-[10px] bg-[#fffbeb] border border-[#fde68a] flex flex-wrap items-center gap-2">
+            <span className="font-['Arimo',sans-serif] text-[12px] text-[#92400e] font-semibold">Strict Intent Constraints:</span>
+            {intentConstraints.minYears != null && (
+              <span className="px-[8px] py-[2px] rounded-[4px] bg-[#fef3c7] font-['Arimo',sans-serif] text-[11px] text-[#92400e]">
+                {intentConstraints.minYears}+ years
+              </span>
+            )}
+            {intentConstraints.mustHaveSkills.map((skill, idx) => (
+              <span key={`${skill}-${idx}`} className="px-[8px] py-[2px] rounded-[4px] bg-[#fef3c7] font-['Arimo',sans-serif] text-[11px] text-[#92400e]">
+                {skill}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {aiSelectionInfo && (
+          <div className="mb-6 px-[16px] py-[10px] rounded-[10px] bg-[#eff6ff] border border-[#bfdbfe] flex items-center gap-2">
+            <Sparkles size={16} className="text-[#1d4ed8]" />
+            <p className="font-['Arimo',sans-serif] text-[13px] text-[#1e40af] font-medium">
+              {aiSelectionInfo}
             </p>
           </div>
         )}
@@ -530,6 +806,15 @@ export function GroupCreationPage({
                     </div>
                   </td>
                   <td className="px-4 py-3">
+                    {(() => {
+                      const displayScore = getDisplayScore(candidate);
+                      const semanticScore = aiRankingEnabled && nlpQuery.trim() ? getSemanticScore(candidate, nlpQuery) : null;
+                      const hardMatch = aiRankingEnabled && nlpQuery.trim() ? meetsHardConstraints(candidate, intentConstraints) : null;
+                      const scoreSource = aiRankingEnabled
+                        ? (nlpQuery.trim() ? 'PreScore + Semantic' : (candidate.pre_score_final != null ? 'PreScore V2' : 'Match fallback'))
+                        : 'CV Match';
+
+                      return (
                     <div className="flex items-center gap-2">
                       <div
                         className="w-[60px] h-[8px] rounded-full bg-[#e5e7eb] overflow-hidden"
@@ -537,23 +822,45 @@ export function GroupCreationPage({
                         <div
                           className="h-full transition-all"
                           style={{
-                            width: `${candidate.aiScore || candidate.match}%`,
-                            backgroundColor: getMatchColor(candidate.aiScore || candidate.match)
+                            width: `${displayScore}%`,
+                            backgroundColor: getMatchColor(displayScore)
                           }}
                         />
                       </div>
                       <span
                         className="font-['Arimo',sans-serif] text-[13px] min-w-[35px]"
-                        style={{ color: getMatchColor(candidate.aiScore || candidate.match) }}
+                        style={{ color: getMatchColor(displayScore) }}
                       >
-                        {candidate.aiScore || candidate.match}%
+                        {displayScore.toFixed(1)}%
                       </span>
-                      {aiRankingEnabled && candidate.aiScore && candidate.aiScore !== candidate.match && (
-                        <span className="font-['Arimo',sans-serif] text-[11px] text-[#10b981]">
-                          ↑
+                      <span className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280]">
+                        {scoreSource}
+                      </span>
+                      {semanticScore != null && (
+                        <span className="font-['Arimo',sans-serif] text-[11px] text-[#0f766e]">
+                          Semantic {semanticScore.toFixed(1)}
                         </span>
                       )}
+                      {hardMatch != null && (
+                        <span className={`font-['Arimo',sans-serif] text-[11px] ${hardMatch ? 'text-[#15803d]' : 'text-[#b91c1c]'}`}>
+                          {hardMatch ? 'Meets intent' : 'Misses intent'}
+                        </span>
+                      )}
+                      {candidate.applicationId && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openViewWhy(candidate);
+                          }}
+                          className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline"
+                        >
+                          View why
+                        </button>
+                      )}
                     </div>
+                      );
+                    })()}
                   </td>
                 </tr>
               ))}
@@ -642,6 +949,159 @@ export function GroupCreationPage({
           }}
           activeFilters={advancedFilters}
         />
+      )}
+
+      {viewWhyOpen && (
+        <div className="fixed inset-0 z-50 bg-black/35 backdrop-blur-[1px] flex items-center justify-center px-4">
+          <div className="w-full max-w-[760px] rounded-[12px] border border-[#e5e7eb] bg-white shadow-2xl">
+            <div className="px-6 py-4 border-b border-[#e5e7eb] flex items-center justify-between">
+              <div>
+                <h3 className="text-[#111827]">Why This Candidate Was Ranked</h3>
+                <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                  {viewWhyCandidate?.name || 'Candidate'}
+                </p>
+              </div>
+              <button
+                onClick={() => setViewWhyOpen(false)}
+                className="h-[32px] w-[32px] rounded-[8px] hover:bg-[#f3f4f6]"
+              >
+                <X size={16} className="mx-auto text-[#6b7280]" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {viewWhyLoading ? (
+                <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Loading score explanation...</p>
+              ) : viewWhyError ? (
+                <p className="font-['Arimo',sans-serif] text-[14px] text-[#ef4444]">{viewWhyError}</p>
+              ) : (
+                <>
+                  {(() => {
+                    const candidate = viewWhyCandidate;
+                    const baseScore = candidate ? (getAiBaseScore(candidate) ?? clampScore(Number(candidate.match || 0))) : 0;
+                    const semanticQueryScore = (candidate && nlpQuery.trim()) ? getSemanticScore(candidate, nlpQuery) : 0;
+                    const baseContribution = baseScore * 0.45;
+                    const semanticContribution = semanticQueryScore * 0.55;
+                    const finalAiScore = clampScore(baseContribution + semanticContribution);
+                    const cvMatchScore = clampScore(Number(candidate?.match || viewWhyBreakdown?.match_score || 0));
+                    const aiModeActive = Boolean(aiRankingEnabled && nlpQuery.trim());
+                    const displayedScore = candidate ? getDisplayScore(candidate) : 0;
+
+                    const backendSemantic = Number(viewWhyBreakdown?.semantic_fit_score ?? candidate?.semantic_fit_score ?? 0);
+                    const backendSkillsExp = Number(viewWhyBreakdown?.skills_experience_score ?? candidate?.skills_experience_score ?? 0);
+                    const backendJdQuality = Number(viewWhyBreakdown?.jd_quality_score ?? candidate?.jd_quality_score ?? 0);
+
+                    const semanticZeroReason = getZeroReason('semantic_fit_score', backendSemantic, viewWhyBreakdown);
+                    const skillsExpZeroReason = getZeroReason('skills_experience_score', backendSkillsExp, viewWhyBreakdown);
+                    const jdQualityZeroReason = getZeroReason('jd_quality_score', backendJdQuality, viewWhyBreakdown);
+
+                    return (
+                      <>
+                  <div className={`rounded-[8px] border p-3 ${aiModeActive ? 'border-[#bbf7d0] bg-[#f0fdf4]' : 'border-[#dbeafe] bg-[#eff6ff]'}`}>
+                    <p className={`font-['Arimo',sans-serif] text-[13px] font-semibold ${aiModeActive ? 'text-[#166534]' : 'text-[#1e3a8a]'}`}>
+                      Scoring Mode: {aiModeActive ? 'AI Rank ON' : 'AI Rank OFF'}
+                    </p>
+                    <p className={`font-['Arimo',sans-serif] text-[12px] mt-1 ${aiModeActive ? 'text-[#15803d]' : 'text-[#1d4ed8]'}`}>
+                      {aiModeActive
+                        ? 'Displayed score is AI-blended using query semantics and base score.'
+                        : 'Displayed score is legacy CV Match only (no AI blending).'}
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Displayed Score</p>
+                      <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(displayedScore)}</p>
+                    </div>
+                    <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">CV Match (Legacy)</p>
+                      <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(cvMatchScore)}</p>
+                    </div>
+                    <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Pre-Score V2</p>
+                      <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(viewWhyBreakdown?.pre_score_final ?? viewWhyCandidate?.pre_score_final ?? 0)}</p>
+                    </div>
+                    <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Semantic Match (Query)</p>
+                      <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">
+                        {candidate && aiModeActive ? formatScore(semanticQueryScore) : 'N/A'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {aiModeActive ? (
+                    <div className="rounded-[8px] border border-[#dbeafe] bg-[#eff6ff] p-3">
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#1e3a8a] font-semibold mb-1">How AI Score Is Calculated</p>
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#1e40af]">
+                        AI Score = 0.45 × Base Score + 0.55 × Semantic Match
+                      </p>
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#1e40af] mt-1">
+                        = 0.45 × {formatScore(baseScore)} + 0.55 × {formatScore(semanticQueryScore)}
+                        = {formatScore(baseContribution)} + {formatScore(semanticContribution)}
+                        = {formatScore(finalAiScore)}
+                      </p>
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#1d4ed8] mt-2">
+                        Base Score is Pre-Score V2 when present; otherwise CV Match fallback is used.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-[8px] border border-[#dbeafe] bg-[#eff6ff] p-3">
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#1e3a8a] font-semibold mb-1">Why You See 92.0 Here</p>
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#1e40af]">
+                        AI Rank is currently OFF, so the table uses CV Match directly.
+                      </p>
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#1e40af] mt-1">
+                        Displayed Score = CV Match = {formatScore(cvMatchScore)}
+                      </p>
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#1d4ed8] mt-2">
+                        When AI Rank is ON, score becomes a weighted blend with query semantic match.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="rounded-[8px] border border-[#e5e7eb] bg-white p-3">
+                    <p className="font-['Arimo',sans-serif] text-[13px] text-[#111827] font-semibold mb-2">Why Some Backend Components Are 0.0</p>
+                    {!viewWhyBreakdown?.prescore_version && cvMatchScore > 0 && (
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-2">
+                        This application has legacy CV Match data but no PreScore V2 payload; that is why CV Match can be high while PreScore components stay 0.0.
+                      </p>
+                    )}
+                    <div className="space-y-2">
+                      <div>
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">Semantic Fit: {formatScore(backendSemantic)}</p>
+                        {semanticZeroReason && <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{semanticZeroReason}</p>}
+                      </div>
+                      <div>
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">Skills + Experience: {formatScore(backendSkillsExp)}</p>
+                        {skillsExpZeroReason && <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{skillsExpZeroReason}</p>}
+                      </div>
+                      <div>
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">JD Quality: {formatScore(backendJdQuality)}</p>
+                        {jdQualityZeroReason && <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{jdQualityZeroReason}</p>}
+                      </div>
+                    </div>
+                  </div>
+
+                  {Array.isArray(viewWhyBreakdown?.score_explanation) && viewWhyBreakdown!.score_explanation.length > 0 ? (
+                    <div>
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] mb-2">Top Reasons</p>
+                      <ul className="space-y-1">
+                        {viewWhyBreakdown!.score_explanation.map((line, idx) => (
+                          <li key={idx} className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">• {line}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">No detailed explanation is available for this application yet.</p>
+                  )}
+                      </>
+                    );
+                  })()}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

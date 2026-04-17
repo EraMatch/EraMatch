@@ -163,6 +163,17 @@ class PositionCandidateResponse(BaseModel):
     github_has_fallback: bool = False
     github_fallback_reason: str | None = None
 
+    # PreScore V2 (ingestion-time score breakdown)
+    prescore_version: str | None = None
+    pre_score_final: float | None = None
+    semantic_fit_score: float | None = None
+    skills_experience_score: float | None = None
+    optional_profile_boost: float | None = None
+    jd_quality_score: float | None = None
+    jd_quality_status: str | None = None
+    jd_quality_cap_applied: bool | None = None
+    score_explanation: list[str] = Field(default_factory=list)
+
 class PositionGroupResponse(BaseModel):
     id: UUID = Field(alias="id")
     name: str = Field(alias="name")
@@ -184,6 +195,28 @@ class PositionGroupResponse(BaseModel):
 class PositionDetailsResponse(BaseModel):
     candidates: list[PositionCandidateResponse] = []
     groups: list[PositionGroupResponse] = []
+
+
+class ApplicationScoreBreakdownResponse(BaseModel):
+    application_id: UUID
+    candidate_id: UUID
+    candidate_name: str
+    position_id: UUID
+    position_title: str
+    match_score: float
+
+    prescore_version: str | None = None
+    pre_score_final: float | None = None
+    semantic_fit_score: float | None = None
+    skills_experience_score: float | None = None
+    optional_profile_boost: float | None = None
+    jd_quality_score: float | None = None
+    jd_quality_status: str | None = None
+    jd_quality_cap: float | None = None
+    jd_quality_cap_applied: bool | None = None
+    jd_quality_feedback: str | None = None
+    score_explanation: list[str] = Field(default_factory=list)
+    criteria_checks: list[dict] = Field(default_factory=list)
 
 class ProjectSummaryResponse(BaseModel):
     openPositions: int

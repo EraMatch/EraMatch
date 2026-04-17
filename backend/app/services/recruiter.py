@@ -11,7 +11,7 @@ from app.models import (
     User, Project, Position, CandidateApplication, CandidateGroup, 
     CandidateStageProgress, OrganizationUser, Hire, Offer, ProctoringFlag,
     ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, GitHubAnalysis, Organization,
-    OrganizationUserSettings, FilterTemplate
+    OrganizationUserSettings, FilterTemplate, QAGProcessingJob
 )
 from app.integrations.llm import get_llm
 import json
@@ -21,15 +21,17 @@ from app.schemas.project import (
     GroupAnalysisResponse, TechnicalAIResponse, RiskBreakdownResponse, TechStats, AIStats,
     PositionResponse, PositionDetailsResponse, PositionCandidateResponse, DistributionItem,
     ScoreBucket, SkillDistributionItem, SeniorityDistributionItem, UniversityDistributionItem,
-    AvailabilityDistributionItem, SourceQualityItem, CompanyPipelineItem
+    AvailabilityDistributionItem, SourceQualityItem, CompanyPipelineItem,
+    ApplicationScoreBreakdownResponse,
 )
 from app.schemas.analytics import (
     RecruiterAnalyticsResponse, OverviewStats, GroupStatusCount, StageCount,
     ProjectPerformance, RecentActivity, WeeklyTrend
 )
 from app.schemas.candidate import ApplicationUpdate
+from app.services.prescore import PreScoreService
 import asyncio
-from typing import List
+from typing import List, Any
 
 
 class RecruiterService:
@@ -37,6 +39,48 @@ class RecruiterService:
         self.session = session
         self.current_user = current_user
         self.organization_id = current_user.organization_id
+
+    async def _start_qag_job(
+        self,
+        *,
+        position: Position,
+        job_type: str,
+        total_items: int = 0,
+        source_provider: str | None = None,
+    ) -> QAGProcessingJob:
+        job = QAGProcessingJob(
+            organization_id=self.organization_id,
+            position_id=position.id,
+            created_by_user_id=(self.current_user.id if self.current_user.role in {"hr", "technical"} else None),
+            job_type=job_type,
+            status="processing",
+            total_items=max(0, int(total_items or 0)),
+            processed_items=0,
+            source_provider=source_provider,
+            started_at=datetime.utcnow(),
+        )
+        self.session.add(job)
+        await self.session.flush()
+        return job
+
+    def _finish_qag_job(
+        self,
+        *,
+        job: QAGProcessingJob,
+        status: str,
+        processed_items: int | None = None,
+        error_message: str | None = None,
+        summary: dict[str, Any] | None = None,
+    ) -> None:
+        job.status = status
+        if processed_items is not None:
+            job.processed_items = max(0, int(processed_items))
+        if error_message:
+            job.error_message = str(error_message)
+        if summary is not None:
+            job.summary = summary
+        job.completed_at = datetime.utcnow()
+        self.session.add(job)
 
     # Project operations
     async def create_project(self, data: ProjectCreate) -> Project:
@@ -566,16 +610,23 @@ class RecruiterService:
         self.session.add(position)
         await self.session.flush()
 
+        # Persist position-level HD Eval + QAG critic artifact.
+        await self._evaluate_position_hdeval_qag(position, force=True)
+
         # Create Approval Request if not open immediately
         if initial_status != "open":
             from app.models import ApprovalRequest
+
+            requester_id = self.current_user.id
+            if self.current_user.role == "admin":
+                requester_id = data.assigned_hr_id or data.assigned_tech_id or requester_id
             
             # Serialize data correctly
             request_data = data.model_dump(mode='json', exclude={"id"})
             
             approval_req = ApprovalRequest(
                 organization_id=self.organization_id,
-                requester_id=self.current_user.id,
+                requester_id=requester_id,
                 request_type="position",
                 data=request_data,
                 status=approval_status,
@@ -649,7 +700,8 @@ class RecruiterService:
             match_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
 
             # Extract detailed fields from parsed_data
-            parsed = cv.parsed_data if cv and cv.parsed_data else {}
+            parsed = cv.parsed_data if cv and isinstance(cv.parsed_data, dict) else {}
+            prescore = parsed.get("prescore_v2") if isinstance(parsed.get("prescore_v2"), dict) else {}
             
             companies = []
             job_titles = []
@@ -722,6 +774,15 @@ class RecruiterService:
                 github_freshness_hours=github_freshness_hours,
                 github_has_fallback=github_has_fallback,
                 github_fallback_reason=github_fallback_reason,
+                prescore_version=prescore.get("version"),
+                pre_score_final=_to_float(prescore.get("pre_score_final")),
+                semantic_fit_score=_to_float(prescore.get("semantic_fit_score")),
+                skills_experience_score=_to_float(prescore.get("skills_experience_score")),
+                optional_profile_boost=_to_float(prescore.get("optional_profile_boost")),
+                jd_quality_score=_to_float(prescore.get("jd_quality_score")),
+                jd_quality_status=prescore.get("jd_quality_status"),
+                jd_quality_cap_applied=bool(prescore.get("jd_quality_cap_applied")) if "jd_quality_cap_applied" in prescore else None,
+                score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
             ))
             
         return candidates
@@ -738,6 +799,67 @@ class RecruiterService:
         if not pos:
             raise NotFoundException("Position not found")
         return pos
+
+    async def get_position_hdeval_qag(self, position_id: UUID) -> dict:
+        """Get generated 50 yes/no HD Eval + QAG questions for recruiter preview."""
+        position = await self.get_position(position_id)
+        if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("You are not assigned to this position")
+
+        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else None
+        if not artifact:
+            artifact = await self._evaluate_position_hdeval_qag(position, force=True)
+            await self.session.commit()
+            await self.session.refresh(position)
+        return artifact
+
+    async def update_position_hdeval_qag(self, position_id: UUID, questions: list[dict]) -> dict:
+        """Edit generated 50 yes/no questions before approval."""
+        position = await self.get_position(position_id)
+        if self.current_user.role != "technical" or position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("Only assigned technical recruiter can edit QAG questions")
+
+        scorer = PreScoreService()
+        normalized = scorer._normalize_qag_questions(
+            [q for q in questions if isinstance(q, dict) and str(q.get("question") or "").strip()]
+        )
+
+        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+        artifact["questions"] = normalized
+        artifact["approved_questions"] = [q for q in normalized if bool(q.get("approved", True))]
+        artifact["question_count"] = len(normalized)
+        artifact["status"] = "pending_tech_review"
+        artifact["updated_at"] = datetime.utcnow().isoformat()
+        artifact["reviewed_by"] = str(self.current_user.id)
+        position.jd_hdeval_qag = artifact
+        self.session.add(position)
+        await self.session.commit()
+        await self.session.refresh(position)
+        return artifact
+
+    async def approve_position_hdeval_qag(self, position_id: UUID) -> dict:
+        """Approve question set and recompute candidates against approved yes/no questions."""
+        position = await self.get_position(position_id)
+        if self.current_user.role != "technical" or position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("Only assigned technical recruiter can approve QAG questions")
+
+        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+        questions = artifact.get("questions") if isinstance(artifact.get("questions"), list) else []
+        approved = [q for q in questions if isinstance(q, dict) and bool(q.get("approved", True))]
+        if not approved:
+            raise NotFoundException("No approved yes/no questions found")
+
+        artifact["approved_questions"] = approved
+        artifact["status"] = "approved"
+        artifact["approved_at"] = datetime.utcnow().isoformat()
+        artifact["approved_by"] = str(self.current_user.id)
+        position.jd_hdeval_qag = artifact
+        self.session.add(position)
+
+        await self._recompute_position_prescores(position)
+        await self.session.commit()
+        await self.session.refresh(position)
+        return artifact
 
     async def get_position_details(self, position_id: UUID) -> PositionDetailsResponse:
         """Aggregate candidates and groups for a position."""
@@ -782,7 +904,8 @@ class RecruiterService:
             match_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
 
             # Extract detailed fields from parsed_data
-            parsed = cv.parsed_data if cv and cv.parsed_data else {}
+            parsed = cv.parsed_data if cv and isinstance(cv.parsed_data, dict) else {}
+            prescore = parsed.get("prescore_v2") if isinstance(parsed.get("prescore_v2"), dict) else {}
             
             companies = []
             job_titles = []
@@ -826,7 +949,16 @@ class RecruiterService:
                 universities=universities,
                 degrees=degrees,
                 groupId=app.group_id,
-                groupName=group_map.get(app.group_id) if app.group_id else None
+                groupName=group_map.get(app.group_id) if app.group_id else None,
+                prescore_version=prescore.get("version"),
+                pre_score_final=float(prescore.get("pre_score_final")) if prescore.get("pre_score_final") is not None else None,
+                semantic_fit_score=float(prescore.get("semantic_fit_score")) if prescore.get("semantic_fit_score") is not None else None,
+                skills_experience_score=float(prescore.get("skills_experience_score")) if prescore.get("skills_experience_score") is not None else None,
+                optional_profile_boost=float(prescore.get("optional_profile_boost")) if prescore.get("optional_profile_boost") is not None else None,
+                jd_quality_score=float(prescore.get("jd_quality_score")) if prescore.get("jd_quality_score") is not None else None,
+                jd_quality_status=prescore.get("jd_quality_status"),
+                jd_quality_cap_applied=bool(prescore.get("jd_quality_cap_applied")) if "jd_quality_cap_applied" in prescore else None,
+                score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
             ))
 
         # 3. Fetch groups
@@ -866,6 +998,10 @@ class RecruiterService:
 
         for key, value in update_data.items():
             setattr(pos, key, value)
+
+        jd_fields = {"job_title", "job_description", "required_skills", "years_of_experience"}
+        if any(field in update_data for field in jd_fields):
+            await self._evaluate_position_hdeval_qag(pos, force=True)
             
         if trigger_review:
             # Determine bypass
@@ -896,10 +1032,14 @@ class RecruiterService:
                 "education_level": pos.education_level,
                 "benefits": pos.benefits
             }
+
+            requester_id = self.current_user.id
+            if self.current_user.role == "admin":
+                requester_id = pos.assigned_hr_id or pos.created_by_user_id or pos.assigned_tech_id or requester_id
             
             approval_req = ApprovalRequest(
                 organization_id=self.organization_id,
-                requester_id=self.current_user.id,
+                requester_id=requester_id,
                 request_type="position",
                 data=request_data,
                 status=approval_status,
@@ -1010,6 +1150,63 @@ class RecruiterService:
             import traceback
             traceback.print_exc()
             return []
+
+    async def get_application_score_breakdown(self, application_id: UUID) -> ApplicationScoreBreakdownResponse:
+        """Return a dedicated pre-score breakdown for one application."""
+        query = (
+            select(CandidateApplication, CandidateProfile, Position, CVAnalysis)
+            .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .join(Position, CandidateApplication.position_id == Position.id)
+            .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
+            .where(
+                CandidateApplication.id == application_id,
+                CandidateApplication.organization_id == self.organization_id,
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+            )
+        )
+        result = await self.session.execute(query)
+        row = result.first()
+
+        if not row:
+            raise NotFoundException("Application not found")
+
+        app, candidate, position, cv = row
+
+        if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("You are not assigned to this position")
+        if self.current_user.role == "hr" and position.assigned_hr_id != self.current_user.id:
+            raise UnauthorizedException("You are not assigned to this position")
+
+        parsed_data = cv.parsed_data if cv and isinstance(cv.parsed_data, dict) else {}
+        prescore = parsed_data.get("prescore_v2") if isinstance(parsed_data.get("prescore_v2"), dict) else {}
+        position_critic = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+        jd_quality_score = position_critic.get("score", prescore.get("jd_quality_score"))
+        jd_quality_status = position_critic.get("status", prescore.get("jd_quality_status"))
+        jd_quality_cap = position_critic.get("cap", prescore.get("jd_quality_cap"))
+        criteria_checks = prescore.get("criteria_checks", position_critic.get("criteria_checks"))
+        jd_quality_feedback = position_critic.get("feedback", prescore.get("jd_quality_feedback"))
+
+        return ApplicationScoreBreakdownResponse(
+            application_id=app.id,
+            candidate_id=candidate.id,
+            candidate_name=candidate.full_name,
+            position_id=position.id,
+            position_title=position.job_title,
+            match_score=float(cv.match_score) if cv and cv.match_score is not None else 0.0,
+            prescore_version=prescore.get("version"),
+            pre_score_final=float(prescore.get("pre_score_final")) if prescore.get("pre_score_final") is not None else None,
+            semantic_fit_score=float(prescore.get("semantic_fit_score")) if prescore.get("semantic_fit_score") is not None else None,
+            skills_experience_score=float(prescore.get("skills_experience_score")) if prescore.get("skills_experience_score") is not None else None,
+            optional_profile_boost=float(prescore.get("optional_profile_boost")) if prescore.get("optional_profile_boost") is not None else None,
+            jd_quality_score=float(jd_quality_score) if jd_quality_score is not None else None,
+            jd_quality_status=jd_quality_status,
+            jd_quality_cap=float(jd_quality_cap) if jd_quality_cap is not None else None,
+            jd_quality_cap_applied=bool(prescore.get("jd_quality_cap_applied")) if "jd_quality_cap_applied" in prescore else None,
+            score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
+            criteria_checks=criteria_checks if isinstance(criteria_checks, list) else [],
+            jd_quality_feedback=jd_quality_feedback,
+        )
 
     # Application management
     async def update_application_status(self, application_id: UUID, data: ApplicationUpdate) -> CandidateApplication:
@@ -1922,6 +2119,169 @@ class RecruiterService:
             
         return data
 
+    async def _evaluate_position_hdeval_qag(self, position: Position, force: bool = False) -> dict:
+        """Run and persist position-level HD Eval + QAG artifact."""
+        existing = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else None
+        if (
+            existing
+            and not force
+            and isinstance(existing.get("questions"), list)
+            and len(existing.get("questions")) >= 50
+        ):
+            return existing
+
+        job = await self._start_qag_job(
+            position=position,
+            job_type="qag_generation",
+            total_items=50,
+            source_provider="ai-service:ollama",
+        )
+
+        try:
+            scorer = PreScoreService()
+            critic = await scorer.run_position_jd_critic(
+                job_title=position.job_title,
+                job_description=position.job_description,
+                required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
+                years_of_experience=position.years_of_experience,
+            )
+            position.jd_hdeval_qag = critic
+            self.session.add(position)
+
+            question_count = len(critic.get("questions") or []) if isinstance(critic, dict) else 0
+            status = str(critic.get("status") or "completed") if isinstance(critic, dict) else "completed"
+            provider = str(critic.get("provider") or "ai-service:ollama") if isinstance(critic, dict) else "ai-service:ollama"
+            job.source_provider = provider
+
+            if status == "ai_generation_failed" or question_count == 0:
+                self._finish_qag_job(
+                    job=job,
+                    status="failed",
+                    processed_items=0,
+                    error_message=str(critic.get("feedback") or "AI-only QAG generation failed") if isinstance(critic, dict) else "AI-only QAG generation failed",
+                    summary={
+                        "status": status,
+                        "question_count": question_count,
+                    },
+                )
+            else:
+                self._finish_qag_job(
+                    job=job,
+                    status="completed",
+                    processed_items=question_count,
+                    summary={
+                        "status": status,
+                        "question_count": question_count,
+                        "fallback_used": bool(critic.get("fallback_used", False)) if isinstance(critic, dict) else False,
+                    },
+                )
+
+            return critic
+        except Exception as exc:
+            self._finish_qag_job(
+                job=job,
+                status="failed",
+                processed_items=0,
+                error_message=str(exc),
+                summary={"status": "error"},
+            )
+            raise
+
+    async def _recompute_position_prescores(self, position: Position) -> int:
+        """Recompute ingestion pre-scores for all applications in a position."""
+        query = (
+            select(CandidateApplication, CandidateProfile, CVAnalysis, GitHubAnalysis)
+            .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
+            .outerjoin(
+                GitHubAnalysis,
+                (GitHubAnalysis.candidate_id == CandidateProfile.id)
+                & (GitHubAnalysis.organization_id == self.organization_id),
+            )
+            .where(
+                CandidateApplication.position_id == position.id,
+                CandidateApplication.organization_id == self.organization_id,
+                CandidateApplication.is_deleted == False,
+            )
+        )
+        result = await self.session.execute(query)
+        rows = result.all()
+
+        correction_job = await self._start_qag_job(
+            position=position,
+            job_type="qag_resume_correction",
+            total_items=len(rows),
+            source_provider="ai-service:ollama",
+        )
+
+        scorer = PreScoreService()
+        updates = 0
+
+        try:
+            jd_critic_result = await self._evaluate_position_hdeval_qag(position, force=False)
+
+            for app, profile, cv, gh in rows:
+                if not cv:
+                    cv = CVAnalysis(
+                        application_id=app.id,
+                        organization_id=self.organization_id,
+                        cv_file_url=app.resume_url,
+                        parsed_data={},
+                        skills=[],
+                        experience_years=0,
+                        match_score=0,
+                    )
+
+                parsed_data = cv.parsed_data if isinstance(cv.parsed_data, dict) else {}
+                prescore = await scorer.score_candidate_prescore(
+                    job_title=position.job_title,
+                    job_description=position.job_description,
+                    required_skills=position.required_skills,
+                    years_of_experience=position.years_of_experience,
+                    candidate_skills=cv.skills or [],
+                    candidate_experience_years=float(cv.experience_years or 0.0),
+                    candidate_parsed_data=parsed_data,
+                    github_analysis_data={
+                        "contribution_score": gh.contribution_score if gh else None,
+                        "code_quality_score": gh.code_quality_score if gh else None,
+                        "repo_count": gh.repo_count if gh else None,
+                    },
+                    jd_critic_result=jd_critic_result,
+                )
+
+                parsed_data["prescore_v2"] = prescore
+                cv.parsed_data = parsed_data
+                cv.match_score = prescore["pre_score_final"]
+                cv.analyzed_at = datetime.utcnow()
+                self.session.add(cv)
+                updates += 1
+
+                correction_job.processed_items = updates
+                self.session.add(correction_job)
+
+            self._finish_qag_job(
+                job=correction_job,
+                status="completed",
+                processed_items=updates,
+                summary={
+                    "position_id": str(position.id),
+                    "applications_scored": updates,
+                },
+            )
+            return updates
+        except Exception as exc:
+            self._finish_qag_job(
+                job=correction_job,
+                status="failed",
+                processed_items=updates,
+                error_message=str(exc),
+                summary={
+                    "position_id": str(position.id),
+                    "applications_scored": updates,
+                },
+            )
+            raise
+
     async def review_approval_request(self, request_id: UUID, status: str, review_notes: str | None = None) -> bool:
         """Process a technical review (approve/reject)."""
         from app.models import ApprovalRequest, Notification
@@ -1955,24 +2315,36 @@ class RecruiterService:
                 if status == "approved":
                     position.status = "open"
                     msg = f"Position '{position.job_title}' reviewed and approved by Technical Recruiter."
+                    # Generate 50 yes/no HD Eval + QAG questions for explicit technical edit/approval.
+                    await self._evaluate_position_hdeval_qag(position, force=True)
                 else:
                     position.status = "rejected"
                     position.is_deleted = True
                     msg = f"Position '{position.job_title}' rejected by Technical Recruiter."
                 
                 self.session.add(position)
-                
-                # Notify HR (Requester)
-                notif = Notification(
-                    organization_id=self.organization_id,
-                    recipient_user_id=req.requester_id,
-                    type="alert",
-                    title=f"Position {status.capitalize()}",
-                    message=msg,
-                    is_read=False,
-                    created_at=datetime.utcnow()
+
+                # Notify requester only when requester_id maps to an org user.
+                # Some legacy admin-created requests store org_id in requester_id.
+                recipient_query = select(OrganizationUser.id).where(
+                    OrganizationUser.id == req.requester_id,
+                    OrganizationUser.organization_id == self.organization_id,
+                    OrganizationUser.is_deleted == False,
                 )
-                self.session.add(notif)
+                recipient_res = await self.session.execute(recipient_query)
+                recipient_user_id = recipient_res.scalar_one_or_none()
+
+                if recipient_user_id:
+                    notif = Notification(
+                        organization_id=self.organization_id,
+                        recipient_user_id=recipient_user_id,
+                        type="alert",
+                        title=f"Position {status.capitalize()}",
+                        message=msg,
+                        is_read=False,
+                        created_at=datetime.utcnow()
+                    )
+                    self.session.add(notif)
                 
         await self.session.commit()
         return True

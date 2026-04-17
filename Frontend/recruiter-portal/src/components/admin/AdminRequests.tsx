@@ -14,6 +14,13 @@ import EraMatchLogo from '../../assets/image-eramatch.png';
 import { useNavigate } from 'react-router-dom';
 import LoadingSpinner from '../common/LoadingSpinner';
 
+const getErrorMessage = (error: unknown, fallback: string): string => {
+    if (error instanceof Error && error.message) {
+        return error.message;
+    }
+    return fallback;
+};
+
 export default function AdminRequests() {
     return (
         <div className="p-0">
@@ -73,10 +80,24 @@ function AdminRequestsContent() {
     const [hrRecruiters, setHRRecruiters] = useState<any[]>([]); // Added
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    const activeProjects = projects.filter((p) => {
+        const status = String(p?.status || '').toLowerCase();
+        return status === 'active';
+    });
+
     useEffect(() => {
         fetchAll();
         fetchTechRecruiters();
     }, []);
+
+    useEffect(() => {
+        if (!selectedProjectIdForPosition) return;
+        const selected = projects.find((p) => String(p.id) === selectedProjectIdForPosition);
+        const status = String(selected?.status || '').toLowerCase();
+        if (selected && status !== 'active') {
+            setSelectedProjectIdForPosition('');
+        }
+    }, [projects, selectedProjectIdForPosition]);
 
     const fetchAll = async () => {
         try {
@@ -139,6 +160,14 @@ function AdminRequestsContent() {
             toast.error('Please select a project first');
             return;
         }
+
+        const selectedProject = projects.find((p) => String(p.id) === selectedProjectIdForPosition);
+        const selectedProjectStatus = String(selectedProject?.status || '').toLowerCase();
+        if (selectedProjectStatus !== 'active') {
+            toast.error('Only active (approved) projects can have positions.');
+            return;
+        }
+
         setIsSubmitting(true);
         try {
             const payload = {
@@ -167,7 +196,7 @@ function AdminRequestsContent() {
             fetchAll();
             setActiveTab('requests');
         } catch (error) {
-            toast.error('Failed to create position');
+            toast.error(getErrorMessage(error, 'Failed to create position'));
         } finally {
             setIsSubmitting(false);
         }
@@ -376,14 +405,17 @@ function AdminRequestsContent() {
                                     <Label className="text-sm font-semibold">Parent Project</Label>
                                     <Select value={selectedProjectIdForPosition} onValueChange={setSelectedProjectIdForPosition}>
                                         <SelectTrigger className="rounded-xl">
-                                            <SelectValue placeholder="Select a project..." />
+                                            <SelectValue placeholder="Select an active project..." />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {projects.map(p => (
+                                            {activeProjects.map(p => (
                                                 <SelectItem key={p.id} value={p.id.toString()}>{p.projectName}</SelectItem>
                                             ))}
                                         </SelectContent>
                                     </Select>
+                                    <p className="text-[11px] text-gray-500">
+                                        Only active (approved) projects are listed.
+                                    </p>
                                 </div>
                                 <div className="col-span-2 space-y-2">
                                     <Label className="text-sm font-semibold">Job Title</Label>
@@ -551,7 +583,7 @@ function AdminRequestsContent() {
                                 </div>
                             </div>
                             <div className="flex justify-end gap-3 pt-4 border-t">
-                                <Button type="submit" disabled={isSubmitting || !posJobTitle.trim() || !selectedProjectIdForPosition} className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-8 h-12">
+                                <Button type="submit" disabled={isSubmitting || !posJobTitle.trim() || !selectedProjectIdForPosition || activeProjects.length === 0} className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-8 h-12">
                                     {isSubmitting && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
                                     Create Position
                                 </Button>

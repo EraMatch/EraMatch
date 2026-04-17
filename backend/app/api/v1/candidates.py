@@ -293,16 +293,6 @@ async def persist_suspect_review_artifacts(
         window_seconds=data.window_seconds,
     )
 
-
-@router.get("/{candidate_id}/knowledge-graph", response_model=dict)
-async def get_knowledge_graph(
-    candidate_id: UUID, session: DbSession, current_user: CurrentUser
-):
-    """Get knowledge graph data for a candidate."""
-    service = CandidateService(session, current_user.organization_id)
-    return await service.get_knowledge_graph(candidate_id)
-
-
 @router.post("/{candidate_id}/github-analysis/start")
 async def start_github_analysis(
     candidate_id: UUID,
