@@ -44,6 +44,9 @@ export function ModuleMonitoringDashboard({
 }: ModuleMonitoringDashboardProps) {
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'pending' | 'flagged'>('all');
   const [sortBy, setSortBy] = useState<'score-high' | 'score-low' | 'name'>('score-high');
+  const [decisionFilter, setDecisionFilter] = useState<'all' | 'confirmed_cheating' | 'suspicious_review' | 'monitoring' | 'clean'>('all');
+  const [decisionSortBy, setDecisionSortBy] = useState<'candidate' | 'decision' | 'flags' | 'score'>('flags');
+  const [decisionSearch, setDecisionSearch] = useState('');
 
   // Determine if we need interview subpages
   const hasRecordedInterview = activeFlow.some(s => s === 'ai-interview' || s === 'ai_interview');
@@ -160,6 +163,58 @@ export function ModuleMonitoringDashboard({
     if (key === 'ai_interview') return 'Recorded Interview';
     if (key === 'live_interview') return 'Live Interview';
     return stage;
+  };
+
+  const selectedStageForDecisionTable = normalizeStageKey(
+    moduleType === 'assessment'
+      ? 'assessment'
+      : (showInterviewSubpages
+        ? (currentSubpage?.stageId || 'ai-interview')
+        : (hasLiveInterview ? 'live-interview' : 'ai-interview'))
+  );
+
+  const decisionRowsRaw = Array.isArray(integrityDecisions?.candidates)
+    ? integrityDecisions.candidates
+      .filter((row: any) => normalizeStageKey(row?.stage || '') === selectedStageForDecisionTable)
+    : [];
+
+  const decisionRows = decisionRowsRaw
+    .filter((row: any) => {
+      const matchesDecision = decisionFilter === 'all' || String(row?.decision || '') === decisionFilter;
+      const query = decisionSearch.trim().toLowerCase();
+      if (!query) return matchesDecision;
+      const candidateName = String(row?.candidate_name || '').toLowerCase();
+      const latestEvent = String(row?.latest_event_type || '').toLowerCase();
+      const stageStatus = String(row?.stage_status || '').toLowerCase();
+      return matchesDecision && (candidateName.includes(query) || latestEvent.includes(query) || stageStatus.includes(query));
+    })
+    .sort((a: any, b: any) => {
+      if (decisionSortBy === 'candidate') {
+        return String(a?.candidate_name || '').localeCompare(String(b?.candidate_name || ''));
+      }
+      if (decisionSortBy === 'decision') {
+        return String(a?.decision || '').localeCompare(String(b?.decision || ''));
+      }
+      if (decisionSortBy === 'score') {
+        return Number(b?.stage_score || 0) - Number(a?.stage_score || 0);
+      }
+      return Number(b?.total_flags || 0) - Number(a?.total_flags || 0);
+    });
+
+  const decisionBadgeClass = (decision: string) => {
+    if (decision === 'confirmed_cheating') return 'bg-red-100 text-red-700 border border-red-200';
+    if (decision === 'suspicious_review') return 'bg-amber-100 text-amber-700 border border-amber-200';
+    if (decision === 'monitoring') return 'bg-blue-100 text-blue-700 border border-blue-200';
+    return 'bg-emerald-100 text-emerald-700 border border-emerald-200';
+  };
+
+  const formatDecision = (decision: string) => {
+    return String(decision || '').replaceAll('_', ' ').replace(/\b\w/g, (m) => m.toUpperCase());
+  };
+
+  const resolveCandidateActionId = (row: any) => {
+    const match = stageScopedCandidates.find((c: any) => String(c?.id) === String(row?.candidate_id));
+    return (match?.id ?? row?.candidate_id) as any;
   };
 
   return (
@@ -390,6 +445,126 @@ export function ModuleMonitoringDashboard({
               <option value="score-low">Score (Low to High)</option>
               <option value="name">Name (A-Z)</option>
             </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Dedicated Candidate Decision Table */}
+      <div className="px-8 py-5 border-b border-[#e5e7eb] bg-[#fcfcfd]">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="font-['Arimo',sans-serif] text-[16px] text-[#111827] font-semibold">
+              Candidate Decisions ({stageLabel(selectedStageForDecisionTable)})
+            </h3>
+            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mt-1">
+              Stage-scoped anti-cheating decisions from live integrity evaluation.
+            </p>
+          </div>
+          <div className="text-[12px] text-[#6b7280]">
+            Showing <span className="font-semibold text-[#111827]">{decisionRows.length}</span> of{' '}
+            <span className="font-semibold text-[#111827]">{decisionRowsRaw.length}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 mb-3">
+          <input
+            value={decisionSearch}
+            onChange={(e) => setDecisionSearch(e.target.value)}
+            placeholder="Search candidate, latest event, or stage status"
+            className="h-[36px] w-[320px] px-3 rounded-[8px] border border-[#e5e7eb] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+          />
+          <select
+            value={decisionFilter}
+            onChange={(e) => setDecisionFilter(e.target.value as any)}
+            className="h-[36px] px-3 rounded-[8px] border border-[#e5e7eb] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+          >
+            <option value="all">All Decisions</option>
+            <option value="confirmed_cheating">Confirmed Cheating</option>
+            <option value="suspicious_review">Suspicious Review</option>
+            <option value="monitoring">Monitoring</option>
+            <option value="clean">Clean</option>
+          </select>
+          <select
+            value={decisionSortBy}
+            onChange={(e) => setDecisionSortBy(e.target.value as any)}
+            className="h-[36px] px-3 rounded-[8px] border border-[#e5e7eb] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1]"
+          >
+            <option value="flags">Sort: Total Flags</option>
+            <option value="score">Sort: Stage Score</option>
+            <option value="decision">Sort: Decision</option>
+            <option value="candidate">Sort: Candidate Name</option>
+          </select>
+        </div>
+
+        <div className="rounded-[12px] border border-[#e5e7eb] bg-white overflow-hidden">
+          <div className="max-h-[280px] overflow-y-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-[#e5e7eb] sticky top-0">
+                <tr>
+                  <th className="px-4 py-3 text-left text-[12px] text-[#6b7280] font-semibold">Candidate</th>
+                  <th className="px-4 py-3 text-center text-[12px] text-[#6b7280] font-semibold">Decision</th>
+                  <th className="px-4 py-3 text-center text-[12px] text-[#6b7280] font-semibold">Stage Status</th>
+                  <th className="px-4 py-3 text-center text-[12px] text-[#6b7280] font-semibold">Stage Score</th>
+                  <th className="px-4 py-3 text-center text-[12px] text-[#6b7280] font-semibold">Flags (H/M/L)</th>
+                  <th className="px-4 py-3 text-center text-[12px] text-[#6b7280] font-semibold">Latest Event</th>
+                  <th className="px-4 py-3 text-center text-[12px] text-[#6b7280] font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {decisionRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-10 text-center text-[13px] text-[#9ca3af]">
+                      No decision rows for current filters.
+                    </td>
+                  </tr>
+                ) : decisionRows.map((row: any) => {
+                  const actionId = resolveCandidateActionId(row);
+                  return (
+                    <tr key={`${row.application_id}:${row.stage}`} className="border-b border-[#f1f5f9] hover:bg-[#fafafa]">
+                      <td className="px-4 py-3 text-[13px] text-[#111827] font-medium">{row.candidate_name}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`inline-flex px-2.5 py-1 rounded-full text-[11px] font-medium ${decisionBadgeClass(String(row.decision || ''))}`}>
+                          {formatDecision(String(row.decision || ''))}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center text-[12px] text-[#374151]">{String(row.stage_status || 'unknown')}</td>
+                      <td className="px-4 py-3 text-center text-[12px] text-[#111827] font-semibold">{Number(row.stage_score || 0) > 0 ? `${Number(row.stage_score).toFixed(1)}%` : 'N/A'}</td>
+                      <td className="px-4 py-3 text-center text-[12px] text-[#374151]">
+                        {Number(row.total_flags || 0)} ({Number(row.high_flags || 0)}/{Number(row.medium_flags || 0)}/{Number(row.low_flags || 0)})
+                      </td>
+                      <td className="px-4 py-3 text-center text-[12px] text-[#6b7280]">{row.latest_event_type || 'None'}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => onViewCandidate(actionId)}
+                            className="p-1.5 rounded-[8px] border border-[#e5e7eb] hover:bg-gray-50 transition-colors"
+                            title="View Candidate"
+                          >
+                            <Eye size={14} className="text-[#6b7280]" />
+                          </button>
+                          <button
+                            onClick={() => onAddVerdict(actionId)}
+                            className="p-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+                            title="Set Technical Verdict"
+                          >
+                            <CheckCircle size={14} className="text-emerald-600" />
+                          </button>
+                          {Number(row.total_flags || 0) > 0 && (
+                            <button
+                              onClick={() => onReviewFlags(actionId)}
+                              className="p-1.5 rounded-[8px] border border-red-200 bg-red-50 hover:bg-red-100 transition-colors"
+                              title="Review Integrity Flags"
+                            >
+                              <Flag size={14} className="text-red-600" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
