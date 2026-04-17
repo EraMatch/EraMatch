@@ -30,6 +30,18 @@ class CVParseRequest(BaseModel):
     """Request body for CV parsing."""
     cv_text: str = Field(..., min_length=50, description="Raw text extracted from a CV/resume PDF")
 
+class CVAsyncParseRequest(BaseModel):
+    """Request body for async CV parsing with webhook callback"""
+    cv_text: str = Field(..., min_length=50)
+    tenant_id: str
+    job_id: str
+    file_path: str
+    source: str = "upload"
+
+class CVAsyncParseResponse(BaseModel):
+    message: str
+    task_id: str
+
 
 class ContactInfo(BaseModel):
     full_name: str | None = None
@@ -284,13 +296,36 @@ async def parse_cv(request: CVParseRequest):
     try:
         prompt = _load_prompt("parse", CV_TEXT=request.cv_text[:30000])
 
-        result = await chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            model=CV_PARSING_MODEL,
-            response_format="json",
-        )
+        max_json_retries = 3
+        last_json_error = None
 
-        parsed = _extract_json(result.get("content", ""))
+        for json_attempt in range(max_json_retries):
+            result = await chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                model=CV_PARSING_MODEL,
+                response_format="json",
+                host=settings.OLLAMA_LOCAL_HOST,
+            )
+
+            try:
+                parsed = _extract_json(result.get("content", ""))
+                break  # Valid JSON — exit retry loop
+            except (ValueError, json.JSONDecodeError) as json_exc:
+                last_json_error = json_exc
+                raw_content = result.get("content", "")
+                logger.warning(
+                    "CV parsing got invalid JSON (attempt %d/%d): %s\nRaw LLM output (first 500 chars): %s",
+                    json_attempt + 1, max_json_retries, json_exc,
+                    raw_content[:500],
+                )
+                if json_attempt < max_json_retries - 1:
+                    continue  # Retry the LLM call
+                logger.error("CV parsing exhausted JSON retries, giving up.")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"LLM returned invalid JSON after {max_json_retries} attempts: {last_json_error}",
+                )
+
         normalized = _normalize_parsed(parsed)
 
         logger.info(
@@ -302,10 +337,6 @@ async def parse_cv(request: CVParseRequest):
         )
 
         return CVParseResponse(**normalized)
-
-    except json.JSONDecodeError as exc:
-        logger.error("CV parsing JSON decode error: %s", exc)
-        raise HTTPException(status_code=502, detail=f"LLM returned invalid JSON: {exc}")
     except Exception as exc:
         logger.error("CV parsing failed: %s", exc)
         message = str(exc).lower()
@@ -320,3 +351,26 @@ async def parse_cv(request: CVParseRequest):
                 detail=f"Model '{CV_PARSING_MODEL}' not found on Ollama Cloud.",
             )
         raise HTTPException(status_code=502, detail=f"CV parsing LLM error: {exc}")
+
+@router.post("/parse-async", response_model=CVAsyncParseResponse, status_code=202)
+async def parse_cv_async_endpoint(request: CVAsyncParseRequest):
+    """
+    Queue an asynchronous CV parsing job.
+    The worker will parse the CV text using LLM and notify the backend via Webhook.
+    """
+    # Import locally to avoid circular dependencies if worker imports router
+    from worker.tasks.cv_parsing_task import parse_cv_async
+    
+    # Enqueue task
+    task = parse_cv_async.delay(
+        request.cv_text,
+        request.tenant_id,
+        request.job_id,
+        request.file_path
+    )
+    
+    logger.info(f"Enqueued async CV parsing task {task.id} for {request.file_path}")
+    return CVAsyncParseResponse(
+        message="Asynchronous CV parsing queued",
+        task_id=str(task.id)
+    )

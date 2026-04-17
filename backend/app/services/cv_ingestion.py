@@ -161,27 +161,56 @@ class CVIngestionService:
             f.write(file_content)
         return file_path
 
-    async def process_cv_file(self, organization_id: UUID, position_id: UUID, file_name: str, file_content: bytes, source: str) -> Dict[str, Any]:
-        """Processes a single CV file. Returns stats dict."""
-        # Placeholder name and email extraction since CV parsing is pending.
-        # We use a random UUID for email to ensure unique candidate creation if re-running.
-        base_name = os.path.splitext(file_name)[0]
-        email = f"{str(uuid.uuid4())}@example.com"
-        
-        candidate_id = await self.get_or_create_candidate(organization_id, email, base_name)
-        app_id = await self.apply_for_position(organization_id, position_id, candidate_id, source)
-        
-        if app_id:
-            file_path = self.save_cv_file(app_id, file_name, file_content)
-            # Dispatch AI CV parsing as a background task (PDF only)
-            if file_name.lower().endswith(".pdf"):
+    async def handle_async_parse_result(self, tenant_id: str, job_id: str, file_path: str, status: str, parsed_data: dict | None, error: str | None, source: str = "upload"):
+        """Called by webhook when parsing finishes"""
+        if status == "success" and parsed_data:
+            email = parsed_data.get("email") or f"{str(uuid.uuid4())}@example.com"
+            name = parsed_data.get("full_name") or os.path.basename(file_path).split("_", 1)[-1]
+            
+            logger.info(f"Webhook creating candidate {email} for {file_path}")
+            
+            # Create/Find Candidate
+            candidate_id = await self.get_or_create_candidate(UUID(str(tenant_id)), email, name)
+            
+            # Create Application
+            app_id = await self.apply_for_position(UUID(str(tenant_id)), UUID(str(job_id)), candidate_id, source)
+            
+            if app_id:
+                # Move staged file to actual location
+                try:
+                    with open(file_path, "rb") as f:
+                        file_content = f.read()
+                    self.save_cv_file(app_id, os.path.basename(file_path), file_content)
+                except Exception as e:
+                    logger.error(f"Failed to move staged file {file_path}: {e}")
+                
+                # We need to dispatch a quick task to save the CVAnalysis data and backfill candidate profile
+                # This way we reuse the database persistence logic for the parsed JSON
                 celery_app.send_task(
-                    "cv_parsing.parse_cv",
-                    args=[str(app_id), str(organization_id), file_path],
+                    "cv_parsing.persist_parsed_data",
+                    args=[str(app_id), str(tenant_id), file_path, parsed_data],
                 )
-            return {"status": "processed", "file": file_name, "app_id": str(app_id)}
         else:
-            return {"status": "skipped", "file": file_name, "reason": "Already applied"}
+            logger.error(f"CV parsing failed per webhook for {file_path}: {error}")
+            
+    async def process_cv_file(self, organization_id: UUID, position_id: UUID, file_name: str, file_content: bytes, source: str) -> Dict[str, Any]:
+        """Stages a CV file and dispatches async parsing."""
+        staging_id = str(uuid.uuid4())
+        base_dir = os.path.join(os.getcwd(), "static", "cvs", "staging", str(organization_id), str(position_id))
+        os.makedirs(base_dir, exist_ok=True)
+        
+        file_path = os.path.join(base_dir, f"{staging_id}_{file_name}")
+        with open(file_path, "wb") as f:
+            f.write(file_content)
+            
+        if file_name.lower().endswith(".pdf"):
+            celery_app.send_task(
+                "cv_parsing.extract_and_parse_cv",
+                args=[file_path, str(organization_id), str(position_id), source],
+            )
+            return {"status": "staged", "file": file_name}
+        else:
+            return {"status": "skipped", "file": file_name, "reason": "Not a PDF"}
 
     async def process_zip_ingestion(self, job_id: UUID, organization_id: UUID, position_id: UUID, zip_content: str):
         """Processes an uploaded ZIP file of CVs."""
@@ -433,35 +462,55 @@ class CVIngestionWorkerService:
         self.session.refresh(new_app)
         return new_app.id
 
-    def process_cv_file(self, organization_id: UUID, position_id: UUID, file_name: str, file_content: bytes, source: str) -> Dict[str, Any]:
-        """Processes a single CV file (Synchronous)."""
-        base_name = os.path.splitext(file_name)[0]
-        email = f"{str(uuid.uuid4())}@example.com"
-        
-        logger.info(f"Processing CV: {file_name} for email {email}")
-        candidate_id = self.get_or_create_candidate(organization_id, email, base_name)
-        app_id = self.apply_for_position(organization_id, position_id, candidate_id, source)
-        
-        if app_id:
-            logger.info(f"Created new application {app_id} for {file_name}")
-            # save_cv_file logic duplicated here to stay sync
-            base_dir = os.path.join(os.getcwd(), "static", "cvs", str(app_id))
-            os.makedirs(base_dir, exist_ok=True)
-            file_path = os.path.join(base_dir, file_name)
-            with open(file_path, "wb") as f:
-                f.write(file_content)
+    def handle_async_parse_result(self, tenant_id: str, job_id: str, file_path: str, status: str, parsed_data: dict | None, error: str | None, source: str = "upload"):
+        """Called by webhook when parsing finishes (Synchronous)"""
+        if status == "success" and parsed_data:
+            email = parsed_data.get("email") or f"{str(uuid.uuid4())}@example.com"
+            name = parsed_data.get("full_name") or os.path.basename(file_path).split("_", 1)[-1]
             
-            # Dispatch AI CV parsing as a background task (PDF only)
-            if file_name.lower().endswith(".pdf"):
+            logger.info(f"Webhook creating candidate {email} for {file_path} (Sync)")
+            
+            candidate_id = self.get_or_create_candidate(UUID(str(tenant_id)), email, name)
+            app_id = self.apply_for_position(UUID(str(tenant_id)), UUID(str(job_id)), candidate_id, source)
+            
+            if app_id:
+                try:
+                    with open(file_path, "rb") as f:
+                        file_content = f.read()
+                        
+                    base_dir = os.path.join(os.getcwd(), "static", "cvs", str(app_id))
+                    os.makedirs(base_dir, exist_ok=True)
+                    new_file_path = os.path.join(base_dir, os.path.basename(file_path))
+                    with open(new_file_path, "wb") as new_f:
+                        new_f.write(file_content)
+                except Exception as e:
+                    logger.error(f"Failed to move staged file {file_path}: {e}")
+                
                 celery_app.send_task(
-                    "cv_parsing.parse_cv",
-                    args=[str(app_id), str(organization_id), file_path],
+                    "cv_parsing.persist_parsed_data",
+                    args=[str(app_id), str(tenant_id), file_path, parsed_data],
                 )
-            
-            return {"status": "processed", "file": file_name, "app_id": str(app_id)}
         else:
-            logger.info(f"Skipping {file_name}: Application already exists for this candidate/position.")
-            return {"status": "skipped", "file": file_name, "reason": "Already applied"}
+            logger.error(f"CV parsing failed per webhook for {file_path}: {error}")
+
+    def process_cv_file(self, organization_id: UUID, position_id: UUID, file_name: str, file_content: bytes, source: str) -> Dict[str, Any]:
+        """Stages a CV file and dispatches async parsing (Synchronous)."""
+        staging_id = str(uuid.uuid4())
+        base_dir = os.path.join(os.getcwd(), "static", "cvs", "staging", str(organization_id), str(position_id))
+        os.makedirs(base_dir, exist_ok=True)
+        
+        file_path = os.path.join(base_dir, f"{staging_id}_{file_name}")
+        with open(file_path, "wb") as f:
+            f.write(file_content)
+            
+        if file_name.lower().endswith(".pdf"):
+            celery_app.send_task(
+                "cv_parsing.extract_and_parse_cv",
+                args=[file_path, str(organization_id), str(position_id), source],
+            )
+            return {"status": "staged", "file": file_name}
+        else:
+            return {"status": "skipped", "file": file_name, "reason": "Not a PDF"}
 
     def process_zip_ingestion(self, job_id: UUID, organization_id: UUID, position_id: UUID, zip_content: str):
         """Processes an uploaded ZIP file of CVs (Synchronous)."""

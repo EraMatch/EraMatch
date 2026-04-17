@@ -19,6 +19,7 @@ from app.api.v1.assessments import router as assessments_router
 from app.api.v1.questions import router as questions_router
 from app.api.v1.background_tasks import router as background_tasks_router
 from app.api.v1.cv_ingestion import router as cv_ingestion_router
+from app.api.v1.webhooks import router as webhooks_router
 from app.routers.monitoring import router as monitoring_router
 
 router = APIRouter()
@@ -39,4 +40,5 @@ router.include_router(groups_router)
 router.include_router(assessments_router)
 router.include_router(questions_router, prefix="/questions", tags=["Questions"])
 router.include_router(cv_ingestion_router, prefix="/ingestion", tags=["CV Ingestion"])
+router.include_router(webhooks_router, prefix="/webhooks", tags=["Webhooks"])
 router.include_router(background_tasks_router)

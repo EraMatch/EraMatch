@@ -20,7 +20,7 @@ from worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-AI_SERVICE_URL = settings.AI_SERVICE_URL or os.environ.get("AI_SERVICE_URL", "http://localhost:8001")
+AI_SERVICE_URL = settings.AI_SERVICE_URL or os.environ.get("AI_SERVICE_URL", "http://127.0.0.1:8001")
 
 
 # =============================================================================
@@ -54,44 +54,54 @@ def extract_text_from_pdf(file_path: str) -> str:
 # CELERY TASK
 # =============================================================================
 
-@celery_app.task(bind=True, name="cv_parsing.parse_cv", max_retries=2, default_retry_delay=30)
-def parse_cv(self, application_id: str, organization_id: str, file_path: str):
+@celery_app.task(bind=True, name="cv_parsing.extract_and_parse_cv", max_retries=2, default_retry_delay=30)
+def extract_and_parse_cv(self, file_path: str, organization_id: str, position_id: str, source: str):
     """
-    Parse a single CV file and store structured results.
-
-    Args:
-        application_id: The CandidateApplication UUID (string).
-        organization_id: The Organization UUID (string).
-        file_path: Absolute path to the saved PDF file.
+    Extract text, then call AI-service's parse-async endpoint.
     """
-    logger.info("[CVParsing] Starting task for application %s", application_id)
+    logger.info("[CVParsing] Starting extraction for %s", file_path)
 
     try:
-        # 1. Extract text from PDF (runs locally in worker)
         text = extract_text_from_pdf(file_path)
         if not text or len(text.strip()) < 50:
-            logger.warning("[CVParsing] Text too short for application %s, skipping", application_id)
+            logger.warning("[CVParsing] Text too short for %s, skipping", file_path)
+            # We can still notify webhook of failure, or just let it die.
             return
 
         logger.info("[CVParsing] Extracted %d chars from %s", len(text), os.path.basename(file_path))
 
-        # 2. Call ai-service for structured parsing
+        # Call ai-service async endpoint
         resp = requests.post(
-            f"{AI_SERVICE_URL}/cv-parsing/parse",
-            json={"cv_text": text},
-            timeout=120,
+            f"{AI_SERVICE_URL}/cv-parsing/parse-async",
+            json={
+                "cv_text": text,
+                "tenant_id": organization_id,
+                "job_id": position_id,
+                "file_path": file_path,
+                "source": source
+            },
+            timeout=30,
         )
         resp.raise_for_status()
-        parsed_data = resp.json()
 
-        logger.info(
-            "[CVParsing] AI service returned: name=%s, email=%s, skills=%d",
-            parsed_data.get("full_name"),
-            parsed_data.get("email"),
-            len(parsed_data.get("skills", [])),
-        )
+        logger.info("[CVParsing] Queued async task in AI service for %s", file_path)
+        return {"status": "enqueued"}
 
-        # 3. Derive fields for CVAnalysis columns
+    except Exception as exc:
+        logger.error("[CVParsing] Extraction failed for %s: %s", file_path, exc)
+        if isinstance(exc, requests.HTTPError):
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 429:
+                raise
+        raise self.retry(exc=exc)
+
+@celery_app.task(bind=True, name="cv_parsing.persist_parsed_data", max_retries=2, default_retry_delay=5)
+def persist_parsed_data(self, application_id: str, organization_id: str, file_path: str, parsed_data: dict):
+    """
+    Save the structured data returned by webhook.
+    """
+    logger.info("[CVParsing] Persisting parsed data for application %s", application_id)
+    try:
         skills_list = [
             s["skill_name"]
             for s in parsed_data.get("skills", [])
@@ -99,7 +109,6 @@ def parse_cv(self, application_id: str, organization_id: str, file_path: str):
         ]
         experience_years = parsed_data.get("years_of_experience")
 
-        # 4. Persist results in the database using SQLAlchemy
         with sync_session_factory() as session:
             service = CVParsingWorkerService(session)
             
@@ -116,23 +125,7 @@ def parse_cv(self, application_id: str, organization_id: str, file_path: str):
                 UUID(application_id), 
                 parsed_data
             )
-
-        logger.info("[CVParsing] Task completed for application %s", application_id)
-
-        return {
-            "application_id": application_id,
-            "status": "completed",
-            "full_name": parsed_data.get("full_name"),
-            "skills_count": len(skills_list),
-        }
-
+        logger.info("[CVParsing] Successfully persisted parsed data for %s", application_id)
     except Exception as exc:
-        logger.error("[CVParsing] Task failed for application %s: %s", application_id, exc)
-
-        # Don't retry on client errors from ai-service (4xx)
-        if isinstance(exc, requests.HTTPError):
-            status_code = getattr(getattr(exc, "response", None), "status_code", None)
-            if isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 429:
-                raise
-
+        logger.error("[CVParsing] Persisting failed for %s: %s", application_id, exc)
         raise self.retry(exc=exc)

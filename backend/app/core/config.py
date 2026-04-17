@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     
     # Internal Services
     AI_SERVICE_URL: str = "http://127.0.0.1:8001"
+    BACKEND_URL: str = "http://127.0.0.1:8000"
+    WEBHOOK_SECRET: str = "shared-secret-change-me"
     GITHUB_TOKEN: str = ""
 
     # Google Drive Integration
