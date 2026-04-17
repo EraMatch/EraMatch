@@ -34,6 +34,10 @@ interface TaskRecord {
     total_flagged: number | null;
     total_approved: number | null;
     import_job_id: string | null;
+    candidates_found?: number | null;
+    candidates_processed?: number | null;
+    candidates_skipped?: number | null;
+    zero_reason?: string | null;
 }
 
 interface LogEntry {
@@ -117,9 +121,9 @@ const CATEGORIES: Array<{ id: CategoryId; title: string; icon: React.ReactNode; 
     },
     {
         id: 'qag-processing',
-        title: 'HD Eval + QAG',
+        title: 'Position Pre-Matching Score',
         icon: <Sparkles size={15} />,
-        description: 'QAG question generation and resume correction jobs',
+        description: 'Pre-matching criteria generation and candidate correction jobs',
     },
 ];
 
@@ -256,8 +260,8 @@ const getTableColumnConfig = (tableId: string): TableColumnConfig => {
             };
         case 'qag-generation':
             return {
-                taskHeader: 'QAG Generation Task',
-                subjectHeader: 'Position & Output',
+                taskHeader: 'Criteria Generation Task',
+                subjectHeader: 'Position & Generated Criteria',
                 renderSubject: (task) => (
                     <div className="flex flex-wrap items-center gap-2 text-[12px]">
                         <span className="text-[13px] text-card-foreground">{task.source_filename || 'Position'}</span>
@@ -267,12 +271,20 @@ const getTableColumnConfig = (tableId: string): TableColumnConfig => {
             };
         case 'qag-resume-correction':
             return {
-                taskHeader: 'QAG Resume Correction Task',
-                subjectHeader: 'Position & Corrections',
+                taskHeader: 'Candidate Correction Task',
+                subjectHeader: 'Position & Corrected Candidates',
                 renderSubject: (task) => (
-                    <div className="flex flex-wrap items-center gap-2 text-[12px]">
-                        <span className="text-[13px] text-card-foreground">{task.source_filename || 'Position'}</span>
-                        {task.total_approved != null && <span className="px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-100">{task.total_approved} corrected</span>}
+                    <div className="flex flex-col gap-1 text-[12px]">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[13px] text-card-foreground">{task.source_filename || 'Position'}</span>
+                            {task.total_approved != null && <span className="px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-100">{task.total_approved} corrected</span>}
+                            {task.candidates_found != null && <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">{task.candidates_found} found</span>}
+                            {task.candidates_processed != null && <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100">{task.candidates_processed} processed</span>}
+                            {task.candidates_skipped != null && <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{task.candidates_skipped} skipped</span>}
+                        </div>
+                        {task.zero_reason && (
+                            <span className="text-[11px] text-amber-700">{task.zero_reason}</span>
+                        )}
                     </div>
                 ),
             };
@@ -456,22 +468,22 @@ export function BackgroundTasks() {
             'qag-processing': [
                 {
                     id: 'qag-generation',
-                    title: 'HD Eval + QAG Question Generation',
-                    description: 'Generate 50 yes/no QAG criteria from the approved JD',
+                    title: 'Criteria Generation',
+                    description: 'Generate position pre-matching criteria from the approved JD',
                     tasks: qagGeneration,
                 },
                 {
                     id: 'qag-resume-correction',
-                    title: 'QAG Resume Correction',
-                    description: 'Evaluate and correct parsed resumes across approved QAG criteria',
+                    title: 'Candidate Correction',
+                    description: 'Evaluate and correct parsed candidate resumes against approved criteria',
                     tasks: qagResumeCorrection,
                 },
                 ...(qagUnclassified.length > 0
                     ? [
                         {
                             id: 'qag-unclassified',
-                            title: 'Other QAG Processing',
-                            description: 'QAG jobs not matched to generation/correction tags',
+                            title: 'Other Pre-Matching Processing',
+                            description: 'Pre-matching jobs not matched to criteria-generation/candidate-correction tags',
                             tasks: qagUnclassified,
                         },
                     ]
@@ -1068,7 +1080,7 @@ export function BackgroundTasks() {
                                 <p className="text-[24px] font-semibold">{questionImportTasks.length}</p>
                             </div>
                             <div className="rounded-[12px] border border-border bg-card px-4 py-3">
-                                <p className="text-[12px] text-muted-foreground">HD Eval + QAG Tasks</p>
+                                <p className="text-[12px] text-muted-foreground">Position Pre-Matching Tasks</p>
                                 <p className="text-[24px] font-semibold">{qagTasks.length}</p>
                             </div>
                             <div className="rounded-[12px] border border-border bg-card px-4 py-3">

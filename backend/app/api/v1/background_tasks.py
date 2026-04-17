@@ -200,6 +200,10 @@ async def get_background_tasks(
             summary = job.summary if isinstance(job.summary, dict) else {}
             total_generated = summary.get("question_count") if isinstance(summary.get("question_count"), int) else job.total_items
             total_approved = summary.get("applications_scored") if isinstance(summary.get("applications_scored"), int) else job.processed_items
+            candidates_found = summary.get("candidates_found") if isinstance(summary.get("candidates_found"), int) else None
+            candidates_processed = summary.get("candidates_processed") if isinstance(summary.get("candidates_processed"), int) else None
+            candidates_skipped = summary.get("candidates_skipped") if isinstance(summary.get("candidates_skipped"), int) else None
+            zero_reason = summary.get("zero_reason") if isinstance(summary.get("zero_reason"), str) else None
 
             tasks.append({
                 "id": str(job.id),
@@ -216,6 +220,10 @@ async def get_background_tasks(
                 "qag_job_type": job.job_type,
                 "processed_items": job.processed_items,
                 "total_items": job.total_items,
+                "candidates_found": candidates_found,
+                "candidates_processed": candidates_processed,
+                "candidates_skipped": candidates_skipped,
+                "zero_reason": zero_reason,
             })
     except Exception:
         pass

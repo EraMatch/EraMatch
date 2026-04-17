@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from time import perf_counter
 from typing import Any
 import httpx
 
@@ -190,7 +191,14 @@ class PreScoreService:
             f"{json.dumps(jd_payload, indent=2)}\n"
         )
 
-    def _normalize_qag_questions(self, raw_questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _normalize_qag_questions(
+        self,
+        raw_questions: list[dict[str, Any]],
+        *,
+        default_generation_source: str = "ai",
+        generation_provider: str | None = None,
+        generation_model: str | None = None,
+    ) -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
         for idx, q in enumerate(raw_questions[: self.QAG_QUESTION_COUNT]):
             if not isinstance(q, dict):
@@ -203,14 +211,24 @@ class PreScoreService:
                 weight = float(q.get("weight", 0.0))
             except Exception:
                 weight = 0.0
+
+            generation_source = str(q.get("generation_source") or default_generation_source).strip().lower()
+            if generation_source not in {"ai", "fallback", "autofill", "manual"}:
+                generation_source = default_generation_source
+
+            question_provider = q.get("generation_provider")
+            question_model = q.get("generation_model")
             normalized.append(
                 {
                     "id": idx + 1,
                     "question": question,
                     "category": category,
                     "weight": max(0.0, weight),
-                    "approved": True,
-                    "edited": False,
+                    "approved": bool(q.get("approved", True)),
+                    "edited": bool(q.get("edited", False)),
+                    "generation_source": generation_source,
+                    "generation_provider": str(question_provider or generation_provider or ""),
+                    "generation_model": str(question_model or generation_model or ""),
                 }
             )
 
@@ -225,6 +243,9 @@ class PreScoreService:
                     "weight": 1.0 / self.QAG_QUESTION_COUNT,
                     "approved": True,
                     "edited": False,
+                    "generation_source": "autofill",
+                    "generation_provider": str(generation_provider or ""),
+                    "generation_model": str(generation_model or ""),
                 }
             )
             i += 1
@@ -258,6 +279,9 @@ class PreScoreService:
                     "weight": 0.0,
                     "approved": True,
                     "edited": False,
+                    "generation_source": "fallback",
+                    "generation_provider": "fallback",
+                    "generation_model": "template",
                 }
             )
             if len(questions) >= self.QAG_QUESTION_COUNT:
@@ -283,10 +307,18 @@ class PreScoreService:
                     "weight": 0.0,
                     "approved": True,
                     "edited": False,
+                    "generation_source": "fallback",
+                    "generation_provider": "fallback",
+                    "generation_model": "template",
                 }
             )
 
-        return self._normalize_qag_questions(questions)
+        return self._normalize_qag_questions(
+            questions,
+            default_generation_source="fallback",
+            generation_provider="fallback",
+            generation_model="template",
+        )
 
     async def run_position_jd_critic(
         self,
@@ -305,6 +337,7 @@ class PreScoreService:
             years_of_experience=years_of_experience,
         )
 
+        started = perf_counter()
         try:
             content, provider_used, model_used = await self._invoke_qag_llm(
                 prompt=prompt,
@@ -323,7 +356,12 @@ class PreScoreService:
                     )
                 else:
                     raise ValueError("AI response did not contain a valid questions list")
-            normalized_questions = self._normalize_qag_questions(questions)
+            normalized_questions = self._normalize_qag_questions(
+                questions,
+                default_generation_source="ai",
+                generation_provider=provider_used,
+                generation_model=model_used,
+            )
 
             # Keep compatibility fields while shifting to 50-QAG artifact.
             score = 1.0 if len(normalized_questions) == self.QAG_QUESTION_COUNT else 0.5
@@ -344,6 +382,7 @@ class PreScoreService:
                 "model": model_used,
                 "generation_source": "ai",
                 "fallback_used": False,
+                "generation_duration_ms": int((perf_counter() - started) * 1000),
             }
         except Exception as exc:
             if not settings.PRESCORE_ALLOW_FALLBACK:
@@ -361,6 +400,7 @@ class PreScoreService:
                     "model": llm_model or settings.PRESCORE_LLM_MODEL,
                     "generation_source": "ai_error",
                     "fallback_used": False,
+                    "generation_duration_ms": int((perf_counter() - started) * 1000),
                 }
 
             fallback_questions = self._fallback_qag_questions(
@@ -382,6 +422,7 @@ class PreScoreService:
                 "model": None,
                 "generation_source": "fallback",
                 "fallback_used": True,
+                "generation_duration_ms": int((perf_counter() - started) * 1000),
             }
 
     def _fallback_candidate_qag_results(

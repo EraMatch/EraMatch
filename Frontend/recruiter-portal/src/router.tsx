@@ -28,6 +28,7 @@ import { RecruiterSettings } from './components/recruiter/settings/RecruiterSett
 import { SuspiciousActivityLog } from './components/recruiter/dashboard/SuspiciousActivityLog';
 import { BackgroundTasks } from './components/recruiter/dashboard/BackgroundTasks';
 import { ReviewRequests } from './components/recruiter/reviews/ReviewRequests';
+import { PositionPreMatchingReviewPage } from './components/recruiter/reviews/PositionPreMatchingReviewPage';
 import { api, PositionGroup } from './services/api';
 
 import AdminRequests from './components/admin/AdminRequests';
@@ -458,6 +459,16 @@ export const router = createBrowserRouter([
             <RecruiterProtectedRoute>
                 <RecruiterLayout>
                     <ReviewRequests />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        )
+    },
+    {
+        path: "/recruiter/reviews/:requestId/pre-matching",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <PositionPreMatchingReviewPage />
                 </RecruiterLayout>
             </RecruiterProtectedRoute>
         )

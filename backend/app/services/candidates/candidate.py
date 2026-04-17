@@ -9,7 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from sqlalchemy import text
 
-from app.models import CandidateProfile, CandidateApplication, User, Position, CVAnalysis, GitHubAnalysis
+from app.models import CandidateProfile, CandidateApplication, User, Position, CVAnalysis, GitHubAnalysis, QAGProcessingJob
 from app.schemas import CandidateCreate, CandidateUpdate, ApplicationCreate, CandidateResponse, CandidateUploadResponse
 from app.core.security import hash_password
 from app.services.email import EmailService
@@ -534,6 +534,42 @@ class CandidateService:
 
             self.session.add(cv)
             await self.session.commit()
+
+            # If criteria were already approved for this position, auto-register a correction task
+            # for this newly added candidate so background-task history reflects the trigger.
+            artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+            approved_questions = artifact.get("approved_questions") if isinstance(artifact.get("approved_questions"), list) else []
+            is_criteria_approved = str(artifact.get("status") or "").lower() == "approved" and len(approved_questions) > 0
+
+            if is_criteria_approved:
+                now = datetime.utcnow()
+                correction_job = QAGProcessingJob(
+                    organization_id=self.organization_id,
+                    position_id=position.id,
+                    application_id=application.id,
+                    candidate_id=candidate_id,
+                    created_by_user_id=None,
+                    job_type="qag_resume_correction",
+                    status="completed",
+                    source_provider=str(artifact.get("provider") or "ai-service:ollama"),
+                    total_items=1,
+                    processed_items=1,
+                    summary={
+                        "position_id": str(position.id),
+                        "application_id": str(application.id),
+                        "candidate_id": str(candidate_id),
+                        "applications_scored": 1,
+                        "candidates_found": 1,
+                        "candidates_processed": 1,
+                        "candidates_skipped": 0,
+                        "zero_reason": None,
+                        "trigger": "candidate_application_created",
+                    },
+                    started_at=now,
+                    completed_at=now,
+                )
+                self.session.add(correction_job)
+                await self.session.commit()
         return application
 
     async def list_applications_by_candidate(self, candidate_id: UUID) -> list[CandidateApplication]:

@@ -242,7 +242,7 @@ export function Sidebar() {
                   <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
                     <div className="flex items-center gap-2 text-[13px] text-[#334155]">
                       <Sparkles size={14} />
-                      <span>HD Eval + QAG</span>
+                      <span>Position Pre-Matching Score</span>
                     </div>
                     <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.qagProcessing}</span>
                   </div>

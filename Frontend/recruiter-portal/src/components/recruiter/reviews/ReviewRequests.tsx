@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card } from '../../ui/card';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
@@ -10,16 +11,8 @@ import { Textarea } from '../../ui/textarea';
 import { Label } from '../../ui/label';
 import { AdminPositionModal } from '../../admin/AdminPositionModal';
 
-interface QAGQuestion {
-    id: number;
-    question: string;
-    category?: string;
-    weight?: number;
-    approved?: boolean;
-    edited?: boolean;
-}
-
 export function ReviewRequests() {
+    const navigate = useNavigate();
     const [requests, setRequests] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [selectedRequest, setSelectedRequest] = useState<any>(null);
@@ -30,12 +23,6 @@ export function ReviewRequests() {
     const [reviewNotes, setReviewNotes] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [expandedIds, setExpandedIds] = useState<string[]>([]);
-    const [isQAGModalOpen, setIsQAGModalOpen] = useState(false);
-    const [qagQuestions, setQagQuestions] = useState<QAGQuestion[]>([]);
-    const [qagPositionId, setQagPositionId] = useState<string>('');
-    const [qagRequestId, setQagRequestId] = useState<string>('');
-    const [qagReviewNotes, setQagReviewNotes] = useState('');
-    const [isQagLoading, setIsQagLoading] = useState(false);
 
     useEffect(() => {
         fetchRequests();
@@ -56,67 +43,17 @@ export function ReviewRequests() {
 
     const handleAction = (request: any, action: 'approved' | 'rejected') => {
         if (action === 'approved' && request.entity_id) {
-            openQAGReview(request);
+            const params = new URLSearchParams({
+                positionId: String(request.entity_id),
+                positionTitle: String(request.position_title || ''),
+            });
+            navigate(`/recruiter/reviews/${request.id}/pre-matching?${params.toString()}`);
             return;
         }
         setSelectedRequest(request);
         setReviewAction(action);
         setReviewNotes('');
         setIsReviewModalOpen(true);
-    };
-
-    const openQAGReview = async (request: any) => {
-        try {
-            setIsQagLoading(true);
-            setQagPositionId(request.entity_id);
-            setQagRequestId(request.id);
-            setQagReviewNotes('');
-            const artifact = await api.recruiter.getPositionHDEvalQAG(request.entity_id);
-            const questions = Array.isArray(artifact?.questions) ? artifact.questions : [];
-            setQagQuestions(questions as QAGQuestion[]);
-            setIsQAGModalOpen(true);
-        } catch (error) {
-            console.error('Failed to load QAG questions:', error);
-            toast.error('Failed to load HD Eval + QAG questions');
-        } finally {
-            setIsQagLoading(false);
-        }
-    };
-
-    const updateQuestionField = (id: number, patch: Partial<QAGQuestion>) => {
-        setQagQuestions(prev => prev.map(q => q.id === id ? { ...q, ...patch, edited: true } : q));
-    };
-
-    const handleSaveQAGDraft = async () => {
-        if (!qagPositionId) return;
-        try {
-            setIsSubmitting(true);
-            await api.recruiter.updatePositionHDEvalQAG(qagPositionId, qagQuestions);
-            toast.success('QAG questions saved');
-        } catch (error) {
-            console.error('Failed to save QAG draft:', error);
-            toast.error('Failed to save QAG draft');
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-
-    const handleApproveWithQAG = async () => {
-        if (!qagPositionId || !qagRequestId) return;
-        try {
-            setIsSubmitting(true);
-            await api.recruiter.updatePositionHDEvalQAG(qagPositionId, qagQuestions);
-            await api.recruiter.reviewRequest(qagRequestId, 'approved', qagReviewNotes || undefined);
-            await api.recruiter.approvePositionHDEvalQAG(qagPositionId);
-            toast.success('Position approved and QAG activated for candidate scoring');
-            setIsQAGModalOpen(false);
-            fetchRequests();
-        } catch (error) {
-            console.error('Failed to approve with QAG:', error);
-            toast.error('Failed to approve with QAG activation');
-        } finally {
-            setIsSubmitting(false);
-        }
     };
 
     const handleEdit = (request: any) => {
@@ -222,9 +159,8 @@ export function ReviewRequests() {
                                         <Button
                                             className="bg-green-600 hover:bg-green-700 text-white"
                                             onClick={() => handleAction(req, 'approved')}
-                                            disabled={isQagLoading}
                                         >
-                                            {isQagLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+                                            <CheckCircle className="w-4 h-4 mr-2" />
                                             Approve + QAG
                                         </Button>
                                     </div>
@@ -332,63 +268,6 @@ export function ReviewRequests() {
                     position={editingPosition}
                 />
             )}
-
-            <Dialog open={isQAGModalOpen} onOpenChange={setIsQAGModalOpen}>
-                <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader>
-                        <DialogTitle>HD Eval + QAG Review (50 Yes/No Questions)</DialogTitle>
-                        <DialogDescription>
-                            Review, edit, and approve the generated question set. Candidate scoring will use these approved yes/no criteria.
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="space-y-3 py-2">
-                        {qagQuestions.map((q) => (
-                            <div key={q.id} className="border border-gray-200 rounded-lg p-3">
-                                <div className="flex items-center justify-between gap-3 mb-2">
-                                    <div className="text-xs text-gray-500">Q{q.id} • {q.category || 'general'} • weight {Number(q.weight || 0).toFixed(4)}</div>
-                                    <label className="flex items-center gap-2 text-sm text-gray-700">
-                                        <input
-                                            type="checkbox"
-                                            checked={Boolean(q.approved ?? true)}
-                                            onChange={(e) => updateQuestionField(q.id, { approved: e.target.checked })}
-                                        />
-                                        Approved
-                                    </label>
-                                </div>
-                                <Textarea
-                                    value={q.question}
-                                    onChange={(e) => updateQuestionField(q.id, { question: e.target.value })}
-                                    className="min-h-[70px]"
-                                />
-                            </div>
-                        ))}
-                    </div>
-
-                    <div>
-                        <Label htmlFor="qag-notes" className="mb-2 block">Technical Review Notes (optional)</Label>
-                        <Textarea
-                            id="qag-notes"
-                            value={qagReviewNotes}
-                            onChange={(e) => setQagReviewNotes(e.target.value)}
-                            className="min-h-[80px]"
-                            placeholder="Add notes about QAG approval/edit decisions..."
-                        />
-                    </div>
-
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setIsQAGModalOpen(false)}>Cancel</Button>
-                        <Button variant="outline" onClick={handleSaveQAGDraft} disabled={isSubmitting}>
-                            {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            Save Draft
-                        </Button>
-                        <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={handleApproveWithQAG} disabled={isSubmitting}>
-                            {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            Approve Request + Activate QAG
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
         </div>
     );
 }

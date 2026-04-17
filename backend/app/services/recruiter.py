@@ -820,11 +820,14 @@ class RecruiterService:
             raise UnauthorizedException("Only assigned technical recruiter can edit QAG questions")
 
         scorer = PreScoreService()
+        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
         normalized = scorer._normalize_qag_questions(
-            [q for q in questions if isinstance(q, dict) and str(q.get("question") or "").strip()]
+            [q for q in questions if isinstance(q, dict) and str(q.get("question") or "").strip()],
+            default_generation_source=str(artifact.get("generation_source") or "ai").lower(),
+            generation_provider=str(artifact.get("provider") or ""),
+            generation_model=str(artifact.get("model") or ""),
         )
 
-        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
         artifact["questions"] = normalized
         artifact["approved_questions"] = [q for q in normalized if bool(q.get("approved", True))]
         artifact["question_count"] = len(normalized)
@@ -2206,6 +2209,7 @@ class RecruiterService:
         )
         result = await self.session.execute(query)
         rows = result.all()
+        candidates_found = len(rows)
 
         correction_job = await self._start_qag_job(
             position=position,
@@ -2266,6 +2270,14 @@ class RecruiterService:
                 summary={
                     "position_id": str(position.id),
                     "applications_scored": updates,
+                    "candidates_found": candidates_found,
+                    "candidates_processed": updates,
+                    "candidates_skipped": max(0, candidates_found - updates),
+                    "zero_reason": (
+                        "No applications found for this position at run time."
+                        if candidates_found == 0
+                        else None
+                    ),
                 },
             )
             return updates
@@ -2278,6 +2290,14 @@ class RecruiterService:
                 summary={
                     "position_id": str(position.id),
                     "applications_scored": updates,
+                    "candidates_found": candidates_found,
+                    "candidates_processed": updates,
+                    "candidates_skipped": max(0, candidates_found - updates),
+                    "zero_reason": (
+                        "No applications found for this position at run time."
+                        if candidates_found == 0
+                        else None
+                    ),
                 },
             )
             raise
