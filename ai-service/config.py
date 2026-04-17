@@ -40,8 +40,9 @@ class Settings(BaseSettings):
     # HuggingFace settings
     HUGGINGFACE_TOKEN: str = ""
     MODELS_DIR: str = "./models"
-    PROCTORING_DRAFTS_DIR: str = "gp-assessment-env-drafts"
-    PROCTORING_REQUIRE_MODEL: bool = True
+    PROCTORING_DRAFTS_DIR: str = "ai-service/gp-assessment-env-drafts"
+    # Dev-safe default: allow fallback adapter output unless explicitly forced by env.
+    PROCTORING_REQUIRE_MODEL: bool = False
     
     # Mock mode is opt-in for local testing only.
     USE_MOCK: bool = False

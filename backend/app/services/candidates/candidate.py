@@ -398,6 +398,14 @@ class CandidateService:
              response.filtrationFlow = filtration_flow
         
         response.groupAssigned = bool(app_row and app_row[0].group_id)
+        response.groupId = app.group_id if app_row else None
+        response.applicationId = app.id if app_row else None
+
+        if app_row and app.group_id:
+            group_res = await self.session.execute(
+                select(CandidateGroup.group_name).where(CandidateGroup.id == app.group_id)
+            )
+            response.groupName = group_res.scalar_one_or_none()
         
         if cv_data:
             response.skills = cv_data.skills or []

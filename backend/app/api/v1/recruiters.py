@@ -3,8 +3,10 @@ Recruiter endpoints - projects, positions, applications.
 """
 from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from sqlmodel import select
+from sqlalchemy import text, bindparam
+from sqlalchemy.dialects.postgresql import UUID as pgUUID
 
 from app.api.deps import DbSession, RecruiterUser
 from app.services import RecruiterService
@@ -235,6 +237,16 @@ class PositionQAGUpdateRequest(BaseModel):
     questions: list[dict]
 
 
+class AssessmentResetResponse(BaseModel):
+    application_id: UUID
+    sessions_deleted: int
+    answers_deleted: int
+    assigned_questions_deleted: int
+    proctoring_flags_deleted: int
+    progress_reset: int
+    message: str
+
+
 @router.get("/positions/{position_id}/hdeval-qag", response_model=dict)
 async def get_position_hdeval_qag(
     position_id: UUID,
@@ -300,6 +312,186 @@ async def update_application(
     """Update application status."""
     service = RecruiterService(session, current_user)
     return await service.update_application_status(application_id, data)
+
+
+@router.post("/applications/{application_id}/assessment/reset", response_model=AssessmentResetResponse)
+async def reset_application_assessment_trial(
+    application_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Reset assessment trial for one application: clear session data and set stage progress to not_started."""
+    current_user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
+    if not current_user_id:
+        dumped = {}
+        try:
+            dumped = current_user.model_dump(by_alias=True)
+        except Exception:
+            dumped = {}
+        current_user_id = dumped.get("user_id") or dumped.get("id")
+
+    ownership = await session.execute(
+        text(
+            """
+            SELECT
+              ca.application_id,
+              ca.organization_id,
+              p.position_id,
+              p.assigned_hr_id,
+              p.assigned_tech_id,
+              ca.candidate_id
+            FROM candidate_applications ca
+            JOIN positions p ON p.position_id = ca.position_id
+            WHERE ca.application_id = :application_id
+              AND ca.organization_id = :organization_id
+              AND ca.is_deleted = false
+              AND p.is_deleted = false
+            LIMIT 1
+            """
+        ).bindparams(
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            bindparam("organization_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "application_id": application_id,
+            "organization_id": current_user.organization_id,
+        },
+    )
+    row = ownership.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    role = str(getattr(current_user, "role", "")).lower()
+    if role == "technical" and row["assigned_tech_id"] != current_user_id:
+        raise HTTPException(status_code=403, detail="You are not assigned to this position")
+    if role == "hr" and row["assigned_hr_id"] != current_user_id:
+        raise HTTPException(status_code=403, detail="You are not assigned to this position")
+
+    sessions_res = await session.execute(
+        text(
+            """
+            SELECT oa.session_id
+            FROM ongoing_assessments oa
+            WHERE oa.application_id = :application_id
+            """
+        ).bindparams(
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"application_id": application_id},
+    )
+    session_ids = [s for s in sessions_res.scalars().all() if s]
+
+    answers_deleted = 0
+    assigned_deleted = 0
+    flags_deleted = 0
+    sessions_deleted = 0
+
+    if session_ids:
+        answers_delete_res = await session.execute(
+            text(
+                """
+                DELETE FROM candidate_answers
+                WHERE session_id IN (
+                  SELECT oa.session_id
+                  FROM ongoing_assessments oa
+                  WHERE oa.application_id = :application_id
+                )
+                """
+            ).bindparams(
+                bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            ),
+            {"application_id": application_id},
+        )
+        answers_deleted = int(answers_delete_res.rowcount or 0)
+
+        assigned_delete_res = await session.execute(
+            text(
+                """
+                DELETE FROM candidate_assigned_questions
+                WHERE session_id IN (
+                  SELECT oa.session_id
+                  FROM ongoing_assessments oa
+                  WHERE oa.application_id = :application_id
+                )
+                """
+            ).bindparams(
+                bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            ),
+            {"application_id": application_id},
+        )
+        assigned_deleted = int(assigned_delete_res.rowcount or 0)
+
+        flags_delete_res = await session.execute(
+            text(
+                """
+                DELETE FROM proctoring_flags
+                WHERE application_id = :application_id
+                  AND session_type = 'assessment'
+                                    AND session_id IN (
+                                        SELECT oa.session_id
+                                        FROM ongoing_assessments oa
+                                        WHERE oa.application_id = :application_id
+                                    )
+                """
+            ).bindparams(
+                bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            ),
+            {
+                "application_id": application_id,
+            },
+        )
+        flags_deleted = int(flags_delete_res.rowcount or 0)
+
+        sessions_delete_res = await session.execute(
+            text(
+                """
+                DELETE FROM ongoing_assessments
+                WHERE application_id = :application_id
+                """
+            ).bindparams(
+                bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            ),
+            {"application_id": application_id},
+        )
+        sessions_deleted = int(sessions_delete_res.rowcount or 0)
+
+    progress_reset_res = await session.execute(
+        text(
+            """
+            UPDATE candidate_pipeline_progress cpp
+            SET status = 'unlocked',
+                session_id = NULL,
+                score = NULL,
+                max_score = NULL,
+                passed = NULL,
+                unlocked_at = NOW(),
+                started_at = NULL,
+                completed_at = NULL
+            WHERE cpp.application_id = :application_id
+              AND cpp.stage_id IN (
+                SELECT gps.stage_id
+                FROM group_pipeline_stages gps
+                WHERE gps.stage_type = 'assessment'
+              )
+            """
+        ).bindparams(
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"application_id": application_id},
+    )
+    progress_reset = int(progress_reset_res.rowcount or 0)
+
+    await session.commit()
+
+    return AssessmentResetResponse(
+        application_id=application_id,
+        sessions_deleted=sessions_deleted,
+        answers_deleted=answers_deleted,
+        assigned_questions_deleted=assigned_deleted,
+        proctoring_flags_deleted=flags_deleted,
+        progress_reset=progress_reset,
+        message="Assessment trial reset. Candidate can start again from unlocked stage.",
+    )
 
 
 @router.get("/applications/{application_id}/score-breakdown", response_model=ApplicationScoreBreakdownResponse)

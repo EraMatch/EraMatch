@@ -5,7 +5,10 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../../services/api';
 
 interface Candidate {
-  id: number;
+  id: string;
+  applicationId?: string;
+  groupId?: string;
+  groupName?: string;
   name: string;
   email: string;
   position?: string;
@@ -40,7 +43,7 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [activeView, setActiveView] = useState<'active' | 'archived'>('active');
-  const [selectedCandidates, setSelectedCandidates] = useState<number[]>([]);
+  const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,6 +65,9 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
         // Map API data to include status and additional fields
         const mappedCandidates: Candidate[] = data.map((c: any) => ({
           id: c.id,
+          applicationId: c.applicationId || c.application_id,
+          groupId: c.groupId || c.group_id,
+          groupName: c.groupName || c.group_name,
           name: c.name,
           email: c.email,
           position: c.seniority || 'Not specified',
@@ -113,7 +119,7 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
     (!githubFilters.fallbackOnly || Boolean(candidate.githubHasFallback))
   );
 
-  const handleToggleSelect = (id: number) => {
+  const handleToggleSelect = (id: string) => {
     setSelectedCandidates(prev =>
       prev.includes(id) ? prev.filter(cId => cId !== id) : [...prev, id]
     );
@@ -353,7 +359,7 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
                       onClick={(e) => {
                         // Prevent navigation if clicking checkbox
                         if ((e.target as HTMLElement).closest('input[type="checkbox"]')) return;
-                        const applicationId = candidate.applicationId || candidate.application_id;
+                        const applicationId = candidate.applicationId;
                         const query = applicationId ? `?applicationId=${encodeURIComponent(String(applicationId))}` : '';
                         navigate(`/recruiter/candidates/${candidate.id}${query}`);
                       }}

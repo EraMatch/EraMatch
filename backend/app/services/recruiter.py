@@ -645,7 +645,7 @@ class RecruiterService:
         # Join Profile -> Application -> CVAnalysis -> GitHubAnalysis
         # Start from CandidateProfile to get all profiles, then left join apps and cvs
         stmt = (
-            select(CandidateProfile, CVAnalysis, GitHubAnalysis)
+            select(CandidateProfile, CandidateApplication, CVAnalysis, GitHubAnalysis)
             .outerjoin(CandidateApplication, CandidateProfile.id == CandidateApplication.candidate_id)
             .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
             .outerjoin(GitHubAnalysis, CandidateProfile.id == GitHubAnalysis.candidate_id)
@@ -668,7 +668,7 @@ class RecruiterService:
             except (TypeError, ValueError):
                 return default
 
-        for p, cv, gh in rows:
+        for p, app, cv, gh in rows:
             if p.id in candidates_map:
                 # Logic: If current CV has higher match score than stored one, replace
                 current_best_cv = candidates_map[p.id]['cv']
@@ -678,18 +678,22 @@ class RecruiterService:
                 if new_score > old_score:
                     candidates_map[p.id] = {
                         'profile': p,
+                        'app': app,
                         'cv': cv,
                         'gh': gh if gh is not None else candidates_map[p.id].get('gh')
                     }
                 if candidates_map[p.id].get('gh') is None and gh is not None:
                     candidates_map[p.id]['gh'] = gh
+                if candidates_map[p.id].get('app') is None and app is not None:
+                    candidates_map[p.id]['app'] = app
                 # Else keep existing
             else:
-                candidates_map[p.id] = {'profile': p, 'cv': cv, 'gh': gh}
+                candidates_map[p.id] = {'profile': p, 'app': app, 'cv': cv, 'gh': gh}
         
         candidates = []
         for item in candidates_map.values():
             p = item['profile']
+            app = item.get('app')
             cv = item['cv']
             gh = item.get('gh')
             
@@ -754,6 +758,8 @@ class RecruiterService:
 
             candidates.append(PositionCandidateResponse(
                 id=p.id, # Profile ID
+                applicationId=(app.id if app else None),
+                groupId=(app.group_id if app else None),
                 name=p.full_name,
                 email=p.email,
                 score=match_score, 

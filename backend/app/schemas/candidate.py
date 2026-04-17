@@ -84,6 +84,9 @@ class CandidateResponse(BaseModel):
     offerAcceptedDate: str | None = None
     filtrationFlow: list[str] | None = None
     groupAssigned: bool = False
+    groupId: UUID | None = None
+    groupName: str | None = None
+    applicationId: UUID | None = None
     
     class Config:
         from_attributes = True

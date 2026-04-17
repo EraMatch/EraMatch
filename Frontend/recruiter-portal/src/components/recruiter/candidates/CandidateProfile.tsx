@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../ui/dialo
 import { Button } from '../../ui/button';
 import { api } from '../../../services/api';
 import type { ApplicationScoreBreakdown } from '../../../services/types';
+import { useNavigate } from 'react-router-dom';
 
 interface CandidateProfileProps {
   candidateId: string;
@@ -19,6 +20,7 @@ interface CandidateProfileProps {
 type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'interview' | 'live-interview' | 'notes' | 'final-report';
 
 export function CandidateProfile({ candidateId, applicationId, onBack, showFinalReport = false }: CandidateProfileProps) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [showTranscript, setShowTranscript] = useState<number | null>(null);
   const [showLiveTranscript, setShowLiveTranscript] = useState(false);
@@ -32,7 +34,11 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [candidate, setCandidate] = useState<any>(null);
   const [scoreBreakdown, setScoreBreakdown] = useState<ApplicationScoreBreakdown | null>(null);
   const [scoreBreakdownLoading, setScoreBreakdownLoading] = useState(false);
+  const [assessmentResetLoading, setAssessmentResetLoading] = useState(false);
+  const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
+  const [assessmentResetError, setAssessmentResetError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const resolvedApplicationId = applicationId || candidate?.applicationId || candidate?.application_id;
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -51,7 +57,6 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   }, [candidateId]);
 
   useEffect(() => {
-    const resolvedApplicationId = applicationId || candidate?.applicationId || candidate?.application_id;
     if (!resolvedApplicationId) {
       setScoreBreakdown(null);
       return;
@@ -71,7 +76,34 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
     };
 
     fetchScoreBreakdown();
-  }, [applicationId, candidate?.applicationId, candidate?.application_id]);
+  }, [resolvedApplicationId]);
+
+  const handleResetAssessmentTrial = async () => {
+    if (!resolvedApplicationId) {
+      setAssessmentResetError('No application context found for this candidate.');
+      setAssessmentResetMessage(null);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Reset assessment trial for ${candidate.name}? This clears answers/sessions and sets assessment stage to not_started.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setAssessmentResetLoading(true);
+      setAssessmentResetError(null);
+      setAssessmentResetMessage(null);
+      const result = await api.recruiter.resetApplicationAssessmentTrial(String(resolvedApplicationId));
+      setAssessmentResetMessage(
+        `Reset complete (${result.answers_deleted} answers, ${result.sessions_deleted} sessions cleared).`
+      );
+    } catch (error: any) {
+      setAssessmentResetError(error?.message || 'Failed to reset assessment trial.');
+    } finally {
+      setAssessmentResetLoading(false);
+    }
+  };
 
   if (isLoading || !candidate) {
     return (
@@ -352,6 +384,9 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
     ? scoreBreakdown!.score_explanation.slice(0, 3)
     : [];
 
+  const assignedGroupId = candidate?.groupId || candidate?.group_id || null;
+  const assignedGroupName = candidate?.groupName || candidate?.group_name || null;
+
   return (
     <div className="h-full w-full overflow-auto bg-[#f9fafb] relative">
       <div className="max-w-[1400px] mx-auto px-[48px] py-[24px]">
@@ -392,13 +427,48 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     </div>
                   </div>
                 </div>
-                <button className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
-                  <Download size={16} className="text-[#6b7280]" />
-                  <span className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
-                    Download Resume
-                  </span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (!assignedGroupId) return;
+                      navigate(`/recruiter/group/${encodeURIComponent(String(assignedGroupId))}`);
+                    }}
+                    disabled={!assignedGroupId}
+                    title={assignedGroupId ? `Open ${assignedGroupName || 'assigned group'}` : 'Candidate is not assigned to a group yet'}
+                    className="flex items-center gap-2 h-[40px] px-[14px] rounded-[8px] border border-[#c7d2fe] bg-[#eef2ff] hover:bg-[#e0e7ff] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#3730a3]">
+                      View Assigned Group
+                    </span>
+                  </button>
+                  <button
+                    onClick={handleResetAssessmentTrial}
+                    disabled={!resolvedApplicationId || assessmentResetLoading}
+                    className="flex items-center gap-2 h-[40px] px-[14px] rounded-[8px] border border-[#fecaca] bg-[#fff1f2] hover:bg-[#ffe4e6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#b91c1c]">
+                      {assessmentResetLoading ? 'Resetting...' : 'Reset Trial'}
+                    </span>
+                  </button>
+                  <button className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
+                    <Download size={16} className="text-[#6b7280]" />
+                    <span className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
+                      Download Resume
+                    </span>
+                  </button>
+                </div>
               </div>
+
+              {assessmentResetMessage && (
+                <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{assessmentResetMessage}</p>
+                </div>
+              )}
+              {assessmentResetError && (
+                <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{assessmentResetError}</p>
+                </div>
+              )}
 
               {/* Scores */}
               <div className="grid grid-cols-4 gap-4">

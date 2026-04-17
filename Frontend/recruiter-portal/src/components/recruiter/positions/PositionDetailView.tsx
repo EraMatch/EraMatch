@@ -16,6 +16,7 @@ import { GroupDeleteModal } from '../groups/GroupDeleteModal';
 
 interface Candidate {
   id: string;
+  applicationId?: string;
   name: string;
   email: string;
   score: number;
@@ -105,6 +106,9 @@ export function PositionDetailView({
   const [showFlowConfigModal, setShowFlowConfigModal] = useState(false);
   const [pendingGroupData, setPendingGroupData] = useState<any>(null);
   const [viewingCandidateId, setViewingCandidateId] = useState<string | null>(null);
+  const [assessmentResetLoadingApplicationId, setAssessmentResetLoadingApplicationId] = useState<string | null>(null);
+  const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
+  const [assessmentResetError, setAssessmentResetError] = useState<string | null>(null);
 
   // Filtering State
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -337,6 +341,34 @@ export function PositionDetailView({
   const handleDeleteAssessment = (id: string) => {
     // This will be handled by parent component through onSaveAssessment
     // For now, we'll keep the assessment in place
+  };
+
+  const handleResetAssessmentTrial = async (candidate: Candidate) => {
+    const applicationId = candidate.applicationId;
+    if (!applicationId) {
+      setAssessmentResetError(`No application found for ${candidate.name}.`);
+      setAssessmentResetMessage(null);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Reset assessment trial for ${candidate.name}? This clears answers/sessions and sets assessment stage to not_started.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setAssessmentResetError(null);
+      setAssessmentResetMessage(null);
+      setAssessmentResetLoadingApplicationId(String(applicationId));
+      const result = await api.recruiter.resetApplicationAssessmentTrial(String(applicationId));
+      setAssessmentResetMessage(
+        `${candidate.name}: reset complete (${result.answers_deleted} answers, ${result.sessions_deleted} sessions cleared).`
+      );
+    } catch (error: any) {
+      setAssessmentResetError(error?.message || `Failed to reset assessment trial for ${candidate.name}.`);
+    } finally {
+      setAssessmentResetLoadingApplicationId(null);
+    }
   };
 
   const customLegend = (props: any) => {
@@ -628,6 +660,17 @@ export function PositionDetailView({
                 </div>
               </div>
 
+              {assessmentResetMessage && (
+                <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{assessmentResetMessage}</p>
+                </div>
+              )}
+              {assessmentResetError && (
+                <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{assessmentResetError}</p>
+                </div>
+              )}
+
               <div className="max-h-[500px] overflow-y-auto pr-2">
                 <div className="flex flex-col gap-3">
                   {filteredCandidates.map((candidate) => (
@@ -652,6 +695,13 @@ export function PositionDetailView({
                           Match: {candidate.match}%
                         </p>
                       </div>
+                      <button
+                        onClick={() => handleResetAssessmentTrial(candidate)}
+                        disabled={!candidate.applicationId || assessmentResetLoadingApplicationId === String(candidate.applicationId)}
+                        className="h-[40px] px-[14px] rounded-[8px] border border-[#fecaca] bg-[#fff1f2] hover:bg-[#ffe4e6] disabled:opacity-50 disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[13px] text-[#b91c1c] transition-colors"
+                      >
+                        {assessmentResetLoadingApplicationId === String(candidate.applicationId) ? 'Resetting...' : 'Reset Trial'}
+                      </button>
                       <button
                         onClick={() => {
                           const query = candidate.applicationId
