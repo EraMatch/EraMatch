@@ -395,6 +395,8 @@ export function PositionDetailView({
   const [isGeneratingKeywords, setIsGeneratingKeywords] = useState(false);
   const [isSavingKeywords, setIsSavingKeywords] = useState(false);
   const [keywordsMessage, setKeywordsMessage] = useState<string | null>(null);
+  const [keywordsError, setKeywordsError] = useState<string | null>(null);
+  const [keywordsVisible, setKeywordsVisible] = useState(false);
   const [newKeywordInputs, setNewKeywordInputs] = useState<Record<string, string>>({});
 
   // Google Drive Scheduler State
@@ -621,14 +623,19 @@ export function PositionDetailView({
       setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
 
       // Auto-trigger keyword extraction after QAG approval
+      setKeywordsVisible(true);   // show panel immediately
       setIsGeneratingKeywords(true);
       setKeywordsMessage(null);
+      setKeywordsError(null);
       try {
         const kwRes = await api.recruiter.generatePositionKeywords(positionId) as any;
         setJdKeywords(kwRes?.keywords ?? null);
-        setKeywordsMessage(`JD keywords extracted (${kwRes?.model ?? 'LLM'}).`);
-      } catch {
-        setKeywordsMessage('Keyword extraction failed — you can retry manually.');
+        setKeywordsMessage(`Keywords extracted via ${kwRes?.model ?? 'LLM'}.`);
+      } catch (kwErr) {
+        console.error('Keyword extraction error:', kwErr);
+        setKeywordsError(
+          kwErr instanceof Error ? kwErr.message : 'Keyword extraction failed — click Re-extract to retry.'
+        );
       } finally {
         setIsGeneratingKeywords(false);
       }
@@ -1757,7 +1764,7 @@ export function PositionDetailView({
           </div>
 
           {/* ── JD Keywords Panel ─────────────────────────────────────── */}
-          {(jdKeywords || isGeneratingKeywords) && (
+          {keywordsVisible && (
             <div className="mx-6 mb-4 rounded-[10px] border border-[#d1fae5] bg-[#f0fdf4] p-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -1765,15 +1772,24 @@ export function PositionDetailView({
                   <span className="font-['Arimo',sans-serif] text-[14px] font-semibold text-[#166534]">JD Keywords</span>
                   {isGeneratingKeywords && <div className="w-4 h-4 border-2 border-[#16a34a] border-t-transparent rounded-full animate-spin" />}
                   {keywordsMessage && !isGeneratingKeywords && (
-                    <span className="font-['Arimo',sans-serif] text-[11px] text-[#16a34a]">{keywordsMessage}</span>
+                    <span className="font-['Arimo',sans-serif] text-[11px] text-[#16a34a]">✓ {keywordsMessage}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button type="button" disabled={isGeneratingKeywords}
                     onClick={async () => {
-                      setIsGeneratingKeywords(true); setKeywordsMessage(null);
-                      try { const r = await api.recruiter.generatePositionKeywords(positionId) as any; setJdKeywords(r?.keywords ?? null); setKeywordsMessage('Re-extracted.'); }
-                      catch { setKeywordsMessage('Extraction failed.'); } finally { setIsGeneratingKeywords(false); }
+                      setIsGeneratingKeywords(true);
+                      setKeywordsMessage(null);
+                      setKeywordsError(null);
+                      try {
+                        const r = await api.recruiter.generatePositionKeywords(positionId) as any;
+                        setJdKeywords(r?.keywords ?? null);
+                        setKeywordsMessage(`Keywords extracted via ${r?.model ?? 'LLM'}.`);
+                      } catch (e) {
+                        setKeywordsError(e instanceof Error ? e.message : 'Extraction failed — please retry.');
+                      } finally {
+                        setIsGeneratingKeywords(false);
+                      }
                     }}
                     className="h-[28px] px-[10px] rounded-[6px] border border-[#bbf7d0] bg-white text-[11px] text-[#16a34a] hover:bg-[#dcfce7] transition-colors disabled:opacity-50"
                   >
@@ -1782,9 +1798,16 @@ export function PositionDetailView({
                   <button type="button" disabled={isSavingKeywords || !jdKeywords}
                     onClick={async () => {
                       if (!jdKeywords) return;
-                      setIsSavingKeywords(true); setKeywordsMessage(null);
-                      try { await api.recruiter.savePositionKeywords(positionId, jdKeywords); setKeywordsMessage('Saved — candidate scores updated.'); }
-                      catch { setKeywordsMessage('Failed to save.'); } finally { setIsSavingKeywords(false); }
+                      setIsSavingKeywords(true);
+                      setKeywordsMessage(null);
+                      try {
+                        await api.recruiter.savePositionKeywords(positionId, jdKeywords);
+                        setKeywordsMessage('Saved — candidate scores updated.');
+                      } catch {
+                        setKeywordsError('Failed to save keywords.');
+                      } finally {
+                        setIsSavingKeywords(false);
+                      }
                     }}
                     className="h-[28px] px-[12px] rounded-[6px] bg-[#16a34a] text-white text-[11px] hover:bg-[#15803d] transition-colors disabled:opacity-50"
                   >
@@ -1793,9 +1816,25 @@ export function PositionDetailView({
                 </div>
               </div>
 
-              {isGeneratingKeywords && !jdKeywords ? (
+              {/* Loading state */}
+              {isGeneratingKeywords && !jdKeywords && (
                 <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Extracting keywords from job description…</p>
-              ) : jdKeywords && (
+              )}
+
+              {/* Error state */}
+              {!isGeneratingKeywords && keywordsError && !jdKeywords && (
+                <div className="flex items-start gap-2 p-3 rounded-[8px] bg-[#fef2f2] border border-[#fecaca]">
+                  <span className="text-[14px]">⚠️</span>
+                  <div>
+                    <p className="font-['Arimo',sans-serif] text-[12px] text-[#991b1b] font-medium">Keyword extraction failed</p>
+                    <p className="font-['Arimo',sans-serif] text-[11px] text-[#b91c1c] mt-0.5">{keywordsError}</p>
+                    <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mt-1">Click <strong>Re-extract</strong> above to retry, or add keywords manually below.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Keywords grid */}
+              {jdKeywords && (
                 <div className="space-y-3">
                   {([
                     { key: 'technical_skills',    label: 'Technical Skills', color: 'bg-[#ede9fe] text-[#5b21b6] border-[#c4b5fd]' },
@@ -1836,6 +1875,7 @@ export function PositionDetailView({
               )}
             </div>
           )}
+
 
           <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-[#f3f4f6]">
             <button
