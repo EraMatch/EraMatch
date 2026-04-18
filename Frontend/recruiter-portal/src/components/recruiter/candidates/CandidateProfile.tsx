@@ -329,6 +329,21 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
     return normalizedType === githubQuestionTypeFilter;
   });
 
+  const getRepoNameFromQuestion = (q: any): string => {
+    const direct = String(q?.repositoryName || '').trim();
+    if (direct) return direct;
+
+    const sourceFile = String(q?.sourceFile || '').trim();
+    if (!sourceFile) return 'Unknown repo';
+
+    const normalized = sourceFile.replace(/\\/g, '/');
+    const parts = normalized.split('/').filter(Boolean);
+    if (parts.length >= 2 && parts[0].toLowerCase() !== 'src') {
+      return parts[0];
+    }
+    return parts[parts.length - 1] || 'Unknown repo';
+  };
+
   const hasGithubProfile = Boolean(candidate.github_url);
   const githubAnalysisReady = Boolean(candidate.githubAnalysis?.summary)
     || Number.isFinite(Number(candidate.githubAnalysis?.overallScore))
@@ -1999,11 +2014,19 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                         <div className="text-sm font-medium text-[#111827]">
                           Q{q.order || idx + 1} • {(q.questionType || 'essay').toUpperCase()}
                         </div>
-                        <div className="text-xs px-2 py-1 rounded-full border border-[#e5e7eb] bg-[#fafafa] text-[#374151]">
-                          {q.points || 10} pts
+                        <div className="flex items-center gap-2 flex-wrap justify-end">
+                          <div className="text-xs px-2 py-1 rounded-full border border-[#c7d2fe] bg-[#eef2ff] text-[#4338ca]">
+                            Repo: {getRepoNameFromQuestion(q)}
+                          </div>
+                          <div className="text-xs px-2 py-1 rounded-full border border-[#e5e7eb] bg-[#fafafa] text-[#374151]">
+                            {q.points || 10} pts
+                          </div>
                         </div>
                       </div>
                       <p className="text-sm text-[#374151] whitespace-pre-wrap">{q.questionText || 'No question text available.'}</p>
+                      {q?.sourceFile && (
+                        <p className="mt-2 text-[11px] text-[#6b7280]">Source file: {q.sourceFile}</p>
+                      )}
                     </div>
                   ))}
                 </div>

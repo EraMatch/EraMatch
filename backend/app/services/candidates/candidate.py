@@ -306,7 +306,20 @@ class CandidateService:
                 for row in assigned_rows:
                     snapshot = row.question_snapshot if isinstance(row.question_snapshot, dict) else {}
                     ctx = snapshot.get("assignment_context") if isinstance(snapshot.get("assignment_context"), dict) else {}
-                    if str(ctx.get("selection_strategy") or "").strip().lower() == "github_analysis":
+                    qcfg = snapshot.get("question_config") if isinstance(snapshot.get("question_config"), dict) else {}
+                    selection_strategy = str(ctx.get("selection_strategy") or "").strip().lower()
+                    source_tag = str(qcfg.get("source") or "").strip().lower()
+                    is_github_assigned = selection_strategy == "github_analysis" or source_tag == "github_analysis"
+
+                    if is_github_assigned:
+                        source_file = str(qcfg.get("source_file") or "").strip()
+                        repository_name = ""
+                        if source_file:
+                            normalized = source_file.replace("\\", "/")
+                            parts = [p for p in normalized.split("/") if p]
+                            if len(parts) >= 2 and parts[0].lower() != "src":
+                                repository_name = parts[0]
+
                         github_assigned_count += 1
                         github_assigned_questions.append(
                             {
@@ -316,6 +329,8 @@ class CandidateService:
                                 "questionType": str(snapshot.get("question_type") or "essay"),
                                 "questionText": str(snapshot.get("question_text") or ""),
                                 "points": int(snapshot.get("points") or 10),
+                                "sourceFile": source_file,
+                                "repositoryName": repository_name,
                             }
                         )
 
@@ -327,6 +342,53 @@ class CandidateService:
                     "totalAssigned": len(assigned_rows),
                     "githubAssigned": github_assigned_count,
                     "githubQuestions": github_assigned_questions,
+                }
+            else:
+                # Fallback: expose synthesized GitHub questions even before assessment starts,
+                # so recruiter profile can preview candidate-specific GitHub-inspired prompts.
+                synthesis_questions = []
+                if isinstance(github_analysis, dict):
+                    raw_questions = github_analysis.get("questions")
+                    if isinstance(raw_questions, list):
+                        synthesis_questions = raw_questions
+
+                preview_questions = []
+                for idx, q in enumerate(synthesis_questions, start=1):
+                    if not isinstance(q, dict):
+                        continue
+                    question_text = str(q.get("question") or q.get("question_text") or "").strip()
+                    if not question_text:
+                        continue
+                    question_type = str(q.get("question_type") or q.get("type") or "essay").strip().lower() or "essay"
+                    if question_type not in {"mcq", "essay", "coding"}:
+                        question_type = "essay"
+                    source_file = str(q.get("source_file") or "").strip()
+                    repository_name = ""
+                    if source_file:
+                        normalized = source_file.replace("\\", "/")
+                        parts = [p for p in normalized.split("/") if p]
+                        if len(parts) >= 2 and parts[0].lower() != "src":
+                            repository_name = parts[0]
+
+                    preview_questions.append(
+                        {
+                            "assignmentId": f"github-suggested-{idx}",
+                            "order": idx,
+                            "questionId": str(q.get("question_id") or f"github-suggested-{idx}"),
+                            "questionType": question_type,
+                            "questionText": question_text,
+                            "points": int(q.get("points") or 10),
+                            "sourceFile": source_file,
+                            "repositoryName": repository_name,
+                        }
+                    )
+
+                github_analysis["assignedQuestionStats"] = {
+                    "sessionId": None,
+                    "assessmentStatus": "not_started",
+                    "totalAssigned": len(preview_questions),
+                    "githubAssigned": len(preview_questions),
+                    "githubQuestions": preview_questions,
                 }
 
             # Fetch pipeline stage names from GroupStageConfig (filtration_flow removed from model)
