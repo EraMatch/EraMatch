@@ -291,21 +291,16 @@ export const recruiterService = {
     },
 
     // Candidate Import & Group Creation
-    uploadCandidates: async (positionId: string, file: File) => {
+    uploadZipCandidates: async (positionId: string, file: File) => {
         const formData = new FormData();
+        formData.append('position_id', positionId);
         formData.append('file', file);
 
-        // Note: fetchAPI wrapper might default to JSON content type. 
-        // If fetchAPI sets 'Content-Type': 'application/json' automatically, this might fail.
-        // We might need to use raw fetch or ensure fetchAPI handles FormData.
-        // Assuming fetchAPI handles it or we override.
-        // Actually, let's use API_URL + fetch directly to be safe if fetchAPI is rigid.
         const token = localStorage.getItem('token');
-        const res = await fetch(`${API_URL}/recruiter/positions/${positionId}/candidates/upload`, {
+        const res = await fetch(`${API_URL}/ingestion/zip`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`
-                // No Content-Type header, browser sets it with boundary for FormData
             },
             body: formData
         });
@@ -322,6 +317,37 @@ export const recruiterService = {
                 }
             }
             throw new Error(errorMessage);
+        }
+        return res.json();
+    },
+
+    createDriveSchedule: async (data: {
+        position_id: string;
+        drive_folder_id: string;
+        drive_folder_url?: string;
+        start_date: string;
+        frequency_days: number;
+        frequency_hours: number;
+    }) => {
+        const formData = new FormData();
+        formData.append('position_id', data.position_id);
+        formData.append('drive_folder_id', data.drive_folder_id);
+        if (data.drive_folder_url) formData.append('drive_folder_url', data.drive_folder_url);
+        formData.append('start_date', data.start_date);
+        formData.append('frequency_days', String(data.frequency_days));
+        formData.append('frequency_hours', String(data.frequency_hours));
+
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/ingestion/drive-schedule`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            },
+            body: formData
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Failed to create drive schedule');
         }
         return res.json();
     },
@@ -551,6 +577,7 @@ export const recruiterService = {
     stopAllQuestionImportTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-question-import', { method: 'POST' }),
     stopAllGithubAnalysisTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-github-analysis', { method: 'POST' }),
     stopAllQagTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-qag', { method: 'POST' }),
+    stopAllCvIngestionTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-cv-ingestion', { method: 'POST' }),
     stopVideoTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-video/${taskId}`, { method: 'POST' }),
     stopQuestionImportTask: async (taskId: string) =>
@@ -559,7 +586,9 @@ export const recruiterService = {
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-github-analysis/${taskId}`, { method: 'POST' }),
     stopQagTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-qag/${taskId}`, { method: 'POST' }),
-    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import' | 'github_analysis' | 'qag') =>
+    stopCvIngestionTask: async (taskId: string) =>
+        fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-cv-ingestion/${taskId}`, { method: 'POST' }),
+    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import' | 'github_analysis' | 'qag' | 'cv_ingestion') =>
         fetchAPI<{ message: string }>(
             `/background-tasks/${taskId}?task_category=${encodeURIComponent(taskCategory)}`,
             { method: 'DELETE' }
@@ -741,5 +770,56 @@ export const recruiterService = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ question_index: questionIndex }),
             }
+        ),
+
+    // --- CV Ingestion Methods ---
+
+    /** Upload a ZIP of CVs and start processing job. */
+    importZipCandidates: async (positionId: string, formData: FormData) => {
+        // Ensure position_id is in the form data (backend expects it as a form field)
+        if (!formData.has('position_id')) {
+            formData.append('position_id', positionId);
+        }
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/ingestion/zip`, {
+            method: 'POST',
+            headers: {
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            },
+            body: formData,
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to upload ZIP.');
+        }
+        return res.json();
+    },
+
+    /** Schedule a Google Drive sync. */
+    scheduleDriveIngestion: async (positionId: string, formData: FormData) => {
+        // Ensure position_id is in the form data (backend expects it as a form field)
+        if (!formData.has('position_id')) {
+            formData.append('position_id', positionId);
+        }
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API_URL}/ingestion/drive-schedule`, {
+            method: 'POST',
+            headers: {
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            },
+            body: formData,
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to schedule Drive ingestion.');
+        }
+        return res.json();
+    },
+
+    /** Cancel a Drive schedule. */
+    cancelDriveSchedule: async (_positionId: string, scheduleId: string) =>
+        fetchAPI<{ message: string }>(
+            `/ingestion/drive-schedule/${scheduleId}`,
+            { method: 'DELETE' }
         ),
 };

@@ -25,7 +25,7 @@ interface TaskRecord {
     id: string;
     status: string;
     type: string;
-    task_category: 'video' | 'question_import' | 'github_analysis' | 'qag';
+    task_category: 'video' | 'question_import' | 'github_analysis' | 'qag' | 'cv_ingestion';
     candidate_name: string | null;
     question: string;
     timestamp: string;
@@ -155,8 +155,9 @@ const isAntiCheatingTask = (task: TaskRecord) =>
     includesAny(normalizedTaskText(task), ['anti cheat', 'anti-cheat', 'cheat', 'proctor', 'suspicious', 'anomaly']);
 
 const isCvTask = (task: TaskRecord) =>
-    (task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
-    includesAny(normalizedTaskText(task), ['cv', 'resume', 'curriculum vitae', '.pdf', '.doc', '.docx']);
+    task.task_category === 'cv_ingestion' ||
+    ((task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
+    includesAny(normalizedTaskText(task), ['cv', 'resume', 'curriculum vitae', '.pdf', '.doc', '.docx']));
 
 const isGithubTask = (task: TaskRecord) =>
     (task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
@@ -378,7 +379,7 @@ export function BackgroundTasks() {
 
     const videoTasks = useMemo(() => tasks.filter((task) => task.task_category === 'video'), [tasks]);
     const questionImportTasks = useMemo(
-        () => tasks.filter((task) => task.task_category === 'question_import' || task.task_category === 'github_analysis'),
+        () => tasks.filter((task) => task.task_category === 'question_import' || task.task_category === 'github_analysis' || task.task_category === 'cv_ingestion'),
         [tasks]
     );
     const qagTasks = useMemo(() => tasks.filter((task) => task.task_category === 'qag'), [tasks]);
@@ -659,7 +660,11 @@ export function BackgroundTasks() {
                         ? api.recruiter.stopGithubAnalysisTask(task.id)
                         : task.task_category === 'qag'
                             ? api.recruiter.stopQagTask(task.id)
-                        : api.recruiter.stopVideoTask(task.id)
+                          : task.task_category === 'qag'
+                              ? api.recruiter.stopQagTask(task.id)
+                        : task.task_category === 'cv_ingestion'
+                            ? api.recruiter.stopCvIngestionTask(task.id)
+                            : api.recruiter.stopVideoTask(task.id)
             )
         );
         const successIds = stoppable
@@ -688,7 +693,10 @@ export function BackgroundTasks() {
         const runningQagCount = tasks.filter(
             (task) => task.task_category === 'qag' && ['pending', 'processing'].includes(task.status.toLowerCase())
         ).length;
-        const totalRunning = runningVideoCount + runningImportCount + runningGithubAnalysisCount + runningQagCount;
+        const runningCvIngestionCount = tasks.filter(
+            (task) => task.task_category === 'cv_ingestion' && ['pending', 'processing'].includes(task.status.toLowerCase())
+        ).length;
+        const totalRunning = runningVideoCount + runningImportCount + runningGithubAnalysisCount + runningQagCount + runningCvIngestionCount;
 
         if (totalRunning === 0) {
             window.alert('No pending or processing tasks to stop.');
@@ -696,7 +704,7 @@ export function BackgroundTasks() {
         }
 
         const confirmed = window.confirm(
-            `Stop ${totalRunning} running task(s)? (${runningVideoCount} video, ${runningImportCount} question import, ${runningGithubAnalysisCount} GitHub analysis, ${runningQagCount} QAG)`
+            `Stop ${totalRunning} running task(s)? (${runningVideoCount} video, ${runningImportCount} question import, ${runningGithubAnalysisCount} GitHub analysis, ${runningQagCount} QAG, ${runningCvIngestionCount} CV ingestion)`
         );
         if (!confirmed) return;
 
@@ -708,6 +716,7 @@ export function BackgroundTasks() {
                 runningImportCount > 0 ? api.recruiter.stopAllQuestionImportTasks() : Promise.resolve(null),
                 runningGithubAnalysisCount > 0 ? api.recruiter.stopAllGithubAnalysisTasks() : Promise.resolve(null),
                 runningQagCount > 0 ? api.recruiter.stopAllQagTasks() : Promise.resolve(null),
+                runningCvIngestionCount > 0 ? api.recruiter.stopAllCvIngestionTasks() : Promise.resolve(null),
             ]);
 
             setTasks((prev) =>

@@ -1,7 +1,6 @@
 import { Plus, Filter, ArrowUpDown, Search, Loader2 } from 'lucide-react';
 import { ProjectCard } from '../../common/ProjectCard';
 import LoadingSpinner from '../../common/LoadingSpinner';
-import { ProjectDetailView } from './ProjectDetailView';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../../ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../../ui/popover';
 import { Checkbox } from '../../ui/checkbox';
@@ -39,20 +38,11 @@ type SortOption =
   | 'roles-desc';
 
 interface ProjectsPageProps {
-  onViewProject: (projectTitle: string) => void;
-  initialProjectTitle?: string;
-  onBackToDashboard?: () => void;
+  onViewProject: (projectId: string | number) => void;
   onCreateAssessment?: () => void;
-  pendingAssessment?: any;
-  onAssessmentConsumed?: () => void;
-  onViewDashboard?: (projectTitle: string, positionTitle: string) => void;
-  onViewGroup?: (groupId: string) => void;
-  returnToGroupsTab?: boolean;
-  initialPosition?: string; // Position to show when loading a project
-  onPositionSelect?: (positionTitle: string) => void; // Callback when position changes
 }
 
-export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashboard, onCreateAssessment, pendingAssessment, onAssessmentConsumed, onViewDashboard, onViewGroup, returnToGroupsTab = false, initialPosition = '', onPositionSelect }: ProjectsPageProps) {
+export function ProjectsPage({ onViewProject, onCreateAssessment }: ProjectsPageProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -83,22 +73,6 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
     fetchProjects();
   }, []);
 
-  // Initialize viewingProject based on initialProjectTitle
-  const initialProject = initialProjectTitle
-    ? projects.find(p => p.title === initialProjectTitle) || null
-    : null;
-
-  const [viewingProject, setViewingProject] = useState<Project | null>(initialProject);
-
-  // Update viewingProject when projects are loaded if initialProjectTitle is present
-  useEffect(() => {
-    if (initialProjectTitle && projects.length > 0 && !viewingProject) {
-      const project = projects.find(p => p.title === initialProjectTitle);
-      if (project) {
-        setViewingProject(project);
-      }
-    }
-  }, [projects, initialProjectTitle]);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -243,42 +217,8 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
   };
 
   const handleViewProject = (project: Project) => {
-    setViewingProject(project);
+    onViewProject(project.id);
   };
-
-  const handleBackToProjects = () => {
-    setViewingProject(null);
-  };
-
-  const handleBack = () => {
-    // If we came from dashboard (initialProjectTitle is set and onBackToDashboard exists), go back to dashboard
-    if (initialProjectTitle && onBackToDashboard) {
-      onBackToDashboard();
-    } else {
-      // Otherwise, just go back to projects list
-      setViewingProject(null);
-    }
-  };
-
-  // If viewing a project, show the detail view
-  if (viewingProject) {
-    return (
-      <ProjectDetailView
-        projectTitle={viewingProject.title}
-        projectDescription={viewingProject.description}
-        onBack={handleBack}
-        backLabel="Back"
-        onCreateAssessment={onCreateAssessment || (() => { })}
-        pendingAssessment={pendingAssessment}
-        onAssessmentConsumed={onAssessmentConsumed}
-        onViewDashboard={onViewDashboard}
-        onViewGroup={onViewGroup}
-        returnToGroupsTab={returnToGroupsTab}
-        initialPosition={initialPosition}
-        onPositionSelect={onPositionSelect}
-      />
-    );
-  }
 
   return (
     <>

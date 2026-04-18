@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 
 from app.api.deps import get_db, get_current_user
-from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob, GitHubAnalysisJob, QAGProcessingJob, Position
+from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob, GitHubAnalysisJob, QAGProcessingJob, CVIngestionJob, Position
 
 router = APIRouter(prefix="/background-tasks", tags=["Background Tasks"])
 
@@ -228,6 +228,32 @@ async def get_background_tasks(
     except Exception:
         pass
 
+    # ── CV Ingestion jobs ──────────────────────────────────────────────────
+    try:
+        cv_query = (
+            select(CVIngestionJob)
+            .where(CVIngestionJob.organization_id == current_user.organization_id)
+            .order_by(desc(CVIngestionJob.created_at))
+            .limit(limit)
+        )
+        cv_result = await db.execute(cv_query)
+        for job in cv_result.scalars().all():
+            tasks.append({
+                "id": str(job.id),
+                "status": job.status,
+                "type": "CV Import (ZIP)" if job.source_type == "zip_upload" else "CV Import (Google Drive)",
+                "task_category": "cv_ingestion",
+                "candidate_name": None,
+                "source_filename": job.source_filename,
+                "question": job.source_filename or "Uploaded file",
+                "timestamp": job.created_at.isoformat() if job.created_at else None,
+                "total_generated": job.processed_files,
+                "total_flagged": job.skipped_files,
+                "total_approved": None,
+            })
+    except Exception:
+        pass
+
     # Sort all tasks by timestamp descending
     tasks.sort(key=lambda t: t.get("timestamp") or "", reverse=True)
     return tasks[:limit]
@@ -399,8 +425,8 @@ async def delete_background_task(
       - video: deletes InterviewResponse row (scoped to current organization)
       - question_import: deletes QuestionImportJob row (scoped to current organization)
     """
-    if task_category not in {"video", "question_import", "github_analysis", "qag"}:
-        raise HTTPException(status_code=400, detail="task_category must be 'video', 'question_import', 'github_analysis', or 'qag'")
+    if task_category not in {"video", "question_import", "github_analysis", "qag", "cv_ingestion"}:
+        raise HTTPException(status_code=400, detail="task_category must be 'video', 'question_import', 'github_analysis', 'qag', or 'cv_ingestion'")
 
     if task_category == "question_import":
         job = await db.get(QuestionImportJob, task_id)
@@ -428,6 +454,15 @@ async def delete_background_task(
         await db.delete(job)
         await db.commit()
         return {"message": "QAG processing task deleted"}
+
+    if task_category == "cv_ingestion":
+        job = await db.get(CVIngestionJob, task_id)
+        if not job or job.organization_id != current_user.organization_id:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        await db.delete(job)
+        await db.commit()
+        return {"message": "CV ingestion task deleted"}
 
     # video task (preferred: organization-scoped join)
     result = await db.execute(
@@ -569,6 +604,33 @@ async def stop_all_qag_tasks(
     }
 
 
+@router.post("/stop-cv-ingestion")
+async def stop_all_cv_ingestion_tasks(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Stop all pending/processing CV ingestion tasks for the current organization."""
+    result = await db.execute(
+        select(CVIngestionJob)
+        .where(
+            CVIngestionJob.organization_id == current_user.organization_id,
+            CVIngestionJob.status.in_(["pending", "processing"]),
+        )
+    )
+    tasks = result.scalars().all()
+
+    for task in tasks:
+        task.status = "cancelled"
+        db.add(task)
+
+    await db.commit()
+
+    return {
+        "stopped_count": len(tasks),
+        "message": f"Stopped {len(tasks)} CV ingestion task(s).",
+    }
+
+
 @router.post("/stop-video/{task_id}")
 async def stop_video_task(
     task_id: UUID,
@@ -683,6 +745,32 @@ async def stop_qag_task(
 
     return {
         "message": "QAG processing task stopped",
+        "task_id": str(task.id),
+        "status": task.status,
+    }
+
+
+@router.post("/stop-cv-ingestion/{task_id}")
+async def stop_cv_ingestion_task(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Stop a single pending/processing CV ingestion task for the current organization."""
+    task = await db.get(CVIngestionJob, task_id)
+
+    if not task or task.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="CV ingestion task not found")
+
+    if task.status not in ["pending", "processing"]:
+        raise HTTPException(status_code=400, detail="Only pending or processing tasks can be stopped")
+
+    task.status = "cancelled"
+    db.add(task)
+    await db.commit()
+
+    return {
+        "message": "CV ingestion task stopped",
         "task_id": str(task.id),
         "status": task.status,
     }

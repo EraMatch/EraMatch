@@ -13,16 +13,27 @@ class Settings(BaseSettings):
     SERVICE_NAME: str = "eramatch-ai-service"
     DEBUG: bool = True
     
+    # Celery
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+
+    # Webhook
+    BACKEND_WEBHOOK_URL: str = "http://127.0.0.1:8000/api/v1/webhooks/cv-parsed"
+    WEBHOOK_SECRET: str = "shared-secret-change-me"  # Same as AI_SERVICE_WEBHOOK_SECRET in backend
+    
     # Ollama Cloud settings
     OLLAMA_HOST: str = "https://ollama.com"
+    OLLAMA_LOCAL_HOST: str = "http://localhost:11434"
     OLLAMA_API_KEY: str = ""
     OLLAMA_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_QUESTION_IMPORT_MODEL: str = "deepseek-v3.1:671b-cloud"
+    OLLAMA_CV_PARSING_MODEL: str = "gemma3:1b"
     OLLAMA_GH_FILTER_MODEL: str = "kimi-k2.5:cloud"
     OLLAMA_GH_MAP_MODEL: str = "kimi-k2.5:cloud"
     OLLAMA_GH_AUDIT_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_GH_SYNTH_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_GH_STAGE_TIMEOUT_SECONDS: int = 90
+    OLLAMA_MAX_CONCURRENT_CALLS: int = 1
 
     # GitHub analysis runtime controls
     GH_ANALYSIS_HTTP_TIMEOUT_SECONDS: int = 30

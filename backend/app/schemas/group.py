@@ -56,6 +56,7 @@ class PipelineStage(BaseModel):
 class CandidateStageStatus(BaseModel):
     score: float | None = None
     status: str = "pending"
+    passed: bool | None = None
     scheduled_at: datetime | None = None
     meeting_link: str | None = None
 
@@ -74,10 +75,12 @@ class CandidateProgressItem(BaseModel):
     assessment: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
     ai_interview: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
     live_interview: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
+    stages: dict[str, CandidateStageStatus] = Field(default_factory=dict)
     meets_criteria: bool = False
     verdict: str = "pending"
     flags: list[IntegrityFlag] = []
-    status: str = "Active"
+    status: str
+
     has_notes: bool = False
 
 

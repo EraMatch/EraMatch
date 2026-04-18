@@ -22,10 +22,11 @@ class UserRole(str, Enum):
 class ApplicationStatus(str, Enum):
     APPLIED = "applied"
     SCREENING = "screening"
-    IN_PIPELINE = "in_pipeline"
     OFFERED = "offered"
     HIRED = "hired"
     REJECTED = "rejected"
+    HOLDED = "holded"
+    WITHDRAWN = "withdrawn"
 
 
 class PositionStatus(str, Enum):
@@ -941,6 +942,82 @@ class ApprovalRequest(BaseModel, table=True):
     review_notes: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# =============================================================================
+# SECTION 15: CV INGESTION PIPELINE (2 Tables)
+# =============================================================================
+
+class CVIngestionJob(SQLModel, table=True):
+    """
+    Tracks a CV ingestion job (from ZIP upload or Google Drive sync).
+    Lifecycle: pending → processing → completed | failed
+    """
+    __tablename__ = "cv_ingestion_jobs"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="job_id",
+        sa_column=Column("job_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    position_id: UUID = Field(foreign_key="positions.position_id")
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+
+    # Status lifecycle
+    status: str = Field(default="pending", max_length=20)  # pending|processing|completed|failed
+    source_type: str = Field(max_length=20)  # zip_upload | google_drive
+    source_filename: str | None = Field(default=None, max_length=255)
+
+    # Progress counters
+    total_files: int = Field(default=0)
+    processed_files: int = Field(default=0)
+    skipped_files: int = Field(default=0)
+
+    # Error and log
+    error_message: str | None = Field(default=None, sa_column=Column(Text))
+    processing_log: list | None = Field(default=None, sa_column=Column(JSONB))
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = Field(default=None)
+
+
+class DriveIngestionSchedule(SQLModel, table=True):
+    """
+    Tracks a recurring or one-time Google Drive folder sync schedule.
+    Uses Celery ETA self-chaining: schedule dispatches a task at start_date,
+    which re-enqueues itself at next_run_at after completion.
+    """
+    __tablename__ = "drive_ingestion_schedules"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="schedule_id",
+        sa_column=Column("schedule_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    position_id: UUID = Field(foreign_key="positions.position_id")
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+
+    # Google Drive config
+    drive_folder_id: str = Field(max_length=255)
+    drive_folder_url: str | None = Field(default=None, max_length=500)
+
+    # Frequency: both 0 = one-time run
+    frequency_days: int = Field(default=0)
+    frequency_hours: int = Field(default=0)
+
+    # Scheduling
+    start_date: datetime = Field(default_factory=datetime.utcnow)
+    next_run_at: datetime | None = Field(default=None)
+    last_run_at: datetime | None = Field(default=None)
+    last_job_id: UUID | None = Field(default=None)
+
+    # Celery task tracking (for revocation)
+    celery_task_id: str | None = Field(default=None, max_length=255)
+
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # =============================================================================

@@ -105,6 +105,7 @@ interface CandidateStatus {
   currentStage: string;
   technicalVerdict?: 'pass' | 'fail' | 'conditional';
   meetsCriteria?: boolean;
+  applicationStatus?: string;
   progressionState?: 'selected' | 'rejected' | 'on-hold' | 'archived' | 'active';
   overrideApplied?: boolean;
   email?: string;
@@ -113,6 +114,9 @@ interface CandidateStatus {
   applicationId?: string;
   liveInterviewScheduledAt?: string;
   liveInterviewMeetingLink?: string;
+  assessmentPassed?: boolean;
+  aiInterviewPassed?: boolean;
+  liveInterviewPassed?: boolean;
 }
 
 export function EnhancedGroupOverviewV2({
@@ -348,6 +352,7 @@ export function EnhancedGroupOverviewV2({
         // Map candidates
         const candidates: CandidateStatus[] = data.candidates.map((c: any) => ({
           id: c.candidate_id, // backend sends candidate_id
+          applicationId: c.application_id,
           name: c.name,
           email: c.email,
           phone: c.phone || `+1-555-${String(c.candidate_id).slice(-4)}`,
@@ -363,10 +368,17 @@ export function EnhancedGroupOverviewV2({
           currentStage: c.currentStage || 'assessment',
           technicalVerdict: c.verdict === 'pass' || c.verdict === 'fail' || c.verdict === 'conditional' ? c.verdict : undefined,
           meetsCriteria: c.meets_criteria,
-          progressionState: 'active',
+          applicationStatus: c.status,
+          progressionState: c.status === 'screening' || c.status === 'applied' ? 'active' :
+            c.status === 'holded' ? 'on-hold' :
+              c.status === 'rejected' ? 'rejected' :
+                c.status === 'hired' ? 'selected' : 'active',
           overrideApplied: false,
           liveInterviewScheduledAt: c.live_interview?.scheduled_at,
-          liveInterviewMeetingLink: c.live_interview?.meeting_link
+          liveInterviewMeetingLink: c.live_interview?.meeting_link,
+          assessmentPassed: c.assessment?.passed,
+          aiInterviewPassed: c.ai_interview?.passed,
+          liveInterviewPassed: c.live_interview?.passed
         }));
 
         setCandidateStatuses(candidates);
@@ -714,17 +726,18 @@ export function EnhancedGroupOverviewV2({
     const updatedCandidates = candidateStatuses.map(candidate => {
       if (selectedIds.includes(candidate.id)) {
         if (action === 'progress') {
-          return { ...candidate, progressionState: 'selected' as const };
+          return { ...candidate, progressionState: 'selected' as const, applicationStatus: 'screening' };
         } else if (action === 'reject') {
-          return { ...candidate, progressionState: 'rejected' as const };
+          return { ...candidate, progressionState: 'rejected' as const, applicationStatus: 'rejected' };
         } else if (action === 'hold') {
-          return { ...candidate, progressionState: 'on-hold' as const };
+          return { ...candidate, progressionState: 'on-hold' as const, applicationStatus: 'holded' };
         }
       }
       return candidate;
     });
 
     setCandidateStatuses(updatedCandidates);
+    setRefreshKey(prev => prev + 1); // Refresh data and analytics
 
     if (action === 'progress') {
       const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
@@ -764,24 +777,41 @@ export function EnhancedGroupOverviewV2({
     });
   };
 
-  const handleProceedSelected = () => {
+  const handleProceedSelected = async () => {
     if (selectedCandidates.length === 0) {
       alert('Please select at least one candidate to proceed');
       return;
     }
 
-    // Update candidate states
+    try {
+      const appIds = selectedCandidates.map(id => {
+        const c = candidateStatuses.find(c => c.id === id);
+        return c?.applicationId ?? String(id);
+      });
+
+      await api.recruiter.bulkProgressCandidates(groupId, {
+        application_ids: appIds,
+        action: 'progress',
+        current_stage_type: currentStage
+      } as any);
+    } catch (error) {
+      console.error('Failed to progress candidates on backend:', error);
+      showToast('Failed to progress candidates — please try again');
+      return;
+    }
+
+
+    // Update candidate states optimistically
     const updatedCandidates = candidateStatuses.map(candidate => {
       if (selectedCandidates.includes(candidate.id)) {
-        return { ...candidate, progressionState: 'selected' as const };
-      } else if (candidate.progressionState === 'active') {
-        // Mark non-selected as needs decision
-        return candidate;
+        return { ...candidate, progressionState: 'selected' as const, applicationStatus: 'screening' };
       }
       return candidate;
     });
 
     setCandidateStatuses(updatedCandidates);
+    setSelectedCandidates([]); // Clear selection after progression
+    setRefreshKey(prev => prev + 1); // Refresh data and analytics
 
     // Move to next stage
     const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
@@ -1001,7 +1031,16 @@ export function EnhancedGroupOverviewV2({
     );
   };
 
-  const getStatusIcon = (status: string) => {
+  const getStatusIcon = (status: string, passed?: boolean) => {
+    // If we have explicit passage boolean, use it to override the status-based icon
+    if (passed === true) {
+      return <CheckCircle size={16} className="text-[#10b981]" />;
+    }
+    if (passed === false) {
+      return <XCircle size={16} className="text-[#ef4444]" />;
+    }
+
+    // Fallback to status strings
     switch (status) {
       case 'completed':
       case 'passed':
@@ -1185,7 +1224,7 @@ export function EnhancedGroupOverviewV2({
       <StageReviewPage
         stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
         stageId={currentStage}
-        candidates={candidateStatuses}
+        candidates={candidateStatuses.filter(c => c.applicationStatus !== 'holded' && c.applicationStatus !== 'rejected')}
         pipelineSteps={pipelineSteps.map(s => ({ id: s.id, name: s.name }))}
         currentStageIndex={currentStepIndex}
         isLastStage={isLastStageCheck}
@@ -2000,7 +2039,7 @@ export function EnhancedGroupOverviewV2({
                                     }}
                                     className={`flex flex-col items-center gap-1 mx-auto ${candidate.assessmentScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
                                   >
-                                    {getStatusIcon(candidate.assessment)}
+                                    {getStatusIcon(candidate.assessment, candidate.assessmentPassed)}
                                     {candidate.assessmentScore > 0 && (
                                       <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
                                         {candidate.assessmentScore}%
@@ -2027,7 +2066,7 @@ export function EnhancedGroupOverviewV2({
                                     }}
                                     className={`flex flex-col items-center gap-1 mx-auto ${candidate.aiInterviewScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
                                   >
-                                    {getStatusIcon(candidate.aiInterview)}
+                                    {getStatusIcon(candidate.aiInterview, candidate.aiInterviewPassed)}
                                     {candidate.aiInterviewScore > 0 && (
                                       <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
                                         {candidate.aiInterviewScore}%
@@ -2041,7 +2080,7 @@ export function EnhancedGroupOverviewV2({
                               return (
                                 <td key={stageType} className="p-4 text-center">
                                   <div className="flex flex-col items-center gap-1 mx-auto">
-                                    {getStatusIcon(candidate.liveInterview)}
+                                    {getStatusIcon(candidate.liveInterview, candidate.liveInterviewPassed)}
 
                                     {candidate.liveInterviewScheduledAt ? (
                                       <div className="flex flex-col items-center mt-1">
@@ -2092,22 +2131,30 @@ export function EnhancedGroupOverviewV2({
                             </button>
                           </td>
                           <td className="p-4 text-center">
-                            {candidate.progressionState && candidate.progressionState !== 'active' ? (
-                              <span className={`px-3 py-1 rounded-full text-[12px] font-medium ${candidate.progressionState === 'selected'
-                                ? 'bg-blue-100 text-blue-700'
-                                : candidate.progressionState === 'rejected'
-                                  ? 'bg-red-100 text-red-700'
-                                  : candidate.progressionState === 'on-hold'
-                                    ? 'bg-yellow-100 text-yellow-700'
-                                    : 'bg-gray-100 text-gray-700'
-                                }`}>
-                                {candidate.progressionState.replace('-', ' ')}
-                              </span>
-                            ) : (
-                              <span className="px-3 py-1 rounded-full text-[12px] font-medium bg-emerald-100 text-emerald-700">
-                                Active
-                              </span>
-                            )}
+                            {(() => {
+                              const status = candidate.applicationStatus || 'screening';
+                              const statusStyles: Record<string, string> = {
+                                'applied': 'bg-blue-50 text-blue-600 border-blue-100',
+                                'screening': 'bg-emerald-50 text-emerald-600 border-emerald-100',
+                                'holded': 'bg-amber-50 text-amber-600 border-amber-100',
+                                'rejected': 'bg-red-50 text-red-600 border-red-100',
+                                'offered': 'bg-purple-50 text-purple-600 border-purple-100',
+                                'hired': 'bg-indigo-50 text-indigo-600 border-indigo-100',
+                              };
+                              const labelMap: Record<string, string> = {
+                                'applied': 'Applied',
+                                'screening': 'Active',
+                                'holded': 'On Hold',
+                                'rejected': 'Rejected',
+                                'offered': 'Offered',
+                                'hired': 'Hired',
+                              };
+                              return (
+                                <span className={`px-3 py-1 rounded-full text-[12px] font-medium border ${statusStyles[status] || 'bg-gray-50 text-gray-600 border-gray-100'}`}>
+                                  {labelMap[status] || status.charAt(0).toUpperCase() + status.slice(1)}
+                                </span>
+                              );
+                            })()}
                           </td>
                           <td className="p-4">
                             <div className="flex items-center justify-center gap-2">

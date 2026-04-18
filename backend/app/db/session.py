@@ -3,9 +3,10 @@ Database session configuration for Supabase PostgreSQL.
 """
 from collections.abc import AsyncGenerator
 
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, create_engine, Session
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -29,6 +30,25 @@ engine = create_async_engine(
 async_session_factory = async_sessionmaker(
     engine,
     class_=AsyncSession,
+    expire_on_commit=False,
+)
+
+# --- Synchronous Support (psycopg2) ---
+# Used primarily in background workers (Celery) for stability on Windows
+sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+sync_engine = create_engine(
+    sync_url,
+    echo=False,
+    pool_size=5,
+    max_overflow=10,
+    connect_args={
+        "options": "-c statement_timeout=30000" # Optional: 30s timeout
+    }
+)
+
+sync_session_factory = sessionmaker(
+    sync_engine,
+    class_=Session,
     expire_on_commit=False,
 )
 

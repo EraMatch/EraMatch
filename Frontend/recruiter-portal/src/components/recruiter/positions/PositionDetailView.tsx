@@ -273,14 +273,57 @@ export function PositionDetailView({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
 
+  // Google Drive Scheduler State
+  const [driveFolderUrl, setDriveFolderUrl] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>('');
+  const [frequencyDays, setFrequencyDays] = useState<number>(0);
+  const [frequencyHours, setFrequencyHours] = useState<number>(0);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleSuccess, setScheduleSuccess] = useState<string | null>(null);
+
+  const extractDriveFolderId = (url: string) => {
+    const match = url.match(/[-\w]{25,-}/);
+    return match ? match[0] : url;
+  };
+
+  const handleSaveDriveSchedule = async () => {
+    if (!driveFolderUrl || !startDate || !positionId) return;
+
+    setIsSavingSchedule(true);
+    setScheduleError(null);
+    try {
+      const folderId = extractDriveFolderId(driveFolderUrl);
+      const startDateTime = new Date(startDate);
+      
+      const formData = new FormData();
+      formData.append('position_id', positionId);
+      formData.append('drive_folder_id', folderId);
+      formData.append('start_date', startDateTime.toISOString());
+      formData.append('frequency_days', frequencyDays.toString());
+      formData.append('frequency_hours', frequencyHours.toString());
+
+      await api.recruiter.scheduleDriveIngestion(positionId, formData);
+      setScheduleSuccess('Google Drive ingestion schedule created successfully.');
+    } catch (err: any) {
+      setScheduleError(err.message || 'Failed to save schedule');
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  };
+
   const handleZipUpload = async () => {
     if (!zipFile || !positionId) return;
 
     setIsUploading(true);
     setUploadError(null);
     try {
-      const res = await api.recruiter.uploadCandidates(positionId, zipFile);
-      setUploadSuccess(`Successfully processed ${res.total_processed} files. Created ${res.success_count} candidates.`);
+      const formData = new FormData();
+      formData.append('file', zipFile);
+      formData.append('position_id', positionId);
+
+      const res = await api.recruiter.importZipCandidates(positionId, formData);
+      setUploadSuccess(`Successfully processed ${res.job_id ? 'ZIP ingestion job started' : 'files'}. Background job is running.`);
       // Optionally refresh candidates list here
     } catch (err: any) {
       setUploadError(err.message || "Upload failed");
@@ -1578,68 +1621,134 @@ export function PositionDetailView({
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-[#111827] text-[20px]">Schedule Data Import (Google Drive)</h3>
               <button
-                onClick={() => setShowGoogleDriveModal(false)}
+                onClick={() => {
+                  setShowGoogleDriveModal(false);
+                  setScheduleSuccess(null);
+                  setScheduleError(null);
+                  setDriveFolderUrl('');
+                  setStartDate('');
+                  setFrequencyDays(0);
+                  setFrequencyHours(0);
+                }}
                 className="w-[32px] h-[32px] flex items-center justify-center rounded-[6px] hover:bg-[#f3f4f6] transition-colors"
               >
                 <X size={18} className="text-[#6b7280]" />
               </button>
             </div>
 
-            <div className="space-y-4 mb-6">
-              <div>
-                <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
-                  Google Drive Folder Link
-                </label>
-                <input
-                  type="text"
-                  placeholder="https://drive.google.com/drive/folders/..."
-                  className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                />
-              </div>
+            {!scheduleSuccess ? (
+              <>
+                <div className="space-y-4 mb-6">
+                  <div>
+                    <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
+                      Google Drive Folder Link
+                    </label>
+                    <input
+                      type="text"
+                      value={driveFolderUrl}
+                      onChange={(e) => setDriveFolderUrl(e.target.value)}
+                      placeholder="https://drive.google.com/drive/folders/..."
+                      className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                    />
+                  </div>
 
-              <div>
-                <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
-                  Import Frequency
-                </label>
-                <select className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent bg-white">
-                  <option>Manual only</option>
-                  <option>Daily at 9:00 AM</option>
-                  <option>Every 6 hours</option>
-                  <option>Weekly on Monday</option>
-                </select>
-              </div>
-            </div>
+                  <div>
+                    <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
+                      Start Date & Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                    />
+                  </div>
 
-            <div className="bg-[#f0fdf4] border border-[#86efac] rounded-[8px] p-4 mb-6">
-              <div className="flex items-center gap-2">
-                <div className="w-[6px] h-[6px] rounded-full bg-[#10b981]" />
-                <span className="font-['Arimo',sans-serif] text-[13px] text-[#10b981]">
-                  Connection Ready
-                </span>
-              </div>
-              <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mt-2">
-                Click "Test Connection" to verify access to the folder
-              </p>
-            </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
+                        Frequency (Days)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={frequencyDays}
+                        onChange={(e) => setFrequencyDays(parseInt(e.target.value) || 0)}
+                        placeholder="0"
+                        className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
+                        Frequency (Hours)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={frequencyHours}
+                        onChange={(e) => setFrequencyHours(parseInt(e.target.value) || 0)}
+                        placeholder="0"
+                        className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                      />
+                    </div>
+                  </div>
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                    Setting both to 0 will result in a one-time import.
+                  </p>
+                </div>
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowGoogleDriveModal(false)}
-                className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                className="h-[44px] px-[20px] rounded-[8px] border border-[#10b981] text-[#10b981] hover:bg-[#f0fdf4] font-['Arimo',sans-serif] text-[14px] transition-colors"
-              >
-                Test Connection
-              </button>
-              <button
-                className="h-[44px] px-[20px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
-              >
-                Save Schedule
-              </button>
-            </div>
+                {scheduleError && (
+                  <div className="mb-4 text-red-500 text-sm font-['Arimo',sans-serif]">
+                    {scheduleError}
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      setShowGoogleDriveModal(false);
+                      setScheduleError(null);
+                      setDriveFolderUrl('');
+                      setStartDate('');
+                      setFrequencyDays(0);
+                      setFrequencyHours(0);
+                    }}
+                    className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveDriveSchedule}
+                    disabled={!driveFolderUrl || !startDate || isSavingSchedule}
+                    className="flex-[2] h-[44px] px-[20px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors flex items-center justify-center gap-2 w-full"
+                  >
+                    {isSavingSchedule ? <Loader2 size={16} className="animate-spin" /> : null}
+                    Save Schedule
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle size={32} className="text-green-600" />
+                </div>
+                <h4 className="text-lg font-medium text-gray-900 mb-2">Schedule Saved!</h4>
+                <p className="text-sm text-gray-500 mb-6">{scheduleSuccess}</p>
+                <button
+                  onClick={() => {
+                    setShowGoogleDriveModal(false);
+                    setScheduleSuccess(null);
+                    setDriveFolderUrl('');
+                    setStartDate('');
+                    setFrequencyDays(0);
+                    setFrequencyHours(0);
+                  }}
+                  className="px-6 py-2 bg-[#6366f1] text-white rounded-lg hover:bg-[#5558e3]"
+                >
+                  Done
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

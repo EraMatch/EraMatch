@@ -68,8 +68,13 @@ class Settings(BaseSettings):
     PRESCORE_ALLOW_FALLBACK: bool = False
     
     # Internal Services
-    AI_SERVICE_URL: str = "http://localhost:8001"
+    AI_SERVICE_URL: str = "http://127.0.0.1:8001"
+    BACKEND_URL: str = "http://127.0.0.1:8000"
+    WEBHOOK_SECRET: str = "shared-secret-change-me"
     GITHUB_TOKEN: str = ""
+
+    # Google Drive Integration
+    GOOGLE_SERVICE_ACCOUNT_FILE: str = "credentials.json"
 
 
 @lru_cache

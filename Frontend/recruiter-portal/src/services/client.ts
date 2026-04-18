@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:8000/api/v1';
+const API_URL = 'http://127.0.0.1:8000/api/v1';
 
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const token = localStorage.getItem('token');

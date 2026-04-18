@@ -1,4 +1,4 @@
-import { createBrowserRouter, useNavigate, useSearchParams, useParams, Navigate } from 'react-router-dom';
+import { createBrowserRouter, useNavigate, useSearchParams, useParams, Navigate, useLocation } from 'react-router-dom';
 import React from 'react';
 import { Toaster } from 'sonner';
 import { AdminLoginPage } from './components/admin/AdminLoginPage';
@@ -30,6 +30,9 @@ import { BackgroundTasks } from './components/recruiter/dashboard/BackgroundTask
 import { ReviewRequests } from './components/recruiter/reviews/ReviewRequests';
 import { PositionPreMatchingReviewPage } from './components/recruiter/reviews/PositionPreMatchingReviewPage';
 import { api, PositionGroup } from './services/api';
+import { NavigationStackProvider, useNavigationStack } from './components/common/NavigationStack';
+import { ProjectDetailView } from './components/recruiter/projects/ProjectDetailView';
+import { PositionDetailView } from './components/recruiter/positions/PositionDetailView';
 
 import AdminRequests from './components/admin/AdminRequests';
 
@@ -57,7 +60,7 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
     );
 };
 
-const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
+const RecruiterLayoutInner = ({ children }: { children: React.ReactNode }) => {
     return (
         <div className="min-h-screen bg-[#edf0f8]">
             <Sidebar />
@@ -66,6 +69,14 @@ const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
                 <Toaster richColors position="top-right" />
             </div>
         </div>
+    );
+};
+
+const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
+    return (
+        <NavigationStackProvider>
+            <RecruiterLayoutInner>{children}</RecruiterLayoutInner>
+        </NavigationStackProvider>
     );
 };
 
@@ -102,58 +113,86 @@ const LandingPageWrapper = () => {
 // Wrapper Components for Navigation
 const DashboardWrapper = () => {
     const navigate = useNavigate();
+    const { navigateWithStack } = useNavigationStack();
     return (
         <Dashboard
             onViewAllProjects={() => navigate('/recruiter/projects')}
-            onViewProject={(title) => navigate(`/recruiter/projects?project=${encodeURIComponent(title)}`)}
+            onViewProject={(projectId) => navigateWithStack(`/recruiter/project/${projectId}`)}
             onViewSuspicious={() => navigate('/recruiter/suspicious-activity')}
         />
     );
 };
 
 const ProjectsPageWrapper = () => {
-    const navigate = useNavigate();
-    const [searchParams, setSearchParams] = useSearchParams();
-    const initialProjectTitle = searchParams.get('project') || undefined;
-    const initialPosition = searchParams.get('position') || undefined;
-
-    const handlePositionSelect = (positionTitle: string) => {
-        // Update URL with position param without reloading
-        const newParams = new URLSearchParams(searchParams);
-        if (positionTitle) {
-            newParams.set('position', positionTitle);
-        } else {
-            newParams.delete('position');
-        }
-        setSearchParams(newParams);
-    };
+    const { navigateWithStack } = useNavigationStack();
 
     return (
         <ProjectsPage
-            onViewProject={(title) => {
-                // When viewing a project, we might want to clear position or keep it? 
-                // Usually viewing a project starts without a specific position unless specified.
-                // But the helper usually just navigates.
-                navigate(`/recruiter/projects?project=${encodeURIComponent(title)}`);
-            }}
-            initialProjectTitle={initialProjectTitle}
-            onBackToDashboard={() => navigate('/recruiter/dashboard')}
+            onViewProject={(projectId) => navigateWithStack(`/recruiter/project/${projectId}`)}
             onCreateAssessment={() => console.log('Create Assessment')}
-            onViewDashboard={(title, position) => navigate(`/recruiter/dashboard`)}
-            onViewGroup={(groupId) => {
-                // Before navigating to the group, update the *current* URL (in history) to include tab=groups
-                // This ensures that when the user clicks 'Back', they return to the Groups tab
-                const url = new URL(window.location.href);
-                url.searchParams.set('tab', 'groups');
-                window.history.replaceState(window.history.state, '', url);
+        />
+    );
+};
 
-                navigate(`/recruiter/group/${groupId}`);
-            }}
-            pendingAssessment={null}
-            onAssessmentConsumed={() => { }}
-            returnToGroupsTab={searchParams.get('tab') === 'groups'}
-            initialPosition={initialPosition}
-            onPositionSelect={handlePositionSelect}
+const ProjectDetailWrapper = () => {
+    const { projectId } = useParams();
+    const { navigateWithStack, goBack } = useNavigationStack();
+
+    return (
+        <ProjectDetailView
+            projectId={projectId || ''}
+            onBack={() => goBack()}
+            backLabel="Back"
+            onCreateAssessment={() => console.log('Create Assessment')}
+            onViewDashboard={() => goBack('/recruiter/dashboard')}
+            onViewGroup={(groupId) => navigateWithStack(`/recruiter/group/${groupId}`)}
+            onViewPosition={(positionId) => navigateWithStack(`/recruiter/position/${positionId}`)}
+        />
+    );
+};
+
+const PositionDetailWrapper = () => {
+    const { positionId } = useParams();
+    const { goBack } = useNavigationStack();
+    const navigate = useNavigate();
+
+    // We need to fetch position details to get the required props
+    const [positionData, setPositionData] = React.useState<any>(null);
+    const [loading, setLoading] = React.useState(true);
+
+    React.useEffect(() => {
+        const loadPosition = async () => {
+            if (!positionId) return;
+            try {
+                const details = await api.recruiter.getPositionDetails(positionId) as any;
+                setPositionData(details);
+            } catch (err) {
+                console.error('Failed to load position:', err);
+            } finally {
+                setLoading(false);
+            }
+        };
+        loadPosition();
+    }, [positionId]);
+
+    if (loading) return (
+        <div className="flex items-center justify-center min-h-screen bg-[#edf0f8]">
+            <p className="text-[#64748b] font-medium">Loading position details...</p>
+        </div>
+    );
+
+    return (
+        <PositionDetailView
+            positionId={positionId || ''}
+            positionTitle={positionData?.title || positionData?.jobTitle || 'Position'}
+            projectTitle={positionData?.projectName || positionData?.project_name || 'Project'}
+            description={positionData?.description}
+            screeningConditions={positionData?.screeningConditions}
+            isOpen={positionData?.status === 'Open' || positionData?.status === 'Active'}
+            onBack={() => goBack()}
+            onSave={() => {}}
+            onCreateAssessment={() => console.log('Create Assessment')}
+            onViewGroup={(groupId) => navigate(`/recruiter/group/${groupId}`)}
         />
     );
 };
@@ -419,6 +458,26 @@ export const router = createBrowserRouter([
             <RecruiterProtectedRoute>
                 <RecruiterLayout>
                     <ProjectsPageWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        ),
+    },
+    {
+        path: "/recruiter/project/:projectId",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <ProjectDetailWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        ),
+    },
+    {
+        path: "/recruiter/position/:positionId",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <PositionDetailWrapper />
                 </RecruiterLayout>
             </RecruiterProtectedRoute>
         ),
