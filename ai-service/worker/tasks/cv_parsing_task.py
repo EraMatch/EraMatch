@@ -40,6 +40,7 @@ async def async_parse_cv_and_webhook(cv_text: str, tenant_id: str, job_id: str, 
                     messages=[{"role": "user", "content": prompt}],
                     model=CV_PARSING_MODEL,
                     response_format="json",
+                    timeout_seconds=settings.OLLAMA_CV_PARSE_TIMEOUT_SECONDS,
                     host=settings.OLLAMA_LOCAL_HOST,
                 )
 

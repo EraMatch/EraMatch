@@ -9,7 +9,9 @@ Endpoint:
 import json
 import logging
 import re
+import asyncio
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -358,19 +360,42 @@ async def parse_cv_async_endpoint(request: CVAsyncParseRequest):
     Queue an asynchronous CV parsing job.
     The worker will parse the CV text using LLM and notify the backend via Webhook.
     """
-    # Import locally to avoid circular dependencies if worker imports router
-    from worker.tasks.cv_parsing_task import parse_cv_async
-    
-    # Enqueue task
-    task = parse_cv_async.delay(
-        request.cv_text,
-        request.tenant_id,
-        request.job_id,
-        request.file_path
+    mode = (settings.CV_PARSE_ASYNC_MODE or "inline").strip().lower()
+
+    if mode == "celery":
+        # Import locally to avoid circular dependencies if worker imports router.
+        from worker.tasks.cv_parsing_task import parse_cv_async
+
+        task = parse_cv_async.delay(
+            request.cv_text,
+            request.tenant_id,
+            request.job_id,
+            request.file_path,
+            request.source,
+        )
+
+        logger.info("Enqueued async CV parsing task %s for %s", task.id, request.file_path)
+        return CVAsyncParseResponse(
+            message="Asynchronous CV parsing queued",
+            task_id=str(task.id)
+        )
+
+    # Dev-safe fallback: run async parse + webhook in-process.
+    from worker.tasks.cv_parsing_task import async_parse_cv_and_webhook
+
+    task_id = str(uuid4())
+    asyncio.create_task(
+        async_parse_cv_and_webhook(
+            request.cv_text,
+            request.tenant_id,
+            request.job_id,
+            request.file_path,
+            request.source,
+        )
     )
-    
-    logger.info(f"Enqueued async CV parsing task {task.id} for {request.file_path}")
+
+    logger.info("Scheduled inline async CV parsing task %s for %s", task_id, request.file_path)
     return CVAsyncParseResponse(
-        message="Asynchronous CV parsing queued",
-        task_id=str(task.id)
+        message="Asynchronous CV parsing scheduled",
+        task_id=task_id
     )

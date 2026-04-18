@@ -164,8 +164,8 @@ const PositionDetailWrapper = () => {
         const loadPosition = async () => {
             if (!positionId) return;
             try {
-                const details = await api.recruiter.getPositionDetails(positionId) as any;
-                setPositionData(details);
+                const position = await api.recruiter.getPosition(positionId) as any;
+                setPositionData(position);
             } catch (err) {
                 console.error('Failed to load position:', err);
             } finally {
@@ -184,11 +184,11 @@ const PositionDetailWrapper = () => {
     return (
         <PositionDetailView
             positionId={positionId || ''}
-            positionTitle={positionData?.title || positionData?.jobTitle || 'Position'}
+            positionTitle={positionData?.jobTitle || positionData?.job_title || positionData?.title || 'Position'}
             projectTitle={positionData?.projectName || positionData?.project_name || 'Project'}
-            description={positionData?.description}
-            screeningConditions={positionData?.screeningConditions}
-            isOpen={positionData?.status === 'Open' || positionData?.status === 'Active'}
+            description={positionData?.jobDescription || positionData?.job_description || positionData?.description}
+            screeningConditions={positionData?.screeningConditions || positionData?.screening_conditions}
+            isOpen={String(positionData?.status || '').toLowerCase() === 'open' || String(positionData?.status || '').toLowerCase() === 'active'}
             onBack={() => goBack()}
             onSave={() => {}}
             onCreateAssessment={() => console.log('Create Assessment')}

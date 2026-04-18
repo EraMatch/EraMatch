@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     OLLAMA_GH_SYNTH_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_GH_STAGE_TIMEOUT_SECONDS: int = 90
     OLLAMA_MAX_CONCURRENT_CALLS: int = 1
+    OLLAMA_CV_PARSE_TIMEOUT_SECONDS: int = 120
 
     # GitHub analysis runtime controls
     GH_ANALYSIS_HTTP_TIMEOUT_SECONDS: int = 30
@@ -57,6 +58,11 @@ class Settings(BaseSettings):
     
     # Mock mode is opt-in for local testing only.
     USE_MOCK: bool = False
+
+    # Async CV parsing dispatch mode:
+    # - inline: run in ai-service process via asyncio task (dev-friendly)
+    # - celery: dispatch to ai-service celery worker queue
+    CV_PARSE_ASYNC_MODE: str = "inline"
     
     class Config:
         env_file = ".env"

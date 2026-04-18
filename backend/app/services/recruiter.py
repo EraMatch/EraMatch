@@ -870,6 +870,29 @@ class RecruiterService:
         await self.session.refresh(position)
         return artifact
 
+    async def recompute_position_prescores(self, position_id: UUID) -> dict:
+        """On-demand recompute for candidate prescores in a position."""
+        position = await self.get_position(position_id)
+
+        # Technical recruiters can recompute only their assigned positions.
+        if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("You are not assigned to this position")
+
+        applications_scored = await self._recompute_position_prescores(position)
+        await self.session.commit()
+        await self.session.refresh(position)
+
+        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+        approved_questions = artifact.get("approved_questions") if isinstance(artifact.get("approved_questions"), list) else []
+
+        return {
+            "position_id": str(position.id),
+            "applications_scored": int(applications_scored),
+            "qag_status": artifact.get("status"),
+            "approved_question_count": len(approved_questions),
+            "message": "Recompute finished successfully",
+        }
+
     async def get_position_details(self, position_id: UUID) -> PositionDetailsResponse:
         """Aggregate candidates and groups for a position."""
         # 1. Verify existence

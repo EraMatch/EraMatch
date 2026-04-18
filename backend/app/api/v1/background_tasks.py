@@ -72,6 +72,29 @@ def _load_video_task_durations() -> dict[str, float]:
             durations[response_id] = max(0.0, (timestamp - starts[response_id]).total_seconds())
     return durations
 
+
+def _derive_cv_metrics(job: CVIngestionJob) -> tuple[int, int]:
+    """Derive processed/skipped counts from processing_log when available."""
+    log_entries = job.processing_log if isinstance(job.processing_log, list) else None
+    if not log_entries:
+        return int(job.processed_files or 0), int(job.skipped_files or 0)
+
+    processed = 0
+    skipped = 0
+    for entry in log_entries:
+        status = (entry.get("status") if isinstance(entry, dict) else None) or ""
+        normalized = str(status).strip().lower()
+        if normalized in {"processed", "staged"}:
+            processed += 1
+        elif normalized:
+            skipped += 1
+
+    # Fallback if logs are malformed or missing status values.
+    if processed == 0 and skipped == 0:
+        return int(job.processed_files or 0), int(job.skipped_files or 0)
+
+    return processed, skipped
+
 @router.get("/")
 async def get_background_tasks(
     limit: int = 50,
@@ -238,6 +261,7 @@ async def get_background_tasks(
         )
         cv_result = await db.execute(cv_query)
         for job in cv_result.scalars().all():
+            processed, skipped = _derive_cv_metrics(job)
             tasks.append({
                 "id": str(job.id),
                 "status": job.status,
@@ -247,9 +271,11 @@ async def get_background_tasks(
                 "source_filename": job.source_filename,
                 "question": job.source_filename or "Uploaded file",
                 "timestamp": job.created_at.isoformat() if job.created_at else None,
-                "total_generated": job.processed_files,
-                "total_flagged": job.skipped_files,
+                "total_generated": processed,
+                "total_flagged": skipped,
                 "total_approved": None,
+                "candidates_processed": processed,
+                "candidates_skipped": skipped,
             })
     except Exception:
         pass

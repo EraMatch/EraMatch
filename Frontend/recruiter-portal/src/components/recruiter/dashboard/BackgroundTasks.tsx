@@ -214,8 +214,8 @@ const getTableColumnConfig = (tableId: string): TableColumnConfig => {
                 renderSubject: (task) => (
                     <div className="flex flex-wrap items-center gap-2 text-[12px]">
                         <span className="text-[13px] text-card-foreground">{task.source_filename || 'Uploaded source'}</span>
-                        {task.total_generated != null && <span className="px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">{task.total_generated} gen</span>}
-                        {task.total_flagged != null && <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{task.total_flagged} flagged</span>}
+                        {task.total_generated != null && <span className="px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">{task.total_generated} processed</span>}
+                        {task.total_flagged != null && <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{task.total_flagged} skipped</span>}
                         {task.total_approved != null && <span className="px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-100">{task.total_approved} approved</span>}
                     </div>
                 ),

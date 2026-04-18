@@ -68,6 +68,8 @@ export const recruiterService = {
     // Position Management
     getPositions: async () => fetchAPI<JobPosition[]>('/recruiter/positions'),
 
+    getPosition: async (positionId: string) => fetchAPI<any>(`/recruiter/positions/${positionId}`),
+
     createPosition: async (data: Partial<JobPosition>) => {
         return fetchAPI<JobPosition>('/recruiter/positions', {
             method: 'POST',
@@ -286,6 +288,12 @@ export const recruiterService = {
 
     approvePositionHDEvalQAG: async (positionId: string) => {
         return fetchAPI<any>(`/recruiter/positions/${positionId}/hdeval-qag/approve`, {
+            method: 'POST'
+        });
+    },
+
+    recomputePositionPrescores: async (positionId: string) => {
+        return fetchAPI<any>(`/recruiter/positions/${positionId}/prescore/recompute`, {
             method: 'POST'
         });
     },

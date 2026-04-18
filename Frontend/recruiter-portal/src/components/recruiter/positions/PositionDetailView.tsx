@@ -1,6 +1,6 @@
 import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../../services/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../ui/dialog';
@@ -37,6 +37,7 @@ interface Candidate {
   github_contribution_source?: string | null;
   github_freshness_hours?: number | null;
   github_has_fallback?: boolean;
+  pre_score_final?: number | null;
 }
 
 interface Assessment {
@@ -44,6 +45,14 @@ interface Assessment {
   title: string;
   questions: Question[];
   createdAt: Date;
+}
+
+interface QAGQuestion {
+  id: number;
+  question: string;
+  category?: string;
+  weight?: number;
+  approved?: boolean;
 }
 
 interface PositionDetailViewProps {
@@ -62,6 +71,92 @@ interface PositionDetailViewProps {
   onViewGroup?: (groupId: string) => void;
   initialActiveTab?: 'candidates' | 'groups' | 'insights';
 }
+
+const PREVIEW_SECTION_LABELS = [
+  'Job Title:',
+  'Location:',
+  'Department:',
+  'Reports to:',
+  'Role Summary:',
+  'Key Responsibilities:',
+  'Technical Requirements:',
+  'Frameworks:',
+  'Infrastructure:',
+  'Cloud:',
+  'Qualifications:',
+  'Education:',
+  'Experience:',
+  'Contributions:',
+  'Soft Skills:',
+  'Ethical Mindset:',
+  'Agility:',
+  'Communication:'
+];
+
+const DESCRIPTION_COLLAPSE_CHAR_LIMIT = 520;
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const normalizePreviewText = (value?: string, splitBySections = false) => {
+  if (!value || !value.trim()) {
+    return '';
+  }
+
+  let normalized = value
+    .replace(/\r\n/g, '\n')
+    .replace(/:\s*(?=[A-Za-z])/g, ': ')
+    .replace(/([a-z])([A-Z][a-z])/g, '$1 $2')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+
+  if (splitBySections) {
+    const labelsPattern = new RegExp(`\\s*(${PREVIEW_SECTION_LABELS.map(escapeRegExp).join('|')})\\s*`, 'gi');
+    normalized = normalized.replace(labelsPattern, '\n$1 ');
+  }
+
+  return normalized.replace(/\n{3,}/g, '\n\n').trim();
+};
+
+const getCollapsedPreview = (value: string, limit = DESCRIPTION_COLLAPSE_CHAR_LIMIT) => {
+  if (!value || value.length <= limit) {
+    return { text: value, truncated: false };
+  }
+
+  const truncated = value.slice(0, limit);
+  const lastSpace = truncated.lastIndexOf(' ');
+  const safeCut = lastSpace > Math.floor(limit * 0.7) ? truncated.slice(0, lastSpace) : truncated;
+
+  return {
+    text: `${safeCut.trimEnd()}...`,
+    truncated: true
+  };
+};
+
+const normalizePercentValue = (value?: number | null) => {
+  if (value == null || Number.isNaN(value)) {
+    return null;
+  }
+  return value <= 1 ? value * 100 : value;
+};
+
+const getCandidateDisplayScore = (candidate: Candidate) => {
+  if (candidate.score > 0) {
+    return Math.round(candidate.score);
+  }
+  const preScore = normalizePercentValue(candidate.pre_score_final);
+  if (preScore != null) {
+    return Math.round(preScore);
+  }
+  return candidate.match > 0 ? Math.round(candidate.match) : null;
+};
+
+const getCandidateDisplayMatch = (candidate: Candidate) => {
+  if (candidate.match > 0) {
+    return Math.round(candidate.match);
+  }
+  const preScore = normalizePercentValue(candidate.pre_score_final);
+  return preScore != null ? Math.round(preScore) : null;
+};
 
 export function PositionDetailView({
   positionId,
@@ -106,6 +201,7 @@ export function PositionDetailView({
   const [showFlowConfigModal, setShowFlowConfigModal] = useState(false);
   const [pendingGroupData, setPendingGroupData] = useState<any>(null);
   const [viewingCandidateId, setViewingCandidateId] = useState<string | null>(null);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [assessmentResetLoadingApplicationId, setAssessmentResetLoadingApplicationId] = useState<string | null>(null);
   const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
   const [assessmentResetError, setAssessmentResetError] = useState<string | null>(null);
@@ -131,6 +227,16 @@ export function PositionDetailView({
   // Rename Group State
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editGroupName, setEditGroupName] = useState('');
+  const descriptionPreview = normalizePreviewText(description, true);
+  const collapsedDescription = getCollapsedPreview(descriptionPreview);
+  const visibleDescription = isDescriptionExpanded || !collapsedDescription.truncated
+    ? descriptionPreview
+    : collapsedDescription.text;
+  const screeningPreview = normalizePreviewText(screeningConditions);
+
+  useEffect(() => {
+    setIsDescriptionExpanded(false);
+  }, [positionId, description]);
 
   // Derived Filter Options
   const filterOptions = {
@@ -272,6 +378,17 @@ export function PositionDetailView({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [isRecomputingScores, setIsRecomputingScores] = useState(false);
+  const [recomputeMessage, setRecomputeMessage] = useState<string | null>(null);
+  const [recomputeError, setRecomputeError] = useState<string | null>(null);
+  const [isQagDialogOpen, setIsQagDialogOpen] = useState(false);
+  const [qagLoading, setQagLoading] = useState(false);
+  const [qagSaving, setQagSaving] = useState(false);
+  const [qagApproving, setQagApproving] = useState(false);
+  const [qagQuestions, setQagQuestions] = useState<QAGQuestion[]>([]);
+  const [qagStatus, setQagStatus] = useState<string | null>(null);
+  const [qagMessage, setQagMessage] = useState<string | null>(null);
+  const [qagError, setQagError] = useState<string | null>(null);
 
   // Google Drive Scheduler State
   const [driveFolderUrl, setDriveFolderUrl] = useState<string>('');
@@ -377,44 +494,133 @@ export function PositionDetailView({
       setGroups(updatedGroups);
       setEditingGroupId(null);
     } catch (err) {
-      console.error("Failed to rename group", err);
+      console.error('Failed to rename group', err);
     }
   };
 
-  const handleDeleteAssessment = (id: string) => {
-    // This will be handled by parent component through onSaveAssessment
-    // For now, we'll keep the assessment in place
-  };
-
-  const handleResetAssessmentTrial = async (candidate: Candidate) => {
-    const applicationId = candidate.applicationId;
-    if (!applicationId) {
-      setAssessmentResetError(`No application found for ${candidate.name}.`);
-      setAssessmentResetMessage(null);
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Reset assessment trial for ${candidate.name}? This clears answers/sessions and sets assessment stage to not_started.`
-    );
-    if (!confirmed) return;
-
+  const fetchPositionData = useCallback(async (showPageLoader: boolean = true) => {
     try {
-      setAssessmentResetError(null);
-      setAssessmentResetMessage(null);
-      setAssessmentResetLoadingApplicationId(String(applicationId));
-      const result = await api.recruiter.resetApplicationAssessmentTrial(String(applicationId));
-      setAssessmentResetMessage(
-        `${candidate.name}: reset complete (${result.answers_deleted} answers, ${result.sessions_deleted} sessions cleared).`
-      );
-    } catch (error: any) {
-      setAssessmentResetError(error?.message || `Failed to reset assessment trial for ${candidate.name}.`);
+      if (showPageLoader) {
+        setIsLoading(true);
+      }
+      const [detailsRes, insightsRes] = await Promise.all([
+        api.recruiter.getPositionDetails(positionId),
+        api.recruiter.getPositionInsights(positionId)
+      ]);
+      const details = detailsRes as any;
+      const insights = insightsRes as any;
+
+      setCandidates(details.candidates || []);
+      setGroups(details.groups || []);
+
+      setFittingData(insights.fittingData || []);
+      setScoreData(insights.scoreData || []);
+      setSkillDistribution(insights.skillDistribution || []);
+      setSeniorityDistribution(insights.seniorityDistribution || []);
+      setUniversityDistribution(insights.universityDistribution || []);
+      setAvailabilityDistribution(insights.availabilityDistribution || []);
+      setConversion(insights.conversion || 0);
+      setQualityScore(insights.qualityScore || 0);
+      setIntegrityIssues(insights.integrityIssues || 0);
+      setSourceQuality(insights.sourceQuality || []);
+      setTopCompanies(insights.topCompanies || []);
+    } catch (error) {
+      console.error('Failed to fetch position details:', error);
     } finally {
-      setAssessmentResetLoadingApplicationId(null);
+      if (showPageLoader) {
+        setIsLoading(false);
+      }
+    }
+  }, [positionId]);
+
+  useEffect(() => {
+    if (positionId) {
+      fetchPositionData(true);
+    }
+  }, [positionId, fetchPositionData]);
+
+  const handleRecomputeScores = async () => {
+    try {
+      setIsRecomputingScores(true);
+      setRecomputeError(null);
+      setRecomputeMessage(null);
+
+      const result = await api.recruiter.recomputePositionPrescores(positionId) as any;
+      await fetchPositionData(false);
+
+      const scored = Number(result?.applications_scored ?? 0);
+      setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+    } catch (error) {
+      console.error('Failed to recompute prescores:', error);
+      setRecomputeError(error instanceof Error ? error.message : 'Failed to recompute scores');
+    } finally {
+      setIsRecomputingScores(false);
     }
   };
 
-  const customLegend = (props: any) => {
+  const openQagManager = async () => {
+    try {
+      setIsQagDialogOpen(true);
+      setQagLoading(true);
+      setQagError(null);
+      setQagMessage(null);
+
+      const artifact = await api.recruiter.getPositionHDEvalQAG(positionId) as any;
+      const questions = Array.isArray(artifact?.questions) ? artifact.questions : [];
+      setQagQuestions(questions);
+      setQagStatus(typeof artifact?.status === 'string' ? artifact.status : null);
+    } catch (error) {
+      console.error('Failed to load QAG questions:', error);
+      setQagError(error instanceof Error ? error.message : 'Failed to load QAG questions');
+    } finally {
+      setQagLoading(false);
+    }
+  };
+
+  const updateQagQuestion = (id: number, patch: Partial<QAGQuestion>) => {
+    setQagQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, ...patch } : q)));
+  };
+
+  const handleSaveQagDraft = async () => {
+    try {
+      setQagSaving(true);
+      setQagError(null);
+      setQagMessage(null);
+      await api.recruiter.updatePositionHDEvalQAG(positionId, qagQuestions);
+      setQagStatus('pending_tech_review');
+      setQagMessage('QAG questions saved successfully.');
+    } catch (error) {
+      console.error('Failed to save QAG draft:', error);
+      setQagError(error instanceof Error ? error.message : 'Failed to save QAG questions');
+    } finally {
+      setQagSaving(false);
+    }
+  };
+
+  const handleApproveQagAndRecompute = async () => {
+    try {
+      setQagApproving(true);
+      setQagError(null);
+      setQagMessage(null);
+
+      await api.recruiter.updatePositionHDEvalQAG(positionId, qagQuestions);
+      await api.recruiter.approvePositionHDEvalQAG(positionId);
+      const recomputeResult = await api.recruiter.recomputePositionPrescores(positionId) as any;
+      await fetchPositionData(false);
+
+      setQagStatus('approved');
+      const scored = Number(recomputeResult?.applications_scored ?? 0);
+      setQagMessage(`QAG approved and recomputed for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+      setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+    } catch (error) {
+      console.error('Failed to approve QAG and recompute:', error);
+      setQagError(error instanceof Error ? error.message : 'Failed to approve QAG and recompute');
+    } finally {
+      setQagApproving(false);
+    }
+  };
+
+  const renderCustomLegend = (props: any) => {
     const { payload } = props;
     return (
       <div className="flex flex-col gap-2 mt-4">
@@ -468,9 +674,20 @@ export function PositionDetailView({
           <h2 className="font-['Arimo',sans-serif] text-[16px] text-black mb-2">
             Description
           </h2>
-          <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af]">
-            {description || 'No description provided'}
-          </p>
+          <div className="rounded-[12px] border border-[#e5e7eb] bg-white/70 p-4">
+            <p className="font-['Arimo',sans-serif] text-[14px] leading-7 text-[#4b5563] whitespace-pre-line break-words">
+              {visibleDescription || 'No description provided'}
+            </p>
+            {collapsedDescription.truncated && (
+              <button
+                type="button"
+                onClick={() => setIsDescriptionExpanded((prev) => !prev)}
+                className="mt-3 font-['Arimo',sans-serif] text-[13px] font-semibold text-[#4f46e5] hover:text-[#4338ca] transition-colors"
+              >
+                {isDescriptionExpanded ? 'Show less' : 'Expand full description'}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Screening Conditions */}
@@ -478,9 +695,11 @@ export function PositionDetailView({
           <h2 className="font-['Arimo',sans-serif] text-[16px] text-black mb-2">
             Screening Conditions
           </h2>
-          <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af]">
-            {screeningConditions || 'No screening conditions provided'}
-          </p>
+          <div className="rounded-[12px] border border-[#e5e7eb] bg-white/70 p-4">
+            <p className="font-['Arimo',sans-serif] text-[14px] leading-7 text-[#4b5563] whitespace-pre-line break-words">
+              {screeningPreview || 'No screening conditions provided'}
+            </p>
+          </div>
         </div>
 
         {/* Tab Navigation */}
@@ -523,7 +742,38 @@ export function PositionDetailView({
               <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
                 Candidates
               </h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={openQagManager}
+                  className="h-[40px] px-[14px] rounded-[8px] border border-[#ddd6fe] bg-[#f5f3ff] hover:bg-[#ede9fe] transition-colors"
+                >
+                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#5b21b6]">
+                    Manage QAG Questions
+                  </span>
+                </button>
+                <button
+                  onClick={handleRecomputeScores}
+                  disabled={isRecomputingScores}
+                  className="h-[40px] px-[14px] rounded-[8px] border border-[#c7d2fe] bg-[#eef2ff] hover:bg-[#e0e7ff] disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                >
+                  {isRecomputingScores && <Loader2 size={14} className="animate-spin text-[#4338ca]" />}
+                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#4338ca]">
+                    {isRecomputingScores ? 'Recomputing...' : 'Recompute Scores'}
+                  </span>
+                </button>
+              </div>
             </div>
+
+            {recomputeMessage && (
+              <div className="mb-4 rounded-[10px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{recomputeMessage}</p>
+              </div>
+            )}
+            {recomputeError && (
+              <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{recomputeError}</p>
+              </div>
+            )}
 
             {/* Import Candidates Section */}
             <div className="bg-white rounded-[12px] p-6 shadow-sm mb-6">
@@ -717,6 +967,7 @@ export function PositionDetailView({
               <div className="max-h-[500px] overflow-y-auto pr-2">
                 <div className="flex flex-col gap-3">
                   {filteredCandidates.map((candidate) => (
+                    
                     <div
                       key={candidate.id}
                       className="flex items-center gap-4 p-4 rounded-[10px] bg-[#f9fafb] hover:bg-[#f3f4f6] transition-colors"
@@ -731,12 +982,20 @@ export function PositionDetailView({
                         </p>
                       </div>
                       <div className="text-right mr-4">
-                        <p className="font-['Arimo',sans-serif] text-[15px] text-black">
-                          Score: {candidate.score}
-                        </p>
-                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#9ca3af]">
-                          Match: {candidate.match}%
-                        </p>
+                        {(() => {
+                          const displayScore = getCandidateDisplayScore(candidate);
+                          const displayMatch = getCandidateDisplayMatch(candidate);
+                          return (
+                            <>
+                              <p className="font-['Arimo',sans-serif] text-[15px] text-black">
+                                Score: {displayScore != null ? displayScore : 'N/A'}
+                              </p>
+                              <p className="font-['Arimo',sans-serif] text-[13px] text-[#9ca3af]">
+                                Match: {displayMatch != null ? `${displayMatch}%` : 'N/A'}
+                              </p>
+                            </>
+                          );
+                        })()}
                       </div>
                       <button
                         onClick={() => handleResetAssessmentTrial(candidate)}
@@ -1399,6 +1658,110 @@ export function PositionDetailView({
           </div>
         )}
       </div>
+
+      {/* QAG Manager Dialog */}
+      <Dialog open={isQagDialogOpen} onOpenChange={setIsQagDialogOpen}>
+        <DialogContent className="sm:max-w-[980px] bg-white p-0">
+          <div className="p-6 pb-4">
+            <DialogHeader className="mb-4">
+              <DialogTitle className="text-[18px] font-['Arimo',sans-serif] text-black">Position QAG Questions</DialogTitle>
+              <DialogDescription className="text-[13px] text-[#6b7280] font-['Arimo',sans-serif] mt-1">
+                Review and edit QAG questions for this position, then approve and recompute candidate scores.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="mb-3 text-[12px] text-[#6b7280]">
+              Current status: <span className="font-semibold text-[#111827]">{qagStatus || 'unknown'}</span>
+            </div>
+
+            {qagMessage && (
+              <div className="mb-3 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{qagMessage}</p>
+              </div>
+            )}
+            {qagError && (
+              <div className="mb-3 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{qagError}</p>
+              </div>
+            )}
+
+            <div className="max-h-[480px] overflow-y-auto rounded-[10px] border border-[#e5e7eb] bg-[#f8fafc] p-3">
+              {qagLoading ? (
+                <div className="h-[180px] flex items-center justify-center text-[#6b7280]">
+                  <Loader2 size={16} className="animate-spin mr-2" />
+                  Loading QAG questions...
+                </div>
+              ) : qagQuestions.length === 0 ? (
+                <div className="h-[180px] flex items-center justify-center text-[#9ca3af]">
+                  No QAG questions found for this position.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {qagQuestions.map((q) => (
+                    <div key={q.id} className="rounded-[10px] border border-[#e5e7eb] bg-white p-3">
+                      <div className="grid grid-cols-[1fr_110px_110px] gap-2 items-start mb-2">
+                        <textarea
+                          value={q.question || ''}
+                          onChange={(e) => updateQagQuestion(q.id, { question: e.target.value })}
+                          rows={2}
+                          className="w-full rounded-[6px] border border-[#e5e7eb] px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]"
+                        />
+                        <input
+                          value={q.category || ''}
+                          onChange={(e) => updateQagQuestion(q.id, { category: e.target.value })}
+                          placeholder="Category"
+                          className="h-[36px] rounded-[6px] border border-[#e5e7eb] px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]"
+                        />
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={q.weight ?? ''}
+                          onChange={(e) => updateQagQuestion(q.id, { weight: Number(e.target.value) })}
+                          placeholder="Weight"
+                          className="h-[36px] rounded-[6px] border border-[#e5e7eb] px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]"
+                        />
+                      </div>
+                      <label className="inline-flex items-center gap-2 text-[12px] text-[#374151]">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(q.approved ?? true)}
+                          onChange={(e) => updateQagQuestion(q.id, { approved: e.target.checked })}
+                        />
+                        Approved
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-[#f3f4f6]">
+            <button
+              onClick={() => setIsQagDialogOpen(false)}
+              className="h-[38px] px-[20px] rounded-[6px] font-['Arimo',sans-serif] text-[14px] text-[#6b7280] hover:bg-[#f9fafb] transition-colors"
+            >
+              Close
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSaveQagDraft}
+                disabled={qagSaving || qagLoading || qagQuestions.length === 0}
+                className="h-[38px] px-[14px] rounded-[6px] border border-[#c7d2fe] bg-[#eef2ff] hover:bg-[#e0e7ff] disabled:opacity-60"
+              >
+                <span className="font-['Arimo',sans-serif] text-[13px] text-[#4338ca]">{qagSaving ? 'Saving...' : 'Save QAG Changes'}</span>
+              </button>
+              <button
+                onClick={handleApproveQagAndRecompute}
+                disabled={qagApproving || qagLoading || qagQuestions.length === 0}
+                className="h-[38px] px-[14px] rounded-[6px] bg-[#5b21b6] hover:bg-[#6d28d9] disabled:opacity-60"
+              >
+                <span className="font-['Arimo',sans-serif] text-[13px] text-white">{qagApproving ? 'Approving...' : 'Approve + Recompute'}</span>
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Position Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>

@@ -579,6 +579,7 @@ class PreScoreService:
             approved_questions = []
         all_generated_questions = jd_critic_result.get("questions") if isinstance(jd_critic_result, dict) else []
         has_generated_qag = isinstance(all_generated_questions, list) and len(all_generated_questions) > 0
+        pending_qag_approval = has_generated_qag and not bool(approved_questions)
 
         normalized_qag = self._normalize_qag_questions(
             [q for q in approved_questions if isinstance(q, dict) and q.get("question")]
@@ -675,24 +676,6 @@ class PreScoreService:
                 "score_explanation": explanation,
             }
 
-        if has_generated_qag and not normalized_qag:
-            return {
-                "version": self.VERSION,
-                "pre_score_final": 0.0,
-                "semantic_fit_score": 0.0,
-                "skills_experience_score": 0.0,
-                "optional_profile_boost": 0.0,
-                "jd_quality_score": jd_quality_score,
-                "jd_quality_status": "pending_qag_approval",
-                "jd_quality_cap": jd_quality_cap,
-                "jd_quality_cap_applied": False,
-                "criteria_checks": [],
-                "jd_quality_feedback": "QAG questions generated but not approved by technical recruiter yet.",
-                "score_explanation": [
-                    "Scoring is blocked until technical recruiter approves the generated 50 yes/no QAG questions."
-                ],
-            }
-
         jd_text = " ".join(
             [
                 job_title or "",
@@ -754,6 +737,8 @@ class PreScoreService:
             explanation.append(f"Optional profile boost +{round(boost, 1)} points from GitHub signals")
         if capped:
             explanation.append(f"JD quality gate applied: capped to {jd_quality_cap}% (quality={jd_quality_status})")
+        if pending_qag_approval:
+            explanation.append("Using heuristic score until technical recruiter approves generated QAG questions.")
 
         return {
             "version": self.VERSION,
@@ -762,10 +747,14 @@ class PreScoreService:
             "skills_experience_score": skills_experience_score,
             "optional_profile_boost": round(boost, 1),
             "jd_quality_score": jd_quality_score,
-            "jd_quality_status": jd_quality_status,
+            "jd_quality_status": "pending_qag_approval" if pending_qag_approval else jd_quality_status,
             "jd_quality_cap": jd_quality_cap,
             "jd_quality_cap_applied": capped,
             "criteria_checks": jd_critic_result.get("criteria_checks", []),
-            "jd_quality_feedback": jd_critic_result.get("feedback"),
+            "jd_quality_feedback": (
+                "QAG questions generated but not yet approved; currently using heuristic scoring."
+                if pending_qag_approval
+                else jd_critic_result.get("feedback")
+            ),
             "score_explanation": explanation,
         }

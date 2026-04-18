@@ -281,6 +281,17 @@ async def approve_position_hdeval_qag(
     return await service.approve_position_hdeval_qag(position_id)
 
 
+@router.post("/positions/{position_id}/prescore/recompute", response_model=dict)
+async def recompute_position_prescores(
+    position_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Trigger on-demand recompute for all candidate prescores in a position."""
+    service = RecruiterService(session, current_user)
+    return await service.recompute_position_prescores(position_id)
+
+
 # =============================================================================
 # APPLICATIONS
 # =============================================================================
