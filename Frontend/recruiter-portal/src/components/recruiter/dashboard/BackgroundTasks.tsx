@@ -660,10 +660,8 @@ export function BackgroundTasks() {
                         ? api.recruiter.stopGithubAnalysisTask(task.id)
                         : task.task_category === 'qag'
                             ? api.recruiter.stopQagTask(task.id)
-                          : task.task_category === 'qag'
-                              ? api.recruiter.stopQagTask(task.id)
-                        : task.task_category === 'cv_ingestion'
-                            ? api.recruiter.stopCvIngestionTask(task.id)
+                            : task.task_category === 'cv_ingestion'
+                                ? api.recruiter.stopCvIngestionTask(task.id)
                             : api.recruiter.stopVideoTask(task.id)
             )
         );
