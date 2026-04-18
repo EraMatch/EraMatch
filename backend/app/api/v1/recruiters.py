@@ -292,6 +292,85 @@ async def recompute_position_prescores(
     return await service.recompute_position_prescores(position_id)
 
 
+# ── JD Keywords ────────────────────────────────────────────────────────────────
+
+class KeywordsSaveRequest(BaseModel):
+    keywords: dict  # ExtractedKeywords dict
+
+
+@router.get("/positions/{position_id}/keywords", response_model=dict)
+async def get_position_keywords(
+    position_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Get the stored JD keywords for a position (empty dict if none extracted yet)."""
+    service = RecruiterService(session, current_user)
+    return await service.get_position_keywords(position_id)
+
+
+@router.put("/positions/{position_id}/keywords", response_model=dict)
+async def save_position_keywords(
+    position_id: UUID,
+    data: KeywordsSaveRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Save recruiter-reviewed JD keywords and recompute keyword_match_score for all candidates."""
+    service = RecruiterService(session, current_user)
+    return await service.save_position_keywords(position_id, data.keywords)
+
+
+@router.post("/positions/{position_id}/keywords/generate", response_model=dict)
+async def generate_position_keywords(
+    position_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """
+    Trigger LLM keyword extraction for a position's JD and store the result.
+    Called automatically when the technical recruiter approves QAG questions.
+    """
+    import httpx
+    from app.core.config import settings
+
+    service = RecruiterService(session, current_user)
+    position = await service.get_position(position_id)
+
+    ai_url = f"{settings.AI_SERVICE_URL.rstrip('/')}/llm/extract-keywords"
+    payload = {
+        "job_title": position.job_title or "",
+        "job_description": position.job_description or "",
+        "required_skills": position.required_skills if isinstance(position.required_skills, list) else [],
+        "experience_level": position.experience_level,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(ai_url, json=payload)
+            resp.raise_for_status()
+            kw_response = resp.json()
+    except Exception as exc:
+        # Fallback: use required_skills as technical keywords
+        kw_response = {
+            "keywords": {
+                "technical_skills": position.required_skills if isinstance(position.required_skills, list) else [],
+                "soft_skills": [],
+                "domain_keywords": [],
+                "experience_keywords": [],
+                "education_keywords": [],
+                "seniority_signals": [],
+            },
+            "model": "fallback",
+        }
+
+    keywords = kw_response.get("keywords", {})
+    # Persist and recompute all candidate keyword scores
+    await service.save_position_keywords(position_id, keywords)
+    return {"keywords": keywords, "model": kw_response.get("model", "unknown")}
+
+
+
 # =============================================================================
 # APPLICATIONS
 # =============================================================================

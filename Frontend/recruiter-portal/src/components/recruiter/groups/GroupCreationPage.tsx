@@ -22,6 +22,7 @@ interface Candidate {
   jd_quality_score?: number | null;
   jd_quality_status?: string | null;
   score_explanation?: string[];
+  keyword_match_score?: number | null;  // Keyword match score (0-100) from JD keywords vs parsed CV
   starred: boolean;
   // Detailed fields
   companies?: string[];
@@ -457,7 +458,7 @@ export function GroupCreationPage({
       };
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
+      const timeout = setTimeout(() => controller.abort(), 120000);
       const res = await fetch(`${AI_SERVICE_URL}/llm/jd-rank`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1132,6 +1133,16 @@ export function GroupCreationPage({
                             >
                               {isJdReason ? '📋' : '🤖'} {reasoning.length > 60 ? reasoning.slice(0, 58) + '…' : reasoning}
                             </p>
+                          )}
+                          {/* Keyword Match Score badge */}
+                          {candidate.keyword_match_score != null && candidate.keyword_match_score > 0 && (
+                            <div className="flex items-center gap-1" title={`Keyword Match Score: ${candidate.keyword_match_score.toFixed(1)}%`}>
+                              <span className="text-[10px]">🏷️</span>
+                              <div className="w-[40px] h-[4px] rounded-full bg-[#e5e7eb] overflow-hidden">
+                                <div className="h-full rounded-full bg-[#0d9488]" style={{ width: `${candidate.keyword_match_score}%` }} />
+                              </div>
+                              <span className="font-['Arimo',sans-serif] text-[10px] text-[#0d9488] font-medium">{candidate.keyword_match_score.toFixed(0)}%</span>
+                            </div>
                           )}
                           {candidate.applicationId && (
                             <button type="button" onClick={(e) => { e.stopPropagation(); openViewWhy(candidate); }} className="font-['Arimo',sans-serif] text-[10px] text-[#6366f1] hover:underline">

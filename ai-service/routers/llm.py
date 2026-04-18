@@ -5,23 +5,39 @@ Example use cases:
 - Interview evaluation (transcript + reference + rubric)
 - Generic chat/prompt completion
 """
+from pathlib import Path
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from services.ollama import chat_completion
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are an expert technical interviewer with years of experience conducting technical interviews at top tech companies.
+PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts" / "llm"
 
-Your evaluation approach:
-- OBJECTIVE: Score based on factual accuracy and technical merit, not style
-- CONSTRUCTIVE: Provide actionable, specific feedback
-- BALANCED: Acknowledge both strengths and improvement areas
-- THOROUGH: Check for depth, completeness, and practical examples
 
-For behavioral questions, look for STAR method (Situation, Task, Action, Result).
-For technical questions, verify concepts, check for examples, assess depth."""
+def _load_prompt_template(template_name: str) -> str:
+    template_path = PROMPTS_DIR / template_name
+    try:
+        return template_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prompt template load failed: {template_path}",
+        ) from exc
+
+
+def _render_prompt_template(template_name: str, replacements: dict[str, str]) -> str:
+    content = _load_prompt_template(template_name)
+    for key, value in replacements.items():
+        content = content.replace(f"{{{{{key}}}}}", value)
+    return content
+
+
+SYSTEM_PROMPT = _load_prompt_template("system_prompt.md").strip()
 
 
 class ChatRequest(BaseModel):
@@ -77,10 +93,9 @@ async def evaluate(request: EvaluateRequest):
     
     Uses system prompt for expert interviewer persona and rubric for structured evaluation.
     """
-    prompt_parts = [SYSTEM_PROMPT, ""]
-    
+    rubric_block = ""
     if request.rubric:
-        prompt_parts.extend([
+        rubric_block = "\n".join([
             "## Evaluation Rubric (REQUIRED - evaluate strictly against these criteria)",
             request.rubric,
             "",
@@ -88,42 +103,35 @@ async def evaluate(request: EvaluateRequest):
             "- Check if addressed in the response",
             "- Assess depth and accuracy",
             "- Note specific examples or lack thereof",
-        ])
-    
-    if request.question:
-        prompt_parts.extend([
             "",
+        ])
+
+    question_block = ""
+    if request.question:
+        question_block = "\n".join([
             "## Interview Question",
             request.question,
-        ])
-    
-    if request.reference_answer:
-        prompt_parts.extend([
             "",
+        ])
+
+    reference_block = ""
+    if request.reference_answer:
+        reference_block = "\n".join([
             "## Reference/Model Answer",
             request.reference_answer,
+            "",
         ])
-    
-    prompt_parts.extend([
-        "",
-        "## Candidate's Transcript",
-        request.transcript or "[No transcript available]",
-        "",
-        "## Scoring Scale",
-        "90-100: Excellent - All rubric criteria fully addressed with accurate, detailed explanations",
-        "70-89: Good - Most criteria addressed well, minor gaps",
-        "50-69: Acceptable - Some criteria met, significant gaps or inaccuracies",
-        "30-49: Below Average - Few criteria addressed, multiple issues",
-        "0-29: Poor - Major misconceptions or criteria not addressed",
-        "",
-        "## Required Output Format (respond EXACTLY):",
-        "SCORE: <number between 0-100>",
-        "FEEDBACK: <3-4 sentences with specific examples from the response>",
-        "STRENGTHS: <comma-separated points candidate did well>",
-        "IMPROVEMENTS: <comma-separated specific suggestions>"
-    ])
-    
-    prompt = "\n".join(prompt_parts)
+
+    prompt = _render_prompt_template(
+        "evaluate_rubric.md",
+        {
+            "SYSTEM_PROMPT": SYSTEM_PROMPT,
+            "RUBRIC_BLOCK": rubric_block,
+            "QUESTION_BLOCK": question_block,
+            "REFERENCE_BLOCK": reference_block,
+            "TRANSCRIPT": request.transcript or "[No transcript available]",
+        },
+    )
 
     try:
         result = await chat_completion(
@@ -176,40 +184,18 @@ async def evaluate(request: EvaluateRequest):
     # evaluation prompt for the llm that will judge 
     has_reference = bool(request.reference_answer and request.reference_answer.strip())
     
-    prompt = f"""You are an expert interview evaluator. Analyze this candidate response.
-
-## Interview Question
-{request.question or 'Interview question'}
-
-## Reference Answer (Key Points)
-{request.reference_answer if has_reference else 'No reference provided - evaluate based on general quality'}
-
-## Candidate's Transcribed Response
-{request.transcript}
-
-## Evaluation Guidelines
-1. If this is a FACTUAL/TECHNICAL question with a reference answer:
-   - Check if key concepts are covered
-   - Allow variations in wording
-   - Partial credit for partial answers
-
-2. If this is a BEHAVIORAL/SITUATIONAL question:
-   - Look for STAR method (Situation, Task, Action, Result)
-   - Evaluate clarity and communication
-   - Check relevance to the question
-
-3. Ignore minor speech transcription errors
-
-## Scoring Scale
-- 90-100: Excellent - comprehensive, accurate, well-structured
-- 70-89: Good - covers main points with minor gaps
-- 50-69: Acceptable - partial answer or lacks depth
-- 30-49: Below average - misses key points
-- 0-29: Poor - irrelevant or incorrect
-
-## Required Output (EXACTLY this format)
-SCORE: [number 0-100]
-FEEDBACK: [2-3 sentences explaining the score]"""
+    prompt = _render_prompt_template(
+        "evaluate_simple.md",
+        {
+            "QUESTION": request.question or "Interview question",
+            "REFERENCE_ANSWER": (
+                request.reference_answer
+                if has_reference
+                else "No reference provided - evaluate based on general quality"
+            ),
+            "TRANSCRIPT": request.transcript,
+        },
+    )
 
     try:
         result = await chat_completion(
@@ -313,39 +299,13 @@ async def smart_rank(request: SmartRankRequest):
 
     candidates_block = "\n".join(cand_lines)
 
-    prompt = f"""You are an AI recruiter assistant. A recruiter is looking for candidates matching this description:
-
-QUERY: "{request.query}"
-
-CANDIDATES (one per line, format: ID:... | Name | Experience | Skills | Titles | Location):
-{candidates_block}
-
-TASK:
-1. Rank ALL candidates from most to least suitable for the query.
-2. For each candidate provide a 1-sentence reason (max 15 words) explaining why they rank there.
-3. Detect the recruiter's intent from the query.
-
-Respond ONLY with valid JSON in this exact schema (no markdown fences, no extra text):
-{{
-  "ranked_ids": ["id1", "id2", ...],
-  "reasoning": {{
-    "id1": "Strong Python + FastAPI match, 7 years exceeds requirement.",
-    "id2": "Some Python skills but missing backend API experience."
-  }},
-  "intent": {{
-    "skills": ["python", "fastapi"],
-    "min_years": 5,
-    "location": null,
-    "seniority": "senior",
-    "summary": "Senior Python/FastAPI backend developer with 5+ years"
-  }}
-}}
-
-RULES:
-- ranked_ids must contain EVERY candidate ID exactly once.
-- reasoning must contain an entry for EVERY candidate ID.
-- If a field cannot be determined from the query, use null.
-- Respond with JSON only, nothing else."""
+    prompt = _render_prompt_template(
+        "smart_rank.md",
+        {
+            "QUERY": request.query,
+            "CANDIDATES_BLOCK": candidates_block,
+        },
+    )
 
     try:
         result = await chat_completion(
@@ -408,7 +368,123 @@ RULES:
         )
 
 
+# ── JD Keyword Extraction ─────────────────────────────────────────────────────
+
+class KeywordExtractRequest(BaseModel):
+    """Request keyword extraction from a job description."""
+    job_title: str
+    job_description: str
+    required_skills: list[str] = []
+    experience_level: str | None = None
+
+
+class ExtractedKeywords(BaseModel):
+    """Structured keywords grouped by semantic category."""
+    technical_skills: list[str] = []     # Python, FastAPI, Docker, SQL
+    soft_skills: list[str] = []          # leadership, communication
+    domain_keywords: list[str] = []      # fintech, healthcare, machine learning
+    experience_keywords: list[str] = []  # senior, 5 years, team lead
+    education_keywords: list[str] = []   # BSc, Computer Science, MBA
+    seniority_signals: list[str] = []    # principal, staff, lead, manager
+
+
+class KeywordExtractResponse(BaseModel):
+    """Response containing structured JD keywords."""
+    keywords: ExtractedKeywords
+    model: str
+
+
+@router.post("/extract-keywords", response_model=KeywordExtractResponse)
+async def extract_keywords(request: KeywordExtractRequest):
+    """
+    Extract structured, categorized keywords from a job description using the LLM.
+
+    The recruiter reviews and edits the returned keywords before they are stored
+    on the position. These keywords are then used to compute a keyword_match_score
+    for each imported candidate.
+    """
+    import json, re as _re
+
+    jd_text = (request.job_description or "").strip()
+    if len(jd_text) > 3000:
+        jd_text = jd_text[:3000] + "\n[JD truncated]"
+
+    required_skills_str = ", ".join(request.required_skills) if request.required_skills else "None listed"
+    exp_level = request.experience_level or "Not specified"
+
+    prompt = _render_prompt_template(
+        "extract_keywords.md",
+        {
+            "JOB_TITLE": request.job_title,
+            "EXPERIENCE_LEVEL": exp_level,
+            "REQUIRED_SKILLS": required_skills_str,
+            "JOB_DESCRIPTION": jd_text,
+        },
+    )
+
+    try:
+        result = await chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+        )
+        content = result["content"].strip()
+
+        # Strip markdown fences
+        if content.startswith("```"):
+            content = _re.sub(r"^```[a-z]*\n?", "", content)
+            content = _re.sub(r"\n?```$", "", content.strip())
+
+        json_match = _re.search(r"\{.*\}", content, _re.DOTALL)
+        if not json_match:
+            raise ValueError("No JSON in LLM response")
+
+        parsed = json.loads(json_match.group())
+
+        def _clean_list(lst: object) -> list[str]:
+            if not isinstance(lst, list):
+                return []
+            return [str(x).strip().lower() for x in lst if isinstance(x, str) and str(x).strip()]
+
+        keywords = ExtractedKeywords(
+            technical_skills=_clean_list(parsed.get("technical_skills")),
+            soft_skills=_clean_list(parsed.get("soft_skills")),
+            domain_keywords=_clean_list(parsed.get("domain_keywords")),
+            experience_keywords=_clean_list(parsed.get("experience_keywords")),
+            education_keywords=_clean_list(parsed.get("education_keywords")),
+            seniority_signals=_clean_list(parsed.get("seniority_signals")),
+        )
+
+        # Ensure required_skills are always in technical_skills
+        required_lower = {s.strip().lower() for s in request.required_skills if s.strip()}
+        existing_lower = {s.lower() for s in keywords.technical_skills}
+        for skill in required_lower - existing_lower:
+            keywords.technical_skills.append(skill)
+
+        return KeywordExtractResponse(
+            keywords=keywords,
+            model=result.get("model", "unknown"),
+        )
+
+    except Exception as e:
+        # Fallback: build keywords directly from required_skills + job title tokens
+        import re as _re2
+        fallback_technical = [s.strip().lower() for s in request.required_skills if s.strip()]
+        title_tokens = [t.lower() for t in _re2.findall(r"[a-zA-Z]{3,}", request.job_title)]
+        fallback_seniority = [t for t in title_tokens if t in {"senior", "lead", "principal", "staff", "manager", "junior", "mid"}]
+        return KeywordExtractResponse(
+            keywords=ExtractedKeywords(
+                technical_skills=fallback_technical,
+                soft_skills=[],
+                domain_keywords=[],
+                experience_keywords=[],
+                education_keywords=[],
+                seniority_signals=fallback_seniority,
+            ),
+            model="fallback",
+        )
+
+
 # ── JD-Based Candidate Ranking ────────────────────────────────────────────────
+
 
 class JDRankCandidate(BaseModel):
     """Rich candidate profile for JD-based ranking."""
@@ -492,41 +568,40 @@ async def jd_rank(request: JDRankRequest):
     exp_level = request.experience_level or "Not specified"
     years_req = f"{request.years_of_experience}+" if request.years_of_experience else "Not specified"
 
-    prompt = f"""You are an expert AI recruiter. Your job is to rank candidates by how well their background fits the following job opening.
+    prompt = _render_prompt_template(
+        "jd_rank.md",
+        {
+            "JOB_TITLE": request.job_title,
+            "EXPERIENCE_LEVEL": exp_level,
+            "YEARS_REQUIRED": years_req,
+            "REQUIRED_SKILLS": required_skills_str,
+            "JOB_DESCRIPTION": jd_text,
+            "CANDIDATES_BLOCK": candidates_block,
+        },
+    )
 
-=== JOB DESCRIPTION ===
-Title: {request.job_title}
-Experience Level: {exp_level}
-Years Required: {years_req}
-Required Skills: {required_skills_str}
+    # ── helper: robust ranked_ids extractor even if full JSON is malformed ──
+    def _extract_ranked_ids_regex(text: str, valid_ids: set[str]) -> list[str]:
+        """Pull UUIDs from ranked_ids array even if the rest of the JSON is broken."""
+        m = _re.search(r'"ranked_ids"\s*:\s*\[([^\]]*)\]', text, _re.DOTALL)
+        if not m:
+            return []
+        raw = m.group(1)
+        found = _re.findall(r'"([^"]+)"', raw)
+        # Keep only IDs that belong to the actual candidate set
+        return [f for f in found if f in valid_ids]
 
-{jd_text}
-
-=== CANDIDATES (one per line) ===
-Format: ID | Name | Experience | Skills | Past Titles | Past Companies | Education | Location
-{candidates_block}
-
-=== YOUR TASK ===
-1. Read the JD carefully and identify the key requirements (skills, experience level, domain, seniority).
-2. Rank ALL candidates from most to least suitable for this specific role.
-3. For each candidate, write 1 sentence (max 15 words) explaining why they rank there.
-4. Write a single fit_summary sentence describing what you looked for in an ideal candidate.
-
-Respond ONLY with valid JSON in this exact schema (no markdown fences, no extra text):
-{{
-  "ranked_ids": ["id1", "id2", ...],
-  "reasoning": {{
-    "id1": "Strong Python + ML match, 6 years aligns with senior requirement.",
-    "id2": "Frontend-focused background does not match backend-heavy JD."
-  }},
-  "fit_summary": "Senior Python backend engineer with ML and cloud experience."
-}}
-
-RULES:
-- ranked_ids must contain EVERY candidate ID exactly once.
-- reasoning must contain an entry for EVERY candidate ID.
-- Base ranking purely on JD fit — ignore candidate location unless the JD requires it.
-- Respond with JSON only, nothing else."""
+    def _sanitize_json_strings(text: str) -> str:
+        """Replace unescaped colons inside JSON string values with a dash."""
+        # Only target values (after a key), not keys themselves or structural colons
+        # Replace ": " patterns inside string values (naive but effective for reasoning)
+        def _fix_value(m: _re.Match) -> str:
+            val = m.group(1)
+            # Replace colons that are NOT at the start (structural) with em-dash
+            val = val.replace(":", " -")
+            return f'"{val}"'
+        # Match "key": "value" pairs and sanitize the value
+        return _re.sub(r'"([^"\\]*(?:\\.[^"\\]*)*)"', _fix_value, text)
 
     try:
         result = await chat_completion(
@@ -544,16 +619,40 @@ RULES:
         if not json_match:
             raise ValueError("No JSON object found in LLM response")
 
-        parsed = json.loads(json_match.group())
+        raw_json = json_match.group()
 
-        ranked_ids = [str(x) for x in parsed.get("ranked_ids", [])]
-        reasoning: dict[str, str] = {
-            str(k): str(v) for k, v in parsed.get("reasoning", {}).items()
-        }
-        fit_summary = str(parsed.get("fit_summary", request.job_title))
+        # ── Layer 1: try clean parse ──────────────────────────────────────
+        parsed = None
+        parse_error = None
+        try:
+            parsed = json.loads(raw_json)
+        except json.JSONDecodeError as je:
+            parse_error = je
+            # ── Layer 2: sanitize string values then retry ─────────────────
+            try:
+                sanitized = _sanitize_json_strings(raw_json)
+                parsed = json.loads(sanitized)
+                logger.warning("jd-rank: used sanitized JSON after initial parse failure")
+            except json.JSONDecodeError:
+                pass
+
+        all_ids = {c.id for c in candidates}
+
+        if parsed:
+            ranked_ids = [str(x) for x in parsed.get("ranked_ids", []) if str(x) in all_ids]
+            reasoning: dict[str, str] = {
+                str(k): str(v) for k, v in parsed.get("reasoning", {}).items()
+                if str(k) in all_ids
+            }
+            fit_summary = str(parsed.get("fit_summary", request.job_title))
+        else:
+            # ── Layer 3: regex extraction of ranked_ids only ───────────────
+            logger.warning(f"jd-rank: JSON parse failed ({parse_error}), falling back to regex extraction")
+            ranked_ids = _extract_ranked_ids_regex(raw_json, all_ids)
+            reasoning = {}
+            fit_summary = request.job_title
 
         # Ensure all candidate IDs are present
-        all_ids = {c.id for c in candidates}
         for cid in all_ids:
             if cid not in reasoning:
                 reasoning[cid] = "No specific match details available."

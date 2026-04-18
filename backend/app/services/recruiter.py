@@ -993,6 +993,7 @@ class RecruiterService:
                 jd_quality_status=prescore.get("jd_quality_status"),
                 jd_quality_cap_applied=bool(prescore.get("jd_quality_cap_applied")) if "jd_quality_cap_applied" in prescore else None,
                 score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
+                keyword_match_score=float(cv.keyword_match_score) if cv and cv.keyword_match_score is not None else None,
             ))
 
         # 3. Fetch groups
@@ -1009,7 +1010,50 @@ class RecruiterService:
             required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
             experience_level=position.experience_level,
             years_of_experience=position.years_of_experience or 0,
+            jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,
         )
+
+    async def get_position_keywords(self, position_id: UUID) -> dict:
+        """Return jd_keywords for a position (empty dict if none set)."""
+        position = await self.get_position(position_id)
+        return position.jd_keywords if isinstance(position.jd_keywords, dict) else {}
+
+    async def save_position_keywords(self, position_id: UUID, keywords: dict) -> dict:
+        """Save recruiter-reviewed jd_keywords to the position and recompute keyword scores."""
+        position = await self.get_position(position_id)
+        position.jd_keywords = keywords
+        flag_modified(position, "jd_keywords")
+        self.session.add(position)
+        await self.session.commit()
+        await self.session.refresh(position)
+
+        # Recompute keyword_match_score for all candidates in this position
+        from app.models import CVAnalysis
+        from app.services.prescore import PreScoreService
+        scorer = PreScoreService()
+        q = (
+            select(CandidateApplication, CVAnalysis)
+            .join(CandidateApplication, CandidateApplication.id == CVAnalysis.application_id)
+            .where(
+                CandidateApplication.position_id == position_id,
+                CandidateApplication.organization_id == self.organization_id,
+                CandidateApplication.is_deleted == False,
+            )
+        )
+        result = await self.session.execute(q)
+        for app, cv in result.all():
+            if not cv:
+                continue
+            parsed_data = cv.parsed_data if isinstance(cv.parsed_data, dict) else {}
+            kw_score = scorer.compute_keyword_match_score(
+                jd_keywords=keywords,
+                candidate_parsed_data=parsed_data,
+                candidate_skills=cv.skills or [],
+            )
+            cv.keyword_match_score = kw_score
+            self.session.add(cv)
+        await self.session.commit()
+        return keywords
 
     async def update_position(self, position_id: UUID, data: PositionUpdate) -> Position:
         """Update a position."""
@@ -2295,6 +2339,16 @@ class RecruiterService:
                 parsed_data["prescore_v2"] = prescore
                 cv.parsed_data = parsed_data
                 cv.match_score = prescore["pre_score_final"]
+
+                # Keyword match score — computed if position has jd_keywords
+                if isinstance(position.jd_keywords, dict):
+                    kw_score = scorer.compute_keyword_match_score(
+                        jd_keywords=position.jd_keywords,
+                        candidate_parsed_data=parsed_data,
+                        candidate_skills=cv.skills or [],
+                    )
+                    cv.keyword_match_score = kw_score
+
                 cv.analyzed_at = datetime.utcnow()
                 self.session.add(cv)
                 updates += 1

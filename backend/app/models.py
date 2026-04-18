@@ -268,6 +268,7 @@ class Position(SQLModel, table=True):
     education_level: str | None = Field(default=None, max_length=100)
     benefits: list = Field(default_factory=list, sa_column=Column(JSONB))
     jd_hdeval_qag: dict | None = Field(default=None, sa_column=Column(JSONB))
+    jd_keywords: dict | None = Field(default=None, sa_column=Column(JSONB))  # LLM-extracted keyword groups
     status: str = Field(default="open", max_length=20)
     assigned_hr_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     assigned_tech_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
@@ -775,6 +776,7 @@ class CVAnalysis(BaseModel, table=True):
     skills: list | None = Field(default=None, sa_column=Column(ARRAY(String)))
     experience_years: Decimal | None = Field(default=None)
     match_score: Decimal | None = Field(default=None)
+    keyword_match_score: Decimal | None = Field(default=None)  # 0-100, computed from jd_keywords vs parsed_data
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)
 
 

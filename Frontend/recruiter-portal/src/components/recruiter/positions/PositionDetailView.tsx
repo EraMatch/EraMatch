@@ -390,6 +390,13 @@ export function PositionDetailView({
   const [qagMessage, setQagMessage] = useState<string | null>(null);
   const [qagError, setQagError] = useState<string | null>(null);
 
+  // JD Keywords state
+  const [jdKeywords, setJdKeywords] = useState<Record<string, string[]> | null>(null);
+  const [isGeneratingKeywords, setIsGeneratingKeywords] = useState(false);
+  const [isSavingKeywords, setIsSavingKeywords] = useState(false);
+  const [keywordsMessage, setKeywordsMessage] = useState<string | null>(null);
+  const [newKeywordInputs, setNewKeywordInputs] = useState<Record<string, string>>({});
+
   // Google Drive Scheduler State
   const [driveFolderUrl, setDriveFolderUrl] = useState<string>('');
   const [startDate, setStartDate] = useState<string>('');
@@ -612,6 +619,19 @@ export function PositionDetailView({
       const scored = Number(recomputeResult?.applications_scored ?? 0);
       setQagMessage(`QAG approved and recomputed for ${scored} candidate${scored === 1 ? '' : 's'}.`);
       setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+
+      // Auto-trigger keyword extraction after QAG approval
+      setIsGeneratingKeywords(true);
+      setKeywordsMessage(null);
+      try {
+        const kwRes = await api.recruiter.generatePositionKeywords(positionId) as any;
+        setJdKeywords(kwRes?.keywords ?? null);
+        setKeywordsMessage(`JD keywords extracted (${kwRes?.model ?? 'LLM'}).`);
+      } catch {
+        setKeywordsMessage('Keyword extraction failed — you can retry manually.');
+      } finally {
+        setIsGeneratingKeywords(false);
+      }
     } catch (error) {
       console.error('Failed to approve QAG and recompute:', error);
       setQagError(error instanceof Error ? error.message : 'Failed to approve QAG and recompute');
@@ -1735,6 +1755,87 @@ export function PositionDetailView({
               )}
             </div>
           </div>
+
+          {/* ── JD Keywords Panel ─────────────────────────────────────── */}
+          {(jdKeywords || isGeneratingKeywords) && (
+            <div className="mx-6 mb-4 rounded-[10px] border border-[#d1fae5] bg-[#f0fdf4] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[16px]">🏷️</span>
+                  <span className="font-['Arimo',sans-serif] text-[14px] font-semibold text-[#166534]">JD Keywords</span>
+                  {isGeneratingKeywords && <div className="w-4 h-4 border-2 border-[#16a34a] border-t-transparent rounded-full animate-spin" />}
+                  {keywordsMessage && !isGeneratingKeywords && (
+                    <span className="font-['Arimo',sans-serif] text-[11px] text-[#16a34a]">{keywordsMessage}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button type="button" disabled={isGeneratingKeywords}
+                    onClick={async () => {
+                      setIsGeneratingKeywords(true); setKeywordsMessage(null);
+                      try { const r = await api.recruiter.generatePositionKeywords(positionId) as any; setJdKeywords(r?.keywords ?? null); setKeywordsMessage('Re-extracted.'); }
+                      catch { setKeywordsMessage('Extraction failed.'); } finally { setIsGeneratingKeywords(false); }
+                    }}
+                    className="h-[28px] px-[10px] rounded-[6px] border border-[#bbf7d0] bg-white text-[11px] text-[#16a34a] hover:bg-[#dcfce7] transition-colors disabled:opacity-50"
+                  >
+                    {isGeneratingKeywords ? 'Extracting…' : 'Re-extract'}
+                  </button>
+                  <button type="button" disabled={isSavingKeywords || !jdKeywords}
+                    onClick={async () => {
+                      if (!jdKeywords) return;
+                      setIsSavingKeywords(true); setKeywordsMessage(null);
+                      try { await api.recruiter.savePositionKeywords(positionId, jdKeywords); setKeywordsMessage('Saved — candidate scores updated.'); }
+                      catch { setKeywordsMessage('Failed to save.'); } finally { setIsSavingKeywords(false); }
+                    }}
+                    className="h-[28px] px-[12px] rounded-[6px] bg-[#16a34a] text-white text-[11px] hover:bg-[#15803d] transition-colors disabled:opacity-50"
+                  >
+                    {isSavingKeywords ? 'Saving…' : 'Save Keywords'}
+                  </button>
+                </div>
+              </div>
+
+              {isGeneratingKeywords && !jdKeywords ? (
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Extracting keywords from job description…</p>
+              ) : jdKeywords && (
+                <div className="space-y-3">
+                  {([
+                    { key: 'technical_skills',    label: 'Technical Skills', color: 'bg-[#ede9fe] text-[#5b21b6] border-[#c4b5fd]' },
+                    { key: 'domain_keywords',     label: 'Domain',           color: 'bg-[#dbeafe] text-[#1e40af] border-[#93c5fd]' },
+                    { key: 'soft_skills',         label: 'Soft Skills',      color: 'bg-[#fef3c7] text-[#92400e] border-[#fcd34d]' },
+                    { key: 'experience_keywords', label: 'Experience',       color: 'bg-[#fce7f3] text-[#9d174d] border-[#f9a8d4]' },
+                    { key: 'education_keywords',  label: 'Education',        color: 'bg-[#ecfdf5] text-[#166534] border-[#86efac]' },
+                    { key: 'seniority_signals',   label: 'Seniority',        color: 'bg-[#fef2f2] text-[#991b1b] border-[#fca5a5]' },
+                  ] as { key: string; label: string; color: string }[]).map(({ key, label, color }) => {
+                    const kws: string[] = Array.isArray((jdKeywords as any)[key]) ? (jdKeywords as any)[key] : [];
+                    return (
+                      <div key={key}>
+                        <span className="font-['Arimo',sans-serif] text-[10px] font-semibold text-[#9ca3af] uppercase tracking-wide">{label}</span>
+                        <div className="flex flex-wrap gap-1 mt-1 items-center">
+                          {kws.map((kw, i) => (
+                            <span key={i} className={`inline-flex items-center gap-1 px-[8px] py-[2px] rounded-[10px] border text-[11px] font-medium ${color}`}>
+                              {kw}
+                              <button type="button" onClick={() => setJdKeywords(prev => prev ? { ...prev, [key]: kws.filter((_, j) => j !== i) } : prev)} className="hover:opacity-60 leading-none">×</button>
+                            </span>
+                          ))}
+                          <input
+                            type="text" placeholder="+ add" value={(newKeywordInputs as any)[key] || ''}
+                            onChange={e => setNewKeywordInputs(p => ({ ...p, [key]: e.target.value }))}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                const val = ((newKeywordInputs as any)[key] || '').trim().toLowerCase();
+                                if (val && !kws.includes(val)) setJdKeywords(p => p ? { ...p, [key]: [...kws, val] } : p);
+                                setNewKeywordInputs(p => ({ ...p, [key]: '' }));
+                              }
+                            }}
+                            className="h-[22px] px-[8px] rounded-[10px] border border-dashed border-[#d1d5db] text-[11px] text-[#6b7280] w-[70px] focus:outline-none focus:border-[#6366f1] bg-white"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-[#f3f4f6]">
             <button

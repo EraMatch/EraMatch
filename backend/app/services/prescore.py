@@ -98,6 +98,69 @@ class PreScoreService:
             return set()
         return {tok for tok in WORD_RE.findall(text.lower()) if len(tok) > 1}
 
+    def compute_keyword_match_score(
+        self,
+        *,
+        jd_keywords: dict[str, Any] | None,
+        candidate_parsed_data: dict[str, Any] | None,
+        candidate_skills: list[str] | None,
+    ) -> float:
+        """
+        Compute a keyword match score (0–100) by comparing position jd_keywords
+        against a candidate's parsed CV data using weighted category matching.
+
+        Category weights:
+          technical_skills  50%  — most important: does the CV have the tech?
+          domain_keywords   25%  — domain/industry alignment
+          soft_skills       10%  — behavioral traits
+          experience_keywords 10% — seniority and methodology fit
+          education_keywords   5% — degree and certification fit
+          seniority_signals    0% — informational only (already covered by experience)
+
+        Returns 0.0 if no keywords are defined (not 0 — means "not computed").
+        """
+        if not isinstance(jd_keywords, dict):
+            return 0.0
+
+        # Build candidate text corpus
+        candidate_text = self._extract_candidate_text(candidate_parsed_data, candidate_skills)
+        # Also add skills array explicitly
+        skills_text = " ".join(candidate_skills or [])
+        full_text = (candidate_text + " " + skills_text).lower()
+
+        # Category definitions: (key, weight)
+        CATEGORY_WEIGHTS = [
+            ("technical_skills",    0.50),
+            ("domain_keywords",     0.25),
+            ("soft_skills",         0.10),
+            ("experience_keywords", 0.10),
+            ("education_keywords",  0.05),
+        ]
+
+        weighted_score = 0.0
+        total_weight = 0.0
+
+        for category, weight in CATEGORY_WEIGHTS:
+            keywords = jd_keywords.get(category, [])
+            if not isinstance(keywords, list) or not keywords:
+                # No keywords in this category — skip (don't penalize)
+                continue
+
+            total_weight += weight
+            keywords_lower = [str(k).strip().lower() for k in keywords if str(k).strip()]
+            if not keywords_lower:
+                continue
+
+            matched = sum(1 for kw in keywords_lower if kw in full_text)
+            category_score = matched / len(keywords_lower)
+            weighted_score += category_score * weight
+
+        if total_weight <= 0:
+            return 0.0
+
+        # Normalize to 0–100
+        return round((weighted_score / total_weight) * 100, 1)
+
     def _extract_candidate_text(self, parsed_data: dict[str, Any] | None, skills: list[str] | None) -> str:
         if not isinstance(parsed_data, dict):
             parsed_data = {}

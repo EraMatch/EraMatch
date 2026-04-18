@@ -174,6 +174,9 @@ class PositionCandidateResponse(BaseModel):
     jd_quality_cap_applied: bool | None = None
     score_explanation: list[str] = Field(default_factory=list)
 
+    # Keyword match score (0-100, computed from position jd_keywords vs parsed CV)
+    keyword_match_score: float | None = None
+
 class PositionGroupResponse(BaseModel):
     id: UUID = Field(alias="id")
     name: str = Field(alias="name")
@@ -201,6 +204,8 @@ class PositionDetailsResponse(BaseModel):
     required_skills: list = []
     experience_level: str | None = None
     years_of_experience: int = 0
+    # Extracted JD keywords (set after recruiter review)
+    jd_keywords: dict | None = None
 
 
 class ApplicationScoreBreakdownResponse(BaseModel):

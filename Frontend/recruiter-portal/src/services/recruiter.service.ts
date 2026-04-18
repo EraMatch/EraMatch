@@ -298,6 +298,25 @@ export const recruiterService = {
         });
     },
 
+    // JD Keywords
+    generatePositionKeywords: async (positionId: string) => {
+        return fetchAPI<{ keywords: Record<string, string[]>; model: string }>(
+            `/recruiter/positions/${positionId}/keywords/generate`,
+            { method: 'POST' }
+        );
+    },
+
+    getPositionKeywords: async (positionId: string) => {
+        return fetchAPI<Record<string, string[]>>(`/recruiter/positions/${positionId}/keywords`);
+    },
+
+    savePositionKeywords: async (positionId: string, keywords: Record<string, string[]>) => {
+        return fetchAPI<Record<string, string[]>>(`/recruiter/positions/${positionId}/keywords`, {
+            method: 'PUT',
+            body: JSON.stringify({ keywords }),
+        });
+    },
+
     // Candidate Import & Group Creation
     uploadZipCandidates: async (positionId: string, file: File) => {
         const formData = new FormData();
