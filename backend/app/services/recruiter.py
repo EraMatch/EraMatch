@@ -3,6 +3,7 @@ import os
 from uuid import UUID
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, func, col, desc, or_, exists
+from sqlalchemy.orm.attributes import flag_modified
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from app.core.exceptions import NotFoundException, UnauthorizedException
@@ -863,6 +864,7 @@ class RecruiterService:
         artifact["approved_at"] = datetime.utcnow().isoformat()
         artifact["approved_by"] = str(self.current_user.id)
         position.jd_hdeval_qag = artifact
+        flag_modified(position, "jd_hdeval_qag")
         self.session.add(position)
 
         await self._recompute_position_prescores(position)

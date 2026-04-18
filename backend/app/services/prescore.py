@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 import httpx
 
 from app.integrations.llm import get_llm
 from app.core.config import settings
+
+_PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "ai-service" / "prompts"
+
+def _load_prompt(filename: str) -> str:
+    """Load a prompt template from the prompts directory."""
+    return (_PROMPTS_DIR / filename).read_text(encoding="utf-8")
 
 
 WORD_RE = re.compile(r"[a-z0-9+#.]+")
@@ -168,28 +175,17 @@ class PreScoreService:
         required_skills: list[str] | None,
         years_of_experience: int | None,
     ) -> str:
-        jd_payload = {
-            "job_title": job_title,
-            "job_description": job_description,
-            "required_skills": required_skills or [],
-            "years_of_experience": years_of_experience,
-        }
-        return (
-            "You are an expert technical recruiter creating an HD Eval + QAG rubric.\n"
-            "Generate EXACTLY 50 yes/no screening questions from this JD.\n"
-            "Each question must be objectively checkable from a parsed resume.\n"
-            "Return ONLY valid JSON with this shape:\n"
-            "{\n"
-            "  \"questions\": [\n"
-            "    {\"id\": 1, \"question\": \"...\", \"category\": \"skills|experience|domain|education|responsibility|quality\", \"weight\": 0.02},\n"
-            "    ... 50 items total ...\n"
-            "  ]\n"
-            "}\n"
-            "All weights must be positive and sum to 1.0.\n"
-            "Questions must be yes/no answerable and non-duplicate.\n\n"
-            "Position JSON:\n"
-            f"{json.dumps(jd_payload, indent=2)}\n"
+        jd_payload = json.dumps(
+            {
+                "job_title": job_title,
+                "job_description": job_description,
+                "required_skills": required_skills or [],
+                "years_of_experience": years_of_experience,
+            },
+            indent=2,
         )
+        template = _load_prompt("qag_generation.txt")
+        return template.replace("{jd_payload}", jd_payload)
 
     def _normalize_qag_questions(
         self,
@@ -459,16 +455,12 @@ class PreScoreService:
         questions: list[dict[str, Any]],
         candidate_payload: dict[str, Any],
     ) -> str:
+        template = _load_prompt("qag_candidate_eval.txt")
         return (
-            "You are evaluating a candidate resume against approved yes/no recruiter criteria.\n"
-            "Return ONLY valid JSON with this exact shape:\n"
-            "{\"results\":[{\"id\":1,\"verdict\":\"YES|NO\",\"reason\":\"...\",\"evidence\":\"...\"}, ...]}\n"
-            "Use strict evidence-based judgment from provided candidate data only.\n"
-            "Keep reasons concise (1 sentence each).\n\n"
-            "Questions:\n"
-            f"{json.dumps(questions, indent=2)}\n\n"
-            "Candidate Parsed Resume:\n"
-            f"{json.dumps(candidate_payload, indent=2)}\n"
+            template
+            .replace("{question_count}", str(len(questions)))
+            .replace("{questions}", json.dumps(questions, indent=2))
+            .replace("{candidate_payload}", json.dumps(candidate_payload, indent=2))
         )
 
     async def _evaluate_candidate_qag(
