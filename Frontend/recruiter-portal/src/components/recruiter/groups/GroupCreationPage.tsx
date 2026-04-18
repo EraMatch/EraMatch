@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Search, Sparkles, Filter, X, ChevronDown, Check, User, MapPin, Briefcase, Star, ArrowUpDown, Users, Sliders, ChevronLeft, ExternalLink } from 'lucide-react';
+import { Search, Sparkles, X, User, MapPin, Briefcase, ArrowUpDown, Users, Sliders, ChevronLeft, ExternalLink, Brain, TrendingUp, AlertCircle, Zap, BarChart3 } from 'lucide-react';
 import { Switch } from '../../ui/switch';
 import { Badge } from '../../ui/badge';
 import { AdvancedFilterDrawer } from '../candidates/AdvancedFilterDrawer';
@@ -109,6 +109,16 @@ export function GroupCreationPage({
   const [nlpQuery, setNlpQuery] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const [aiSelectionInfo, setAiSelectionInfo] = useState('');
+  // AI Sort — LLM-powered ranking
+  const [aiSortReasoning, setAiSortReasoning] = useState<Record<string, string>>({});
+  const [aiSortIntent, setAiSortIntent] = useState<{
+    skills: string[]; min_years: number | null; location: string | null;
+    seniority: string | null; summary: string;
+  } | null>(null);
+  const [aiSortRankedIds, setAiSortRankedIds] = useState<string[]>([]);
+  const [aiSortError, setAiSortError] = useState<string | null>(null);
+  // AI Rank Insights panel
+  const [showRankInsights, setShowRankInsights] = useState(false);
 
   // View Why modal
   const [viewWhyOpen, setViewWhyOpen] = useState(false);
@@ -124,6 +134,7 @@ export function GroupCreationPage({
 
   // Group Details
   const [groupName, setGroupName] = useState('');
+  const [groupNameAiSuggested, setGroupNameAiSuggested] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
   const clampScore = (value: number) => Math.max(0, Math.min(100, value));
@@ -258,13 +269,23 @@ export function GroupCreationPage({
     return clampScore(Number(candidate.pre_score_final));
   };
 
+  /** 4-dimensional composite score for AI Rank mode. */
+  const getMultiDimScore = (candidate: Candidate, query: string) => {
+    const cvFit = clampScore(Number(candidate.pre_score_final ?? candidate.match ?? 0));
+    const semantic = query.trim() ? getSemanticScore(candidate, query) : cvFit * 0.5;
+    const exp = Number(candidate.experience ?? 0);
+    const expTier = exp >= 12 ? 100 : exp >= 8 ? 88 : exp >= 5 ? 72 : exp >= 3 ? 55 : exp >= 1 ? 35 : 12;
+    const skillPts = Math.min(25, (candidate.skills?.length ?? 0) * 5);
+    const titlePts = (candidate.job_titles?.length ?? 0) >= 1 ? 25 : 0;
+    const compPts  = (candidate.companies?.length ?? 0) >= 1 ? 25 : 0;
+    const eduPts   = (candidate.universities?.length ?? 0) >= 1 ? 25 : 0;
+    const completeness = skillPts + titlePts + compPts + eduPts;
+    const composite = clampScore(cvFit * 0.40 + semantic * 0.30 + expTier * 0.20 + completeness * 0.10);
+    return { cvFit, semantic, expTier, completeness, composite };
+  };
+
   const getDisplayScore = (candidate: Candidate) => {
-    if (aiRankingEnabled) {
-      const base = getAiBaseScore(candidate) ?? clampScore(Number(candidate.match || 0));
-      if (!nlpQuery.trim()) return base;
-      const semantic = getSemanticScore(candidate, nlpQuery);
-      return clampScore(base * 0.45 + semantic * 0.55);
-    }
+    if (aiRankingEnabled) return getMultiDimScore(candidate, nlpQuery).composite;
     return clampScore(Number(candidate.match || 0));
   };
 
@@ -273,19 +294,12 @@ export function GroupCreationPage({
       return [...source].sort((a, b) => clampScore(Number(b.match || 0)) - clampScore(Number(a.match || 0)));
     }
     return [...source].sort((a, b) => {
-      const baseA = getAiBaseScore(a) ?? clampScore(Number(a.match || 0));
-      const baseB = getAiBaseScore(b) ?? clampScore(Number(b.match || 0));
-      if (!query.trim()) return baseB - baseA;
-      const semanticA = getSemanticScore(a, query);
-      const semanticB = getSemanticScore(b, query);
-      const aiA = clampScore(baseA * 0.45 + semanticA * 0.55);
-      const aiB = clampScore(baseB * 0.45 + semanticB * 0.55);
+      const scoreA = getMultiDimScore(a, query).composite;
+      const scoreB = getMultiDimScore(b, query).composite;
       const aHard = meetsHardConstraints(a, intentConstraints);
       const bHard = meetsHardConstraints(b, intentConstraints);
-
-      // Strict intent ranking: candidates satisfying hard constraints are prioritized.
       if (aHard !== bHard) return aHard ? -1 : 1;
-      return aiB - aiA;
+      return scoreB - scoreA;
     });
   };
 
@@ -338,36 +352,67 @@ export function GroupCreationPage({
     [nlpQuery, filteredCandidates, allCandidates],
   );
 
-  // Apply AI ranking or default sorting
+  // Apply AI ranking — prefer LLM-ranked order when available
   const displayCandidates = useMemo(() => {
+    if (aiRankingEnabled && aiSortRankedIds.length > 0) {
+      const idxMap = new Map(aiSortRankedIds.map((id, i) => [id, i]));
+      return [...filteredCandidates].sort((a, b) => {
+        const ia = idxMap.has(a.id) ? idxMap.get(a.id)! : 9999;
+        const ib = idxMap.has(b.id) ? idxMap.get(b.id)! : 9999;
+        return ia - ib;
+      });
+    }
     return rankCandidates(filteredCandidates, aiRankingEnabled, nlpQuery);
-  }, [filteredCandidates, aiRankingEnabled, nlpQuery]);
+  }, [filteredCandidates, aiRankingEnabled, nlpQuery, aiSortRankedIds]);
+
+  const AI_SERVICE_URL = 'http://localhost:8001';
 
   const handleAiEnhance = async () => {
     if (!nlpQuery.trim()) return;
-
+    setIsAiProcessing(true);
+    setAiSortReasoning({});
+    setAiSortIntent(null);
+    setAiSortRankedIds([]);
+    setAiSortError(null);
+    setAiRankingEnabled(true);
+    setAiSelectionInfo('');
+    setShowRankInsights(true);
     try {
-      setIsAiProcessing(true);
-      setAiRankingEnabled(true);
-
-      const ranked = rankCandidates(filteredCandidates, true, nlpQuery);
-      const strictlyCompatible = ranked.filter(c => meetsHardConstraints(c, intentConstraints));
-      const semanticallyCompatible = ranked.filter(c => {
-        const semantic = getSemanticScore(c, nlpQuery);
-        const aiScore = clampScore((getAiBaseScore(c) ?? clampScore(Number(c.match || 0))) * 0.45 + semantic * 0.55);
-        return semantic >= 35 || aiScore >= 70;
+      const payload = filteredCandidates.map(c => ({
+        id: c.id, name: c.name,
+        skills: c.skills || [], experience: c.experience || 0,
+        titles: c.job_titles || [], location: c.location || '', degrees: c.degrees || [],
+      }));
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch(`${AI_SERVICE_URL}/llm/smart-rank`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: nlpQuery, candidates: payload }),
+        signal: controller.signal,
       });
-      const compatible = strictlyCompatible.length > 0 ? strictlyCompatible : semanticallyCompatible;
-
-      const autoSelected = (compatible.length > 0 ? compatible : ranked).slice(0, Math.min(50, Math.max(10, compatible.length || 10)));
-      setSelectedCandidates(new Set(autoSelected.map(c => c.id)));
-      const hardParts: string[] = [];
-      if (intentConstraints.minYears != null) hardParts.push(`${intentConstraints.minYears}+ years`);
-      if (intentConstraints.mustHaveSkills.length > 0) {
-        hardParts.push(`must-have: ${intentConstraints.mustHaveSkills.slice(0, 4).join(', ')}${intentConstraints.mustHaveSkills.length > 4 ? '...' : ''}`);
+      clearTimeout(timeout);
+      if (!res.ok) throw new Error(`AI service error ${res.status}`);
+      const data = await res.json();
+      setAiSortReasoning(data.reasoning || {});
+      setAiSortIntent(data.intent || null);
+      setAiSortRankedIds(data.ranked_ids || []);
+      const topN = Math.min(50, Math.max(10, Math.ceil((data.ranked_ids?.length ?? 0) * 0.4)));
+      const autoSelected = (data.ranked_ids || []).slice(0, topN);
+      setSelectedCandidates(new Set(autoSelected));
+      setAiSelectionInfo(`✨ AI ranked ${data.ranked_ids?.length ?? 0} candidates — top ${autoSelected.length} auto-selected.`);
+      // Auto-suggest group name from LLM intent summary
+      const suggestedName = data.intent?.summary;
+      if (suggestedName && suggestedName.trim() && !groupName.trim()) {
+        setGroupName(suggestedName.trim());
+        setGroupNameAiSuggested(true);
       }
-      const hardLabel = hardParts.length > 0 ? ` using strict constraints (${hardParts.join(' | ')})` : '';
-      setAiSelectionInfo(`Auto-selected ${autoSelected.length} compatible candidates for "${nlpQuery}"${hardLabel}.`);
+    } catch {
+      setAiSortError('AI service unavailable — using local multi-dim ranking as fallback.');
+      const ranked = rankCandidates(filteredCandidates, true, nlpQuery);
+      const autoSelected = ranked.slice(0, Math.min(50, Math.max(10, ranked.length)));
+      setSelectedCandidates(new Set(autoSelected.map(c => c.id)));
+      setAiSelectionInfo(`Local multi-dim ranking — auto-selected top ${autoSelected.length}.`);
     } finally {
       setIsAiProcessing(false);
     }
@@ -536,29 +581,39 @@ export function GroupCreationPage({
               value={nlpQuery}
               onChange={(e) => setNlpQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAiEnhance()}
-              placeholder="Search by skills, role, or describe ideal profile (e.g. 'Java expert with fintech exp')..."
-              className="w-full h-[48px] pl-[40px] pr-[120px] rounded-[10px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent shadow-sm transition-all"
+              placeholder="Describe your ideal candidate group (e.g. 'Senior Python backend 5+ years, fintech exp') — press Enter or AI Sort"
+              className="w-full h-[48px] pl-[40px] pr-[140px] rounded-[10px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent shadow-sm transition-all"
             />
-            {/* Enhance Button inside Input */}
+            {/* AI Sort Button inside Input */}
             <div className="absolute right-2 top-1/2 -translate-y-1/2">
               <button
                 onClick={handleAiEnhance}
                 disabled={!nlpQuery.trim() || isAiProcessing}
-                className="h-[36px] px-[16px] rounded-[8px] bg-[#10b981] hover:bg-[#059669] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[13px] text-white flex items-center gap-1.5 transition-colors font-medium"
+                className="h-[36px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] disabled:from-[#f3f4f6] disabled:to-[#f3f4f6] disabled:text-[#9ca3af] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[13px] text-white flex items-center gap-1.5 transition-all font-medium shadow-sm"
               >
                 {isAiProcessing ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /><span>Ranking...</span></>
                 ) : (
-                  <><Sparkles size={14} /> AI Sort</>
+                  <><Zap size={13} /><span>AI Sort</span></>
                 )}
               </button>
             </div>
           </div>
 
-          {/* AI Toggle */}
-          <div className="flex items-center gap-3 h-[48px] px-[16px] rounded-[10px] bg-white border border-[#e5e7eb] shadow-sm">
-            <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-[#374151]">AI Rank</span>
-            <Switch checked={aiRankingEnabled} onCheckedChange={setAiRankingEnabled} />
+          {/* AI Rank Toggle */}
+          <div className={`flex items-center gap-3 h-[48px] px-[16px] rounded-[10px] border shadow-sm transition-all ${aiRankingEnabled ? 'bg-gradient-to-r from-[#eef2ff] to-[#f5f3ff] border-[#a5b4fc]' : 'bg-white border-[#e5e7eb]'}`}>
+            <Brain size={15} className={aiRankingEnabled ? 'text-[#6366f1]' : 'text-[#9ca3af]'} />
+            <span className={`font-['Arimo',sans-serif] text-[13px] font-medium ${aiRankingEnabled ? 'text-[#4f46e5]' : 'text-[#374151]'}`}>AI Rank</span>
+            <Switch checked={aiRankingEnabled} onCheckedChange={(v) => { setAiRankingEnabled(v); if (!v) { setShowRankInsights(false); setAiSortRankedIds([]); } }} />
+            {aiRankingEnabled && (
+              <button
+                onClick={() => setShowRankInsights(p => !p)}
+                title="Toggle Insights Panel"
+                className={`ml-1 p-1 rounded-[4px] transition-colors ${showRankInsights ? 'bg-[#6366f1] text-white' : 'hover:bg-[#e0e7ff] text-[#6366f1]'}`}
+              >
+                <BarChart3 size={13} />
+              </button>
+            )}
           </div>
 
           {/* Advanced Filter Button */}
@@ -574,38 +629,41 @@ export function GroupCreationPage({
           </button>
         </div>
 
-        {/* Active Query Indicator */}
-        {aiRankingEnabled && nlpQuery && (
-          <div className="mb-6 px-[16px] py-[10px] rounded-[10px] bg-[#f0fdf4] border border-[#bbf7d0] flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
-            <Sparkles size={16} className="text-[#15803d]" />
-            <p className="font-['Arimo',sans-serif] text-[13px] text-[#15803d] font-medium">
-              Active AI Context: "{nlpQuery}"
-            </p>
-          </div>
-        )}
-
-        {aiRankingEnabled && nlpQuery && (intentConstraints.minYears != null || intentConstraints.mustHaveSkills.length > 0) && (
-          <div className="mb-6 px-[16px] py-[10px] rounded-[10px] bg-[#fffbeb] border border-[#fde68a] flex flex-wrap items-center gap-2">
-            <span className="font-['Arimo',sans-serif] text-[12px] text-[#92400e] font-semibold">Strict Intent Constraints:</span>
-            {intentConstraints.minYears != null && (
-              <span className="px-[8px] py-[2px] rounded-[4px] bg-[#fef3c7] font-['Arimo',sans-serif] text-[11px] text-[#92400e]">
-                {intentConstraints.minYears}+ years
-              </span>
+        {/* LLM Intent Banner */}
+        {aiSortIntent && nlpQuery && (
+          <div className="mb-4 px-[16px] py-[10px] rounded-[10px] bg-gradient-to-r from-[#eef2ff] to-[#f5f3ff] border border-[#a5b4fc] flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <Brain size={15} className="text-[#6366f1]" />
+              <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#4f46e5]">AI Detected:</span>
+            </div>
+            {aiSortIntent.seniority && (
+              <span className="px-2 py-0.5 rounded-full bg-[#6366f1] text-white font-['Arimo',sans-serif] text-[11px] font-medium capitalize">{aiSortIntent.seniority}</span>
             )}
-            {intentConstraints.mustHaveSkills.map((skill, idx) => (
-              <span key={`${skill}-${idx}`} className="px-[8px] py-[2px] rounded-[4px] bg-[#fef3c7] font-['Arimo',sans-serif] text-[11px] text-[#92400e]">
-                {skill}
-              </span>
+            {aiSortIntent.min_years != null && (
+              <span className="px-2 py-0.5 rounded-full bg-[#ddd6fe] text-[#4f46e5] font-['Arimo',sans-serif] text-[11px]">{aiSortIntent.min_years}+ yrs</span>
+            )}
+            {aiSortIntent.location && (
+              <span className="px-2 py-0.5 rounded-full bg-[#ddd6fe] text-[#4f46e5] font-['Arimo',sans-serif] text-[11px]"><MapPin size={9} className="inline mr-0.5" />{aiSortIntent.location}</span>
+            )}
+            {aiSortIntent.skills.slice(0, 5).map((s, i) => (
+              <span key={i} className="px-2 py-0.5 rounded-full bg-[#e0e7ff] text-[#3730a3] font-['Arimo',sans-serif] text-[11px]">{s}</span>
             ))}
           </div>
         )}
 
+        {/* AI Sort Error / Fallback Notice */}
+        {aiSortError && (
+          <div className="mb-4 px-[16px] py-[10px] rounded-[10px] bg-[#fffbeb] border border-[#fde68a] flex items-center gap-2">
+            <AlertCircle size={15} className="text-[#d97706] shrink-0" />
+            <p className="font-['Arimo',sans-serif] text-[12px] text-[#92400e]">{aiSortError}</p>
+          </div>
+        )}
+
+        {/* AI Selection Info */}
         {aiSelectionInfo && (
-          <div className="mb-6 px-[16px] py-[10px] rounded-[10px] bg-[#eff6ff] border border-[#bfdbfe] flex items-center gap-2">
-            <Sparkles size={16} className="text-[#1d4ed8]" />
-            <p className="font-['Arimo',sans-serif] text-[13px] text-[#1e40af] font-medium">
-              {aiSelectionInfo}
-            </p>
+          <div className="mb-4 px-[16px] py-[10px] rounded-[10px] bg-[#eff6ff] border border-[#bfdbfe] flex items-center gap-2">
+            <TrendingUp size={15} className="text-[#1d4ed8]" />
+            <p className="font-['Arimo',sans-serif] text-[13px] text-[#1e40af] font-medium">{aiSelectionInfo}</p>
           </div>
         )}
 
@@ -690,15 +748,67 @@ export function GroupCreationPage({
           <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
             Showing {displayCandidates.length} candidates
           </p>
-          {aiRankingEnabled && (
-            <div className="flex items-center gap-2 px-[12px] py-[6px] rounded-[6px] bg-[#f0fdf4] border border-[#bbf7d0]">
-              <Sparkles size={14} className="text-[#10b981]" />
-              <span className="font-['Arimo',sans-serif] text-[12px] text-[#15803d]">
-                AI Ranked
-              </span>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {aiRankingEnabled && (
+              <div className="flex items-center gap-2 px-[12px] py-[6px] rounded-[6px] bg-gradient-to-r from-[#eef2ff] to-[#f5f3ff] border border-[#a5b4fc]">
+                <Brain size={13} className="text-[#6366f1]" />
+                <span className="font-['Arimo',sans-serif] text-[12px] text-[#4f46e5] font-medium">
+                  {aiSortRankedIds.length > 0 ? 'LLM Ranked' : 'AI Ranked'}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* AI Rank Insights Panel */}
+        {aiRankingEnabled && showRankInsights && displayCandidates.length > 0 && (() => {
+          const scores = displayCandidates.map(c => getMultiDimScore(c, nlpQuery).composite);
+          const bands = [scores.filter(s => s >= 85).length, scores.filter(s => s >= 65 && s < 85).length, scores.filter(s => s >= 45 && s < 65).length, scores.filter(s => s < 45).length];
+          const allSkills = displayCandidates.flatMap(c => c.skills || []);
+          const skillFreq = new Map<string, number>();
+          allSkills.forEach(s => skillFreq.set(s.toLowerCase(), (skillFreq.get(s.toLowerCase()) || 0) + 1));
+          const querySkills = (aiSortIntent?.skills || intentConstraints.mustHaveSkills).map(s => s.toLowerCase());
+          const gaps = querySkills.filter(s => (skillFreq.get(s) || 0) < displayCandidates.length * 0.3);
+          const recommended = bands[0] + Math.floor(bands[1] * 0.6);
+          return (
+            <div className="mb-4 bg-gradient-to-br from-[#f8f7ff] to-[#eef2ff] rounded-[12px] border border-[#c7d2fe] p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart3 size={15} className="text-[#6366f1]" />
+                <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#4f46e5]">AI Rank Insights</span>
+                <button onClick={() => setShowRankInsights(false)} className="ml-auto text-[#9ca3af] hover:text-[#374151]"><X size={14} /></button>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mb-2">Score Distribution</p>
+                  <div className="space-y-1.5">
+                    {[['85-100', bands[0], '#10b981'], ['65-84', bands[1], '#6366f1'], ['45-64', bands[2], '#f59e0b'], ['<45', bands[3], '#ef4444']].map(([label, count, color]) => (
+                      <div key={String(label)} className="flex items-center gap-2">
+                        <div className="w-[80px] h-[6px] rounded-full bg-[#e5e7eb] overflow-hidden">
+                          <div className="h-full rounded-full" style={{ width: `${displayCandidates.length > 0 ? (Number(count)/displayCandidates.length*100) : 0}%`, backgroundColor: String(color) }} />
+                        </div>
+                        <span className="font-['Arimo',sans-serif] text-[11px] text-[#374151]">{label} ({count})</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mb-2">Skill Gaps vs Query</p>
+                  {gaps.length > 0 ? gaps.slice(0, 4).map(g => (
+                    <div key={g} className="flex items-center gap-1.5 mb-1">
+                      <span className="w-2 h-2 rounded-full bg-[#ef4444] shrink-0" />
+                      <span className="font-['Arimo',sans-serif] text-[11px] text-[#374151]">{g}</span>
+                    </div>
+                  )) : <p className="font-['Arimo',sans-serif] text-[11px] text-[#10b981]">No major gaps detected</p>}
+                </div>
+                <div className="flex flex-col items-center justify-center bg-white rounded-[10px] border border-[#e0e7ff] p-3">
+                  <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mb-1">Recommended Group Size</p>
+                  <p className="font-['Arimo',sans-serif] text-[28px] font-bold text-[#6366f1]">{recommended}</p>
+                  <p className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af]">based on score distribution</p>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Candidates Table */}
         <div className="bg-white rounded-[12px] border border-[#e5e7eb] overflow-hidden">
@@ -735,10 +845,20 @@ export function GroupCreationPage({
                   Skills
                 </th>
                 <th className="text-left px-4 py-3 font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                  <div className={`flex items-center gap-2 ${aiRankingEnabled ? 'text-[#10b981]' : ''}`}>
-                    <ArrowUpDown size={14} />
-                    {aiRankingEnabled ? 'AI Score' : 'Match Score'}
-                  </div>
+                  {aiRankingEnabled ? (
+                    <div className="flex items-center gap-1.5">
+                      <Brain size={13} className="text-[#6366f1]" />
+                      <span className="text-[#4f46e5]">AI Score</span>
+                      <span className="flex gap-[3px] ml-1">
+                        <span className="w-2 h-2 rounded-sm bg-[#6366f1]" title="CV Fit (40%)" />
+                        <span className="w-2 h-2 rounded-sm bg-[#8b5cf6]" title="Semantic (30%)" />
+                        <span className="w-2 h-2 rounded-sm bg-[#06b6d4]" title="Exp Tier (20%)" />
+                        <span className="w-2 h-2 rounded-sm bg-[#10b981]" title="Completeness (10%)" />
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2"><ArrowUpDown size={14} />Match Score</div>
+                  )}
                 </th>
               </tr>
             </thead>
@@ -808,57 +928,45 @@ export function GroupCreationPage({
                   <td className="px-4 py-3">
                     {(() => {
                       const displayScore = getDisplayScore(candidate);
-                      const semanticScore = aiRankingEnabled && nlpQuery.trim() ? getSemanticScore(candidate, nlpQuery) : null;
-                      const hardMatch = aiRankingEnabled && nlpQuery.trim() ? meetsHardConstraints(candidate, intentConstraints) : null;
-                      const scoreSource = aiRankingEnabled
-                        ? (nlpQuery.trim() ? 'PreScore + Semantic' : (candidate.pre_score_final != null ? 'PreScore V2' : 'Match fallback'))
-                        : 'CV Match';
-
+                      const dims = aiRankingEnabled ? getMultiDimScore(candidate, nlpQuery) : null;
+                      const reasoning = aiSortReasoning[candidate.id];
                       return (
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="w-[60px] h-[8px] rounded-full bg-[#e5e7eb] overflow-hidden"
-                      >
-                        <div
-                          className="h-full transition-all"
-                          style={{
-                            width: `${displayScore}%`,
-                            backgroundColor: getMatchColor(displayScore)
-                          }}
-                        />
-                      </div>
-                      <span
-                        className="font-['Arimo',sans-serif] text-[13px] min-w-[35px]"
-                        style={{ color: getMatchColor(displayScore) }}
-                      >
-                        {displayScore.toFixed(1)}%
-                      </span>
-                      <span className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280]">
-                        {scoreSource}
-                      </span>
-                      {semanticScore != null && (
-                        <span className="font-['Arimo',sans-serif] text-[11px] text-[#0f766e]">
-                          Semantic {semanticScore.toFixed(1)}
-                        </span>
-                      )}
-                      {hardMatch != null && (
-                        <span className={`font-['Arimo',sans-serif] text-[11px] ${hardMatch ? 'text-[#15803d]' : 'text-[#b91c1c]'}`}>
-                          {hardMatch ? 'Meets intent' : 'Misses intent'}
-                        </span>
-                      )}
-                      {candidate.applicationId && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openViewWhy(candidate);
-                          }}
-                          className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline"
-                        >
-                          View why
-                        </button>
-                      )}
-                    </div>
+                        <div className="space-y-1.5">
+                          {dims ? (
+                            <>
+                              {/* 4-segment composite bar */}
+                              <div className="flex h-[6px] rounded-full overflow-hidden w-[100px] gap-[1px]">
+                                <div style={{ width: `${dims.cvFit * 0.40}%`, backgroundColor: '#6366f1' }} className="h-full rounded-l-full" title={`CV Fit: ${dims.cvFit.toFixed(0)}`} />
+                                <div style={{ width: `${dims.semantic * 0.30}%`, backgroundColor: '#8b5cf6' }} className="h-full" title={`Semantic: ${dims.semantic.toFixed(0)}`} />
+                                <div style={{ width: `${dims.expTier * 0.20}%`, backgroundColor: '#06b6d4' }} className="h-full" title={`Exp Tier: ${dims.expTier.toFixed(0)}`} />
+                                <div style={{ width: `${dims.completeness * 0.10}%`, backgroundColor: '#10b981' }} className="h-full rounded-r-full" title={`Completeness: ${dims.completeness.toFixed(0)}`} />
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-['Arimo',sans-serif] text-[13px] font-semibold" style={{ color: getMatchColor(dims.composite) }}>{dims.composite.toFixed(1)}%</span>
+                                <span className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af]">AI Score</span>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <div className="w-[60px] h-[8px] rounded-full bg-[#e5e7eb] overflow-hidden">
+                                <div className="h-full transition-all" style={{ width: `${displayScore}%`, backgroundColor: getMatchColor(displayScore) }} />
+                              </div>
+                              <span className="font-['Arimo',sans-serif] text-[13px]" style={{ color: getMatchColor(displayScore) }}>{displayScore.toFixed(1)}%</span>
+                              <span className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280]">CV Match</span>
+                            </div>
+                          )}
+                          {/* LLM Reasoning badge */}
+                          {reasoning && reasoning !== 'AI ranking unavailable — showing original order.' && (
+                            <p className="font-['Arimo',sans-serif] text-[10px] text-[#6366f1] leading-snug max-w-[200px]" title={reasoning}>
+                              🤖 {reasoning.length > 60 ? reasoning.slice(0, 58) + '…' : reasoning}
+                            </p>
+                          )}
+                          {candidate.applicationId && (
+                            <button type="button" onClick={(e) => { e.stopPropagation(); openViewWhy(candidate); }} className="font-['Arimo',sans-serif] text-[10px] text-[#6366f1] hover:underline">
+                              View why
+                            </button>
+                          )}
+                        </div>
                       );
                     })()}
                   </td>
@@ -888,16 +996,33 @@ export function GroupCreationPage({
       <div className="bg-white border-t border-[#e5e7eb] px-8 py-5">
         <div className="flex items-center gap-4">
           <div className="flex-1">
-            <label className="block font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-2">
-              Group Name
-            </label>
-            <input
-              type="text"
-              value={groupName}
-              onChange={(e) => setGroupName(e.target.value)}
-              placeholder="e.g., Senior Backend Engineers - Q1 2025"
-              className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-            />
+            <div className="flex items-center gap-2 mb-2">
+              <label className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Group Name</label>
+              {groupNameAiSuggested && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-[#eef2ff] to-[#f5f3ff] border border-[#a5b4fc] font-['Arimo',sans-serif] text-[10px] text-[#6366f1] font-medium">
+                  <Sparkles size={9} /> AI suggested
+                </span>
+              )}
+            </div>
+            <div className="relative">
+              <input
+                type="text"
+                value={groupName}
+                onChange={(e) => { setGroupName(e.target.value); setGroupNameAiSuggested(false); }}
+                placeholder="e.g., Senior Backend Engineers - Q1 2025"
+                className={`w-full h-[44px] px-[16px] ${groupNameAiSuggested ? 'pr-[36px]' : ''} rounded-[8px] border font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent transition-all ${groupNameAiSuggested ? 'border-[#a5b4fc] bg-[#fafaff]' : 'border-[#e5e7eb]'}`}
+              />
+              {groupNameAiSuggested && (
+                <button
+                  type="button"
+                  onClick={() => { setGroupName(''); setGroupNameAiSuggested(false); }}
+                  title="Clear AI suggestion"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af] hover:text-[#6b7280] transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-3 pt-6">
             <div className="text-right">
@@ -990,6 +1115,8 @@ export function GroupCreationPage({
                     const backendSemantic = Number(viewWhyBreakdown?.semantic_fit_score ?? candidate?.semantic_fit_score ?? 0);
                     const backendSkillsExp = Number(viewWhyBreakdown?.skills_experience_score ?? candidate?.skills_experience_score ?? 0);
                     const backendJdQuality = Number(viewWhyBreakdown?.jd_quality_score ?? candidate?.jd_quality_score ?? 0);
+                    const dims = candidate ? getMultiDimScore(candidate, nlpQuery) : null;
+                    const llmReasoning = candidate ? aiSortReasoning[candidate.id] : null;
 
                     const semanticZeroReason = getZeroReason('semantic_fit_score', backendSemantic, viewWhyBreakdown);
                     const skillsExpZeroReason = getZeroReason('skills_experience_score', backendSkillsExp, viewWhyBreakdown);
@@ -997,20 +1124,46 @@ export function GroupCreationPage({
 
                     return (
                       <>
-                  <div className={`rounded-[8px] border p-3 ${aiModeActive ? 'border-[#bbf7d0] bg-[#f0fdf4]' : 'border-[#dbeafe] bg-[#eff6ff]'}`}>
-                    <p className={`font-['Arimo',sans-serif] text-[13px] font-semibold ${aiModeActive ? 'text-[#166534]' : 'text-[#1e3a8a]'}`}>
-                      Scoring Mode: {aiModeActive ? 'AI Rank ON' : 'AI Rank OFF'}
-                    </p>
-                    <p className={`font-['Arimo',sans-serif] text-[12px] mt-1 ${aiModeActive ? 'text-[#15803d]' : 'text-[#1d4ed8]'}`}>
-                      {aiModeActive
-                        ? 'Displayed score is AI-blended using query semantics and base score.'
-                        : 'Displayed score is legacy CV Match only (no AI blending).'}
-                    </p>
+                  <div className={`rounded-[8px] border p-3 ${aiModeActive ? 'border-[#a5b4fc] bg-gradient-to-r from-[#eef2ff] to-[#f5f3ff]' : 'border-[#dbeafe] bg-[#eff6ff]'}`}>
+                    <div className="flex items-center gap-2">
+                      <Brain size={14} className={aiModeActive ? 'text-[#6366f1]' : 'text-[#1e3a8a]'} />
+                      <p className={`font-['Arimo',sans-serif] text-[13px] font-semibold ${aiModeActive ? 'text-[#4f46e5]' : 'text-[#1e3a8a]'}`}>
+                        {aiModeActive ? 'AI Rank ON — 4-Dimensional Scoring' : 'AI Rank OFF — CV Match Mode'}
+                      </p>
+                    </div>
+                    {llmReasoning && llmReasoning !== 'AI ranking unavailable — showing original order.' && (
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6366f1] mt-2 italic">🤖 {llmReasoning}</p>
+                    )}
                   </div>
 
+                  {/* 4-dim sub-score cards */}
+                  {dims && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {[
+                        { label: 'CV Fit', value: dims.cvFit, color: '#6366f1', weight: '40%', desc: 'Pre-Score V2 or legacy CV match' },
+                        { label: 'Semantic', value: dims.semantic, color: '#8b5cf6', weight: '30%', desc: 'Query relevance matching' },
+                        { label: 'Exp Tier', value: dims.expTier, color: '#06b6d4', weight: '20%', desc: 'Years of experience tier' },
+                        { label: 'Completeness', value: dims.completeness, color: '#10b981', weight: '10%', desc: 'Profile data richness' },
+                      ].map(({ label, value, color, weight, desc }) => (
+                        <div key={label} className="bg-[#f9fafb] rounded-[8px] p-3 border border-[#e5e7eb]">
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280]">{label}</p>
+                            <span className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af]">{weight}</span>
+                          </div>
+                          <p className="font-['Arimo',sans-serif] text-[20px] font-bold" style={{ color }}>{value.toFixed(0)}</p>
+                          <div className="w-full h-[4px] rounded-full bg-[#e5e7eb] mt-1.5">
+                            <div className="h-full rounded-full" style={{ width: `${value}%`, backgroundColor: color }} />
+                          </div>
+                          <p className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af] mt-1">{desc}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Composite score summary */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <div className="bg-[#f9fafb] rounded-[8px] p-3">
-                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Displayed Score</p>
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Composite Score</p>
                       <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(displayedScore)}</p>
                     </div>
                     <div className="bg-[#f9fafb] rounded-[8px] p-3">

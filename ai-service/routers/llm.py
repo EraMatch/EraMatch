@@ -237,7 +237,172 @@ FEEDBACK: [2-3 sentences explaining the score]"""
         return EvaluateResponse(
             score=score,
             feedback=feedback,
-            raw_response=content,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Smart Candidate Ranking ───────────────────────────────────────────────────
+
+class SmartRankCandidate(BaseModel):
+    """Slim candidate profile for ranking."""
+    id: str
+    name: str
+    skills: list[str] = []
+    experience: float = 0
+    titles: list[str] = []
+    location: str = ""
+    degrees: list[str] = []
+
+
+class SmartRankRequest(BaseModel):
+    """Request LLM-based candidate ranking from a natural language query."""
+    query: str
+    candidates: list[SmartRankCandidate]
+    max_candidates: int = 100  # Truncate to avoid token limits
+
+
+class SmartRankIntent(BaseModel):
+    """Detected intent from the recruiter query."""
+    skills: list[str] = []
+    min_years: int | None = None
+    location: str | None = None
+    seniority: str | None = None  # junior / mid / senior / lead
+    summary: str = ""
+
+
+class SmartRankResponse(BaseModel):
+    """LLM ranking result."""
+    ranked_ids: list[str]
+    reasoning: dict[str, str]  # candidate_id -> reasoning sentence
+    intent: SmartRankIntent
+    model: str
+
+
+@router.post("/smart-rank", response_model=SmartRankResponse)
+async def smart_rank(request: SmartRankRequest):
+    """
+    Rank candidates against a natural language recruiter query using the LLM.
+
+    Sends a compact summary of each candidate to the LLM, asks for ranked
+    candidate IDs with per-candidate reasoning and detected query intent.
+    Falls back gracefully if the LLM fails or returns malformed output.
+    """
+    import json, re as _re
+
+    if not request.candidates:
+        return SmartRankResponse(
+            ranked_ids=[],
+            reasoning={},
+            intent=SmartRankIntent(summary="No candidates to rank."),
+            model="none",
+        )
+
+    # Build a compact candidate summary (truncated to max_candidates)
+    candidates = request.candidates[:request.max_candidates]
+
+    cand_lines = []
+    for c in candidates:
+        skills_str = ", ".join(c.skills[:8]) if c.skills else "N/A"
+        titles_str = ", ".join(c.titles[:3]) if c.titles else "N/A"
+        line = (
+            f'ID:{c.id} | {c.name} | {c.experience}yrs | '
+            f'Skills:{skills_str} | Titles:{titles_str} | Location:{c.location or "N/A"}'
+        )
+        cand_lines.append(line)
+
+    candidates_block = "\n".join(cand_lines)
+
+    prompt = f"""You are an AI recruiter assistant. A recruiter is looking for candidates matching this description:
+
+QUERY: "{request.query}"
+
+CANDIDATES (one per line, format: ID:... | Name | Experience | Skills | Titles | Location):
+{candidates_block}
+
+TASK:
+1. Rank ALL candidates from most to least suitable for the query.
+2. For each candidate provide a 1-sentence reason (max 15 words) explaining why they rank there.
+3. Detect the recruiter's intent from the query.
+
+Respond ONLY with valid JSON in this exact schema (no markdown fences, no extra text):
+{{
+  "ranked_ids": ["id1", "id2", ...],
+  "reasoning": {{
+    "id1": "Strong Python + FastAPI match, 7 years exceeds requirement.",
+    "id2": "Some Python skills but missing backend API experience."
+  }},
+  "intent": {{
+    "skills": ["python", "fastapi"],
+    "min_years": 5,
+    "location": null,
+    "seniority": "senior",
+    "summary": "Senior Python/FastAPI backend developer with 5+ years"
+  }}
+}}
+
+RULES:
+- ranked_ids must contain EVERY candidate ID exactly once.
+- reasoning must contain an entry for EVERY candidate ID.
+- If a field cannot be determined from the query, use null.
+- Respond with JSON only, nothing else."""
+
+    try:
+        result = await chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+        )
+        content = result["content"].strip()
+
+        # Strip markdown fences if present
+        if content.startswith("```"):
+            content = _re.sub(r"^```[a-z]*\n?", "", content)
+            content = _re.sub(r"\n?```$", "", content.strip())
+
+        # Extract the first JSON object
+        json_match = _re.search(r"\{.*\}", content, _re.DOTALL)
+        if not json_match:
+            raise ValueError("No JSON object found in LLM response")
+
+        parsed = json.loads(json_match.group())
+
+        ranked_ids = [str(x) for x in parsed.get("ranked_ids", [])]
+        reasoning: dict[str, str] = {
+            str(k): str(v) for k, v in parsed.get("reasoning", {}).items()
+        }
+
+        # Ensure all candidate IDs are present (fill missing with fallback)
+        all_ids = {c.id for c in candidates}
+        for cid in all_ids:
+            if cid not in reasoning:
+                reasoning[cid] = "No specific match details available."
+        # Append any IDs missing from ranked_ids at the end
+        ranked_id_set = set(ranked_ids)
+        for cid in [c.id for c in candidates]:
+            if cid not in ranked_id_set:
+                ranked_ids.append(cid)
+
+        intent_raw = parsed.get("intent", {})
+        intent = SmartRankIntent(
+            skills=[str(s) for s in intent_raw.get("skills", [])],
+            min_years=intent_raw.get("min_years"),
+            location=intent_raw.get("location"),
+            seniority=intent_raw.get("seniority"),
+            summary=str(intent_raw.get("summary", request.query)),
+        )
+
+        return SmartRankResponse(
+            ranked_ids=ranked_ids,
+            reasoning=reasoning,
+            intent=intent,
+            model=result.get("model", "unknown"),
+        )
+
+    except Exception as e:
+        # Graceful fallback: return candidates in original order, no reasoning
+        fallback_ids = [c.id for c in candidates]
+        return SmartRankResponse(
+            ranked_ids=fallback_ids,
+            reasoning={c.id: "AI ranking unavailable — showing original order." for c in candidates},
+            intent=SmartRankIntent(summary=f"Fallback: {str(e)[:80]}"),
+            model="fallback",
+        )
