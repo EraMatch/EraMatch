@@ -238,7 +238,7 @@ class CVIngestionService:
                     res = await self.process_cv_file(organization_id, position_id, basename, file_content, source="zip_upload")
                     
                     processing_log.append(res)
-                    if res["status"] == "processed":
+                    if res["status"] == "staged":
                         processed += 1
                     else:
                         skipped += 1
@@ -321,7 +321,7 @@ class CVIngestionService:
                 if len(file_content) > 0:
                     res = await self.process_cv_file(schedule.organization_id, schedule.position_id, item['name'], file_content, source="google_drive")
                     processing_log.append(res)
-                    if res["status"] == "processed":
+                    if res["status"] == "staged":
                         processed += 1
                     else:
                         skipped += 1
@@ -536,7 +536,7 @@ class CVIngestionWorkerService:
                     res = self.process_cv_file(organization_id, position_id, basename, file_content, source="zip_upload")
                     
                     processing_log.append(res)
-                    if res["status"] == "processed":
+                    if res["status"] == "staged":
                         processed += 1
                     else:
                         skipped += 1
@@ -624,7 +624,7 @@ class CVIngestionWorkerService:
                         res = self.process_cv_file(schedule.organization_id, schedule.position_id, item['name'], file_content, source="google_drive")
                         logger.info(f"Process CV File result for {item['name']}: {res['status']}")
                         processing_log.append(res)
-                        if res["status"] == "processed":
+                        if res["status"] == "staged":
                             processed += 1
                         else:
                             skipped += 1
