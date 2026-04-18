@@ -30,6 +30,7 @@ jobs:
           python -m pip install pytest
 
       - name: Pytest collection check
+        working-directory: .
         run: python -m pytest --collect-only -q
 
       - name: No-DB route smoke check

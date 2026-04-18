@@ -150,7 +150,15 @@ class CandidateService:
         candidate_title = "Software Engineer" # Default fallback
 
         work_history = []
+        project_history = []
         education_history = []
+        resume_summary = ""
+        tech_skills = {
+            "frontend": [],
+            "backend": [],
+            "devops": [],
+        }
+        certifications = []
 
         if app_row:
             app, pos, proj = app_row
@@ -163,6 +171,16 @@ class CandidateService:
                 cv_data = cv
                 parsed = cv.parsed_data or {}
                 github_profile = cv.github_profile or parsed.get("github_profile") or {}
+
+                summary_candidates = [
+                    parsed.get("summary"),
+                    parsed.get("professional_summary"),
+                    parsed.get("profile_summary"),
+                ]
+                for candidate_summary in summary_candidates:
+                    if isinstance(candidate_summary, str) and candidate_summary.strip():
+                        resume_summary = candidate_summary.strip()
+                        break
 
                 profile_part = github_profile.get("profile") if isinstance(github_profile, dict) else {}
                 stats_part = github_profile.get("stats") if isinstance(github_profile, dict) else {}
@@ -197,6 +215,44 @@ class CandidateService:
                 if exp_list and len(exp_list) > 0 and isinstance(exp_list[0], dict):
                     candidate_title = exp_list[0].get("job_title") or exp_list[0].get("title") or candidate_title
 
+                skill_entries = parsed.get("skills", [])
+                if isinstance(skill_entries, list):
+                    for entry in skill_entries:
+                        if isinstance(entry, dict):
+                            skill_name = str(entry.get("skill_name") or entry.get("name") or "").strip()
+                            category = str(entry.get("category") or "").strip().lower()
+                        else:
+                            skill_name = str(entry).strip()
+                            category = ""
+
+                        if not skill_name:
+                            continue
+
+                        if category in {"frontend", "front-end", "front end", "ui", "web"}:
+                            tech_skills["frontend"].append(skill_name)
+                        elif category in {"backend", "back-end", "back end", "api", "server"}:
+                            tech_skills["backend"].append(skill_name)
+                        elif category in {"devops", "infra", "infrastructure", "cloud", "platform"}:
+                            tech_skills["devops"].append(skill_name)
+                        else:
+                            lowered = skill_name.lower()
+                            if any(token in lowered for token in ["react", "vue", "angular", "html", "css", "tailwind", "javascript", "typescript"]):
+                                tech_skills["frontend"].append(skill_name)
+                            elif any(token in lowered for token in ["python", "java", "spring", "node", "fastapi", "django", "flask", "sql", "postgres", "mysql", "mongodb", "go", "c#", "dotnet"]):
+                                tech_skills["backend"].append(skill_name)
+                            elif any(token in lowered for token in ["docker", "kubernetes", "aws", "azure", "gcp", "terraform", "jenkins", "ci", "cd", "linux"]):
+                                tech_skills["devops"].append(skill_name)
+
+                cert_entries = parsed.get("certifications", [])
+                if isinstance(cert_entries, list):
+                    for cert in cert_entries:
+                        if isinstance(cert, dict):
+                            cert_name = str(cert.get("name") or cert.get("title") or "").strip()
+                        else:
+                            cert_name = str(cert).strip()
+                        if cert_name:
+                            certifications.append(cert_name)
+
                 # Populate workHistory
                 from app.schemas.candidate import JobExperience
                 for job in exp_list:
@@ -207,6 +263,43 @@ class CandidateService:
                             duration=str(job.get("duration") or job.get("dates") or "N/A"),
                             description=str(job.get("description") or job.get("responsibilities") or "No description provided")
                         ))
+
+                # Populate projects separately from work experience.
+                from app.schemas.candidate import CandidateProject
+                project_list = parsed.get("projects", [])
+                if isinstance(project_list, list):
+                    for project in project_list:
+                        if not isinstance(project, dict):
+                            continue
+
+                        name = str(project.get("name") or project.get("title") or "").strip()
+                        if not name:
+                            continue
+
+                        technologies_raw = project.get("technologies")
+                        technologies: list[str] = []
+                        if isinstance(technologies_raw, list):
+                            technologies = [str(t).strip() for t in technologies_raw if str(t).strip()]
+
+                        start_date = str(project.get("start_date") or "").strip()
+                        end_date = str(project.get("end_date") or "").strip()
+                        duration = "N/A"
+                        if start_date and end_date:
+                            duration = f"{start_date} - {end_date}"
+                        elif start_date:
+                            duration = f"{start_date} - Present"
+                        elif end_date:
+                            duration = end_date
+
+                        project_history.append(
+                            CandidateProject(
+                                name=name,
+                                description=str(project.get("description") or "No description provided").strip(),
+                                technologies=technologies,
+                                duration=duration,
+                                url=str(project.get("url") or "").strip() or None,
+                            )
+                        )
                 
                 # Populate education
                 from app.schemas.candidate import Education
@@ -455,6 +548,7 @@ class CandidateService:
         response.title = candidate_title
         response.scores = CandidateScores(**scores)
         response.workHistory = work_history
+        response.projects = project_history
         response.education = education_history
         if 'filtration_flow' in locals() and filtration_flow is not None:
              response.filtrationFlow = filtration_flow
@@ -472,6 +566,30 @@ class CandidateService:
         if cv_data:
             response.skills = cv_data.skills or []
             response.experience = float(cv_data.experience_years or 0.0)
+
+            # Ensure resume tab has complete parsed CV content.
+            if not resume_summary and work_history:
+                resume_summary = str(work_history[0].description or "").strip()
+            if not resume_summary:
+                resume_summary = f"Candidate profile for {profile.full_name}."
+
+            if not tech_skills["frontend"] and not tech_skills["backend"] and not tech_skills["devops"]:
+                for skill in response.skills:
+                    lowered = str(skill).lower()
+                    if any(token in lowered for token in ["react", "vue", "angular", "html", "css", "tailwind", "javascript", "typescript"]):
+                        tech_skills["frontend"].append(skill)
+                    elif any(token in lowered for token in ["docker", "kubernetes", "aws", "azure", "gcp", "terraform", "jenkins", "ci", "cd", "linux"]):
+                        tech_skills["devops"].append(skill)
+                    else:
+                        tech_skills["backend"].append(skill)
+
+            response.resumeSummary = resume_summary
+            response.techSkills = {
+                "frontend": list(dict.fromkeys(tech_skills["frontend"])),
+                "backend": list(dict.fromkeys(tech_skills["backend"])),
+                "devops": list(dict.fromkeys(tech_skills["devops"])),
+            }
+            response.certifications = list(dict.fromkeys(certifications))
             
         response.pipelineStatus = pipeline_status
         response.assessmentData = assessment_data

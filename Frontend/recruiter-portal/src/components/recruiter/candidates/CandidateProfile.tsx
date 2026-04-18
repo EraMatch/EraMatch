@@ -363,6 +363,31 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
     ? Number(candidate.githubAnalysis.overallScore)
     : candidate.scores.github;
 
+  const resumeSummary = String(
+    candidate.resumeSummary ||
+    candidate.about ||
+    (Array.isArray(candidate.workHistory) && candidate.workHistory[0]?.description) ||
+    ''
+  ).trim();
+
+  const rawTechSkills = candidate.techSkills || {};
+  const fallbackSkills = Array.isArray(candidate.skills) ? candidate.skills : [];
+  const frontendSkills = Array.isArray(rawTechSkills.frontend) ? rawTechSkills.frontend : [];
+  const backendSkills = Array.isArray(rawTechSkills.backend) ? rawTechSkills.backend : [];
+  const devopsSkills = Array.isArray(rawTechSkills.devops) ? rawTechSkills.devops : [];
+
+  const hasCategorizedTechSkills = frontendSkills.length > 0 || backendSkills.length > 0 || devopsSkills.length > 0;
+  const derivedFrontendSkills = fallbackSkills.filter((s: string) => /react|vue|angular|html|css|javascript|typescript|tailwind/i.test(String(s)));
+  const derivedDevopsSkills = fallbackSkills.filter((s: string) => /docker|kubernetes|aws|azure|gcp|terraform|jenkins|linux|ci\/cd|ci|cd/i.test(String(s)));
+  const derivedBackendSkills = fallbackSkills.filter((s: string) => !derivedFrontendSkills.includes(s) && !derivedDevopsSkills.includes(s));
+
+  const resumeFrontendSkills = hasCategorizedTechSkills ? frontendSkills : derivedFrontendSkills;
+  const resumeBackendSkills = hasCategorizedTechSkills ? backendSkills : derivedBackendSkills;
+  const resumeDevopsSkills = hasCategorizedTechSkills ? devopsSkills : derivedDevopsSkills;
+
+  const resumeCertifications = Array.isArray(candidate.certifications) ? candidate.certifications : [];
+  const resumeProjects = Array.isArray(candidate.projects) ? candidate.projects : [];
+
   const pendingPipelineStages = [
     { key: 'assessment', label: 'Technical Assessment' },
     { key: 'aiInterview', label: 'AI Interview' },
@@ -829,7 +854,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                 <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
                   <h4 className="text-[#111827] text-sm font-medium mb-3">Professional Summary</h4>
                   <p className="text-[#374151] text-sm leading-relaxed">
-                    {candidate.resumeSummary}
+                    {resumeSummary || 'No summary was extracted from this CV yet.'}
                   </p>
                 </div>
 
@@ -840,25 +865,28 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     <div>
                       <div className="text-xs text-[#6b7280] mb-2">Frontend</div>
                       <div className="space-y-1">
-                        {candidate.techSkills?.frontend.map((s: string, i: number) => (
+                        {resumeFrontendSkills.map((s: string, i: number) => (
                           <div key={i} className="text-sm text-[#111827]">{s}</div>
                         ))}
+                        {resumeFrontendSkills.length === 0 && <div className="text-sm text-[#9ca3af]">No frontend skills extracted</div>}
                       </div>
                     </div>
                     <div>
                       <div className="text-xs text-[#6b7280] mb-2">Backend</div>
                       <div className="space-y-1">
-                        {candidate.techSkills?.backend.map((s: string, i: number) => (
+                        {resumeBackendSkills.map((s: string, i: number) => (
                           <div key={i} className="text-sm text-[#111827]">{s}</div>
                         ))}
+                        {resumeBackendSkills.length === 0 && <div className="text-sm text-[#9ca3af]">No backend skills extracted</div>}
                       </div>
                     </div>
                     <div>
                       <div className="text-xs text-[#6b7280] mb-2">DevOps</div>
                       <div className="space-y-1">
-                        {candidate.techSkills?.devops.map((s: string, i: number) => (
+                        {resumeDevopsSkills.map((s: string, i: number) => (
                           <div key={i} className="text-sm text-[#111827]">{s}</div>
                         ))}
+                        {resumeDevopsSkills.length === 0 && <div className="text-sm text-[#9ca3af]">No DevOps skills extracted</div>}
                       </div>
                     </div>
                   </div>
@@ -883,6 +911,47 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                   </div>
                 </div>
 
+                {/* Projects from Resume */}
+                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
+                  <h4 className="text-[#111827] text-sm font-medium mb-4">Projects</h4>
+                  {resumeProjects.length > 0 ? (
+                    <div className="space-y-5">
+                      {resumeProjects.map((project: any, i: number) => (
+                        <div key={i} className="border-l-2 border-[#10b981] pl-4">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <div className="font-medium text-[#111827] text-sm">{project.name}</div>
+                              {project.url && (
+                                <a
+                                  href={project.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[#4f46e5] text-xs hover:underline"
+                                >
+                                  {project.url}
+                                </a>
+                              )}
+                            </div>
+                            <div className="text-[#6b7280] text-xs">{project.duration || 'N/A'}</div>
+                          </div>
+                          <p className="text-[#374151] text-sm">{project.description || 'No description provided'}</p>
+                          {Array.isArray(project.technologies) && project.technologies.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {project.technologies.map((tech: string, idx: number) => (
+                                <span key={idx} className="px-2 py-0.5 rounded-full bg-[#ecfeff] text-[#0f766e] text-[11px] border border-[#a5f3fc]">
+                                  {tech}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-[#9ca3af]">No projects extracted from parsed CV data.</div>
+                  )}
+                </div>
+
                 {/* Education from Resume */}
                 <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
                   <h4 className="text-[#111827] text-sm font-medium mb-4">Education</h4>
@@ -900,12 +969,15 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                 <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
                   <h4 className="text-[#111827] text-sm font-medium mb-4">Certifications</h4>
                   <div className="space-y-2">
-                    {candidate.certifications?.map((cert: string, i: number) => (
+                    {resumeCertifications.map((cert: string, i: number) => (
                       <div key={i} className="flex items-center gap-2">
                         <CheckCircle className="w-4 h-4 text-emerald-600" />
                         <span className="text-sm text-[#374151]">{cert}</span>
                       </div>
                     ))}
+                    {resumeCertifications.length === 0 && (
+                      <div className="text-sm text-[#9ca3af]">No certifications listed in parsed CV data.</div>
+                    )}
                   </div>
                 </div>
               </div>
