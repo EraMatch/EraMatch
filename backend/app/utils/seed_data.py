@@ -346,7 +346,7 @@ def generate_candidates_and_applications(org_id, position_ids, group_map):
             app_id = str(uuid4())
             group_id = group_map.get(pos_id)
             # More realistic funnel: Most in screening/rejected, fewer in later stages
-            statuses = ['applied']*10 + ['screening']*8 + ['in_pipeline']*5 + ['rejected']*10 + ['offered']*2 + ['hired']*1
+            statuses = ['applied']*10 + ['screening']*13 + ['rejected']*10 + ['offered']*2 + ['hired']*1
             status = random.choice(statuses)
             
             cur.execute(
@@ -482,7 +482,7 @@ def generate_detailed_assessments_and_interviews(org_id, candidates):
         asm_id = mapping["asm_id"]
         ai_config_id = mapping["ai_conf_id"]
 
-        if status in ['in_pipeline', 'offered', 'hired', 'rejected']:
+        if status in ['screening', 'offered', 'hired', 'rejected']:
              # Create Ongoing Assessment
             session_id = str(uuid4())
             score = round(random.uniform(60.0, 98.0), 2)

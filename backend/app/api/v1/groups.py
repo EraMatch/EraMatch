@@ -150,11 +150,12 @@ async def get_candidate_progress(
     current_user: RecruiterUser,
     filter: str | None = Query(default=None, description='e.g. "completed", "flagged"'),
     sort: str | None = Query(default=None, description='e.g. "score", "name"'),
+    stage: str | None = Query(default=None, description="The stage to filter by (e.g. 'assessment', 'ai-interview')"),
 ):
-    """Retrieve all candidates in the group with their complete progress through
-    all stages including scores, status, and flags."""
+    """Retrieve all candidates in the group with their complete progress.
+    Can be filtered by a specific stage to exclude locked candidates."""
     svc = GroupService(session, current_user)
-    return await svc.get_candidate_progress(group_id, filter=filter, sort=sort)
+    return await svc.get_candidate_progress(group_id, filter=filter, sort=sort, stage=stage)
 
 
 # ─── Start Stage ─────────────────────────────────────────────────────────────
@@ -220,9 +221,25 @@ async def get_assessment_monitoring(
     session: DbSession,
     current_user: RecruiterUser,
 ):
-    """Retrieve detailed monitoring data for the assessment stage."""
+    """Legacy monitoring for the assessment stage."""
     svc = GroupService(session, current_user)
     return await svc.get_assessment_monitoring(group_id)
+
+
+@router.get(
+    "/recruiter/groups/{group_id}/stages/{stage_type}/monitoring",
+    response_model=AssessmentMonitoringResponse,
+)
+async def get_stage_monitoring(
+    group_id: UUID,
+    stage_type: str,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Generic monitoring for any stage (assessment, ai-interview, live-interview).
+    Filters candidates to only include those formally progressed to this stage."""
+    svc = GroupService(session, current_user)
+    return await svc.get_stage_monitoring(group_id, stage_type)
 
 
 # ─── Assign Interview Config ────────────────────────────────────────────────
@@ -351,7 +368,7 @@ async def bulk_progress_candidates(
 ):
     """Progress, reject, or hold candidates in bulk."""
     svc = GroupService(session, current_user)
-    await svc.bulk_progress(group_id, request.application_ids, request.action, request.reason)
+    await svc.bulk_progress(group_id, request.application_ids, request.action, request.current_stage_type, request.reason)
     return {"message": f"Successfully processed {len(request.application_ids)} candidates"}
 
 

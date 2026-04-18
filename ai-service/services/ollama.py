@@ -1,15 +1,25 @@
 import os
 import asyncio
-from ollama import Client
+import logging
+import threading
+from ollama import Client, ResponseError
 from config import settings
 
+logger = logging.getLogger(__name__)
 
-def get_client() -> Client:
+# Global threading semaphore to limit concurrent requests to Ollama across threads/event loops
+_ollama_semaphore = threading.Semaphore(settings.OLLAMA_MAX_CONCURRENT_CALLS)
+
+
+
+def get_client(host: str | None = None) -> Client:
     """Get configured Ollama client (cloud or local)."""
+    target_host = host or settings.OLLAMA_HOST
     headers = None
-    if settings.OLLAMA_API_KEY:
+    # Only attach API key for cloud host
+    if settings.OLLAMA_API_KEY and target_host == settings.OLLAMA_HOST:
         headers = {"Authorization": f"Bearer {settings.OLLAMA_API_KEY}"}
-    return Client(host=settings.OLLAMA_HOST, headers=headers)
+    return Client(host=target_host, headers=headers)
 
 
 async def chat_completion(  
@@ -18,44 +28,71 @@ async def chat_completion(
     stream: bool = False,
     response_format: str | dict | None = None,
     timeout_seconds: float | None = None,
+    host: str | None = None,
 ) -> dict:
     """
-    Send chat completion request to Ollama Cloud llm 
+    Send chat completion request to Ollama (cloud or local).
     
     Args:
         messages: List of message dicts [{role: "user", content: "..."}]
         model: Model to use (default from settings)
         stream: Whether to stream response
+        host: Override Ollama host (e.g. settings.OLLAMA_LOCAL_HOST for local models)
         
     Returns:
         dict with content and model
     """
-    client = get_client()
+    client = get_client(host=host)
     model_name = model or settings.OLLAMA_MODEL
     
     chat_kwargs = {
         "model": model_name,
         "messages": messages,
         "stream": stream,
+        "options": {"num_ctx": 8192, "num_predict": 8192},
     }
     if response_format is not None:
         chat_kwargs["format"] = response_format
 
     async def _run_chat() -> dict:
-        if stream:
-            def _stream_call() -> dict:
-                full_content = ""
-                for part in client.chat(**chat_kwargs):
-                    full_content += part["message"]["content"]
-                return {"content": full_content, "model": model_name}
+        max_retries = 5
+        base_delay = 1.0
+        
+        for attempt in range(max_retries):
+            try:
+                if stream:
+                    def _stream_call() -> dict:
+                        with _ollama_semaphore:
+                            full_content = ""
+                            for part in client.chat(**chat_kwargs):
+                                full_content += part["message"]["content"]
+                            return {"content": full_content, "model": model_name}
 
-            return await asyncio.to_thread(_stream_call)
+                    return await asyncio.to_thread(_stream_call)
 
-        response = await asyncio.to_thread(client.chat, **chat_kwargs)
-        return {
-            "content": response["message"]["content"],
-            "model": model_name,
-        }
+                def _sync_call() -> dict:
+                    with _ollama_semaphore:
+                        return client.chat(**chat_kwargs)
+
+                response = await asyncio.to_thread(_sync_call)
+                return {
+                    "content": response["message"]["content"],
+                    "model": model_name,
+                }
+            except ResponseError as e:
+                if e.status_code == 429 and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Ollama rate limit reached (429). Retrying in {delay} seconds (attempt {attempt + 1}/{max_retries - 1})...")
+                    await asyncio.sleep(delay)
+                else:
+                    raise
+            except Exception as e:
+                if "429" in str(e) and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Ollama rate limit reached (429). Retrying in {delay} seconds (attempt {attempt + 1}/{max_retries - 1})...")
+                    await asyncio.sleep(delay)
+                else:
+                    raise
 
     if timeout_seconds and timeout_seconds > 0:
         return await asyncio.wait_for(_run_chat(), timeout=timeout_seconds)

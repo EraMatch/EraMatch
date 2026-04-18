@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 
 interface DashboardProps {
   onViewAllProjects: () => void;
-  onViewProject: (projectTitle: string) => void;
+  onViewProject: (projectId: string | number) => void;
   onViewSuspicious?: () => void;
 }
 
@@ -139,7 +139,7 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
                         applicants={project.applicantsCount}
                         isOpen={true} // Assuming active projects are open
                         showEditButton={false}
-                        onView={() => onViewProject(project.projectName)}
+                        onView={() => onViewProject(project.id)}
                       />
                     ))}
                     {projects.length === 0 && (
