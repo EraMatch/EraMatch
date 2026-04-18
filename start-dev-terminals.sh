@@ -17,6 +17,7 @@ SERVICES=(
   "Candidate Portal|cd '$ROOT_DIR/Frontend/candidate-portal' && npm run dev"
   "AI Service|source '$VENV_ACTIVATE' && cd '$ROOT_DIR/ai-service' && uvicorn main:app --reload --port 8001"
   "Celery Worker|source '$VENV_ACTIVATE' && cd '$ROOT_DIR/backend' && celery -A worker.celery_app worker --loglevel=info"
+  "AI Celery Worker|source '$VENV_ACTIVATE' && cd '$ROOT_DIR/ai-service' && celery -A worker.celery_app worker --loglevel=info"
 )
 
 run_cmd_in_shell() {

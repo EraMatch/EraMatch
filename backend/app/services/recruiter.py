@@ -998,9 +998,17 @@ class RecruiterService:
         # 3. Fetch groups
         groups = await self.get_position_groups(position_id)
 
+        # 4. Fetch position for JD context
+        position = await self.get_position(position_id)
+
         return PositionDetailsResponse(
             candidates=candidates,
-            groups=groups
+            groups=groups,
+            job_title=position.job_title or "",
+            job_description=position.job_description,
+            required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
+            experience_level=position.experience_level,
+            years_of_experience=position.years_of_experience or 0,
         )
 
     async def update_position(self, position_id: UUID, data: PositionUpdate) -> Position:

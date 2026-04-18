@@ -61,6 +61,15 @@ export function GroupCreationPage({
   const [loading, setLoading] = useState(true);
   const [skillsFilter, setSkillsFilter] = useState<string[]>([]);
 
+  // Position JD context (fetched from backend, forwarded to AI service)
+  const [positionJD, setPositionJD] = useState<{
+    job_title: string;
+    job_description: string | null;
+    required_skills: string[];
+    experience_level: string | null;
+    years_of_experience: number;
+  } | null>(null);
+
   // Fetch candidates from API
   useEffect(() => {
     const fetchCandidates = async () => {
@@ -69,6 +78,18 @@ export function GroupCreationPage({
         // Fetch candidates for this specific position
         const response = await api.recruiter.getPositionDetails(positionId);
         console.log('GroupCreationPage response:', response);
+
+        // Store JD context for AI Rank
+        if (response) {
+          const r = response as any;
+          setPositionJD({
+            job_title: r.job_title || '',
+            job_description: r.job_description || null,
+            required_skills: Array.isArray(r.required_skills) ? r.required_skills : [],
+            experience_level: r.experience_level || null,
+            years_of_experience: r.years_of_experience || 0,
+          });
+        }
 
         // Extract candidates from response details
         if (response && (response as any).candidates) {
@@ -108,8 +129,9 @@ export function GroupCreationPage({
   const [aiRankingEnabled, setAiRankingEnabled] = useState(false);
   const [nlpQuery, setNlpQuery] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const [isJdRankProcessing, setIsJdRankProcessing] = useState(false);
   const [aiSelectionInfo, setAiSelectionInfo] = useState('');
-  // AI Sort — LLM-powered ranking
+  // AI Sort — LLM-powered ranking (NLP query-based)
   const [aiSortReasoning, setAiSortReasoning] = useState<Record<string, string>>({});
   const [aiSortIntent, setAiSortIntent] = useState<{
     skills: string[]; min_years: number | null; location: string | null;
@@ -117,6 +139,11 @@ export function GroupCreationPage({
   } | null>(null);
   const [aiSortRankedIds, setAiSortRankedIds] = useState<string[]>([]);
   const [aiSortError, setAiSortError] = useState<string | null>(null);
+  // AI Rank (JD-based LLM ranking)
+  const [jdRankRankedIds, setJdRankRankedIds] = useState<string[]>([]);
+  const [jdRankReasoning, setJdRankReasoning] = useState<Record<string, string>>({});
+  const [jdRankFitSummary, setJdRankFitSummary] = useState<string | null>(null);
+  const [jdRankError, setJdRankError] = useState<string | null>(null);
   // AI Rank Insights panel
   const [showRankInsights, setShowRankInsights] = useState(false);
 
@@ -352,8 +379,9 @@ export function GroupCreationPage({
     [nlpQuery, filteredCandidates, allCandidates],
   );
 
-  // Apply AI ranking — prefer LLM-ranked order when available
+  // Apply AI ranking — priority: AI Sort (NLP) > JD Rank (LLM) > local formula
   const displayCandidates = useMemo(() => {
+    // AI Sort (NLP query) takes highest priority when available
     if (aiRankingEnabled && aiSortRankedIds.length > 0) {
       const idxMap = new Map(aiSortRankedIds.map((id, i) => [id, i]));
       return [...filteredCandidates].sort((a, b) => {
@@ -362,10 +390,109 @@ export function GroupCreationPage({
         return ia - ib;
       });
     }
+    // JD Rank (LLM, JD-based) is second priority
+    if (aiRankingEnabled && jdRankRankedIds.length > 0) {
+      const idxMap = new Map(jdRankRankedIds.map((id, i) => [id, i]));
+      return [...filteredCandidates].sort((a, b) => {
+        const ia = idxMap.has(a.id) ? idxMap.get(a.id)! : 9999;
+        const ib = idxMap.has(b.id) ? idxMap.get(b.id)! : 9999;
+        return ia - ib;
+      });
+    }
+    // Local formula fallback
     return rankCandidates(filteredCandidates, aiRankingEnabled, nlpQuery);
-  }, [filteredCandidates, aiRankingEnabled, nlpQuery, aiSortRankedIds]);
+  }, [filteredCandidates, aiRankingEnabled, nlpQuery, aiSortRankedIds, jdRankRankedIds]);
 
   const AI_SERVICE_URL = 'http://localhost:8001';
+
+  /** Called when AI Rank toggle is switched ON — triggers JD-based LLM ranking. */
+  const handleAiRankToggle = async (enabled: boolean) => {
+    setAiRankingEnabled(enabled);
+    if (!enabled) {
+      // Reset all AI rank state on toggle-off
+      setShowRankInsights(false);
+      setJdRankRankedIds([]);
+      setJdRankReasoning({});
+      setJdRankFitSummary(null);
+      setJdRankError(null);
+      setAiSortRankedIds([]);
+      setAiSortReasoning({});
+      setAiSortIntent(null);
+      setAiSelectionInfo('');
+      return;
+    }
+
+    // No JD available — skip LLM, stay on local formula
+    if (!positionJD?.job_description) {
+      setJdRankError('No job description found for this position — using local scoring instead.');
+      setShowRankInsights(true);
+      return;
+    }
+
+    setIsJdRankProcessing(true);
+    setJdRankError(null);
+    setJdRankFitSummary(null);
+    setJdRankRankedIds([]);
+    setJdRankReasoning({});
+    setShowRankInsights(true);
+
+    try {
+      const payload = {
+        job_title: positionJD.job_title,
+        job_description: positionJD.job_description,
+        required_skills: positionJD.required_skills,
+        experience_level: positionJD.experience_level,
+        years_of_experience: positionJD.years_of_experience || undefined,
+        candidates: filteredCandidates.map(c => ({
+          id: c.id,
+          name: c.name,
+          skills: c.skills || [],
+          experience: c.experience || 0,
+          titles: c.job_titles || [],
+          companies: c.companies || [],
+          degrees: c.degrees || [],
+          universities: c.universities || [],
+          location: c.location || '',
+        })),
+      };
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      const res = await fetch(`${AI_SERVICE_URL}/llm/jd-rank`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) throw new Error(`AI service error ${res.status}`);
+      const data = await res.json();
+
+      setJdRankRankedIds(data.ranked_ids || []);
+      setJdRankReasoning(data.reasoning || {});
+      setJdRankFitSummary(data.fit_summary || null);
+
+      // Check if LLM returned fallback
+      const isFallback = data.model === 'fallback';
+      if (isFallback) {
+        setJdRankError('AI service returned fallback — using local scoring. Reasoning unavailable.');
+      }
+
+      const topN = Math.min(50, Math.max(10, Math.ceil((data.ranked_ids?.length ?? 0) * 0.4)));
+      const autoSelected = (data.ranked_ids || []).slice(0, topN);
+      setSelectedCandidates(new Set(autoSelected));
+      setAiSelectionInfo(`🎯 JD-ranked ${data.ranked_ids?.length ?? 0} candidates — top ${autoSelected.length} auto-selected.`);
+    } catch (err: any) {
+      const msg = err?.name === 'AbortError'
+        ? 'JD ranking timed out — using local scoring as fallback.'
+        : 'AI service unavailable — using local scoring as fallback.';
+      setJdRankError(msg);
+      // Fallback: keep local formula (jdRankRankedIds stays empty)
+    } finally {
+      setIsJdRankProcessing(false);
+    }
+  };
 
   const handleAiEnhance = async () => {
     if (!nlpQuery.trim()) return;
@@ -602,10 +729,20 @@ export function GroupCreationPage({
 
           {/* AI Rank Toggle */}
           <div className={`flex items-center gap-3 h-[48px] px-[16px] rounded-[10px] border shadow-sm transition-all ${aiRankingEnabled ? 'bg-gradient-to-r from-[#eef2ff] to-[#f5f3ff] border-[#a5b4fc]' : 'bg-white border-[#e5e7eb]'}`}>
-            <Brain size={15} className={aiRankingEnabled ? 'text-[#6366f1]' : 'text-[#9ca3af]'} />
-            <span className={`font-['Arimo',sans-serif] text-[13px] font-medium ${aiRankingEnabled ? 'text-[#4f46e5]' : 'text-[#374151]'}`}>AI Rank</span>
-            <Switch checked={aiRankingEnabled} onCheckedChange={(v) => { setAiRankingEnabled(v); if (!v) { setShowRankInsights(false); setAiSortRankedIds([]); } }} />
-            {aiRankingEnabled && (
+            {isJdRankProcessing ? (
+              <div className="w-4 h-4 border-2 border-[#6366f1] border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Brain size={15} className={aiRankingEnabled ? 'text-[#6366f1]' : 'text-[#9ca3af]'} />
+            )}
+            <span className={`font-['Arimo',sans-serif] text-[13px] font-medium ${aiRankingEnabled ? 'text-[#4f46e5]' : 'text-[#374151]'}`}>
+              {isJdRankProcessing ? 'Ranking...' : 'AI Rank'}
+            </span>
+            <Switch
+              checked={aiRankingEnabled}
+              onCheckedChange={handleAiRankToggle}
+              disabled={isJdRankProcessing}
+            />
+            {aiRankingEnabled && !isJdRankProcessing && (
               <button
                 onClick={() => setShowRankInsights(p => !p)}
                 title="Toggle Insights Panel"
@@ -629,7 +766,21 @@ export function GroupCreationPage({
           </button>
         </div>
 
-        {/* LLM Intent Banner */}
+        {/* JD Rank Fit Summary Banner */}
+        {jdRankFitSummary && aiRankingEnabled && !aiSortIntent && (
+          <div className="mb-4 px-[16px] py-[10px] rounded-[10px] bg-gradient-to-r from-[#f0fdf4] to-[#ecfdf5] border border-[#86efac] flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <Brain size={15} className="text-[#16a34a]" />
+              <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#15803d]">JD Fit Criteria:</span>
+            </div>
+            <span className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{jdRankFitSummary}</span>
+            {positionJD?.required_skills?.slice(0, 5).map((s, i) => (
+              <span key={i} className="px-2 py-0.5 rounded-full bg-[#dcfce7] text-[#166534] font-['Arimo',sans-serif] text-[11px]">{s}</span>
+            ))}
+          </div>
+        )}
+
+        {/* LLM Intent Banner (AI Sort) */}
         {aiSortIntent && nlpQuery && (
           <div className="mb-4 px-[16px] py-[10px] rounded-[10px] bg-gradient-to-r from-[#eef2ff] to-[#f5f3ff] border border-[#a5b4fc] flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1.5">
@@ -648,6 +799,14 @@ export function GroupCreationPage({
             {aiSortIntent.skills.slice(0, 5).map((s, i) => (
               <span key={i} className="px-2 py-0.5 rounded-full bg-[#e0e7ff] text-[#3730a3] font-['Arimo',sans-serif] text-[11px]">{s}</span>
             ))}
+          </div>
+        )}
+
+        {/* JD Rank Error / Fallback Notice */}
+        {jdRankError && aiRankingEnabled && (
+          <div className="mb-4 px-[16px] py-[10px] rounded-[10px] bg-[#fffbeb] border border-[#fde68a] flex items-center gap-2">
+            <AlertCircle size={15} className="text-[#d97706] shrink-0" />
+            <p className="font-['Arimo',sans-serif] text-[12px] text-[#92400e]">{jdRankError}</p>
           </div>
         )}
 
@@ -751,9 +910,13 @@ export function GroupCreationPage({
           <div className="flex items-center gap-2">
             {aiRankingEnabled && (
               <div className="flex items-center gap-2 px-[12px] py-[6px] rounded-[6px] bg-gradient-to-r from-[#eef2ff] to-[#f5f3ff] border border-[#a5b4fc]">
-                <Brain size={13} className="text-[#6366f1]" />
+                {isJdRankProcessing ? (
+                  <div className="w-3 h-3 border-2 border-[#6366f1] border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Brain size={13} className="text-[#6366f1]" />
+                )}
                 <span className="font-['Arimo',sans-serif] text-[12px] text-[#4f46e5] font-medium">
-                  {aiSortRankedIds.length > 0 ? 'LLM Ranked' : 'AI Ranked'}
+                  {isJdRankProcessing ? 'Ranking...' : aiSortRankedIds.length > 0 ? 'AI Sorted' : jdRankRankedIds.length > 0 ? 'JD Ranked' : 'Local Scored'}
                 </span>
               </div>
             )}
@@ -929,7 +1092,11 @@ export function GroupCreationPage({
                     {(() => {
                       const displayScore = getDisplayScore(candidate);
                       const dims = aiRankingEnabled ? getMultiDimScore(candidate, nlpQuery) : null;
-                      const reasoning = aiSortReasoning[candidate.id];
+                      // Prefer AI Sort reasoning, fall back to JD Rank reasoning
+                      const aiSortReason = aiSortReasoning[candidate.id];
+                      const jdReason = jdRankReasoning[candidate.id];
+                      const reasoning = aiSortReason || jdReason;
+                      const isJdReason = !aiSortReason && !!jdReason;
                       return (
                         <div className="space-y-1.5">
                           {dims ? (
@@ -943,7 +1110,9 @@ export function GroupCreationPage({
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="font-['Arimo',sans-serif] text-[13px] font-semibold" style={{ color: getMatchColor(dims.composite) }}>{dims.composite.toFixed(1)}%</span>
-                                <span className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af]">AI Score</span>
+                                <span className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af]">
+                                  {jdRankRankedIds.length > 0 && !aiSortRankedIds.length ? 'JD Fit' : 'AI Score'}
+                                </span>
                               </div>
                             </>
                           ) : (
@@ -955,10 +1124,13 @@ export function GroupCreationPage({
                               <span className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280]">CV Match</span>
                             </div>
                           )}
-                          {/* LLM Reasoning badge */}
-                          {reasoning && reasoning !== 'AI ranking unavailable — showing original order.' && (
-                            <p className="font-['Arimo',sans-serif] text-[10px] text-[#6366f1] leading-snug max-w-[200px]" title={reasoning}>
-                              🤖 {reasoning.length > 60 ? reasoning.slice(0, 58) + '…' : reasoning}
+                          {/* LLM Reasoning badge (AI Sort = purple, JD Rank = green) */}
+                          {reasoning && reasoning !== 'AI ranking unavailable — showing original order.' && reasoning !== 'JD ranking unavailable — showing original order.' && (
+                            <p
+                              className={`font-['Arimo',sans-serif] text-[10px] leading-snug max-w-[200px] ${isJdReason ? 'text-[#16a34a]' : 'text-[#6366f1]'}`}
+                              title={reasoning}
+                            >
+                              {isJdReason ? '📋' : '🤖'} {reasoning.length > 60 ? reasoning.slice(0, 58) + '…' : reasoning}
                             </p>
                           )}
                           {candidate.applicationId && (

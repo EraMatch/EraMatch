@@ -406,3 +406,175 @@ RULES:
             intent=SmartRankIntent(summary=f"Fallback: {str(e)[:80]}"),
             model="fallback",
         )
+
+
+# ── JD-Based Candidate Ranking ────────────────────────────────────────────────
+
+class JDRankCandidate(BaseModel):
+    """Rich candidate profile for JD-based ranking."""
+    id: str
+    name: str
+    skills: list[str] = []
+    experience: float = 0
+    titles: list[str] = []
+    companies: list[str] = []
+    degrees: list[str] = []
+    universities: list[str] = []
+    location: str = ""
+
+
+class JDRankRequest(BaseModel):
+    """Request LLM-based candidate ranking from a job description."""
+    job_title: str
+    job_description: str
+    required_skills: list[str] = []
+    experience_level: str | None = None
+    years_of_experience: int | None = None
+    candidates: list[JDRankCandidate]
+    max_candidates: int = 100
+
+
+class JDRankResponse(BaseModel):
+    """JD-based LLM ranking result."""
+    ranked_ids: list[str]
+    reasoning: dict[str, str]   # candidate_id -> 1-sentence reason
+    fit_summary: str             # Short summary of what the LLM looked for
+    model: str
+
+
+@router.post("/jd-rank", response_model=JDRankResponse)
+async def jd_rank(request: JDRankRequest):
+    """
+    Rank candidates against a job description using the LLM.
+
+    Unlike /smart-rank (which uses a free-text recruiter query), this endpoint
+    uses the structured job description and required skills stored on the position
+    to perform a deep, JD-aware ranking of all candidates.
+
+    Sends a compact CV summary of each candidate alongside the full JD to the LLM
+    and asks for a ranked list with per-candidate fit reasoning.
+    Falls back gracefully if the LLM fails or returns malformed output.
+    """
+    import json, re as _re
+
+    if not request.candidates:
+        return JDRankResponse(
+            ranked_ids=[],
+            reasoning={},
+            fit_summary="No candidates to rank.",
+            model="none",
+        )
+
+    candidates = request.candidates[:request.max_candidates]
+
+    # Build compact candidate summaries
+    cand_lines = []
+    for c in candidates:
+        skills_str = ", ".join(c.skills[:10]) if c.skills else "N/A"
+        titles_str = ", ".join(c.titles[:3]) if c.titles else "N/A"
+        companies_str = ", ".join(c.companies[:3]) if c.companies else "N/A"
+        edu_str = ", ".join(c.degrees[:2]) if c.degrees else "N/A"
+        line = (
+            f'ID:{c.id} | {c.name} | {c.experience}yrs | '
+            f'Skills:{skills_str} | Titles:{titles_str} | '
+            f'Companies:{companies_str} | Education:{edu_str} | Location:{c.location or "N/A"}'
+        )
+        cand_lines.append(line)
+
+    candidates_block = "\n".join(cand_lines)
+
+    # Truncate job description to avoid blowing the context window
+    jd_text = (request.job_description or "").strip()
+    if len(jd_text) > 3000:
+        jd_text = jd_text[:3000] + "\n[JD truncated for length]"
+
+    required_skills_str = ", ".join(request.required_skills) if request.required_skills else "Not specified"
+    exp_level = request.experience_level or "Not specified"
+    years_req = f"{request.years_of_experience}+" if request.years_of_experience else "Not specified"
+
+    prompt = f"""You are an expert AI recruiter. Your job is to rank candidates by how well their background fits the following job opening.
+
+=== JOB DESCRIPTION ===
+Title: {request.job_title}
+Experience Level: {exp_level}
+Years Required: {years_req}
+Required Skills: {required_skills_str}
+
+{jd_text}
+
+=== CANDIDATES (one per line) ===
+Format: ID | Name | Experience | Skills | Past Titles | Past Companies | Education | Location
+{candidates_block}
+
+=== YOUR TASK ===
+1. Read the JD carefully and identify the key requirements (skills, experience level, domain, seniority).
+2. Rank ALL candidates from most to least suitable for this specific role.
+3. For each candidate, write 1 sentence (max 15 words) explaining why they rank there.
+4. Write a single fit_summary sentence describing what you looked for in an ideal candidate.
+
+Respond ONLY with valid JSON in this exact schema (no markdown fences, no extra text):
+{{
+  "ranked_ids": ["id1", "id2", ...],
+  "reasoning": {{
+    "id1": "Strong Python + ML match, 6 years aligns with senior requirement.",
+    "id2": "Frontend-focused background does not match backend-heavy JD."
+  }},
+  "fit_summary": "Senior Python backend engineer with ML and cloud experience."
+}}
+
+RULES:
+- ranked_ids must contain EVERY candidate ID exactly once.
+- reasoning must contain an entry for EVERY candidate ID.
+- Base ranking purely on JD fit — ignore candidate location unless the JD requires it.
+- Respond with JSON only, nothing else."""
+
+    try:
+        result = await chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+        )
+        content = result["content"].strip()
+
+        # Strip markdown fences if present
+        if content.startswith("```"):
+            content = _re.sub(r"^```[a-z]*\n?", "", content)
+            content = _re.sub(r"\n?```$", "", content.strip())
+
+        # Extract the first JSON object
+        json_match = _re.search(r"\{.*\}", content, _re.DOTALL)
+        if not json_match:
+            raise ValueError("No JSON object found in LLM response")
+
+        parsed = json.loads(json_match.group())
+
+        ranked_ids = [str(x) for x in parsed.get("ranked_ids", [])]
+        reasoning: dict[str, str] = {
+            str(k): str(v) for k, v in parsed.get("reasoning", {}).items()
+        }
+        fit_summary = str(parsed.get("fit_summary", request.job_title))
+
+        # Ensure all candidate IDs are present
+        all_ids = {c.id for c in candidates}
+        for cid in all_ids:
+            if cid not in reasoning:
+                reasoning[cid] = "No specific match details available."
+        ranked_id_set = set(ranked_ids)
+        for cid in [c.id for c in candidates]:
+            if cid not in ranked_id_set:
+                ranked_ids.append(cid)
+
+        return JDRankResponse(
+            ranked_ids=ranked_ids,
+            reasoning=reasoning,
+            fit_summary=fit_summary,
+            model=result.get("model", "unknown"),
+        )
+
+    except Exception as e:
+        # Graceful fallback: return candidates in original order
+        fallback_ids = [c.id for c in candidates]
+        return JDRankResponse(
+            ranked_ids=fallback_ids,
+            reasoning={c.id: "JD ranking unavailable — showing original order." for c in candidates},
+            fit_summary=f"Fallback: {str(e)[:80]}",
+            model="fallback",
+        )

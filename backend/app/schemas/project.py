@@ -195,6 +195,12 @@ class PositionGroupResponse(BaseModel):
 class PositionDetailsResponse(BaseModel):
     candidates: list[PositionCandidateResponse] = []
     groups: list[PositionGroupResponse] = []
+    # JD context — exposed so the frontend can pass these to the AI service
+    job_title: str = ""
+    job_description: str | None = None
+    required_skills: list = []
+    experience_level: str | None = None
+    years_of_experience: int = 0
 
 
 class ApplicationScoreBreakdownResponse(BaseModel):
