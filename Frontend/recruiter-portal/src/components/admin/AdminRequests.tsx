@@ -37,6 +37,12 @@ function AdminRequestsContent() {
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [filterType, setFilterType] = useState('all');
+    const [requesterFilter, setRequesterFilter] = useState('all');
+    const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+    const [selectedRequestIds, setSelectedRequestIds] = useState<string[]>([]);
+    const [bulkReviewNotes, setBulkReviewNotes] = useState('');
+    const [bulkAssignedTechId, setBulkAssignedTechId] = useState('');
+    const [isBulkSubmitting, setIsBulkSubmitting] = useState(false);
 
     // Creation Form States (Project)
     const [projName, setProjName] = useState('');
@@ -98,6 +104,10 @@ function AdminRequestsContent() {
             setSelectedProjectIdForPosition('');
         }
     }, [projects, selectedProjectIdForPosition]);
+
+    useEffect(() => {
+        setSelectedRequestIds((prev) => prev.filter((id) => requests.some((req) => String(req.id) === id)));
+    }, [requests]);
 
     const fetchAll = async () => {
         try {
@@ -220,12 +230,18 @@ function AdminRequestsContent() {
                 });
                 toast.success('Request approved and resource created!');
             } else {
+                if (!reviewNotes.trim()) {
+                    toast.error('Please provide a rejection reason');
+                    setIsSubmitting(false);
+                    return;
+                }
                 await api.admin.rejectRequest(selectedRequest.id, reviewNotes);
                 toast.success('Request rejected');
             }
 
             setIsDecisionOpen(false);
             setIsDetailOpen(false);
+            setReviewNotes('');
             fetchAll();
         } catch (error) {
             toast.error('Failed to process request');
@@ -234,16 +250,138 @@ function AdminRequestsContent() {
         }
     };
 
-    const filteredRequests = requests.filter(req => {
+    const processRequestDecision = async (
+        req: any,
+        action: 'approve' | 'reject',
+        options?: { notes?: string; assignedTechId?: string }
+    ) => {
+        const notes = options?.notes || '';
+        const techId = options?.assignedTechId || '';
+
+        if (action === 'approve') {
+            if (req.request_type === 'position' && !techId) {
+                throw new Error('Technical recruiter assignment is required for position approvals.');
+            }
+
+            await api.admin.approveRequest(req.id, {
+                assigned_tech_id: techId || undefined,
+                review_notes: notes || undefined,
+            });
+            return;
+        }
+
+        if (!notes.trim()) {
+            throw new Error('Rejection reason is required.');
+        }
+        await api.admin.rejectRequest(req.id, notes);
+    };
+
+    const filteredRequests = requests.filter((req) => {
         const matchesSearch =
             req.requester_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             req.data?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             req.data?.job_title?.toLowerCase().includes(searchQuery.toLowerCase());
 
         const matchesType = filterType === 'all' || req.request_type === filterType;
+        const matchesRequester = requesterFilter === 'all' || req.requester_name === requesterFilter;
 
-        return matchesSearch && matchesType;
+        return matchesSearch && matchesType && matchesRequester;
+    }).sort((a, b) => {
+        const aTime = new Date(a.created_at || 0).getTime();
+        const bTime = new Date(b.created_at || 0).getTime();
+        return sortOrder === 'newest' ? bTime - aTime : aTime - bTime;
     });
+
+    const projectRequests = filteredRequests.filter((req) => req.request_type === 'project');
+    const positionRequests = filteredRequests.filter((req) => req.request_type === 'position');
+    const requesterOptions = Array.from(new Set(requests.map((req) => req.requester_name).filter(Boolean))).sort();
+
+    const selectedRequests = filteredRequests.filter((req) => selectedRequestIds.includes(String(req.id)));
+    const selectedPositionCount = selectedRequests.filter((req) => req.request_type === 'position').length;
+
+    const toggleRequestSelection = (requestId: string) => {
+        setSelectedRequestIds((prev) => (
+            prev.includes(requestId)
+                ? prev.filter((id) => id !== requestId)
+                : [...prev, requestId]
+        ));
+    };
+
+    const toggleSectionSelection = (sectionRequests: any[]) => {
+        const sectionIds = sectionRequests.map((req) => String(req.id));
+        const allSelected = sectionIds.every((id) => selectedRequestIds.includes(id));
+
+        if (allSelected) {
+            setSelectedRequestIds((prev) => prev.filter((id) => !sectionIds.includes(id)));
+            return;
+        }
+
+        setSelectedRequestIds((prev) => Array.from(new Set([...prev, ...sectionIds])));
+    };
+
+    const handleBulkProcess = async (action: 'approve' | 'reject') => {
+        if (selectedRequests.length === 0) {
+            toast.error('Select at least one request first');
+            return;
+        }
+
+        if (action === 'approve' && selectedPositionCount > 0 && !bulkAssignedTechId) {
+            toast.error('Assign a technical recruiter for selected position approvals');
+            return;
+        }
+
+        if (action === 'reject' && !bulkReviewNotes.trim()) {
+            toast.error('Please provide rejection reason for bulk reject');
+            return;
+        }
+
+        setIsBulkSubmitting(true);
+        let successCount = 0;
+        let failedCount = 0;
+
+        for (const req of selectedRequests) {
+            try {
+                await processRequestDecision(req, action, {
+                    notes: bulkReviewNotes,
+                    assignedTechId: bulkAssignedTechId,
+                });
+                successCount += 1;
+            } catch (error) {
+                failedCount += 1;
+            }
+        }
+
+        if (successCount > 0) {
+            toast.success(`${successCount} request(s) ${action === 'approve' ? 'approved' : 'rejected'}`);
+        }
+        if (failedCount > 0) {
+            toast.error(`${failedCount} request(s) failed to process`);
+        }
+
+        setSelectedRequestIds([]);
+        setBulkReviewNotes('');
+        setBulkAssignedTechId('');
+        setIsBulkSubmitting(false);
+        fetchAll();
+    };
+
+    const formatCreatedAt = (value?: string) => {
+        if (!value) return '-';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '-';
+        return date.toLocaleDateString();
+    };
+
+    const formatCurrencyValue = (value: unknown) => {
+        const n = typeof value === 'number' ? value : Number(value);
+        if (!Number.isFinite(n)) return 'N/A';
+        return `$${n.toLocaleString()}`;
+    };
+
+    const toStringArray = (value: unknown): string[] => {
+        if (!Array.isArray(value)) return [];
+        return value.map((item) => String(item)).filter(Boolean);
+    };
 
     const navigate = useNavigate();
 
@@ -599,55 +737,257 @@ function AdminRequestsContent() {
                         <p className="text-gray-500">No pending approval requests at the moment.</p>
                     </Card>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {requests.map(req => (
-                            <Card key={req.id} className="group hover:shadow-xl transition-all duration-300 border-gray-100 rounded-3xl overflow-hidden hover:-translate-y-1 bg-white/50 backdrop-blur-sm">
-                                <CardContent className="p-6">
-                                    <div className="flex items-start justify-between mb-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`p-3 rounded-2xl ${req.request_type === 'project' ? 'bg-indigo-50 text-indigo-600' : 'bg-purple-50 text-purple-600'}`}>
-                                                {req.request_type === 'project' ? <FileText size={20} /> : <Briefcase size={20} />}
-                                            </div>
-                                            <div>
-                                                <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider mb-1">
-                                                    {req.request_type}
-                                                </Badge>
-                                                <h3 className="font-bold text-gray-900 line-clamp-1">
-                                                    {req.request_type === 'project' ? req.data.name : req.data.job_title}
-                                                </h3>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="space-y-3 mb-6">
-                                        <div className="flex items-center gap-2 text-sm text-gray-500">
-                                            <UserPlus size={14} />
-                                            <span>From: <span className="font-medium text-gray-700">{req.requester_name}</span></span>
-                                        </div>
-                                        {req.request_type === 'project' && req.data.budget && (
-                                            <div className="flex items-center gap-2 text-sm text-green-600 font-medium">
-                                                <DollarSign size={14} />
-                                                <span>Budget: ${req.data.budget.toLocaleString()}</span>
-                                            </div>
-                                        )}
-                                        {req.request_type === 'position' && req.data.salary_min && (
-                                            <div className="flex items-center gap-2 text-sm text-indigo-600 font-medium">
-                                                <DollarSign size={14} />
-                                                <span>Range: ${req.data.salary_min.toLocaleString()} - ${req.data.salary_max.toLocaleString()}</span>
-                                            </div>
-                                        )}
-                                    </div>
+                    <div className="space-y-5">
+                        <Card className="rounded-3xl border-gray-100 shadow-sm bg-white">
+                            <CardContent className="p-5 space-y-4">
+                                <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                                    <Filter size={15} />
+                                    Request filters
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                    <Select value={filterType} onValueChange={setFilterType}>
+                                        <SelectTrigger className="rounded-xl">
+                                            <SelectValue placeholder="Type" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All types</SelectItem>
+                                            <SelectItem value="project">Projects</SelectItem>
+                                            <SelectItem value="position">Positions</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+
+                                    <Select value={requesterFilter} onValueChange={setRequesterFilter}>
+                                        <SelectTrigger className="rounded-xl">
+                                            <SelectValue placeholder="Requester" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All requesters</SelectItem>
+                                            {requesterOptions.map((name) => (
+                                                <SelectItem key={name} value={name}>{name}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+
+                                    <Select value={sortOrder} onValueChange={(val: 'newest' | 'oldest') => setSortOrder(val)}>
+                                        <SelectTrigger className="rounded-xl">
+                                            <SelectValue placeholder="Sort" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="newest">Newest first</SelectItem>
+                                            <SelectItem value="oldest">Oldest first</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+
                                     <Button
-                                        className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white"
+                                        type="button"
+                                        variant="outline"
+                                        className="rounded-xl"
                                         onClick={() => {
-                                            setSelectedRequest(req);
-                                            setIsDetailOpen(true);
+                                            setFilterType('all');
+                                            setRequesterFilter('all');
+                                            setSortOrder('newest');
+                                            setSearchQuery('');
+                                            setSelectedRequestIds([]);
                                         }}
                                     >
-                                        Review Proposal
+                                        Reset filters
                                     </Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {selectedRequestIds.length > 0 && (
+                            <Card className="rounded-3xl border-indigo-100 bg-indigo-50/40">
+                                <CardContent className="p-5 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-sm font-semibold text-indigo-800">
+                                            {selectedRequestIds.length} request(s) selected
+                                        </p>
+                                        <button
+                                            onClick={() => setSelectedRequestIds([])}
+                                            className="text-xs text-indigo-700 hover:text-indigo-900"
+                                        >
+                                            Clear selection
+                                        </button>
+                                    </div>
+
+                                    {selectedPositionCount > 0 && (
+                                        <div className="space-y-2">
+                                            <Label className="text-xs uppercase tracking-wide text-indigo-700">Technical Recruiter for Position Approvals</Label>
+                                            <Select value={bulkAssignedTechId} onValueChange={setBulkAssignedTechId}>
+                                                <SelectTrigger className="rounded-xl bg-white">
+                                                    <SelectValue placeholder="Select technical recruiter" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {techRecruiters.map(rec => (
+                                                        <SelectItem key={rec.id} value={rec.id.toString()}>
+                                                            {rec.name} ({rec.assignedCount || 0} active)
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    )}
+
+                                    <div className="space-y-2">
+                                        <Label className="text-xs uppercase tracking-wide text-indigo-700">Bulk Review Notes</Label>
+                                        <Textarea
+                                            value={bulkReviewNotes}
+                                            onChange={(e) => setBulkReviewNotes(e.target.value)}
+                                            placeholder="For bulk reject this is required; for approve it is optional"
+                                            className="rounded-xl min-h-[84px] bg-white"
+                                        />
+                                    </div>
+
+                                    <div className="flex gap-2">
+                                        <Button
+                                            type="button"
+                                            className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
+                                            disabled={isBulkSubmitting}
+                                            onClick={() => handleBulkProcess('approve')}
+                                        >
+                                            {isBulkSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                                            Approve Selected
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            className="rounded-xl bg-red-500 hover:bg-red-600 text-white"
+                                            disabled={isBulkSubmitting}
+                                            onClick={() => handleBulkProcess('reject')}
+                                        >
+                                            {isBulkSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                                            Reject Selected
+                                        </Button>
+                                    </div>
                                 </CardContent>
                             </Card>
-                        ))}
+                        )}
+
+                        {filteredRequests.length === 0 ? (
+                            <Card className="border-dashed h-52 flex flex-col items-center justify-center text-center p-6 rounded-3xl">
+                                <Clock className="w-10 h-10 text-gray-300 mb-4" />
+                                <h3 className="text-lg font-medium text-gray-900">No matches found</h3>
+                                <p className="text-gray-500">Try changing filters or search criteria.</p>
+                            </Card>
+                        ) : (
+                            <>
+                                <Card className="rounded-3xl border-gray-100 shadow-sm bg-white overflow-hidden">
+                                    <CardContent className="p-0">
+                                        <div className="flex items-center justify-between px-5 py-4 border-b bg-slate-50">
+                                            <div className="flex items-center gap-2">
+                                                <FileText size={16} className="text-indigo-600" />
+                                                <h3 className="font-semibold text-slate-900">Project Requests ({projectRequests.length})</h3>
+                                            </div>
+                                            {projectRequests.length > 0 && (
+                                                <button
+                                                    onClick={() => toggleSectionSelection(projectRequests)}
+                                                    className="text-xs text-indigo-700 hover:text-indigo-900"
+                                                >
+                                                    {projectRequests.every((req) => selectedRequestIds.includes(String(req.id)))
+                                                        ? 'Unselect all'
+                                                        : 'Select all'}
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        {projectRequests.length === 0 ? (
+                                            <div className="px-5 py-6 text-sm text-gray-500">No pending project requests in this view.</div>
+                                        ) : (
+                                            <div className="divide-y">
+                                                {projectRequests.map((req) => (
+                                                    <div key={req.id} className="px-5 py-4 flex items-center gap-4">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedRequestIds.includes(String(req.id))}
+                                                            onChange={() => toggleRequestSelection(String(req.id))}
+                                                            className="h-4 w-4 rounded border-gray-300"
+                                                        />
+
+                                                        <div className="min-w-0 flex-1">
+                                                            <p className="font-semibold text-slate-900 truncate">{req.data?.name || 'Untitled project'}</p>
+                                                            <p className="text-sm text-gray-600">From {req.requester_name || 'Unknown requester'} • {formatCreatedAt(req.created_at)}</p>
+                                                        </div>
+
+                                                        <div className="text-sm text-gray-600 min-w-[120px] text-right">
+                                                            {req.data?.budget ? `$${Number(req.data.budget).toLocaleString()}` : 'No budget'}
+                                                        </div>
+
+                                                        <Button
+                                                            className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white"
+                                                            onClick={() => {
+                                                                setSelectedRequest(req);
+                                                                setIsDetailOpen(true);
+                                                            }}
+                                                        >
+                                                            Review
+                                                        </Button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </CardContent>
+                                </Card>
+
+                                <Card className="rounded-3xl border-gray-100 shadow-sm bg-white overflow-hidden">
+                                    <CardContent className="p-0">
+                                        <div className="flex items-center justify-between px-5 py-4 border-b bg-slate-50">
+                                            <div className="flex items-center gap-2">
+                                                <Briefcase size={16} className="text-purple-600" />
+                                                <h3 className="font-semibold text-slate-900">Position Requests ({positionRequests.length})</h3>
+                                            </div>
+                                            {positionRequests.length > 0 && (
+                                                <button
+                                                    onClick={() => toggleSectionSelection(positionRequests)}
+                                                    className="text-xs text-indigo-700 hover:text-indigo-900"
+                                                >
+                                                    {positionRequests.every((req) => selectedRequestIds.includes(String(req.id)))
+                                                        ? 'Unselect all'
+                                                        : 'Select all'}
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        {positionRequests.length === 0 ? (
+                                            <div className="px-5 py-6 text-sm text-gray-500">No pending position requests in this view.</div>
+                                        ) : (
+                                            <div className="divide-y">
+                                                {positionRequests.map((req) => (
+                                                    <div key={req.id} className="px-5 py-4 flex items-center gap-4">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedRequestIds.includes(String(req.id))}
+                                                            onChange={() => toggleRequestSelection(String(req.id))}
+                                                            className="h-4 w-4 rounded border-gray-300"
+                                                        />
+
+                                                        <div className="min-w-0 flex-1">
+                                                            <p className="font-semibold text-slate-900 truncate">{req.data?.job_title || 'Untitled position'}</p>
+                                                            <p className="text-sm text-gray-600">From {req.requester_name || 'Unknown requester'} • {formatCreatedAt(req.created_at)}</p>
+                                                        </div>
+
+                                                        <div className="text-sm text-gray-600 min-w-[180px] text-right">
+                                                            {req.data?.salary_min
+                                                                ? `$${Number(req.data.salary_min).toLocaleString()} - $${Number(req.data.salary_max || 0).toLocaleString()}`
+                                                                : 'No salary range'}
+                                                        </div>
+
+                                                        <Button
+                                                            className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white"
+                                                            onClick={() => {
+                                                                setSelectedRequest(req);
+                                                                setIsDetailOpen(true);
+                                                            }}
+                                                        >
+                                                            Review
+                                                        </Button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </CardContent>
+                                </Card>
+                            </>
+                        )}
                     </div>
                 )
             ) : null}
@@ -691,31 +1031,36 @@ function AdminRequestsContent() {
                                     <>
                                         <div className="col-span-2">
                                             <Label className="text-xs uppercase text-gray-400 font-bold mb-1 block">Job Title</Label>
-                                            <p className="text-lg font-semibold text-gray-900">{selectedRequest.data.job_title}</p>
+                                            <p className="text-lg font-semibold text-gray-900">{selectedRequest.data?.job_title || 'Untitled position'}</p>
                                         </div>
                                         <div>
                                             <Label className="text-xs uppercase text-gray-400 font-bold mb-1 block">Experience</Label>
-                                            <Badge variant="secondary">{selectedRequest.data.experience_level}</Badge>
+                                            <Badge variant="secondary">{selectedRequest.data?.experience_level || 'N/A'}</Badge>
                                         </div>
                                         <div>
                                             <Label className="text-xs uppercase text-gray-400 font-bold mb-1 block">Work Type</Label>
-                                            <Badge variant="secondary">{selectedRequest.data.work_type}</Badge>
+                                            <Badge variant="secondary">{selectedRequest.data?.work_type || 'N/A'}</Badge>
                                         </div>
                                         <div>
                                             <Label className="text-xs uppercase text-gray-400 font-bold mb-1 block">Salary Range</Label>
-                                            <p className="font-semibold text-green-600">${selectedRequest.data.salary_min.toLocaleString()} - ${selectedRequest.data.salary_max.toLocaleString()}</p>
+                                            <p className="font-semibold text-green-600">
+                                                {formatCurrencyValue(selectedRequest.data?.salary_min)} - {formatCurrencyValue(selectedRequest.data?.salary_max)}
+                                            </p>
                                         </div>
                                         <div className="col-span-2">
                                             <Label className="text-xs uppercase text-gray-400 font-bold mb-1 block">Required Skills</Label>
                                             <div className="flex flex-wrap gap-2 mt-1">
-                                                {selectedRequest.data.required_skills?.map((s: string) => (
+                                                {toStringArray(selectedRequest.data?.required_skills).map((s) => (
                                                     <Badge key={s} className="bg-indigo-50 text-indigo-700 border-none">{s}</Badge>
                                                 ))}
+                                                {toStringArray(selectedRequest.data?.required_skills).length === 0 && (
+                                                    <span className="text-sm text-gray-500">No skills provided</span>
+                                                )}
                                             </div>
                                         </div>
                                         <div className="col-span-2">
                                             <Label className="text-xs uppercase text-gray-400 font-bold mb-1 block">Description</Label>
-                                            <p className="text-gray-700 text-sm leading-relaxed">{selectedRequest.data.job_description}</p>
+                                            <p className="text-gray-700 text-sm leading-relaxed">{selectedRequest.data?.job_description || 'No description provided.'}</p>
                                         </div>
                                     </>
                                 )}

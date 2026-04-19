@@ -32,6 +32,7 @@ export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [technicalReviewCount, setTechnicalReviewCount] = useState(0);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [runningTasks, setRunningTasks] = useState<SidebarTask[]>([]);
   const [showTaskCategoryPopover, setShowTaskCategoryPopover] = useState(false);
@@ -69,6 +70,18 @@ export function Sidebar() {
   useEffect(() => {
     if (userRole !== 'technical') return;
 
+    const fetchAssignedReviews = async () => {
+      try {
+        const assigned = await api.recruiter.getAssignedRequests();
+        setTechnicalReviewCount(Array.isArray(assigned) ? assigned.length : 0);
+      } catch (error) {
+        console.error('Failed to fetch technical review count:', error);
+      }
+    };
+
+    fetchAssignedReviews();
+    const reviewInterval = setInterval(fetchAssignedReviews, 30000);
+
     const fetchRunningTasks = async () => {
       try {
         const tasks = await api.recruiter.getBackgroundTasks();
@@ -83,8 +96,11 @@ export function Sidebar() {
     };
 
     fetchRunningTasks();
-    const interval = setInterval(fetchRunningTasks, 10000);
-    return () => clearInterval(interval);
+    const taskInterval = setInterval(fetchRunningTasks, 10000);
+    return () => {
+      clearInterval(taskInterval);
+      clearInterval(reviewInterval);
+    };
   }, [userRole]);
 
   useEffect(() => {
@@ -172,6 +188,13 @@ export function Sidebar() {
           <NavLink to="/recruiter/reviews" className={({ isActive }) => getLinkClass(isActive)} title="Reviews">
             <div className="relative">
               <ClipboardCheck size={24} />
+              {technicalReviewCount > 0 && (
+                <div className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#ef4444] flex items-center justify-center">
+                  <span className="font-['Arimo',sans-serif] text-[9px] text-white font-bold leading-none">
+                    {technicalReviewCount > 99 ? '99+' : technicalReviewCount}
+                  </span>
+                </div>
+              )}
             </div>
           </NavLink>
         )}

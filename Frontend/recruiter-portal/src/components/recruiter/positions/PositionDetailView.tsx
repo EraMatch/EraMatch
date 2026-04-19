@@ -139,6 +139,22 @@ const normalizePercentValue = (value?: number | null) => {
   return value <= 1 ? value * 100 : value;
 };
 
+const hasAnyKeywords = (keywords?: Record<string, string[]> | null) => {
+  if (!keywords || typeof keywords !== 'object') {
+    return false;
+  }
+  return Object.values(keywords).some((items) => Array.isArray(items) && items.length > 0);
+};
+
+const KEYWORD_SECTIONS: Array<{ key: string; label: string; color: string }> = [
+  { key: 'technical_skills', label: 'Technical Skills', color: 'bg-[#ede9fe] text-[#5b21b6] border-[#c4b5fd]' },
+  { key: 'domain_keywords', label: 'Domain', color: 'bg-[#dbeafe] text-[#1e40af] border-[#93c5fd]' },
+  { key: 'soft_skills', label: 'Soft Skills', color: 'bg-[#fef3c7] text-[#92400e] border-[#fcd34d]' },
+  { key: 'experience_keywords', label: 'Experience', color: 'bg-[#fce7f3] text-[#9d174d] border-[#f9a8d4]' },
+  { key: 'education_keywords', label: 'Education', color: 'bg-[#ecfdf5] text-[#166534] border-[#86efac]' },
+  { key: 'seniority_signals', label: 'Seniority', color: 'bg-[#fef2f2] text-[#991b1b] border-[#fca5a5]' },
+];
+
 const getCandidateDisplayScore = (candidate: Candidate) => {
   if (candidate.score > 0) {
     return Math.round(candidate.score);
@@ -341,6 +357,11 @@ export function PositionDetailView({
 
         setCandidates(details.candidates);
         setGroups(details.groups);
+        const initialKeywords = details?.jd_keywords && typeof details.jd_keywords === 'object'
+          ? details.jd_keywords as Record<string, string[]>
+          : null;
+        setJdKeywords(initialKeywords);
+        setKeywordsVisible(hasAnyKeywords(initialKeywords));
 
         // Set metrics individually as setMetrics state object does not exist
         // Assuming these states exist based on previous code reading, or if not, I should check defaults.
@@ -398,6 +419,11 @@ export function PositionDetailView({
   const [keywordsError, setKeywordsError] = useState<string | null>(null);
   const [keywordsVisible, setKeywordsVisible] = useState(false);
   const [newKeywordInputs, setNewKeywordInputs] = useState<Record<string, string>>({});
+  const [expandedKeywordSections, setExpandedKeywordSections] = useState<Record<string, boolean>>({ technical_skills: true });
+
+  useEffect(() => {
+    setExpandedKeywordSections({ technical_skills: true });
+  }, [positionId]);
 
   // Google Drive Scheduler State
   const [driveFolderUrl, setDriveFolderUrl] = useState<string>('');
@@ -564,6 +590,27 @@ export function PositionDetailView({
       setRecomputeError(error instanceof Error ? error.message : 'Failed to recompute scores');
     } finally {
       setIsRecomputingScores(false);
+    }
+  };
+
+  const handleShowKeywords = async () => {
+    try {
+      setKeywordsVisible(true);
+      setKeywordsError(null);
+
+      if (hasAnyKeywords(jdKeywords)) {
+        return;
+      }
+
+      const existing = await api.recruiter.getPositionKeywords(positionId) as Record<string, string[]>;
+      if (hasAnyKeywords(existing)) {
+        setJdKeywords(existing);
+        setKeywordsMessage('Loaded saved JD keywords.');
+      } else {
+        setKeywordsMessage('No saved keywords yet. Approve QAG and extract keywords first.');
+      }
+    } catch (error) {
+      setKeywordsError(error instanceof Error ? error.message : 'Failed to load keywords');
     }
   };
 
@@ -764,27 +811,41 @@ export function PositionDetailView({
 
         {/* Candidates Tab Content */}
         {activeTab === 'candidates' && (
-          <div className="w-full">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
-                Candidates
-              </h2>
-              <div className="flex items-center gap-2">
+          <div className="w-full space-y-5">
+            <div className="rounded-[14px] border border-[#dbe3ff] bg-gradient-to-br from-white via-[#f8faff] to-[#f3f6ff] p-5 shadow-sm">
+              <div className="mb-2 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
+                <h2 className="font-['Arimo',sans-serif] text-[22px] leading-[28px] text-[#0f172a]">
+                  Candidates Workspace
+                </h2>
+                <p className="font-['Arimo',sans-serif] text-[13px] text-[#64748b]">
+                  Manage criteria, keywords, and candidate scoring in one place
+                </p>
+              </div>
+
+              <div className="mt-4 flex w-full flex-wrap items-center gap-2.5 lg:w-auto lg:justify-start">
+                <button
+                  onClick={handleShowKeywords}
+                  className="inline-flex h-[40px] items-center justify-center px-[14px] rounded-[10px] border border-[#bbf7d0] bg-[#f0fdf4] hover:bg-[#dcfce7] transition-colors"
+                >
+                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#166534]">
+                    {keywordsVisible ? 'JD Keywords Visible' : 'Show JD Keywords'}
+                  </span>
+                </button>
                 <button
                   onClick={openQagManager}
-                  className="h-[40px] px-[14px] rounded-[8px] border border-[#ddd6fe] bg-[#f5f3ff] hover:bg-[#ede9fe] transition-colors"
+                  className="inline-flex h-[40px] items-center justify-center px-[14px] rounded-[10px] border border-[#ddd6fe] bg-[#f5f3ff] hover:bg-[#ede9fe] transition-colors"
                 >
-                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#5b21b6]">
+                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#5b21b6]">
                     Manage QAG Questions
                   </span>
                 </button>
                 <button
                   onClick={handleRecomputeScores}
                   disabled={isRecomputingScores}
-                  className="h-[40px] px-[14px] rounded-[8px] border border-[#c7d2fe] bg-[#eef2ff] hover:bg-[#e0e7ff] disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                  className="inline-flex h-[40px] items-center justify-center gap-2 px-[14px] rounded-[10px] border border-[#c7d2fe] bg-[#eef2ff] hover:bg-[#e0e7ff] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                 >
                   {isRecomputingScores && <Loader2 size={14} className="animate-spin text-[#4338ca]" />}
-                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#4338ca]">
+                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#4338ca]">
                     {isRecomputingScores ? 'Recomputing...' : 'Recompute Scores'}
                   </span>
                 </button>
@@ -802,12 +863,91 @@ export function PositionDetailView({
               </div>
             )}
 
+            {keywordsVisible && (
+              <div className="rounded-[14px] border border-[#dbe4ff] bg-white p-5 shadow-sm">
+                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-['Arimo',sans-serif] text-[16px] font-semibold text-[#1e3a8a]">Extracted JD Keywords</span>
+                    {isGeneratingKeywords && <Loader2 size={14} className="animate-spin text-[#1e3a8a]" />}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isGeneratingKeywords}
+                    onClick={async () => {
+                      setIsGeneratingKeywords(true);
+                      setKeywordsMessage(null);
+                      setKeywordsError(null);
+                      try {
+                        const r = await api.recruiter.generatePositionKeywords(positionId) as any;
+                        const extracted = r?.keywords ?? null;
+                        setJdKeywords(extracted);
+                        setKeywordsMessage(`Keywords extracted via ${r?.model ?? 'LLM'}.`);
+                      } catch (e) {
+                        setKeywordsError(e instanceof Error ? e.message : 'Extraction failed — please retry.');
+                      } finally {
+                        setIsGeneratingKeywords(false);
+                      }
+                    }}
+                    className="h-[30px] px-[12px] rounded-[7px] border border-[#bfdbfe] bg-white text-[12px] text-[#1d4ed8] hover:bg-[#dbeafe] transition-colors disabled:opacity-50"
+                  >
+                    {isGeneratingKeywords ? 'Extracting...' : 'Re-extract'}
+                  </button>
+                </div>
+
+                {keywordsMessage && (
+                  <p className="mb-2 font-['Arimo',sans-serif] text-[12px] text-[#166534]">{keywordsMessage}</p>
+                )}
+                {keywordsError && (
+                  <p className="mb-2 font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{keywordsError}</p>
+                )}
+
+                {!hasAnyKeywords(jdKeywords) ? (
+                  <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                    No keywords are saved for this position yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2 rounded-[12px] border border-[#dbeafe] bg-[#f8fbff] p-3.5">
+                    {KEYWORD_SECTIONS.map(({ key, label, color }) => {
+                      const kws: string[] = Array.isArray((jdKeywords as any)?.[key]) ? (jdKeywords as any)[key] : [];
+                      if (kws.length === 0) return null;
+                      const isExpanded = Boolean(expandedKeywordSections[key]);
+                      return (
+                        <div key={key} className="rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedKeywordSections((prev) => ({ ...prev, [key]: !prev[key] }))}
+                            className="flex w-full items-center justify-between gap-2 text-[12px] text-[#334155] hover:text-[#111827]"
+                          >
+                            <span className="font-['Arimo',sans-serif] font-semibold uppercase tracking-wide">{label}</span>
+                            <span className="flex items-center gap-2">
+                              <span className="rounded-full bg-white border border-[#d1d5db] px-2 py-0 text-[11px] text-[#64748b]">{kws.length}</span>
+                              <span className="text-[11px] text-[#64748b]">{isExpanded ? 'Hide' : 'Show'}</span>
+                            </span>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {kws.map((kw, i) => (
+                                <span key={`${key}-${i}`} className={`inline-flex items-center px-[8px] py-[2px] rounded-[999px] border text-[11px] font-medium ${color}`}>
+                                  {kw}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Import Candidates Section */}
-            <div className="bg-white rounded-[12px] p-6 shadow-sm mb-6">
-              <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
+            <div className="bg-white rounded-[14px] p-6 shadow-sm mb-6 border border-[#eef2ff]">
+              <h3 className="font-['Arimo',sans-serif] text-[19px] text-black mb-4">
                 Import Candidates
               </h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button
                   onClick={() => setShowZipUploadModal(true)}
                   className="flex items-center gap-3 p-4 rounded-[8px] border-2 border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-all"
@@ -840,9 +980,9 @@ export function PositionDetailView({
             </div>
 
             {/* Quick Data Board */}
-            <div className="grid grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
               {/* Total Candidates */}
-              <div className="bg-white rounded-[12px] p-5 shadow-sm">
+              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                     Total Candidates
@@ -855,7 +995,7 @@ export function PositionDetailView({
               </div>
 
               {/* Groups Created */}
-              <div className="bg-white rounded-[12px] p-5 shadow-sm">
+              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                     Groups Created
@@ -868,7 +1008,7 @@ export function PositionDetailView({
               </div>
 
               {/* Assigned Candidates */}
-              <div className="bg-white rounded-[12px] p-5 shadow-sm">
+              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                     Assigned
@@ -887,7 +1027,7 @@ export function PositionDetailView({
               </div>
 
               {/* Unassigned Candidates */}
-              <div className="bg-white rounded-[12px] p-5 shadow-sm">
+              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                     Unassigned
@@ -907,8 +1047,8 @@ export function PositionDetailView({
             </div>
 
             {/* Group Distribution */}
-            <div className="bg-white rounded-[12px] p-6 shadow-sm mb-6">
-              <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
+            <div className="bg-white rounded-[14px] p-6 shadow-sm mb-6 border border-[#eef2ff]">
+              <h3 className="font-['Arimo',sans-serif] text-[19px] text-black mb-4">
                 Candidates by Group
               </h3>
               {groups.length > 0 ? (
@@ -958,9 +1098,9 @@ export function PositionDetailView({
             </div>
 
             {/* All Candidates List */}
-            <div className="bg-white rounded-[12px] p-6 shadow-sm">
+            <div className="bg-white rounded-[14px] p-6 shadow-sm border border-[#eef2ff]">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black">
+                <h3 className="font-['Arimo',sans-serif] text-[19px] text-black">
                   All Candidates ({filteredCandidates.length})
                 </h3>
                 <div className="flex items-center gap-2">
@@ -997,18 +1137,18 @@ export function PositionDetailView({
                     
                     <div
                       key={candidate.id}
-                      className="flex items-center gap-4 p-4 rounded-[10px] bg-[#f9fafb] hover:bg-[#f3f4f6] transition-colors"
+                      className="grid grid-cols-1 lg:grid-cols-[auto_1fr_auto_auto_auto] items-center gap-3 p-4 rounded-[12px] border border-[#e2e8f0] bg-[#f8fafc] hover:bg-[#f1f5f9] transition-colors"
                     >
                       <div className={`w-[4px] h-[44px] rounded-full`} style={{ backgroundColor: candidate.color }}></div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-['Arimo',sans-serif] text-[15px] text-black">
+                        <p className="font-['Arimo',sans-serif] text-[16px] text-[#0f172a]">
                           {candidate.name}
                         </p>
-                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#9ca3af]">
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#64748b]">
                           {candidate.email}
                         </p>
                       </div>
-                      <div className="text-right mr-4">
+                      <div className="text-left lg:text-right lg:mr-2">
                         {(() => {
                           const displayScore = getCandidateDisplayScore(candidate);
                           const displayMatch = getCandidateDisplayMatch(candidate);
@@ -1017,7 +1157,7 @@ export function PositionDetailView({
                               <p className="font-['Arimo',sans-serif] text-[15px] text-black">
                                 Score: {displayScore != null ? displayScore : 'N/A'}
                               </p>
-                              <p className="font-['Arimo',sans-serif] text-[13px] text-[#9ca3af]">
+                              <p className="font-['Arimo',sans-serif] text-[13px] text-[#64748b]">
                                 Match: {displayMatch != null ? `${displayMatch}%` : 'N/A'}
                               </p>
                             </>
@@ -1027,7 +1167,7 @@ export function PositionDetailView({
                       <button
                         onClick={() => handleResetAssessmentTrial(candidate)}
                         disabled={!candidate.applicationId || assessmentResetLoadingApplicationId === String(candidate.applicationId)}
-                        className="h-[40px] px-[14px] rounded-[8px] border border-[#fecaca] bg-[#fff1f2] hover:bg-[#ffe4e6] disabled:opacity-50 disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[13px] text-[#b91c1c] transition-colors"
+                        className="h-[38px] px-[12px] rounded-[8px] border border-[#fecaca] bg-[#fff1f2] hover:bg-[#ffe4e6] disabled:opacity-50 disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[12px] text-[#b91c1c] transition-colors"
                       >
                         {assessmentResetLoadingApplicationId === String(candidate.applicationId) ? 'Resetting...' : 'Reset Trial'}
                       </button>
@@ -1038,7 +1178,7 @@ export function PositionDetailView({
                             : '';
                           navigate(`/recruiter/candidates/${candidate.id}${query}`);
                         }}
-                        className="h-[40px] px-[20px] rounded-[8px] bg-[#5b21b6] hover:bg-[#6d28d9] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
+                        className="h-[38px] px-[16px] rounded-[8px] bg-[#5b21b6] hover:bg-[#6d28d9] font-['Arimo',sans-serif] text-[13px] text-white transition-colors"
                       >
                         View Report
                       </button>
@@ -1836,38 +1976,43 @@ export function PositionDetailView({
               {/* Keywords grid */}
               {jdKeywords && (
                 <div className="space-y-3">
-                  {([
-                    { key: 'technical_skills',    label: 'Technical Skills', color: 'bg-[#ede9fe] text-[#5b21b6] border-[#c4b5fd]' },
-                    { key: 'domain_keywords',     label: 'Domain',           color: 'bg-[#dbeafe] text-[#1e40af] border-[#93c5fd]' },
-                    { key: 'soft_skills',         label: 'Soft Skills',      color: 'bg-[#fef3c7] text-[#92400e] border-[#fcd34d]' },
-                    { key: 'experience_keywords', label: 'Experience',       color: 'bg-[#fce7f3] text-[#9d174d] border-[#f9a8d4]' },
-                    { key: 'education_keywords',  label: 'Education',        color: 'bg-[#ecfdf5] text-[#166534] border-[#86efac]' },
-                    { key: 'seniority_signals',   label: 'Seniority',        color: 'bg-[#fef2f2] text-[#991b1b] border-[#fca5a5]' },
-                  ] as { key: string; label: string; color: string }[]).map(({ key, label, color }) => {
+                  {KEYWORD_SECTIONS.map(({ key, label, color }) => {
                     const kws: string[] = Array.isArray((jdKeywords as any)[key]) ? (jdKeywords as any)[key] : [];
+                    const isExpanded = Boolean(expandedKeywordSections[key]);
                     return (
                       <div key={key}>
-                        <span className="font-['Arimo',sans-serif] text-[10px] font-semibold text-[#9ca3af] uppercase tracking-wide">{label}</span>
-                        <div className="flex flex-wrap gap-1 mt-1 items-center">
-                          {kws.map((kw, i) => (
-                            <span key={i} className={`inline-flex items-center gap-1 px-[8px] py-[2px] rounded-[10px] border text-[11px] font-medium ${color}`}>
-                              {kw}
-                              <button type="button" onClick={() => setJdKeywords(prev => prev ? { ...prev, [key]: kws.filter((_, j) => j !== i) } : prev)} className="hover:opacity-60 leading-none">×</button>
-                            </span>
-                          ))}
-                          <input
-                            type="text" placeholder="+ add" value={(newKeywordInputs as any)[key] || ''}
-                            onChange={e => setNewKeywordInputs(p => ({ ...p, [key]: e.target.value }))}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') {
-                                const val = ((newKeywordInputs as any)[key] || '').trim().toLowerCase();
-                                if (val && !kws.includes(val)) setJdKeywords(p => p ? { ...p, [key]: [...kws, val] } : p);
-                                setNewKeywordInputs(p => ({ ...p, [key]: '' }));
-                              }
-                            }}
-                            className="h-[22px] px-[8px] rounded-[10px] border border-dashed border-[#d1d5db] text-[11px] text-[#6b7280] w-[70px] focus:outline-none focus:border-[#6366f1] bg-white"
-                          />
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedKeywordSections((prev) => ({ ...prev, [key]: !prev[key] }))}
+                          className="flex items-center gap-2 text-[11px] text-[#374151] hover:text-[#111827]"
+                        >
+                          <span className="font-['Arimo',sans-serif] font-semibold text-[#9ca3af] uppercase tracking-wide">{label}</span>
+                          <span className="rounded-full bg-white border border-[#d1d5db] px-2 py-0 text-[10px] text-[#6b7280]">{kws.length}</span>
+                          <span className="text-[11px] text-[#6b7280]">{isExpanded ? 'Hide' : 'Show'}</span>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="flex flex-wrap gap-1 mt-1 items-center">
+                            {kws.map((kw, i) => (
+                              <span key={i} className={`inline-flex items-center gap-1 px-[6px] py-[1px] rounded-[8px] border text-[10px] font-medium ${color}`}>
+                                {kw}
+                                <button type="button" onClick={() => setJdKeywords(prev => prev ? { ...prev, [key]: kws.filter((_, j) => j !== i) } : prev)} className="hover:opacity-60 leading-none">×</button>
+                              </span>
+                            ))}
+                            <input
+                              type="text" placeholder="+ add" value={(newKeywordInputs as any)[key] || ''}
+                              onChange={e => setNewKeywordInputs(p => ({ ...p, [key]: e.target.value }))}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') {
+                                  const val = ((newKeywordInputs as any)[key] || '').trim().toLowerCase();
+                                  if (val && !kws.includes(val)) setJdKeywords(p => p ? { ...p, [key]: [...kws, val] } : p);
+                                  setNewKeywordInputs(p => ({ ...p, [key]: '' }));
+                                }
+                              }}
+                              className="h-[22px] px-[8px] rounded-[10px] border border-dashed border-[#d1d5db] text-[11px] text-[#6b7280] w-[70px] focus:outline-none focus:border-[#6366f1] bg-white"
+                            />
+                          </div>
+                        )}
                       </div>
                     );
                   })}

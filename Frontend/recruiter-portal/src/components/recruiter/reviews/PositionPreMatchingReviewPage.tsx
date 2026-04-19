@@ -42,6 +42,12 @@ export function PositionPreMatchingReviewPage() {
     const [qagArtifactMeta, setQagArtifactMeta] = useState<QAGArtifactMeta | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [sourceFilter, setSourceFilter] = useState<'all' | 'ai' | 'fallback' | 'autofill' | 'manual'>('all');
+    const [submitStage, setSubmitStage] = useState<'idle' | 'saving' | 'finalizing'>('idle');
+    const [jdKeywords, setJdKeywords] = useState<Record<string, string[]> | null>(null);
+    const [isGeneratingKeywords, setIsGeneratingKeywords] = useState(false);
+    const [keywordsMessage, setKeywordsMessage] = useState<string | null>(null);
+    const [keywordsError, setKeywordsError] = useState<string | null>(null);
+    const [approvalCompleted, setApprovalCompleted] = useState(false);
 
     useEffect(() => {
         const load = async () => {
@@ -105,6 +111,11 @@ export function PositionPreMatchingReviewPage() {
         });
     }, [qagQuestions, searchTerm, sourceFilter]);
 
+    const hasQagEdits = useMemo(
+        () => qagQuestions.some((q) => Boolean(q.edited)),
+        [qagQuestions],
+    );
+
     const updateQuestionField = (id: number, patch: Partial<QAGQuestion>) => {
         setQagQuestions((prev) => prev.map((q) => {
             if (q.id !== id) return q;
@@ -161,12 +172,15 @@ export function PositionPreMatchingReviewPage() {
         if (!positionId) return;
         try {
             setSubmitting(true);
+            setSubmitStage('saving');
             await api.recruiter.updatePositionHDEvalQAG(positionId, qagQuestions);
+            setQagQuestions((prev) => prev.map((q) => ({ ...q, edited: false })));
             toast.success('Position pre-matching criteria saved');
         } catch (error) {
             console.error('Failed to save pre-matching criteria draft:', error);
             toast.error('Failed to save criteria draft');
         } finally {
+            setSubmitStage('idle');
             setSubmitting(false);
         }
     };
@@ -175,15 +189,56 @@ export function PositionPreMatchingReviewPage() {
         if (!positionId || !requestId) return;
         try {
             setSubmitting(true);
-            await api.recruiter.updatePositionHDEvalQAG(positionId, qagQuestions);
-            await api.recruiter.reviewRequest(requestId, 'approved', qagReviewNotes || undefined);
-            await api.recruiter.approvePositionHDEvalQAG(positionId);
-            toast.success('Position approved and pre-matching criteria activated for scoring');
-            navigate('/recruiter/reviews');
+            setApprovalCompleted(false);
+            if (hasQagEdits) {
+                setSubmitStage('saving');
+                await api.recruiter.updatePositionHDEvalQAG(positionId, qagQuestions);
+                setQagQuestions((prev) => prev.map((q) => ({ ...q, edited: false })));
+            }
+
+            setSubmitStage('finalizing');
+            await Promise.all([
+                api.recruiter.reviewRequest(requestId, 'approved', qagReviewNotes || undefined),
+                api.recruiter.approvePositionHDEvalQAG(positionId),
+            ]);
+
+            setIsGeneratingKeywords(true);
+            setKeywordsError(null);
+            setKeywordsMessage(null);
+            try {
+                const kwRes = await api.recruiter.generatePositionKeywords(positionId) as any;
+                const generated = kwRes?.keywords ?? null;
+                if (generated && Object.keys(generated).length > 0) {
+                    setJdKeywords(generated);
+                    setKeywordsMessage(`Keywords extracted via ${kwRes?.model ?? 'LLM'}.`);
+                } else {
+                    const existing = await api.recruiter.getPositionKeywords(positionId) as Record<string, string[]>;
+                    if (existing && Object.keys(existing).length > 0) {
+                        setJdKeywords(existing);
+                        setKeywordsMessage('Keywords loaded from saved position keywords.');
+                    } else {
+                        setJdKeywords(null);
+                        setKeywordsError('No keywords were returned from extraction.');
+                    }
+                }
+            } catch (kwErr) {
+                console.error('Keyword extraction error:', kwErr);
+                setKeywordsError(
+                    kwErr instanceof Error
+                        ? kwErr.message
+                        : 'Keyword extraction failed. You can re-open this position and retry extraction from Position Details.'
+                );
+            } finally {
+                setIsGeneratingKeywords(false);
+            }
+
+            setApprovalCompleted(true);
+            toast.success('Position approved and criteria activated. Keywords are shown below.');
         } catch (error) {
             console.error('Failed to approve with pre-matching criteria:', error);
             toast.error('Failed to approve and activate criteria');
         } finally {
+            setSubmitStage('idle');
             setSubmitting(false);
         }
     };
@@ -353,6 +408,52 @@ export function PositionPreMatchingReviewPage() {
                         />
                     </div>
 
+                    <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                        <h2 className="text-base font-semibold text-gray-900">Extracted JD Keywords</h2>
+                        {isGeneratingKeywords && (
+                            <div className="text-sm text-gray-600 flex items-center gap-2">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Extracting keywords from job description...
+                            </div>
+                        )}
+                        {keywordsMessage && (
+                            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                                {keywordsMessage}
+                            </p>
+                        )}
+                        {keywordsError && (
+                            <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
+                                {keywordsError}
+                            </p>
+                        )}
+                        {!isGeneratingKeywords && !keywordsMessage && !keywordsError && (
+                            <p className="text-xs text-gray-500">
+                                Keywords will be extracted automatically right after approval.
+                            </p>
+                        )}
+                        {jdKeywords && Object.keys(jdKeywords).length > 0 && (
+                            <div className="space-y-2">
+                                {Object.entries(jdKeywords).map(([bucket, values]) => (
+                                    <div key={bucket}>
+                                        <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">{bucket.replace(/_/g, ' ')}</p>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {(values || []).map((item) => (
+                                                <span key={`${bucket}-${item}`} className="text-xs px-2 py-1 rounded border border-gray-200 bg-gray-50 text-gray-700">
+                                                    {item}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {approvalCompleted && !isGeneratingKeywords && !keywordsError && (!jdKeywords || Object.keys(jdKeywords).length === 0) && (
+                            <p className="text-xs text-gray-500">
+                                Approval completed, but no keywords were found for this JD.
+                            </p>
+                        )}
+                    </div>
+
                     <div className="rounded-xl border border-gray-200 bg-white p-3">
                         <div className="flex flex-col gap-2">
                             <Button variant="outline" onClick={() => navigate('/recruiter/reviews')} disabled={submitting}>
@@ -362,10 +463,22 @@ export function PositionPreMatchingReviewPage() {
                                 {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                 Save Draft
                             </Button>
-                            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={handleApproveWithQAG} disabled={submitting || approvedCount === 0}>
+                            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={handleApproveWithQAG} disabled={submitting || approvedCount === 0 || approvalCompleted}>
                                 {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                Approve Request + Activate Criteria
+                                {approvalCompleted ? 'Approved' : 'Approve Request + Activate Criteria'}
                             </Button>
+                            {approvalCompleted && (
+                                <Button variant="outline" onClick={() => navigate('/recruiter/reviews')}>
+                                    Back to Technical Reviews
+                                </Button>
+                            )}
+                            {submitting && (
+                                <p className="text-xs text-gray-500 pt-1">
+                                    {submitStage === 'saving'
+                                        ? 'Saving updated criteria...'
+                                        : 'Finalizing approval...'}
+                                </p>
+                            )}
                         </div>
                     </div>
                 </aside>

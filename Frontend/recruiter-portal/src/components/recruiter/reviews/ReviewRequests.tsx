@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../../ui/card';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
 import { api } from '../../../services/api';
 import { toast } from 'sonner';
-import { Loader2, CheckCircle, XCircle, FileText, Calendar, Briefcase, MapPin, DollarSign, ChevronDown, ChevronUp } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle, FileText, Calendar, Briefcase, MapPin, DollarSign, ChevronDown, ChevronUp, Search, Filter } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '../../ui/dialog';
 import { Textarea } from '../../ui/textarea';
 import { Label } from '../../ui/label';
@@ -23,6 +23,8 @@ export function ReviewRequests() {
     const [reviewNotes, setReviewNotes] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [expandedIds, setExpandedIds] = useState<string[]>([]);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [organizationFilter, setOrganizationFilter] = useState<'all' | 'needs_attention' | 'ready'>('all');
 
     useEffect(() => {
         fetchRequests();
@@ -88,6 +90,73 @@ export function ReviewRequests() {
         );
     };
 
+    const normalizeSkills = (skills: unknown): string[] => {
+        if (!Array.isArray(skills)) return [];
+        return skills.map((s) => String(s || '').trim()).filter(Boolean);
+    };
+
+    const getMissingFieldCount = (req: any) => {
+        const data = req?.position_data || {};
+        const descriptionMissing = !String(data.job_description || '').trim();
+        const skillsMissing = normalizeSkills(data.required_skills).length === 0;
+        const salaryMissing = Number(data.salary_min || 0) <= 0 || Number(data.salary_max || 0) <= 0;
+        return [descriptionMissing, skillsMissing, salaryMissing].filter(Boolean).length;
+    };
+
+    const formatDate = (value?: string) => {
+        if (!value) return '-';
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? '-' : d.toLocaleDateString();
+    };
+
+    const formatCurrency = (value: unknown) => {
+        const num = typeof value === 'number' ? value : Number(value);
+        if (!Number.isFinite(num) || num <= 0) return 'N/A';
+        return `$${num.toLocaleString()}`;
+    };
+
+    const sortedRequests = useMemo(() => {
+        return [...requests].sort((a, b) => {
+            const aTime = new Date(a.created_at || 0).getTime();
+            const bTime = new Date(b.created_at || 0).getTime();
+            return bTime - aTime;
+        });
+    }, [requests]);
+
+    const filteredRequests = useMemo(() => {
+        const term = searchQuery.trim().toLowerCase();
+        return sortedRequests.filter((req) => {
+            const data = req?.position_data || {};
+            const skills = normalizeSkills(data.required_skills).join(' ').toLowerCase();
+            const title = String(req?.position_title || '').toLowerCase();
+            const description = String(data.job_description || '').toLowerCase();
+            const matchesSearch = !term || title.includes(term) || skills.includes(term) || description.includes(term);
+
+            const missingCount = getMissingFieldCount(req);
+            const matchesOrganization =
+                organizationFilter === 'all' ||
+                (organizationFilter === 'needs_attention' && missingCount > 0) ||
+                (organizationFilter === 'ready' && missingCount === 0);
+
+            return matchesSearch && matchesOrganization;
+        });
+    }, [sortedRequests, searchQuery, organizationFilter]);
+
+    const requestsNeedingAttention = useMemo(
+        () => filteredRequests.filter((req) => getMissingFieldCount(req) > 0),
+        [filteredRequests],
+    );
+
+    const readyRequests = useMemo(
+        () => filteredRequests.filter((req) => getMissingFieldCount(req) === 0),
+        [filteredRequests],
+    );
+
+    const totalMissingFields = useMemo(
+        () => requests.reduce((sum, req) => sum + getMissingFieldCount(req), 0),
+        [requests],
+    );
+
     if (isLoading) {
         return (
             <div className="flex h-96 items-center justify-center">
@@ -97,11 +166,72 @@ export function ReviewRequests() {
     }
 
     return (
-        <div className="p-8 max-w-7xl mx-auto">
-            <div className="mb-8">
+        <div className="p-8 max-w-7xl mx-auto space-y-6">
+            <div className="mb-1">
                 <h1 className="text-3xl font-bold text-gray-900 mb-2">Technical Reviews</h1>
                 <p className="text-gray-500">Review and approve position requests assigned to you.</p>
             </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Card className="p-4 border-indigo-100 bg-indigo-50/40">
+                    <p className="text-xs uppercase tracking-wider text-indigo-700 font-semibold">Pending Reviews</p>
+                    <p className="text-3xl font-bold text-indigo-900 mt-1">{requests.length}</p>
+                </Card>
+                <Card className="p-4 border-amber-100 bg-amber-50/40">
+                    <p className="text-xs uppercase tracking-wider text-amber-700 font-semibold">Need Attention</p>
+                    <p className="text-3xl font-bold text-amber-900 mt-1">{requests.filter((req) => getMissingFieldCount(req) > 0).length}</p>
+                </Card>
+                <Card className="p-4 border-emerald-100 bg-emerald-50/40">
+                    <p className="text-xs uppercase tracking-wider text-emerald-700 font-semibold">Ready To Approve</p>
+                    <p className="text-3xl font-bold text-emerald-900 mt-1">{requests.filter((req) => getMissingFieldCount(req) === 0).length}</p>
+                </Card>
+            </div>
+
+            <Card className="p-4">
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-center">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <input
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Search by title, description, or skills"
+                            className="w-full pl-9 pr-3 h-10 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                        />
+                    </div>
+
+                    <div className="flex items-center gap-2 h-10 px-3 rounded-xl border border-gray-200 bg-white text-sm text-gray-600">
+                        <Filter size={14} />
+                        <span>Status</span>
+                    </div>
+
+                    <div className="flex gap-2">
+                        <Button
+                            variant={organizationFilter === 'all' ? 'default' : 'outline'}
+                            className="rounded-xl"
+                            onClick={() => setOrganizationFilter('all')}
+                        >
+                            All
+                        </Button>
+                        <Button
+                            variant={organizationFilter === 'needs_attention' ? 'default' : 'outline'}
+                            className="rounded-xl"
+                            onClick={() => setOrganizationFilter('needs_attention')}
+                        >
+                            Needs Attention
+                        </Button>
+                        <Button
+                            variant={organizationFilter === 'ready' ? 'default' : 'outline'}
+                            className="rounded-xl"
+                            onClick={() => setOrganizationFilter('ready')}
+                        >
+                            Ready
+                        </Button>
+                    </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-3">
+                    Showing {filteredRequests.length} of {requests.length} requests • Missing core fields detected: {totalMissingFields}
+                </p>
+            </Card>
 
             {requests.length === 0 ? (
                 <Card className="p-12 flex flex-col items-center justify-center text-center">
@@ -115,108 +245,57 @@ export function ReviewRequests() {
                 </Card>
             ) : (
                 <div className="space-y-6">
-                    {requests.map((req) => (
-                        <Card key={req.id} className="overflow-hidden border-2 border-transparent hover:border-indigo-100 transition-all duration-300 shadow-sm hover:shadow-md">
-                            <div className="p-6">
-                                <div className="flex items-start justify-between mb-4">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center">
-                                            <FileText className="w-6 h-6 text-indigo-600" />
-                                        </div>
-                                        <div>
-                                            <h3 className="text-lg font-bold text-gray-900">
-                                                {req.position_title || 'Untitled Position'}
-                                            </h3>
-                                            <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
-                                                <span className="flex items-center gap-1">
-                                                    <Calendar size={14} />
-                                                    Submitted {new Date(req.created_at).toLocaleDateString()}
-                                                </span>
-                                                <span>•</span>
-                                                <Badge variant="secondary" className="bg-amber-50 text-amber-700 border-amber-100">
-                                                    Pending Review
-                                                </Badge>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="flex gap-3">
-                                        <Button
-                                            variant="ghost"
-                                            className="text-gray-600 hover:bg-gray-100"
-                                            onClick={() => handleEdit(req)}
-                                        >
-                                            <Briefcase className="w-4 h-4 mr-2" />
-                                            Edit
-                                        </Button>
-                                        <Button
-                                            variant="outline"
-                                            className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300"
-                                            onClick={() => handleAction(req, 'rejected')}
-                                        >
-                                            <XCircle className="w-4 h-4 mr-2" />
-                                            Reject
-                                        </Button>
-                                        <Button
-                                            className="bg-green-600 hover:bg-green-700 text-white"
-                                            onClick={() => handleAction(req, 'approved')}
-                                        >
-                                            <CheckCircle className="w-4 h-4 mr-2" />
-                                            Approve + QAG
-                                        </Button>
-                                    </div>
-                                </div>
+                    {filteredRequests.length === 0 && (
+                        <Card className="p-10 text-center text-gray-500">No requests match your current filter.</Card>
+                    )}
 
-                                {/* Position Summary / Collapsible Details */}
-                                <div className="bg-gray-50 rounded-xl p-4">
-                                    <div className="flex items-center justify-between cursor-pointer" onClick={() => toggleExpand(req.id)}>
-                                        <span className="font-medium text-gray-700">Position Details</span>
-                                        {expandedIds.includes(req.id) ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
-                                    </div>
-
-                                    {expandedIds.includes(req.id) && req.position_data && (
-                                        <div className="mt-4 pt-4 border-t border-gray-200 grid grid-cols-2 gap-6 animate-in fade-in slide-in-from-top-2 duration-300">
-                                            <div className="space-y-4">
-                                                <div>
-                                                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Description</span>
-                                                    <p className="text-sm text-gray-700 whitespace-pre-line">{req.position_data.job_description}</p>
-                                                </div>
-                                                <div>
-                                                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Required Skills</span>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {req.position_data.required_skills?.map((skill: string) => (
-                                                            <Badge key={skill} variant="outline" className="bg-white">{skill}</Badge>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="space-y-3">
-                                                <div className="flex items-center gap-3 text-sm">
-                                                    <Briefcase className="w-4 h-4 text-gray-400" />
-                                                    <span className="text-gray-600">Experience:</span>
-                                                    <span className="font-medium text-gray-900">{req.position_data.experience_level} ({req.position_data.years_of_experience} years)</span>
-                                                </div>
-                                                <div className="flex items-center gap-3 text-sm">
-                                                    <MapPin className="w-4 h-4 text-gray-400" />
-                                                    <span className="text-gray-600">Location:</span>
-                                                    <span className="font-medium text-gray-900">{req.position_data.location_type} {req.position_data.location_data?.office_location ? `(${req.position_data.location_data.office_location})` : ''}</span>
-                                                </div>
-                                                <div className="flex items-center gap-3 text-sm">
-                                                    <DollarSign className="w-4 h-4 text-gray-400" />
-                                                    <span className="text-gray-600">Salary:</span>
-                                                    <span className="font-medium text-gray-900">${req.position_data.salary_min?.toLocaleString()} - ${req.position_data.salary_max?.toLocaleString()}</span>
-                                                </div>
-                                                <div className="flex items-center gap-3 text-sm">
-                                                    <Briefcase className="w-4 h-4 text-gray-400" />
-                                                    <span className="text-gray-600">Type:</span>
-                                                    <span className="font-medium text-gray-900 capitalize">{req.position_data.employment_type}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
+                    {requestsNeedingAttention.length > 0 && (
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                                <h2 className="text-lg font-semibold text-amber-800">Needs Attention ({requestsNeedingAttention.length})</h2>
+                                <p className="text-xs text-gray-500">Missing description, skills, or salary values</p>
                             </div>
-                        </Card>
-                    ))}
+                            {requestsNeedingAttention.map((req) => (
+                                <Card key={req.id} className="overflow-hidden border-2 border-amber-100 bg-amber-50/20 shadow-sm">
+                                    <div className="p-6">
+                                        <RequestRow
+                                            req={req}
+                                            expanded={expandedIds.includes(req.id)}
+                                            onToggleExpand={toggleExpand}
+                                            onEdit={handleEdit}
+                                            onAction={handleAction}
+                                            formatDate={formatDate}
+                                            normalizeSkills={normalizeSkills}
+                                            formatCurrency={formatCurrency}
+                                            isAttention
+                                        />
+                                    </div>
+                                </Card>
+                            ))}
+                        </div>
+                    )}
+
+                    {readyRequests.length > 0 && (
+                        <div className="space-y-4">
+                            <h2 className="text-lg font-semibold text-emerald-800">Ready For Review ({readyRequests.length})</h2>
+                            {readyRequests.map((req) => (
+                                <Card key={req.id} className="overflow-hidden border-2 border-transparent hover:border-indigo-100 transition-all duration-300 shadow-sm hover:shadow-md">
+                                    <div className="p-6">
+                                        <RequestRow
+                                            req={req}
+                                            expanded={expandedIds.includes(req.id)}
+                                            onToggleExpand={toggleExpand}
+                                            onEdit={handleEdit}
+                                            onAction={handleAction}
+                                            formatDate={formatDate}
+                                            normalizeSkills={normalizeSkills}
+                                            formatCurrency={formatCurrency}
+                                        />
+                                    </div>
+                                </Card>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -269,5 +348,142 @@ export function ReviewRequests() {
                 />
             )}
         </div>
+    );
+}
+
+type RequestRowProps = {
+    req: any;
+    expanded: boolean;
+    isAttention?: boolean;
+    onToggleExpand: (id: string) => void;
+    onEdit: (req: any) => void;
+    onAction: (req: any, action: 'approved' | 'rejected') => void;
+    formatDate: (value?: string) => string;
+    normalizeSkills: (skills: unknown) => string[];
+    formatCurrency: (value: unknown) => string;
+};
+
+function RequestRow({
+    req,
+    expanded,
+    isAttention,
+    onToggleExpand,
+    onEdit,
+    onAction,
+    formatDate,
+    normalizeSkills,
+    formatCurrency,
+}: RequestRowProps) {
+    const positionData = req.position_data || {};
+    const skills = normalizeSkills(positionData.required_skills);
+
+    return (
+        <>
+            <div className="flex items-start justify-between mb-4 gap-4">
+                <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center">
+                        <FileText className="w-6 h-6 text-indigo-600" />
+                    </div>
+                    <div className="min-w-0">
+                        <h3 className="text-lg font-bold text-gray-900 truncate">
+                            {req.position_title || 'Untitled Position'}
+                        </h3>
+                        <div className="flex items-center gap-2 text-sm text-gray-500 mt-1 flex-wrap">
+                            <span className="flex items-center gap-1">
+                                <Calendar size={14} />
+                                Submitted {formatDate(req.created_at)}
+                            </span>
+                            <span>•</span>
+                            <Badge variant="secondary" className="bg-amber-50 text-amber-700 border-amber-100">
+                                Pending Review
+                            </Badge>
+                            {isAttention && (
+                                <Badge variant="secondary" className="bg-red-50 text-red-700 border-red-100">
+                                    Missing Data
+                                </Badge>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex gap-2 shrink-0">
+                    <Button
+                        variant="ghost"
+                        className="text-gray-600 hover:bg-gray-100"
+                        onClick={() => onEdit(req)}
+                    >
+                        <Briefcase className="w-4 h-4 mr-2" />
+                        Edit
+                    </Button>
+                    <Button
+                        variant="outline"
+                        className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300"
+                        onClick={() => onAction(req, 'rejected')}
+                    >
+                        <XCircle className="w-4 h-4 mr-2" />
+                        Reject
+                    </Button>
+                    <Button
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                        onClick={() => onAction(req, 'approved')}
+                    >
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Approve + QAG
+                    </Button>
+                </div>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl p-4">
+                <div className="flex items-center justify-between cursor-pointer" onClick={() => onToggleExpand(req.id)}>
+                    <span className="font-medium text-gray-700">Position Details</span>
+                    {expanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                </div>
+
+                {expanded && (
+                    <div className="mt-4 pt-4 border-t border-gray-200 grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="space-y-4">
+                            <div>
+                                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Description</span>
+                                <p className="text-sm text-gray-700 whitespace-pre-line">{positionData.job_description || 'No description provided.'}</p>
+                            </div>
+                            <div>
+                                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Required Skills</span>
+                                <div className="flex flex-wrap gap-2">
+                                    {skills.length > 0 ? skills.map((skill) => (
+                                        <Badge key={skill} variant="outline" className="bg-white">{skill}</Badge>
+                                    )) : <span className="text-sm text-gray-500">No required skills provided.</span>}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-3 text-sm">
+                                <Briefcase className="w-4 h-4 text-gray-400" />
+                                <span className="text-gray-600">Experience:</span>
+                                <span className="font-medium text-gray-900">
+                                    {positionData.experience_level || 'N/A'} ({positionData.years_of_experience ?? 0} years)
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-3 text-sm">
+                                <MapPin className="w-4 h-4 text-gray-400" />
+                                <span className="text-gray-600">Location:</span>
+                                <span className="font-medium text-gray-900">
+                                    {positionData.location_type || 'N/A'} {positionData.location_data?.office_location ? `(${positionData.location_data.office_location})` : ''}
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-3 text-sm">
+                                <DollarSign className="w-4 h-4 text-gray-400" />
+                                <span className="text-gray-600">Salary:</span>
+                                <span className="font-medium text-gray-900">{formatCurrency(positionData.salary_min)} - {formatCurrency(positionData.salary_max)}</span>
+                            </div>
+                            <div className="flex items-center gap-3 text-sm">
+                                <Briefcase className="w-4 h-4 text-gray-400" />
+                                <span className="text-gray-600">Type:</span>
+                                <span className="font-medium text-gray-900 capitalize">{positionData.employment_type || 'N/A'}</span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </>
     );
 }
