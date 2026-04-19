@@ -558,7 +558,14 @@ export const recruiterService = {
 
     // AI Features
     generateAIQuestion: async (
-        data: { question_type: string, topic: string, difficulty: string, context?: string },
+        data: {
+            question_type: string;
+            topic: string;
+            difficulty: string;
+            context?: string;
+            use_case?: string;
+            metadata?: Record<string, any>;
+        },
         signal?: AbortSignal
     ) => {
         return fetchAPI<any>('/recruiter/ai/generate-question', {
@@ -569,11 +576,18 @@ export const recruiterService = {
         });
     },
 
-    refineAIQuestion: async (questionText: string) => {
+    refineAIQuestion: async (
+        questionText: string,
+        options?: { useCase?: string; metadata?: Record<string, any> }
+    ) => {
         return fetchAPI<{ refinedText: string }>('/recruiter/ai/refine-question', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question_text: questionText })
+            body: JSON.stringify({
+                question_text: questionText,
+                use_case: options?.useCase || '',
+                metadata: options?.metadata || undefined,
+            })
         });
     },
 

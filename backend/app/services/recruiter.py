@@ -7,6 +7,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from app.core.exceptions import NotFoundException, UnauthorizedException
+from pathlib import Path
 
 from app.models import (
     User, Project, Position, CandidateApplication, CandidateGroup, 
@@ -2604,9 +2605,68 @@ class RecruiterService:
     # AI FEATURES (OLLAMA)
     # =========================================================================
 
-    async def generate_ai_question(self, question_type: str, topic: str, difficulty: str, context: str = "") -> dict:
+    @staticmethod
+    def _recruiter_prompt_dir() -> Path:
+        return Path(__file__).resolve().parents[3] / "ai-service" / "prompts" / "llm"
+
+    def _render_recruiter_prompt(self, template_name: str, fallback: str, values: dict[str, Any]) -> str:
+        template = fallback
+        path = self._recruiter_prompt_dir() / template_name
+        try:
+            if path.exists():
+                template = path.read_text(encoding="utf-8")
+        except Exception:
+            template = fallback
+
+        for key, value in values.items():
+            token = f"{{{{{key}}}}}"
+            if isinstance(value, (dict, list)):
+                rendered = json.dumps(value, ensure_ascii=False)
+            else:
+                rendered = str(value)
+            template = template.replace(token, rendered)
+        return template
+
+    @staticmethod
+    def _extract_json_payload(raw_content: str) -> dict[str, Any]:
+        content = (raw_content or "").strip()
+        if "```json" in content:
+            content = content.split("```json", 1)[1].split("```", 1)[0].strip()
+        elif content.startswith("```") and "```" in content[3:]:
+            content = content.split("```", 2)[1].strip()
+
+        try:
+            payload = json.loads(content)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            pass
+
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                payload = json.loads(content[start:end + 1])
+                if isinstance(payload, dict):
+                    return payload
+            except Exception:
+                pass
+
+        return {}
+
+    async def generate_ai_question(
+        self,
+        question_type: str,
+        topic: str,
+        difficulty: str,
+        context: str = "",
+        use_case: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict:
         """Generate a technical or interview question using Ollama."""
         llm = get_llm("ollama")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        use_case = (use_case or "").strip().lower()
 
         def _derive_yes_no_checks(payload: dict) -> list[dict]:
             rubric = str(payload.get("rubric") or "").strip()
@@ -2632,29 +2692,130 @@ class RecruiterService:
                 {"id": idx + 1, "check": check, "weight": 0.10}
                 for idx, check in enumerate(candidates[:10])
             ]
-        
-        prompts = {
-            "mcq": f"Generate a multiple-choice question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, options (array of 4), correctAnswer (index 0-3), explanation, evidence, referenceAnswer, difficulty.",
-            "essay": f"Generate an essay or theoretical question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, maxWords, rubric, expectedKeywords (array), evidence, referenceAnswer, rubricYesNoChecks (array of 10 items with id/check/weight), difficulty.",
-            "code": f"Generate a coding problem about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText (requirements), language, codeTemplate (with a TODO), testCases (array of {{input, expectedOutput, isHidden, points}}), difficulty.",
-            "interview": f"Generate 2 interview questions about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with a 'questions' key containing an array of {{question, criteria (array), keyPoints (array), difficulty}}."
+
+        fallback_prompts = {
+            "mcq": (
+                "Generate one multiple-choice assessment question. "
+                "Topic: {{TOPIC}}. Difficulty: {{DIFFICULTY}}. Context: {{CONTEXT}}. "
+                "Return ONLY JSON with keys questionText, options (4), correctAnswer (0-3), explanation, evidence, referenceAnswer, difficulty."
+            ),
+            "essay": (
+                "Generate one essay assessment question. "
+                "Topic: {{TOPIC}}. Difficulty: {{DIFFICULTY}}. Context: {{CONTEXT}}. "
+                "Return ONLY JSON with keys questionText, maxWords, rubric, expectedKeywords, evidence, referenceAnswer, rubricYesNoChecks (10 items id/check/weight), difficulty."
+            ),
+            "code": (
+                "Generate one coding assessment question. "
+                "Topic: {{TOPIC}}. Difficulty: {{DIFFICULTY}}. Context: {{CONTEXT}}. "
+                "Return ONLY JSON with keys questionText, language, codeTemplate, testCases (input, expectedOutput, isHidden, points), difficulty."
+            ),
+            "interview": (
+                "Generate interview questions for Topic: {{TOPIC}}. Difficulty: {{DIFFICULTY}}. Context: {{CONTEXT}}. "
+                "Return ONLY JSON with key questions as array of objects {question, criteria, keyPoints, difficulty}."
+            ),
+            "recorded_interview_suggest": (
+                "Generate recorded interview screening questions for group/role {{TOPIC}}. "
+                "Context: {{CONTEXT}}. Return ONLY JSON with key questions as array of {question, duration_seconds}."
+            ),
+            "live_interview_setup": (
+                "Generate live interview setup content. Topic: {{TOPIC}}. Difficulty: {{DIFFICULTY}}. "
+                "Context: {{CONTEXT}}. Metadata: {{METADATA_JSON}}. "
+                "Return ONLY JSON with keys systemPrompt and sections (array of {title, duration_minutes})."
+            ),
         }
-        
-        prompt = prompts.get(question_type, prompts["mcq"])
+
+        if use_case == "recorded_interview_suggest":
+            template_name = "recorded_interview_suggest.md"
+            fallback = fallback_prompts["recorded_interview_suggest"]
+        elif use_case == "live_interview_setup":
+            template_name = "live_interview_setup.md"
+            fallback = fallback_prompts["live_interview_setup"]
+        elif question_type == "mcq":
+            template_name = "assessment_generate_mcq.md"
+            fallback = fallback_prompts["mcq"]
+        elif question_type == "essay":
+            template_name = "assessment_generate_essay.md"
+            fallback = fallback_prompts["essay"]
+        elif question_type == "code":
+            template_name = "assessment_generate_code.md"
+            fallback = fallback_prompts["code"]
+        else:
+            template_name = "interview_generate_questions.md"
+            fallback = fallback_prompts["interview"]
+
+        prompt = self._render_recruiter_prompt(
+            template_name,
+            fallback,
+            {
+                "QUESTION_TYPE": question_type,
+                "TOPIC": topic,
+                "DIFFICULTY": difficulty,
+                "CONTEXT": context,
+                "USE_CASE": use_case,
+                "METADATA_JSON": metadata,
+            },
+        )
+
         try:
             response = await llm.ainvoke(prompt)
-            # Try to extract JSON from response content
-            content = response.content
-            # Basic cleanup if LLM returns markdown blocks
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
-                
-            payload = json.loads(content)
+            payload = self._extract_json_payload(getattr(response, "content", ""))
 
             if not isinstance(payload, dict):
                 return {"questionText": f"Stub: {topic} ({difficulty})", "type": question_type, "difficulty": difficulty}
+
+            if use_case == "recorded_interview_suggest":
+                items = payload.get("questions") if isinstance(payload.get("questions"), list) else []
+                normalized_questions: list[dict[str, Any]] = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    text_val = str(item.get("question") or "").strip()
+                    if not text_val:
+                        continue
+                    duration_val = int(item.get("duration_seconds") or 120)
+                    normalized_questions.append(
+                        {
+                            "question": text_val,
+                            "duration_seconds": max(60, min(300, duration_val)),
+                        }
+                    )
+                if not normalized_questions:
+                    normalized_questions = [
+                        {"question": f"Tell us about your background in {topic}.", "duration_seconds": 120},
+                        {"question": f"Describe a challenge you solved related to {topic}.", "duration_seconds": 180},
+                    ]
+                return {"questions": normalized_questions}
+
+            if use_case == "live_interview_setup":
+                system_prompt = str(payload.get("systemPrompt") or "").strip()
+                if not system_prompt:
+                    system_prompt = (
+                        "You are a structured live interviewer. Ask concise, role-relevant questions, "
+                        "probe with follow-ups, and stay objective in scoring."
+                    )
+
+                sections_raw = payload.get("sections") if isinstance(payload.get("sections"), list) else []
+                sections: list[dict[str, Any]] = []
+                for idx, section in enumerate(sections_raw[:6]):
+                    if not isinstance(section, dict):
+                        continue
+                    title = str(section.get("title") or "").strip() or f"Section {idx + 1}"
+                    duration = int(section.get("duration_minutes") or 5)
+                    sections.append(
+                        {
+                            "id": str(idx + 1),
+                            "title": title,
+                            "duration": max(2, min(30, duration)),
+                        }
+                    )
+
+                if not sections:
+                    sections = [
+                        {"id": "1", "title": "Introduction & Context", "duration": 5},
+                        {"id": "2", "title": "Core Evaluation", "duration": 15},
+                        {"id": "3", "title": "Wrap-up", "duration": 5},
+                    ]
+                return {"systemPrompt": system_prompt, "sections": sections}
 
             if question_type in {"mcq", "essay", "code"}:
                 payload.setdefault("type", question_type)
@@ -2710,6 +2871,27 @@ class RecruiterService:
             return payload
         except Exception as e:
             print(f"Ollama generation failed: {e}")
+            if use_case == "recorded_interview_suggest":
+                return {
+                    "questions": [
+                        {"question": f"Tell me about your experience with {topic}.", "duration_seconds": 120},
+                        {"question": f"Describe a difficult scenario you handled in {topic}.", "duration_seconds": 180},
+                    ],
+                    "error": str(e),
+                }
+            if use_case == "live_interview_setup":
+                return {
+                    "systemPrompt": (
+                        "You are a professional live interviewer. Keep questions role-focused, ask follow-ups, "
+                        "and evaluate consistently."
+                    ),
+                    "sections": [
+                        {"id": "1", "title": "Introduction", "duration": 5},
+                        {"id": "2", "title": "Main Evaluation", "duration": 15},
+                        {"id": "3", "title": "Closing", "duration": 5},
+                    ],
+                    "error": str(e),
+                }
             # Fallback mock for safety
             fallback: dict = {
                 "questionText": f"Stub: {topic} ({difficulty})",
@@ -2744,14 +2926,50 @@ class RecruiterService:
                 )
             return fallback
 
-    async def refine_question_with_ai(self, question_text: str) -> str:
+    async def refine_question_with_ai(
+        self,
+        question_text: str,
+        use_case: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
         """Refine or polish a question text using Ollama."""
         llm = get_llm("ollama")
-        prompt = f"Refine and professionalize the following interview question, making it clear and concise: '{question_text}'. Return ONLY the refined question text."
-        
+        metadata = metadata if isinstance(metadata, dict) else {}
+        use_case = (use_case or "").strip().lower()
+
+        template_name = {
+            "assessment_question": "assessment_refine_question.md",
+            "assessment_rubric": "assessment_refine_rubric.md",
+            "recorded_interview_question": "recorded_interview_refine_question.md",
+            "recorded_interview_instructions": "recorded_interview_refine_instructions.md",
+            "live_interview_system_prompt": "live_interview_refine_system_prompt.md",
+            "live_interview_flow_instructions": "live_interview_refine_flow_instructions.md",
+        }.get(use_case, "assessment_refine_question.md")
+
+        fallback_prompt = (
+            "Refine the following text for recruiter workflows. Keep intent unchanged, improve clarity and professionalism, "
+            "and return ONLY the refined text.\n"
+            "Use case: {{USE_CASE}}\n"
+            "Metadata: {{METADATA_JSON}}\n"
+            "Text: {{QUESTION_TEXT}}"
+        )
+
+        prompt = self._render_recruiter_prompt(
+            template_name,
+            fallback_prompt,
+            {
+                "QUESTION_TEXT": question_text,
+                "USE_CASE": use_case,
+                "METADATA_JSON": metadata,
+            },
+        )
+
         try:
             response = await llm.ainvoke(prompt)
-            return response.content.strip()
+            refined = str(getattr(response, "content", "")).strip()
+            if refined.startswith("```") and refined.endswith("```"):
+                refined = refined.strip("`").strip()
+            return refined or question_text
         except Exception as e:
             print(f"Ollama refinement failed: {e}")
-            return f"Refined: {question_text}"
+            return question_text

@@ -946,7 +946,12 @@ async def generate_ai_question(
     """Generate an interview/technical question using Ollama."""
     service = RecruiterService(session, current_user)
     return await service.generate_ai_question(
-        data.question_type, data.topic, data.difficulty, data.context
+        data.question_type,
+        data.topic,
+        data.difficulty,
+        data.context,
+        data.use_case,
+        data.metadata,
     )
 
 
@@ -958,5 +963,5 @@ async def refine_question_with_ai(
 ):
     """Refine or professionalize a question text using Ollama."""
     service = RecruiterService(session, current_user)
-    refined_text = await service.refine_question_with_ai(data.question_text)
+    refined_text = await service.refine_question_with_ai(data.question_text, data.use_case, data.metadata)
     return {"refinedText": refined_text}

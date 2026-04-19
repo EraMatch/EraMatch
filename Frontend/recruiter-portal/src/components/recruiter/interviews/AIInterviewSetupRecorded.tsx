@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ChevronLeft, Clock, RotateCcw, FileText } from 'lucide-react';
+import { ChevronLeft, Clock, RotateCcw, FileText, Sparkles, Loader2 } from 'lucide-react';
+import { recruiterService } from '../../../services/recruiter.service';
 
 interface AIInterviewSetupRecordedProps {
   groupName: string;
@@ -10,6 +11,7 @@ interface AIInterviewSetupRecordedProps {
 export function AIInterviewSetupRecorded({ groupName, onBack, onSetupQuestions }: AIInterviewSetupRecordedProps) {
   const [timePerQuestion, setTimePerQuestion] = useState(120);
   const [maxRetries, setMaxRetries] = useState(2);
+  const [isRefiningInstructions, setIsRefiningInstructions] = useState(false);
   const [candidateInstructions, setCandidateInstructions] = useState(
     'Please answer each question thoughtfully. You will have 2 minutes per question and can re-record your answer up to 2 times if needed.'
   );
@@ -126,6 +128,33 @@ export function AIInterviewSetupRecorded({ groupName, onBack, onSetupQuestions }
               className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
               placeholder="Enter instructions for candidates..."
             />
+            <button
+              type="button"
+              onClick={async () => {
+                if (!candidateInstructions.trim()) return;
+                setIsRefiningInstructions(true);
+                try {
+                  const response = await recruiterService.refineAIQuestion(candidateInstructions, {
+                    useCase: 'recorded_interview_instructions',
+                    metadata: {
+                      group_name: groupName,
+                      time_per_question: timePerQuestion,
+                      max_retries: maxRetries,
+                    },
+                  });
+                  setCandidateInstructions((response?.refinedText || candidateInstructions).trim() || candidateInstructions);
+                } catch (error) {
+                  console.error('Failed to refine recorded interview instructions:', error);
+                } finally {
+                  setIsRefiningInstructions(false);
+                }
+              }}
+              disabled={isRefiningInstructions || !candidateInstructions.trim()}
+              className="mt-2 flex items-center gap-2 h-[30px] px-[16px] rounded-[8px] border border-dashed border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-colors disabled:opacity-50"
+            >
+              {isRefiningInstructions ? <Loader2 size={14} className="animate-spin text-[#6366f1]" /> : <Sparkles size={14} className="text-[#6366f1]" />}
+              <span className="font-['Arimo',sans-serif] text-[13px] text-[#6366f1]">Refine with AI</span>
+            </button>
             <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mt-2">
               These instructions will be displayed to candidates before they begin the interview
             </p>

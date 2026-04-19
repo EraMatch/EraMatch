@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { FileText, Save, ArrowLeft, Target, MessageSquare, Cpu, Users, Layers } from 'lucide-react';
+import { FileText, Save, ArrowLeft, Target, MessageSquare, Cpu, Users, Layers, Sparkles, Loader2 } from 'lucide-react';
+import { recruiterService } from '../../../services/recruiter.service';
 
 export interface LiveInterviewFlowSettings {
     instructions: string;
@@ -91,6 +92,7 @@ export function LiveInterviewFlowSetup({
         questionCount: initialSettings?.questionCount || 5,
         hintPolicy: initialSettings?.hintPolicy || 'on_struggle',
     });
+    const [isRefiningInstructions, setIsRefiningInstructions] = useState(false);
 
     const handleThemeChange = (theme: 'technical' | 'interpersonal' | 'mixed') => {
         // Reset focus areas to sensible defaults when switching theme
@@ -266,6 +268,38 @@ export function LiveInterviewFlowSetup({
                         placeholder="e.g. This interview is for a Senior Backend Engineering role. Focus on distributed systems and API design. If the candidate mentions React, redirect them to backend topics."
                         className="w-full h-[140px] p-3 text-[14px] text-gray-700 border border-[#d1d5db] rounded-[8px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]/20 focus:border-[#8b5cf6] resize-y"
                     />
+                    <button
+                        type="button"
+                        onClick={async () => {
+                            if (!settings.instructions.trim()) return;
+                            setIsRefiningInstructions(true);
+                            try {
+                                const response = await recruiterService.refineAIQuestion(settings.instructions, {
+                                    useCase: 'live_interview_flow_instructions',
+                                    metadata: {
+                                        group_name: groupName,
+                                        interview_theme: settings.interviewTheme,
+                                        focus_areas: settings.focusAreas,
+                                        question_count: settings.questionCount,
+                                        hint_policy: settings.hintPolicy,
+                                    },
+                                });
+                                setSettings((prev) => ({
+                                    ...prev,
+                                    instructions: (response?.refinedText || prev.instructions).trim() || prev.instructions,
+                                }));
+                            } catch (error) {
+                                console.error('Failed to refine live interview flow instructions:', error);
+                            } finally {
+                                setIsRefiningInstructions(false);
+                            }
+                        }}
+                        disabled={isRefiningInstructions || !settings.instructions.trim()}
+                        className="mt-2 flex items-center gap-2 h-[30px] px-[16px] rounded-[8px] border border-dashed border-[#e5e7eb] hover:border-[#8b5cf6] hover:bg-[#faf5ff] transition-colors disabled:opacity-50"
+                    >
+                        {isRefiningInstructions ? <Loader2 className="w-4 h-4 animate-spin text-[#8b5cf6]" /> : <Sparkles className="w-4 h-4 text-[#8b5cf6]" />}
+                        <span className="text-[13px] font-medium text-[#8b5cf6]">Refine with AI</span>
+                    </button>
                 </div>
 
             </div>
