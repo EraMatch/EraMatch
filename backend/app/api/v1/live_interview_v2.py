@@ -232,15 +232,26 @@ async def get_session_token(
     2. Create (or reuse) a LiV2Session record.
     3. Return a signed LiveKit JWT so the candidate can join the room.
     4. Dispatch the EraMatch Interviewer agent to the room.
-
-    # TODO (Phase 3 hardening): Before issuing the token, validate that the
-    # candidate's face embedding stored from earlier stages (assessment, recorded
-    # interview) matches the current camera feed via the AI service. This prevents
-    # impersonation across pipeline stages.
     """
+    from sqlmodel import select
+    from app.models import CandidateApplication
+
+    # CandidateProfile doesn't carry application_id — look it up from the application table
+    app_result = await db.execute(
+        select(CandidateApplication).where(
+            CandidateApplication.candidate_id == current_candidate.candidate_id
+        )
+    )
+    application = app_result.scalars().first()
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No application found for this candidate.",
+        )
+
     return await generate_session_token_service(
         db=db,
-        application_id=current_candidate.application_id,
+        application_id=application.id,
         candidate_id=current_candidate.candidate_id,
         organization_id=current_candidate.organization_id,
     )
