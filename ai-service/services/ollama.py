@@ -3,6 +3,14 @@ import asyncio
 from ollama import Client
 from config import settings
 
+_ollama_semaphore = None
+
+def get_ollama_semaphore() -> asyncio.Semaphore:
+    """Lazy initializing semaphore to ensure it attaches to the right event loop."""
+    global _ollama_semaphore
+    if _ollama_semaphore is None:
+        _ollama_semaphore = asyncio.Semaphore(settings.OLLAMA_MAX_CONCURRENT_CALLS)
+    return _ollama_semaphore
 
 def get_client() -> Client:
     """Get configured Ollama client (cloud or local)."""
@@ -20,7 +28,7 @@ async def chat_completion(
     timeout_seconds: float | None = None,
 ) -> dict:
     """
-    Send chat completion request to Ollama Cloud llm 
+    Send chat completion request to Ollama Cloud llm with concurrency limits
     
     Args:
         messages: List of message dicts [{role: "user", content: "..."}]
@@ -57,7 +65,13 @@ async def chat_completion(
             "model": model_name,
         }
 
+    semaphore = get_ollama_semaphore()
+
+    async def _run_with_semaphore():
+        async with semaphore:
+            return await _run_chat()
+
     if timeout_seconds and timeout_seconds > 0:
-        return await asyncio.wait_for(_run_chat(), timeout=timeout_seconds)
-    return await _run_chat()
+        return await asyncio.wait_for(_run_with_semaphore(), timeout=timeout_seconds)
+    return await _run_with_semaphore()
 

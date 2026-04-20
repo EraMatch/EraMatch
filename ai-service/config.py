@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     OLLAMA_GH_AUDIT_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_GH_SYNTH_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_GH_STAGE_TIMEOUT_SECONDS: int = 90
+    OLLAMA_MAX_CONCURRENT_CALLS: int = 4
 
     # GitHub analysis runtime controls
     GH_ANALYSIS_HTTP_TIMEOUT_SECONDS: int = 30

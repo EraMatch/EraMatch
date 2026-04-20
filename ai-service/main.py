@@ -61,30 +61,6 @@ async def startup_event():
             print(f"[Startup] Failed to pre-load Whisper: {e}")
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Pre-load Whisper model at startup so first request doesn't crash."""
-    from config import settings
-    if not settings.USE_MOCK:
-        try:
-            from services.whisper import get_model
-            import threading
-            # Load model in a background thread to avoid blocking startup
-            def load_model():
-                try:
-                    model = get_model()
-                    if model != "mock":
-                        print("[Startup] Whisper model pre-loaded successfully")
-                    else:
-                        print("[Startup] Whisper model failed, using mock")
-                except Exception as e:
-                    print(f"[Startup] Whisper pre-load error: {e}")
-            t = threading.Thread(target=load_model, daemon=True)
-            t.start()
-            t.join(timeout=120)  # Wait up to 2 minutes for model download
-        except Exception as e:
-            print(f"[Startup] Failed to pre-load Whisper: {e}")
-
 
 @app.get("/health")
 async def health_check():
