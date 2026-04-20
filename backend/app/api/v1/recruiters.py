@@ -36,6 +36,7 @@ from app.schemas import (
     FilterTemplateCreate,
     AIGenerateQuestionRequest,
     AIRefineQuestionRequest,
+    BulkActionRequest,
 )
 from app.services import CandidateService, GroupService
 from app.models import CandidateApplication, CandidateProfile, CVAnalysis, Position, GitHubAnalysisJob
@@ -399,9 +400,55 @@ async def update_application(
     session: DbSession,
     current_user: RecruiterUser,
 ):
-    """Update application status."""
+    """Update application status or group."""
     service = RecruiterService(session, current_user)
     return await service.update_application_status(application_id, data)
+
+
+@router.post("/applications/{application_id}/archive", response_model=ApplicationResponse)
+async def archive_application(
+    application_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Archive a specific application."""
+    service = RecruiterService(session, current_user)
+    return await service.update_application_status(application_id, ApplicationUpdate(status="archived"))
+
+
+@router.delete("/applications/{application_id}", status_code=204)
+async def delete_application(
+    application_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Soft delete a specific application."""
+    service = RecruiterService(session, current_user)
+    await service.delete_application(application_id)
+
+
+@router.post("/applications/bulk-archive")
+async def bulk_archive_applications(
+    data: BulkActionRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Archive multiple applications at once."""
+    service = RecruiterService(session, current_user)
+    count = await service.bulk_archive_applications(data.application_ids)
+    return {"archived_count": count}
+
+
+@router.post("/applications/bulk-delete")
+async def bulk_delete_applications(
+    data: BulkActionRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Soft delete multiple applications at once."""
+    service = RecruiterService(session, current_user)
+    count = await service.bulk_delete_applications(data.application_ids)
+    return {"deleted_count": count}
 
 
 @router.post("/applications/{application_id}/assessment/reset", response_model=AssessmentResetResponse)

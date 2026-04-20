@@ -1,4 +1,4 @@
-import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
+import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe, Archive } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -614,6 +614,27 @@ export function PositionDetailView({
     }
   };
 
+  const handleArchiveCandidate = async (candidate: any) => {
+    if (!candidate.applicationId) return;
+    try {
+      await api.recruiter.archiveApplication(candidate.applicationId);
+      setCandidates(prev => prev.filter(c => c.id !== candidate.id));
+    } catch (error) {
+      console.error('Failed to archive candidate:', error);
+    }
+  };
+
+  const handleDeleteCandidate = async (candidate: any) => {
+    if (!candidate.applicationId) return;
+    if (!window.confirm(`Are you sure you want to permanently delete ${candidate.name}? This action cannot be undone.`)) return;
+    try {
+      await api.recruiter.deleteApplication(candidate.applicationId);
+      setCandidates(prev => prev.filter(c => c.id !== candidate.id));
+    } catch (error) {
+      console.error('Failed to delete candidate:', error);
+    }
+  };
+
   const openQagManager = async () => {
     try {
       setIsQagDialogOpen(true);
@@ -1168,8 +1189,23 @@ export function PositionDetailView({
                         onClick={() => handleResetAssessmentTrial(candidate)}
                         disabled={!candidate.applicationId || assessmentResetLoadingApplicationId === String(candidate.applicationId)}
                         className="h-[38px] px-[12px] rounded-[8px] border border-[#fecaca] bg-[#fff1f2] hover:bg-[#ffe4e6] disabled:opacity-50 disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[12px] text-[#b91c1c] transition-colors"
+                        title="Reset Assessment"
                       >
                         {assessmentResetLoadingApplicationId === String(candidate.applicationId) ? 'Resetting...' : 'Reset Trial'}
+                      </button>
+                      <button
+                        onClick={() => handleArchiveCandidate(candidate)}
+                        className="flex items-center justify-center w-[38px] h-[38px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#fef3c7] hover:border-[#f59e0b] text-[#f59e0b] transition-colors"
+                        title="Archive Candidate"
+                      >
+                        <Archive size={16} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCandidate(candidate)}
+                        className="flex items-center justify-center w-[38px] h-[38px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#fee2e2] hover:border-[#ef4444] text-[#ef4444] transition-colors"
+                        title="Delete Candidate"
+                      >
+                        <Trash2 size={16} />
                       </button>
                       <button
                         onClick={() => {

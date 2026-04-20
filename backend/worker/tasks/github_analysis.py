@@ -67,8 +67,7 @@ def _derive_yes_no_checks(payload: dict) -> list[dict]:
         seed_text = "correctly answer the question with clear supporting rationale"
 
     candidates: list[str] = []
-    for piece in [p.strip(" -:;,.
-	") for p in seed_text.replace("\r", "\n").split("\n") if p.strip()]:
+    for piece in [p.strip(" -:;,.") for p in seed_text.replace("\r", "\n").split("\n") if p.strip()]:
         if len(piece) < 8:
             continue
         if len(candidates) >= 10:
@@ -83,6 +82,30 @@ def _derive_yes_no_checks(payload: dict) -> list[dict]:
         {"id": idx + 1, "check": check, "weight": 0.10}
         for idx, check in enumerate(candidates[:10])
     ]
+
+
+def _derive_rubric_text(payload: dict) -> str:
+    rubric = str(payload.get("rubric") or "").strip()
+    if rubric:
+        return rubric
+
+    reference = str(
+        payload.get("reference_answer")
+        or payload.get("referenceAnswer")
+        or payload.get("ideal_answer")
+        or payload.get("expected_answer")
+        or ""
+    ).strip()
+    evidence = str(payload.get("evidence") or "").strip()
+
+    if reference and evidence:
+        return "Evaluate technical correctness against the reference answer and require evidence-grounded reasoning tied to the repository context."
+    if reference:
+        return "Evaluate technical correctness, clarity of reasoning, and practical trade-off awareness against the reference answer."
+    if evidence:
+        return "Evaluate whether the response is technically sound and supported by concrete evidence from the repository context."
+
+    return "Evaluate technical correctness, reasoning quality, trade-off awareness, and maintainability/security considerations."
 
 
 def update_job_status(conn, job_id: str, status: str, **extra_fields):
@@ -278,7 +301,7 @@ def run_github_analysis(
                     "options": q.get("options") if isinstance(q.get("options"), list) else [],
                     "ideal_answer": q.get("ideal_answer") or q.get("expected_answer") or "",
                     "reference_answer": q.get("reference_answer") or q.get("referenceAnswer") or q.get("ideal_answer") or q.get("expected_answer") or "",
-                    "rubric": q.get("rubric") or "",
+                    "rubric": _derive_rubric_text(q),
                     "rubric_yes_no_checks": q.get("rubric_yes_no_checks") if isinstance(q.get("rubric_yes_no_checks"), list) and len(q.get("rubric_yes_no_checks")) > 0 else _derive_yes_no_checks(q),
                     "selection_reason": q.get("selection_reason") or "Generated from GitHub profile analysis",
                     "jd_relation": q.get("jd_relation") or "",

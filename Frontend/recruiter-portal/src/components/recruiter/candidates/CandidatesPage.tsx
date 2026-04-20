@@ -45,6 +45,8 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
   const [activeView, setActiveView] = useState<'active' | 'archived'>('active');
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [githubFilters, setGithubFilters] = useState<GitHubFilters>({
@@ -133,16 +135,52 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
     }
   };
 
-  const handleArchiveSelected = () => {
-    setCandidates(prev =>
-      prev.map(c =>
-        selectedCandidates.includes(c.id)
-          ? { ...c, status: 'archived' as const, archivedDate: new Date() }
-          : c
-      )
-    );
-    setSelectedCandidates([]);
-    setShowArchiveConfirm(false);
+  const handleArchiveSelected = async () => {
+    try {
+      setIsProcessing(true);
+      const applicationIds = candidates
+        .filter(c => selectedCandidates.includes(c.id) && c.applicationId)
+        .map(c => c.applicationId as string);
+
+      if (applicationIds.length > 0) {
+        await api.recruiter.bulkArchiveApplications(applicationIds);
+      }
+
+      setCandidates(prev =>
+        prev.map(c =>
+          selectedCandidates.includes(c.id)
+            ? { ...c, status: 'archived' as const, archivedDate: new Date() }
+            : c
+        )
+      );
+      setSelectedCandidates([]);
+      setShowArchiveConfirm(false);
+    } catch (error) {
+      console.error('Failed to archive candidates:', error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    try {
+      setIsProcessing(true);
+      const applicationIds = candidates
+        .filter(c => selectedCandidates.includes(c.id) && c.applicationId)
+        .map(c => c.applicationId as string);
+
+      if (applicationIds.length > 0) {
+        await api.recruiter.bulkDeleteApplications(applicationIds);
+      }
+
+      setCandidates(prev => prev.filter(c => !selectedCandidates.includes(c.id)));
+      setSelectedCandidates([]);
+      setShowDeleteConfirm(false);
+    } catch (error) {
+      console.error('Failed to delete candidates:', error);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // Statistics for archived candidates
@@ -201,15 +239,28 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
 
             <div className="flex items-center gap-2">
               {selectedCandidates.length > 0 && activeView === 'active' && (
-                <button
-                  onClick={() => setShowArchiveConfirm(true)}
-                  className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#f59e0b] hover:bg-[#d97706] text-white transition-colors"
-                >
-                  <Archive size={16} />
-                  <span className="font-['Arimo',sans-serif] text-[14px]">
-                    Archive ({selectedCandidates.length})
-                  </span>
-                </button>
+                <>
+                  <button
+                    onClick={() => setShowArchiveConfirm(true)}
+                    disabled={isProcessing}
+                    className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#f59e0b] hover:bg-[#d97706] text-white transition-colors disabled:opacity-50"
+                  >
+                    <Archive size={16} />
+                    <span className="font-['Arimo',sans-serif] text-[14px]">
+                      Archive ({selectedCandidates.length})
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    disabled={isProcessing}
+                    className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-[#ef4444] hover:bg-[#dc2626] text-white transition-colors disabled:opacity-50"
+                  >
+                    <X size={16} />
+                    <span className="font-['Arimo',sans-serif] text-[14px]">
+                      Delete
+                    </span>
+                  </button>
+                </>
               )}
               <button className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors">
                 <Download size={16} className="text-[#6b7280]" />
@@ -569,15 +620,54 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
             <div className="flex gap-3">
               <button
                 onClick={() => setShowArchiveConfirm(false)}
-                className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
+                disabled={isProcessing}
+                className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleArchiveSelected}
-                className="flex-1 h-[44px] rounded-[8px] bg-[#f59e0b] hover:bg-[#d97706] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
+                disabled={isProcessing}
+                className="flex-1 h-[44px] rounded-[8px] bg-[#f59e0b] hover:bg-[#d97706] font-['Arimo',sans-serif] text-[14px] text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
+                {isProcessing && <Loader2 size={16} className="animate-spin" />}
                 Archive
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+          <div className="bg-white rounded-[16px] shadow-2xl max-w-md w-full p-8">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-[#fee2e2] flex items-center justify-center">
+                <X size={24} className="text-[#ef4444]" />
+              </div>
+              <h3 className="text-[#111827] text-[18px] font-semibold">
+                Delete Candidates
+              </h3>
+            </div>
+            <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280] mb-6">
+              Are you sure you want to permanently delete {selectedCandidates.length} candidate(s)? This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isProcessing}
+                className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteSelected}
+                disabled={isProcessing}
+                className="flex-1 h-[44px] rounded-[8px] bg-[#ef4444] hover:bg-[#dc2626] font-['Arimo',sans-serif] text-[14px] text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isProcessing && <Loader2 size={16} className="animate-spin" />}
+                Delete
               </button>
             </div>
           </div>

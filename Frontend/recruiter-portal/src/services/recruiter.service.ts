@@ -120,6 +120,8 @@ export const recruiterService = {
                 difficulty: string;
                 sourceFile?: string | null;
                 referenceAnswer?: string | null;
+                rubric?: string | null;
+                rubricYesNoChecks?: Array<{ id?: number; check?: string; weight?: number }>;
                 selectionReason?: string | null;
                 jdRelation?: string | null;
                 evidence?: string | null;
@@ -144,6 +146,26 @@ export const recruiterService = {
             message: string;
         }>(`/recruiter/applications/${applicationId}/assessment/reset`, {
             method: 'POST',
+        }),
+    archiveApplication: async (applicationId: string) =>
+        fetchAPI(`/recruiter/applications/${applicationId}/archive`, {
+            method: 'POST'
+        }),
+    deleteApplication: async (applicationId: string) =>
+        fetchAPI(`/recruiter/applications/${applicationId}`, {
+            method: 'DELETE'
+        }),
+    bulkArchiveApplications: async (applicationIds: string[]) =>
+        fetchAPI<{ archived_count: number }>('/recruiter/applications/bulk-archive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ application_ids: applicationIds })
+        }),
+    bulkDeleteApplications: async (applicationIds: string[]) =>
+        fetchAPI<{ deleted_count: number }>('/recruiter/applications/bulk-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ application_ids: applicationIds })
         }),
     startCandidateGithubAnalysis: async (candidateId: string) =>
         fetchAPI<{ job_id: string; status: string; message: string }>(`/candidates/${candidateId}/github-analysis/start`, {

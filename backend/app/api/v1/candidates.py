@@ -35,6 +35,8 @@ class GitHubAnalysisReviewQuestion(BaseModel):
     difficulty: str = Field(default="Medium")
     sourceFile: str | None = None
     referenceAnswer: str | None = None
+    rubric: str | None = None
+    rubricYesNoChecks: list[dict] = Field(default_factory=list)
     selectionReason: str | None = None
     jdRelation: str | None = None
     evidence: str | None = None
@@ -214,6 +216,8 @@ async def persist_github_analysis_review(
                 "difficulty": item.difficulty,
                 "source_file": item.sourceFile or "",
                 "reference_answer": item.referenceAnswer or "",
+                "rubric": item.rubric or "",
+                "rubric_yes_no_checks": item.rubricYesNoChecks if isinstance(item.rubricYesNoChecks, list) else [],
                 "selection_reason": item.selectionReason or "",
                 "jd_relation": item.jdRelation or "",
                 "evidence": item.evidence or "",

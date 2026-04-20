@@ -153,6 +153,7 @@ class ApplicationResponse(BaseModel):
         from_attributes = True
 
 
+
 class CandidateUploadResponse(BaseModel):
     """Response for bulk candidate upload."""
     total_processed: int
@@ -160,3 +161,8 @@ class CandidateUploadResponse(BaseModel):
     failed_count: int
     errors: list[str] = []
     created_candidates: list[CandidateResponse] = []
+
+
+class BulkActionRequest(BaseModel):
+    """Request schema for bulk actions (archive, delete)."""
+    application_ids: list[UUID]

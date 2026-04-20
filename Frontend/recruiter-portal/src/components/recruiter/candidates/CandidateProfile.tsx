@@ -407,9 +407,6 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   }
 
   const developmentAreas: string[] = [];
-  if (scoreBreakdown?.jd_quality_cap_applied) {
-    developmentAreas.push(`JD quality cap applied at ${scoreBreakdown.jd_quality_cap ?? 'N/A'}; refine role rubric for more reliable ranking.`);
-  }
   if (scoreBreakdown?.skills_experience_score != null && scoreBreakdown.skills_experience_score < 60) {
     developmentAreas.push('Skills/experience alignment is below target threshold and should be validated in interview stages.');
   }
@@ -686,7 +683,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                       </p>
                     ) : (
                       <div className="space-y-4">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                           <div className="bg-[#f9fafb] rounded-[8px] p-3">
                             <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Final Pre-Score</p>
                             <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.pre_score_final ?? scoreBreakdown.match_score, 1)}</p>
@@ -699,19 +696,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                             <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Skills + Experience</p>
                             <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.skills_experience_score, 1)}</p>
                           </div>
-                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
-                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">JD Quality</p>
-                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.jd_quality_score, 1)}</p>
-                          </div>
                         </div>
 
-                        {scoreBreakdown.jd_quality_cap_applied && (
-                          <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3">
-                            <p className="font-['Arimo',sans-serif] text-[13px] text-amber-800">
-                              JD quality cap applied at {scoreBreakdown.jd_quality_cap ?? 'N/A'}.
-                            </p>
-                          </div>
-                        )}
 
                         {Array.isArray(scoreBreakdown.score_explanation) && scoreBreakdown.score_explanation.length > 0 && (
                           <div>

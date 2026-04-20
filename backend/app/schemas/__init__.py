@@ -27,6 +27,7 @@ from app.schemas.candidate import (
     ApplicationUpdate,
     ApplicationResponse,
     CandidateUploadResponse,
+    BulkActionRequest,
 )
 from app.schemas.project import (
     ProjectCreate,
@@ -120,6 +121,7 @@ __all__ = [
     "ApplicationUpdate",
     "ApplicationResponse",
     "CandidateUploadResponse",
+    "BulkActionRequest",
     # Project
     "ProjectCreate",
     "ProjectUpdate",
