@@ -6,7 +6,7 @@ import { DimensionSelector } from './DimensionSelector';
 import { RubricEditor } from './RubricEditor';
 import { QuestionBankEditor } from './QuestionBankEditor';
 import { FreezeConfirmation } from './FreezeConfirmation';
-import { api } from '../../../../services/api'; // Or standard api import used in the project
+import { fetchAPI } from '../../../services/client';
 
 interface ConfigWizardV2Props {
   groupId: string;
@@ -34,7 +34,7 @@ export function ConfigWizardV2({ groupId, stageId, onComplete }: ConfigWizardV2P
       try {
         setIsLoading(true);
         // Try getting existing rubric
-        const rubricRes = await api.client.get(`/live-interview-v2/rubric/group/${groupId}`);
+        const rubricRes = await fetchAPI<{ rubric_id?: string; state?: string }>(`/live-interview-v2/rubric/group/${groupId}`);
         if (rubricRes && rubricRes.rubric_id) {
           setRubricId(rubricRes.rubric_id);
           
@@ -42,7 +42,7 @@ export function ConfigWizardV2({ groupId, stageId, onComplete }: ConfigWizardV2P
             setIsFrozen(true);
             // Move to bank or freeze step
             try {
-              const bankRes = await api.client.get(`/live-interview-v2/bank/group/${groupId}`);
+              const bankRes = await fetchAPI<{ bank_id?: string; state?: string }>(`/live-interview-v2/bank/group/${groupId}`);
               if (bankRes && bankRes.bank_id) {
                  setBankId(bankRes.bank_id);
                  if (bankRes.state === 'frozen') {
