@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, Loader2, ChevronLeft, ChevronRight, AlertCircle, RefreshCw } from 'lucide-react';
-import { api } from '../../../../services/api';
+import { fetchAPI } from '../../../services/client';
 
 interface Dimension {
   name: string;
@@ -37,7 +37,7 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
   const loadRubric = async () => {
     try {
       setIsLoading(true);
-      const res = await api.client.get(`/live-interview-v2/rubric/group/${groupId}`);
+      const res = await fetchAPI<{ dimensions?: any[] }>(`/live-interview-v2/rubric/group/${groupId}`);
       if (res && res.dimensions) {
         setDimensions(res.dimensions);
       }
@@ -53,12 +53,12 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
       setIsGenerating(true);
       setError(null);
       // Pass the names of the dimensions
-      const res = await api.client.post('/live-interview-v2/rubric/generate-anchors', {
-        dimensions: dimensions.map(d => d.name),
-        // Optional: pass job_description if we want to fetch it from the API, 
-        // but our backend service is handling it right now if we pass empty, wait...
-        // Ah, our backend expects job_description in AnchorGenerationRequest or it defaults to "". 
-        // We can pass empty string, the LLM will just use dimensions if context is missing.
+      const res = await fetchAPI<any[]>('/live-interview-v2/rubric/generate-anchors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dimensions: dimensions.map(d => d.name),
+        }),
       });
       
       // Merge anchors back into dimensions
@@ -74,7 +74,7 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
         })));
       }
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Failed to generate anchors');
+      setError(e instanceof Error ? e.message : 'Failed to generate anchors');
     } finally {
       setIsGenerating(false);
     }
@@ -102,13 +102,17 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
       setIsSaving(true);
       setError(null);
       
-      await api.client.put(`/live-interview-v2/rubric/${rubricId}`, {
-        dimensions
+      await fetchAPI(`/live-interview-v2/rubric/${rubricId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dimensions
+        }),
       });
       
       onSave(); // Proceed to next step
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Failed to save anchors');
+      setError(e instanceof Error ? e.message : 'Failed to save anchors');
     } finally {
       setIsSaving(false);
     }
