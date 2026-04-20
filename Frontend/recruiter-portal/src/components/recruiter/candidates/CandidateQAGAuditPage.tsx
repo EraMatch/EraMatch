@@ -16,6 +16,8 @@ export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQ
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApplicationScoreBreakdown | null>(null);
+  const [pendingQuestions, setPendingQuestions] = useState<any[]>([]);
+  const [pendingSourceLabel, setPendingSourceLabel] = useState<string>('');
   const [filter, setFilter] = useState<'all' | 'failed' | 'must-fail'>('all');
 
   useEffect(() => {
@@ -29,6 +31,24 @@ export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQ
         setLoading(true);
         const res = await api.recruiter.getApplicationScoreBreakdown(applicationId);
         setData(res);
+
+        const hasChecks = Array.isArray(res?.criteria_checks) && res.criteria_checks.length > 0;
+        if (!hasChecks && res?.position_id) {
+          try {
+            const artifact = await api.recruiter.getPositionHDEvalQAG(String(res.position_id));
+            const approved = Array.isArray(artifact?.approved_questions) ? artifact.approved_questions : [];
+            const generated = Array.isArray(artifact?.questions) ? artifact.questions : [];
+            const selected = approved.length > 0 ? approved : generated;
+            setPendingQuestions(selected);
+            setPendingSourceLabel(approved.length > 0 ? 'Approved questions awaiting candidate evaluation' : 'Generated questions awaiting technical approval/evaluation');
+          } catch {
+            setPendingQuestions([]);
+            setPendingSourceLabel('');
+          }
+        } else {
+          setPendingQuestions([]);
+          setPendingSourceLabel('');
+        }
       } catch (e) {
         setError('Failed to load QAG audit data.');
       } finally {
@@ -40,7 +60,7 @@ export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQ
 
   const checks = useMemo(() => {
     const items = Array.isArray(data?.criteria_checks) ? data!.criteria_checks : [];
-    return items.map((item: any) => {
+    const mappedChecks = items.map((item: any) => {
       const verdict = String(item.verdict || (item.passed ? 'YES' : 'NO')).toUpperCase();
       const passed = item.passed != null ? Boolean(item.passed) : verdict === 'YES';
       const criterion = String(item.criterion || '');
@@ -48,28 +68,48 @@ export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQ
       return {
         id: Number(item.id || 0),
         criterion,
-        passed,
+        passed: passed as boolean | null,
         verdict,
         reason: String(item.reason || ''),
         evidence: String(item.evidence || ''),
         weight: Number(item.weight || 0),
         mustHave,
+        pending: false,
       };
     });
-  }, [data]);
+
+    if (mappedChecks.length > 0) return mappedChecks;
+
+    return (pendingQuestions || []).map((q: any, idx: number) => {
+      const criterion = String(q?.question || q?.criterion || '').trim();
+      const mustHave = MUST_HAVE_RE.test(criterion);
+      return {
+        id: Number(q?.id || idx + 1),
+        criterion,
+        passed: null as boolean | null,
+        verdict: 'PENDING',
+        reason: pendingSourceLabel || 'Awaiting candidate QAG evaluation output.',
+        evidence: '',
+        weight: Number(q?.weight || 0),
+        mustHave,
+        pending: true,
+      };
+    });
+  }, [data, pendingQuestions, pendingSourceLabel]);
 
   const filteredChecks = useMemo(() => {
     if (filter === 'all') return checks;
-    if (filter === 'failed') return checks.filter(c => !c.passed);
-    return checks.filter(c => !c.passed && c.mustHave);
+    if (filter === 'failed') return checks.filter(c => c.passed === false);
+    return checks.filter(c => c.passed === false && c.mustHave);
   }, [checks, filter]);
 
   const summary = useMemo(() => {
     const total = checks.length;
-    const passed = checks.filter(c => c.passed).length;
-    const failed = total - passed;
-    const mustFail = checks.filter(c => !c.passed && c.mustHave).length;
-    return { total, passed, failed, mustFail };
+    const passed = checks.filter(c => c.passed === true).length;
+    const failed = checks.filter(c => c.passed === false).length;
+    const pending = checks.filter(c => c.passed === null).length;
+    const mustFail = checks.filter(c => c.passed === false && c.mustHave).length;
+    return { total, passed, failed, pending, mustFail };
   }, [checks]);
 
   const handleExportPdf = () => {
@@ -114,6 +154,12 @@ export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQ
         <div className="bg-white border border-[#fecaca] rounded-[12px] p-6 text-[#b91c1c]">{error}</div>
       ) : (
         <>
+          {summary.pending > 0 && (
+            <div className="bg-[#eff6ff] border border-[#bfdbfe] rounded-[12px] p-4 mb-4 text-[#1e40af] text-[13px]">
+              {summary.pending} QAG item(s) are pending evaluation. Pre-score can still be shown from heuristic scoring until QAG evaluation is completed.
+            </div>
+          )}
+
           <div className="bg-white border border-[#e5e7eb] rounded-[12px] p-4 mb-4 grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-[#f9fafb] rounded-[8px] p-3">
               <p className="text-[12px] text-[#6b7280]">Total Questions</p>
@@ -160,9 +206,13 @@ export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQ
                       {row.mustHave && <span className="ml-2 text-[11px] px-2 py-0.5 rounded bg-[#fff7ed] text-[#9a3412]">Must-Have</span>}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-[12px] px-2 py-1 rounded ${row.passed ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#fee2e2] text-[#991b1b]'}`}>
-                        {row.passed ? 'YES' : 'NO'}
-                      </span>
+                      {row.passed === null ? (
+                        <span className="text-[12px] px-2 py-1 rounded bg-[#e0e7ff] text-[#3730a3]">PENDING</span>
+                      ) : (
+                        <span className={`text-[12px] px-2 py-1 rounded ${row.passed ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#fee2e2] text-[#991b1b]'}`}>
+                          {row.passed ? 'YES' : 'NO'}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-[12px] text-[#374151]">{row.weight.toFixed(4)}</td>
                     <td className="px-4 py-3 text-[12px] text-[#374151]">
