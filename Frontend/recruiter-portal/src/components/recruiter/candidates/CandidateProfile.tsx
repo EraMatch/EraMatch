@@ -8,6 +8,7 @@ import { LiveInterviewTranscript } from '../interviews/LiveInterviewTranscript';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../ui/dialog';
 import { Button } from '../../ui/button';
 import { api } from '../../../services/api';
+import { LiveInterviewResults } from '../live-interview-v2/LiveInterviewResults';
 
 interface CandidateProfileProps {
   candidateId: string;
@@ -1262,89 +1263,25 @@ export function CandidateProfile({ candidateId, onBack, onViewKnowledgeGraph, sh
 
             {activeTab === 'live-interview' && (
               <div className="space-y-6">
-                {/* Score Cards */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gradient-to-r from-emerald-50 to-emerald-100 border-2 border-emerald-200 rounded-2xl p-5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm text-emerald-700 mb-1">Confidence Score</div>
-                        <div className="text-3xl font-bold text-emerald-900">{liveInterviewData.overallConfidence}%</div>
-                      </div>
-                      <div className="w-12 h-12 rounded-full bg-emerald-500 flex items-center justify-center">
-                        <TrendingUp size={24} className="text-white" />
-                      </div>
-                    </div>
+                {/* Real LiveInterviewResults — session ID comes from backend via liveInterviewData */}
+                {(candidate as any).liveInterviewData?.sessionId ? (
+                  <LiveInterviewResults
+                    sessionId={(candidate as any).liveInterviewData.sessionId}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                    <div className="text-5xl mb-4">🎙️</div>
+                    <p className="text-lg font-medium text-slate-300">No live interview session yet</p>
+                    <p className="text-sm mt-1">The candidate hasn't started the live interview stage.</p>
                   </div>
-                  <div className="bg-gradient-to-r from-indigo-50 to-indigo-100 border-2 border-indigo-200 rounded-2xl p-5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm text-indigo-700 mb-1">Answer Correctness</div>
-                        <div className="text-3xl font-bold text-indigo-900">{liveInterviewData.overallCorrectness}%</div>
-                      </div>
-                      <div className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center">
-                        <CheckCircle size={24} className="text-white" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                )}
+              </div>
+            )}
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Completed</div>
-                    <div className="font-['Arimo',sans-serif] text-[16px] text-[#111827]">
-                      {liveInterviewData.completedAt}
-                    </div>
-                  </div>
-                  <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Duration</div>
-                    <div className="font-['Arimo',sans-serif] text-[16px] text-[#111827]">
-                      {liveInterviewData.duration}
-                    </div>
-                  </div>
-                </div>
-
-                {/* View Full Transcript Button */}
-                <Button
-                  onClick={() => setShowLiveInterviewTranscript(true)}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-6 flex items-center justify-center gap-2"
-                >
-                  <FileText size={20} />
-                  View Full Interview Transcript
-                </Button>
-
-                {/* Emotion Metrics */}
-                <div>
-                  <h3 className="text-[#111827] mb-4">Overall Emotion Metrics</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    {liveInterviewData.emotionMetrics.map((metric: any, i: number) => (
-                      <div key={i} className="bg-white border border-[#e5e7eb] rounded-[12px] p-5">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            {metric.icon === 'smile' && <Smile size={20} style={{ color: metric.color }} />}
-                            {metric.icon === 'activity' && <Activity size={20} style={{ color: metric.color }} />}
-                            {metric.icon === 'meh' && <Meh size={20} style={{ color: metric.color }} />}
-                            {metric.icon === 'trending-up' && <TrendingUp size={20} style={{ color: metric.color }} />}
-                            <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                              {metric.emotion}
-                            </span>
-                          </div>
-                          <span className="text-lg font-semibold" style={{ color: metric.color }}>
-                            {metric.percentage}%
-                          </span>
-                        </div>
-                        <div className="w-full h-2 bg-[#e5e7eb] rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all"
-                            style={{
-                              width: `${metric.percentage}%`,
-                              backgroundColor: metric.color
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+            {activeTab === 'github' && (
+              <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                <div className="text-5xl mb-4">📂</div>
+                <p className="text-lg font-medium text-slate-300">GitHub analysis not available</p>
               </div>
             )}
 
