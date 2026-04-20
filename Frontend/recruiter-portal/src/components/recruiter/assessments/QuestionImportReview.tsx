@@ -476,6 +476,40 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
   const allVisibleSelected = visibleCount > 0 && visibleRows.every(({ row }) => row.selected);
   const selectedCount = rows.filter(r => r.selected).length;
 
+  const stats = data?.critic_stats;
+  const csvRowErrors = useMemo(() => {
+    if (!stats?.row_errors || !Array.isArray(stats.row_errors)) return [];
+    return stats.row_errors
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        row: Number(item.row || 0),
+        error: String(item.error || 'Unknown validation error'),
+        question_type: String(item.question_type || ''),
+        question_text: String(item.question_text || ''),
+      }))
+      .filter((item) => item.row > 0);
+  }, [stats]);
+
+  const rowErrorTypes = useMemo(() => {
+    const unique = Array.from(new Set(csvRowErrors.map((item) => item.error))).filter(Boolean);
+    return ['all', ...unique];
+  }, [csvRowErrors]);
+
+  useEffect(() => {
+    const urlJob = searchParams.get('rowErrorFilterJob');
+    const urlFilter = searchParams.get('rowErrorFilter');
+    if (urlJob === jobId && urlFilter && rowErrorTypes.includes(urlFilter)) {
+      setRowErrorTypeFilter(urlFilter);
+      return;
+    }
+    setRowErrorTypeFilter('all');
+  }, [searchParams, jobId, rowErrorTypes]);
+
+  const filteredRowErrors = useMemo(() => {
+    if (rowErrorTypeFilter === 'all') return csvRowErrors;
+    return csvRowErrors.filter((item) => item.error === rowErrorTypeFilter);
+  }, [csvRowErrors, rowErrorTypeFilter]);
+
   const toggleVisibleRows = () => {
     if (visibleRows.length === 0) return;
     setRows(prev => prev.map((r, idx) => {
@@ -524,35 +558,6 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
     );
   }
 
-  const stats = data?.critic_stats;
-  const csvRowErrors = useMemo(() => {
-    if (!stats?.row_errors || !Array.isArray(stats.row_errors)) return [];
-    return stats.row_errors
-      .filter((item) => item && typeof item === 'object')
-      .map((item) => ({
-        row: Number(item.row || 0),
-        error: String(item.error || 'Unknown validation error'),
-        question_type: String(item.question_type || ''),
-        question_text: String(item.question_text || ''),
-      }))
-      .filter((item) => item.row > 0);
-  }, [stats]);
-
-  const rowErrorTypes = useMemo(() => {
-    const unique = Array.from(new Set(csvRowErrors.map((item) => item.error))).filter(Boolean);
-    return ['all', ...unique];
-  }, [csvRowErrors]);
-
-  useEffect(() => {
-    const urlJob = searchParams.get('rowErrorFilterJob');
-    const urlFilter = searchParams.get('rowErrorFilter');
-    if (urlJob === jobId && urlFilter && rowErrorTypes.includes(urlFilter)) {
-      setRowErrorTypeFilter(urlFilter);
-      return;
-    }
-    setRowErrorTypeFilter('all');
-  }, [searchParams, jobId, rowErrorTypes]);
-
   const setRowErrorFilterAndPersist = (nextFilter: string) => {
     setRowErrorTypeFilter(nextFilter);
     const nextParams = new URLSearchParams(searchParams);
@@ -565,11 +570,6 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
     }
     setSearchParams(nextParams);
   };
-
-  const filteredRowErrors = useMemo(() => {
-    if (rowErrorTypeFilter === 'all') return csvRowErrors;
-    return csvRowErrors.filter((item) => item.error === rowErrorTypeFilter);
-  }, [csvRowErrors, rowErrorTypeFilter]);
 
   const exportFilteredRowErrors = () => {
     if (filteredRowErrors.length === 0) {

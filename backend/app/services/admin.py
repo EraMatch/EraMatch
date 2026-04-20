@@ -480,8 +480,6 @@ CandidateStageProgress.completed_at.isnot(None),
                     counts["screening"] += count
                 elif s == "assessment":
                     counts["assessment"] += count
-                elif s == "in_pipeline":
-                    counts["interview"] += count
                 elif s in ["offer", "offered", "hired", "accepted"]:
                     counts["offer"] += count
             
