@@ -8,13 +8,14 @@
  * - Auto-tags (strong_on, weak_on)
  *
  * Data flow:
- *   Recruiter clicks candidate → fetches GET /api/v1/li-v2/session/{id}
+ *   Recruiter clicks candidate → fetches GET /api/v1/live-interview-v2/session/{id}
  *   If evaluation is null → judge is still running → show "Evaluating..." state
  *   Poll every 5s while state === "completed" but evaluation === null
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Clock, Award, TrendingUp, MessageSquare, RefreshCw } from 'lucide-react';
+import { fetchAPI } from '../../../services/client';
 
 interface Anchor {
     substandard: string;
@@ -58,11 +59,11 @@ interface SessionData {
     duration_seconds: number | null;
     transcript: TranscriptTurn[];
     evaluation: Evaluation | null;
+    context_pool?: Record<string, any>;
 }
 
 interface LiveInterviewResultsProps {
     sessionId: string;
-    apiBase?: string;
     onClose?: () => void;
 }
 
@@ -212,19 +213,14 @@ function TranscriptAccordion({ turns }: { turns: TranscriptTurn[] }) {
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-export function LiveInterviewResults({ sessionId, apiBase = '', onClose }: LiveInterviewResultsProps) {
+export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResultsProps) {
     const [data, setData] = useState<SessionData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
     const fetchData = useCallback(async () => {
         try {
-            const token = localStorage.getItem('token');
-            const resp = await fetch(`${apiBase}/api/v1/li-v2/session/${sessionId}`, {
-                headers: { Authorization: `Bearer ${token}` },
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const json = await resp.json();
+            const json = await fetchAPI<SessionData>(`/live-interview-v2/session/${sessionId}`);
             setData(json);
             setError(null);
         } catch (e: any) {
@@ -232,7 +228,7 @@ export function LiveInterviewResults({ sessionId, apiBase = '', onClose }: LiveI
         } finally {
             setLoading(false);
         }
-    }, [sessionId, apiBase]);
+    }, [sessionId]);
 
     useEffect(() => {
         fetchData();
@@ -269,8 +265,10 @@ export function LiveInterviewResults({ sessionId, apiBase = '', onClose }: LiveI
     const verdictCfg = ev ? VERDICT_CONFIG[ev.auto_verdict] : null;
     const VerdictIcon = verdictCfg?.icon;
 
+    const [activeTab, setActiveTab] = useState<'evaluation' | 'transcript' | 'context'>('evaluation');
+
     return (
-        <div className="max-w-3xl mx-auto space-y-6 py-6 px-4">
+        <div className="max-w-4xl mx-auto space-y-6 py-6 px-4">
             {/* Header */}
             <div className="flex items-start justify-between">
                 <div>
@@ -304,82 +302,187 @@ export function LiveInterviewResults({ sessionId, apiBase = '', onClose }: LiveI
                 </div>
             )}
 
-            {/* Evaluation summary */}
-            {ev && (
-                <>
-                    {/* Score + verdict */}
-                    <div className="bg-white border border-gray-200 rounded-2xl p-6 flex items-center gap-8">
-                        <ScoreRing pct={ev.overall_score_pct} />
-                        <div className="space-y-3 flex-1">
-                            {verdictCfg && VerdictIcon && (
-                                <div className={`inline-flex items-center gap-2 text-white text-sm font-semibold px-4 py-1.5 rounded-full ${verdictCfg.color}`}>
-                                    <VerdictIcon className="w-4 h-4" />
-                                    {verdictCfg.label}
-                                </div>
-                            )}
-                            <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                    <p className="text-gray-400 text-xs">Meets Criteria</p>
-                                    <p className={`font-semibold ${ev.meets_criteria ? 'text-emerald-600' : 'text-red-600'}`}>
-                                        {ev.meets_criteria ? 'Yes' : 'No'}
-                                    </p>
-                                </div>
-                                <div>
-                                    <p className="text-gray-400 text-xs">Coverage</p>
-                                    <p className="font-semibold text-gray-700">{Math.round(ev.coverage_ratio * 100)}% of dimensions</p>
-                                </div>
-                                <div>
-                                    <p className="text-gray-400 text-xs">Confidence</p>
-                                    <p className={`font-semibold capitalize ${CONFIDENCE_COLOR[ev.evaluation_confidence]}`}>
-                                        {ev.evaluation_confidence}
-                                    </p>
-                                </div>
-                                <div>
-                                    <p className="text-gray-400 text-xs">Judged at</p>
-                                    <p className="font-semibold text-gray-700 text-xs">{new Date(ev.judged_at).toLocaleString()}</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+            {/* Tabs */}
+            <div className="border-b border-gray-200">
+                <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+                    <button
+                        onClick={() => setActiveTab('evaluation')}
+                        className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                            activeTab === 'evaluation'
+                                ? 'border-indigo-500 text-indigo-600'
+                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        }`}
+                    >
+                        Evaluation
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('transcript')}
+                        className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                            activeTab === 'transcript'
+                                ? 'border-indigo-500 text-indigo-600'
+                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        }`}
+                    >
+                        Transcript ({data.transcript?.length || 0})
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('context')}
+                        className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                            activeTab === 'context'
+                                ? 'border-indigo-500 text-indigo-600'
+                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        }`}
+                    >
+                        Context Used
+                    </button>
+                </nav>
+            </div>
 
-                    {/* Dimension breakdown */}
-                    <div>
-                        <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3 flex items-center gap-2">
-                            <TrendingUp className="w-4 h-4" />
-                            Dimension Breakdown
-                        </h3>
-                        <div className="space-y-2">
-                            {Object.entries(ev.dimension_scores || {}).map(([dimId, result]) => (
-                                <DimensionCard key={dimId} dimId={dimId} result={result} />
-                            ))}
-                        </div>
-                    </div>
+            {/* Tab Panels */}
+            <div className="pt-2">
+                {activeTab === 'evaluation' && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        {ev ? (
+                            <>
+                                {/* Score + verdict */}
+                                <div className="bg-white border border-gray-200 rounded-2xl p-6 flex items-center gap-8 shadow-sm">
+                                    <ScoreRing pct={ev.overall_score_pct} />
+                                    <div className="space-y-3 flex-1">
+                                        {verdictCfg && VerdictIcon && (
+                                            <div className={`inline-flex items-center gap-2 text-white text-sm font-semibold px-4 py-1.5 rounded-full ${verdictCfg.color}`}>
+                                                <VerdictIcon className="w-4 h-4" />
+                                                {verdictCfg.label}
+                                            </div>
+                                        )}
+                                        <div className="grid grid-cols-2 gap-4 text-sm">
+                                            <div>
+                                                <p className="text-gray-400 text-xs">Meets Criteria</p>
+                                                <p className={`font-semibold ${ev.meets_criteria ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                    {ev.meets_criteria ? 'Yes' : 'No'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <p className="text-gray-400 text-xs">Coverage</p>
+                                                <p className="font-semibold text-gray-700">{Math.round(ev.coverage_ratio * 100)}% of dimensions</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-gray-400 text-xs">Confidence</p>
+                                                <p className={`font-semibold capitalize ${CONFIDENCE_COLOR[ev.evaluation_confidence]}`}>
+                                                    {ev.evaluation_confidence}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <p className="text-gray-400 text-xs">Judged at</p>
+                                                <p className="font-semibold text-gray-700 text-xs">{new Date(ev.judged_at).toLocaleString()}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
 
-                    {/* Auto-tags */}
-                    {ev.auto_tags && Object.keys(ev.auto_tags).length > 0 && (
-                        <div>
-                            <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3 flex items-center gap-2">
-                                <Award className="w-4 h-4" />
-                                Tags
-                            </h3>
-                            <div className="flex flex-wrap gap-2">
-                                {Object.entries(ev.auto_tags).flatMap(([tag, values]) =>
-                                    (Array.isArray(values) ? values : [String(values)]).map(v => (
-                                        <span key={`${tag}-${v}`} className="text-xs bg-gray-100 text-gray-600 px-3 py-1 rounded-full border border-gray-200">
-                                            {tag}: {v}
-                                        </span>
-                                    ))
+                                {/* Dimension breakdown */}
+                                <div>
+                                    <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3 flex items-center gap-2">
+                                        <TrendingUp className="w-4 h-4" />
+                                        Dimension Breakdown
+                                    </h3>
+                                    <div className="space-y-2">
+                                        {Object.entries(ev.dimension_scores || {}).map(([dimId, result]) => (
+                                            <DimensionCard key={dimId} dimId={dimId} result={result} />
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Auto-tags */}
+                                {ev.auto_tags && Object.keys(ev.auto_tags).length > 0 && (
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3 flex items-center gap-2">
+                                            <Award className="w-4 h-4" />
+                                            Tags
+                                        </h3>
+                                        <div className="flex flex-wrap gap-2">
+                                            {Object.entries(ev.auto_tags).flatMap(([tag, values]) =>
+                                                (Array.isArray(values) ? values : [String(values)]).map(v => (
+                                                    <span key={`${tag}-${v}`} className="text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded-full border border-gray-200">
+                                                        {tag}: {v}
+                                                    </span>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
                                 )}
+                            </>
+                        ) : (
+                            <div className="text-center py-10 text-gray-400">
+                                No evaluation available right now.
                             </div>
-                        </div>
-                    )}
-                </>
-            )}
+                        )}
+                    </div>
+                )}
 
-            {/* Transcript */}
-            {data.transcript && data.transcript.length > 0 && (
-                <TranscriptAccordion turns={data.transcript} />
-            )}
+                {activeTab === 'transcript' && (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        {data.transcript && data.transcript.length > 0 ? (
+                            <div className="bg-white border border-gray-200 rounded-xl max-h-[600px] overflow-y-auto divide-y divide-gray-50 shadow-sm">
+                                {data.transcript.map((t, i) => (
+                                    <div key={i} className={`px-5 py-4 ${t.role === 'ai' ? 'bg-indigo-50/50' : 'bg-white'}`}>
+                                        <span className={`text-xs font-bold uppercase tracking-wide ${t.role === 'ai' ? 'text-indigo-600' : 'text-gray-500'} mr-2 block mb-1`}>
+                                            {t.role === 'ai' ? 'Interviewer' : 'Candidate'}
+                                        </span>
+                                        <span className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{t.text}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-center py-10 text-gray-400">
+                                No transcript recorded.
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {activeTab === 'context' && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        {data.context_pool && Object.keys(data.context_pool).length > 0 ? (
+                            <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                                <div className="px-5 py-4 bg-gray-50 border-b border-gray-100">
+                                    <h3 className="text-sm font-semibold text-gray-700">Context Provided to AI</h3>
+                                </div>
+                                <div className="divide-y divide-gray-100">
+                                    {Object.entries(data.context_pool).map(([key, value]) => {
+                                        if (value === null || (Array.isArray(value) && value.length === 0)) return null;
+                                        
+                                        let displayValue = value;
+                                        if (Array.isArray(value)) {
+                                            displayValue = value.join(', ');
+                                        } else if (typeof value === 'object') {
+                                            displayValue = JSON.stringify(value, null, 2);
+                                        }
+
+                                        return (
+                                            <div key={key} className="p-5 flex flex-col md:flex-row gap-4">
+                                                <div className="w-1/3">
+                                                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                                        {key.replace(/_/g, ' ')}
+                                                    </span>
+                                                </div>
+                                                <div className="w-2/3">
+                                                    <span className="text-sm text-gray-800 break-words">
+                                                        {displayValue}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-center py-10 text-gray-400">
+                                No background context was injected into this interview.
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
