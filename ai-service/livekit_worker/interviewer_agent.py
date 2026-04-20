@@ -15,6 +15,7 @@ Context injection:
   - Weak assessment topics → opening prompt modifier (recruiter opt-in)
   - Language → TTS voice and prompt language instruction
 """
+
 import json
 import logging
 import os
@@ -27,22 +28,25 @@ from typing import Any, TYPE_CHECKING
 try:
     from livekit.agents import AgentSession, Agent, function_tool
     from livekit.agents.llm import ChatContext, ChatMessage
+
     _LIVEKIT_AVAILABLE = True
 except ImportError:
     # Stub base class for test-environment imports
     class Agent:  # type: ignore
-        def __init__(self, *args, **kwargs): pass
+        def __init__(self, *args, **kwargs):
+            pass
+
     AgentSession = Any  # type: ignore
-    ChatContext = Any   # type: ignore
+    ChatContext = Any  # type: ignore
     _LIVEKIT_AVAILABLE = False
 
 logger = logging.getLogger("eramatch.interviewer")
 
 # config for now only — override in .env for prod
 _INTERVIEWER_MODEL = os.getenv("INTERVIEWER_PRIMARY_MODEL", "gemini-2.5-flash-lite")
-_COVERAGE_MODEL    = os.getenv("COVERAGE_CHECK_MODEL", "qwen3.5:4b-cloud")
-_COVERAGE_BASEURL  = os.getenv("OLLAMA_HOST", "https://ollama.com") + "/v1"
-_COVERAGE_API_KEY  = os.getenv("OLLAMA_API_KEY", "")
+_COVERAGE_MODEL = os.getenv("COVERAGE_CHECK_MODEL", "gemma3:4b-cloud")
+_COVERAGE_BASEURL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434") + "/v1"
+_COVERAGE_API_KEY = os.getenv("OLLAMA_API_KEY", "") or "ollama"
 
 # Language config
 _LANGUAGE_VOICE_MAP = {
@@ -57,18 +61,22 @@ _LANGUAGE_VOICE_MAP = {
 @dataclass
 class PillarState:
     """Represents one topical pillar (a bank question + its sub-criteria coverage)."""
+
     bank_item_id: str
     question_text: str
     dimension_name: str
-    sub_criteria: list[str]                    # from question_rubric in bank
+    sub_criteria: list[str]  # from question_rubric in bank
     covered: set[str] = field(default_factory=set)
-    partial:  set[str] = field(default_factory=set)
+    partial: set[str] = field(default_factory=set)
     probe_count: int = 0
-    MAX_PROBES: int = 2                        # max follow-ups per pillar
+    MAX_PROBES: int = 2  # max follow-ups per pillar
 
     @property
     def is_complete(self) -> bool:
-        return len(self.covered) >= len(self.sub_criteria) or self.probe_count >= self.MAX_PROBES
+        return (
+            len(self.covered) >= len(self.sub_criteria)
+            or self.probe_count >= self.MAX_PROBES
+        )
 
     @property
     def missing(self) -> list[str]:
@@ -80,25 +88,31 @@ def _build_pillars_from_bank(bank_items: list[dict]) -> list[PillarState]:
     Convert frozen bank items into PillarState objects.
     Mandatory questions first, then sorted by dimension for coherent topical flow.
     """
-    mandatory   = [i for i in bank_items if i.get("is_mandatory")]
-    optional    = [i for i in bank_items if not i.get("is_mandatory")]
-    ordered     = mandatory + optional
+    mandatory = [i for i in bank_items if i.get("is_mandatory")]
+    optional = [i for i in bank_items if not i.get("is_mandatory")]
+    ordered = mandatory + optional
 
     pillars = []
     for item in ordered:
         sub_criteria = []
         rubric = item.get("question_rubric") or {}
         sub_criteria = rubric.get("sub_criteria", [])
-        if isinstance(sub_criteria, list) and sub_criteria and isinstance(sub_criteria[0], dict):
+        if (
+            isinstance(sub_criteria, list)
+            and sub_criteria
+            and isinstance(sub_criteria[0], dict)
+        ):
             # handle {"text": ..., "weight": ...} format
             sub_criteria = [s.get("text", str(s)) for s in sub_criteria]
 
-        pillars.append(PillarState(
-            bank_item_id=item.get("bank_item_id", ""),
-            question_text=item.get("text", ""),
-            dimension_name=item.get("primary_dimension_id", ""),
-            sub_criteria=sub_criteria or ["Demonstrate knowledge of the topic"],
-        ))
+        pillars.append(
+            PillarState(
+                bank_item_id=item.get("bank_item_id", ""),
+                question_text=item.get("text", ""),
+                dimension_name=item.get("primary_dimension_id", ""),
+                sub_criteria=sub_criteria or ["Demonstrate knowledge of the topic"],
+            )
+        )
     return pillars
 
 
@@ -125,7 +139,10 @@ async def _check_coverage(candidate_utterance: str, sub_criteria: list[str]) -> 
 
     try:
         import httpx
-        headers = {"Authorization": f"Bearer {_COVERAGE_API_KEY}", "Content-Type": "application/json"}
+
+        headers = {"Content-Type": "application/json"}
+        if _COVERAGE_API_KEY:
+            headers["Authorization"] = f"Bearer {_COVERAGE_API_KEY}"
         payload = {
             "model": _COVERAGE_MODEL,
             "messages": [{"role": "user", "content": prompt}],
@@ -133,20 +150,30 @@ async def _check_coverage(candidate_utterance: str, sub_criteria: list[str]) -> 
             "max_tokens": 300,
         }
         async with httpx.AsyncClient(timeout=8) as client:
-            resp = await client.post(f"{_COVERAGE_BASEURL}/chat/completions", json=payload, headers=headers)
+            resp = await client.post(
+                f"{_COVERAGE_BASEURL}/chat/completions", json=payload, headers=headers
+            )
             resp.raise_for_status()
             raw = resp.json()["choices"][0]["message"]["content"]
             # Strip markdown fences if any
             raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-            return json.loads(raw)
+            result = json.loads(raw)
+            logger.info(
+                "[COVERAGE] covered=%s partial=%s missed=%s",
+                result.get("covered", []),
+                result.get("partial", []),
+                result.get("missed", []),
+            )
+            return result
     except Exception as e:
-        logger.warning(f"Coverage check failed ({e}), defaulting to all-missed.")
+        logger.warning("[COVERAGE] Ollama call failed: %s", e)
         return {"covered": [], "partial": [], "missed": sub_criteria}
 
 
 # ---------------------------------------------------------------------------
 # Prompt helpers
 # ---------------------------------------------------------------------------
+
 
 def _opening_prompt(
     candidate_name: str,
@@ -192,6 +219,22 @@ def _opening_prompt(
                 f"Candidate's listed skills (from their CV): {skills_str}. "
                 "Use this to calibrate the depth of technical questions — don't ask questions "
                 "about skills they've clearly not listed unless testing adaptability."
+            )
+
+        experience = context.get("experience_summary", [])
+        if experience:
+            experience_str = " | ".join(experience)
+            lines.append(
+                f"Candidate's recent experience: {experience_str}. "
+                "You may refer to these roles when asking for examples of past work."
+            )
+
+        projects = context.get("projects", [])
+        if projects:
+            projects_str = ", ".join(projects)
+            lines.append(
+                f"Candidate's notable projects: {projects_str}. "
+                "Feel free to ask them to elaborate on these projects if relevant to the dimension being evaluated."
             )
 
         weak = context.get("weak_topics")
@@ -260,21 +303,23 @@ def _time_warning_closing_prompt(candidate_name: str, remaining_pillars: int) ->
 # ---------------------------------------------------------------------------
 class InterviewerAgent(Agent):
     """
-      on_session_start → set system prompt, generate greeting
-      on_user_turn_completed → check coverage, enforce time, decide next action
+    on_session_start → set system prompt, generate greeting
+    on_user_turn_completed → check coverage, enforce time, decide next action
     """
 
-    def __init__(self, metadata: dict):
-        self.session_id      = metadata.get("session_id", "unknown")
-        self.candidate_name  = metadata.get("candidate_name", "Candidate")
-        self.time_budget     = metadata.get("time_budget_minutes", 30)
-        self.language        = metadata.get("language", "en")
-        self.context         = metadata.get("context", {})
+    def __init__(self, metadata: dict, bank_items: list | None = None):
+        self.session_id = metadata.get("session_id", "unknown")
+        self.candidate_name = metadata.get("candidate_name", "Candidate")
+        self.time_budget = metadata.get("time_budget_minutes", 30)
+        self.language = metadata.get("language", "en")
+        self.context = metadata.get("context", {})
+        # Bank items injected at construction time (avoids userdata timing race)
+        self._bank_items: list[dict] = bank_items or []
 
         # Runtime state — filled after bank is fetched
         self.pillars: list[PillarState] = []
         self.current_pillar_idx: int = 0
-        self.phase: str = "welcome"   # welcome | topic | probe | closing | done
+        self.phase: str = "welcome"  # welcome | topic | probe | closing | done
 
         # Time tracking
         self.session_start_time: float = 0.0
@@ -300,19 +345,29 @@ class InterviewerAgent(Agent):
         logger.info(f"[{self.session_id}] Session start — loading bank from context")
         self.session_start_time = time.time()
 
-        # bank_items are passed via the session's userdata by agent_server.py
-        bank_items = session.userdata.get("bank_items", [])
+        # bank_items injected at construction time (no userdata timing dependency)
+        bank_items = self._bank_items
         if bank_items:
             self.pillars = _build_pillars_from_bank(bank_items)
-            logger.info(f"[{self.session_id}] Loaded {len(self.pillars)} pillars from frozen bank")
+            logger.info(
+                f"[{self.session_id}] Loaded {len(self.pillars)} pillars from frozen bank"
+            )
         else:
-            logger.warning(f"[{self.session_id}] No bank items — using fallback question")
-            self.pillars = [PillarState(
-                bank_item_id="fallback",
-                question_text="Tell me about a challenging project you've worked on and what you learned from it.",
-                dimension_name="General",
-                sub_criteria=["Describes a specific challenge", "Explains how it was resolved", "Reflects on learnings"],
-            )]
+            logger.warning(
+                f"[{self.session_id}] No bank items — using fallback question"
+            )
+            self.pillars = [
+                PillarState(
+                    bank_item_id="fallback",
+                    question_text="Tell me about a challenging project you've worked on and what you learned from it.",
+                    dimension_name="General",
+                    sub_criteria=[
+                        "Describes a specific challenge",
+                        "Explains how it was resolved",
+                        "Reflects on learnings",
+                    ],
+                )
+            ]
 
         # Compute per-pillar time budget (seconds)
         total_seconds = self.time_budget * 60
@@ -362,7 +417,9 @@ class InterviewerAgent(Agent):
     # ------------------------------------------------------------------
     # Every time the candidate finishes speaking
     # ------------------------------------------------------------------
-    async def on_user_turn_completed(self, session: AgentSession, turn_ctx: ChatContext):
+    async def on_user_turn_completed(
+        self, turn_ctx: ChatContext, new_message: ChatMessage
+    ):
         """
         Called after LiveKit turn detection signals the candidate has stopped speaking.
         This is the core decision loop.
@@ -377,27 +434,25 @@ class InterviewerAgent(Agent):
                 f"[{self.session_id}] Time budget at 90% ({self._elapsed():.0f}s). "
                 f"Forcing close. {remaining} pillars skipped."
             )
-            await self._close(session, forced=True, remaining_pillars=remaining)
+            await self._close(self.session, forced=True, remaining_pillars=remaining)
             return
 
         # Extract last candidate utterance
-        candidate_utterance = ""
-        for msg in reversed(turn_ctx.messages):
-            if hasattr(msg, "role") and msg.role == "user":
-                candidate_utterance = str(msg.content or "")
-                break
+        candidate_utterance = str(new_message.content or "")
 
-        # Log to transcript
-        self.transcript.append({
-            "role": "candidate",
-            "text": candidate_utterance,
-            "pillar_idx": self.current_pillar_idx,
-            "phase": self.phase,
-            "elapsed_seconds": round(self._elapsed()),
-        })
+        self.transcript.append(
+            {
+                "role": "candidate",
+                "text": candidate_utterance,
+                "pillar_idx": self.current_pillar_idx,
+                "phase": self.phase,
+                "elapsed_seconds": round(self._elapsed()),
+            }
+        )
+        self.session.userdata["transcript"] = self.transcript
 
         if not self.pillars or self.current_pillar_idx >= len(self.pillars):
-            await self._close(session)
+            await self._close(self.session)
             return
 
         pillar = self.pillars[self.current_pillar_idx]
@@ -423,26 +478,34 @@ class InterviewerAgent(Agent):
             # Advance to next pillar
             self.current_pillar_idx += 1
             if self.current_pillar_idx >= len(self.pillars):
-                await self._close(session)
+                await self._close(self.session)
             else:
                 next_pillar = self.pillars[self.current_pillar_idx]
-                await session.generate_reply(instructions=_bridge_prompt(next_pillar))
+                await self.session.generate_reply(
+                    instructions=_bridge_prompt(next_pillar)
+                )
                 self.phase = "topic"
         else:
             # Ask a follow-up probe
             pillar.probe_count += 1
-            await session.generate_reply(instructions=_probe_prompt(pillar))
+            await self.session.generate_reply(instructions=_probe_prompt(pillar))
             self.phase = "probe"
 
-    async def _close(self, session: AgentSession, forced: bool = False, remaining_pillars: int = 0):
+    async def _close(
+        self, session: AgentSession, forced: bool = False, remaining_pillars: int = 0
+    ):
         """Generate closing statement and signal the backend."""
         self.phase = "closing"
         if forced and remaining_pillars > 0:
             await session.generate_reply(
-                instructions=_time_warning_closing_prompt(self.candidate_name, remaining_pillars)
+                instructions=_time_warning_closing_prompt(
+                    self.candidate_name, remaining_pillars
+                )
             )
         else:
-            await session.generate_reply(instructions=_closing_prompt(self.candidate_name))
+            await session.generate_reply(
+                instructions=_closing_prompt(self.candidate_name)
+            )
         self.phase = "done"
         logger.info(
             f"[{self.session_id}] Interview complete. "
