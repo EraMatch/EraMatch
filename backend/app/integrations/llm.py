@@ -8,7 +8,7 @@ Supported providers:
 
 Usage:
     from app.integrations.llm import get_llm
-    
+
     llm = get_llm("gemini")  # or "ollama", "groq"
     response = await llm.ainvoke("Hello, world!")
 """
@@ -33,15 +33,15 @@ def get_llm(
 ) -> BaseChatModel:
     """
     Get LLM instance for the specified provider.
-    
+
     Args:
         provider: LLM provider name
         model: Model name (uses default if not specified)
         temperature: Sampling temperature
-        
+
     Returns:
         LangChain chat model instance
-        
+
     Example:
         llm = get_llm("gemini")
         response = await llm.ainvoke("Summarize this CV...")
@@ -62,18 +62,19 @@ def get_llm(
 # OLLAMA CLOUD
 # =============================================================================
 
+
 def _get_ollama_llm(model: str | None, temperature: float) -> BaseChatModel:
     """
     Ollama Cloud LLMs.
-    
+
     Models available via Ollama Cloud:
     - deepseek-r1, llama3.3, qwen2.5, etc.
-    
+
     Requires: OLLAMA_API_KEY in .env
     Docs: https://ollama.com/blog/cloud-models
     """
     from langchain_ollama import ChatOllama
-    
+
     return ChatOllama(
         model=model or "llama3.2",
         temperature=temperature,
@@ -86,20 +87,28 @@ def _get_ollama_llm(model: str | None, temperature: float) -> BaseChatModel:
 # GOOGLE GEMINI
 # =============================================================================
 
+
 def _get_gemini_llm(model: str | None, temperature: float) -> BaseChatModel:
-    """
-    Google Gemini via LangChain.
-    
+    """Google Gemini via LangChain.
+
     Models: gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash
-    
+
     Requires: GOOGLE_API_KEY in .env
+
+    max_retries=0 disables all retry behavior. The google-genai SDK has
+    two retry layers: per-request (HttpRetryOptions) and client-level
+    (_async_retry). Setting max_retries=0 creates HttpRetryOptions(attempts=0)
+    which is coerced to 1 (= no retry) and overrides the client-level default
+    of 5 attempts. This prevents 60s+ exponential backoff delays on 429
+    quota errors, allowing our Ollama fallback to kick in immediately.
     """
     from langchain_google_genai import ChatGoogleGenerativeAI
-    
+
     return ChatGoogleGenerativeAI(
         model=model or "gemini-2.5-flash-lite",
         temperature=temperature,
         google_api_key=settings.GOOGLE_API_KEY,
+        max_retries=0,
     )
 
 
@@ -107,16 +116,17 @@ def _get_gemini_llm(model: str | None, temperature: float) -> BaseChatModel:
 # GROQ (Placeholder)
 # =============================================================================
 
+
 def _get_groq_llm(model: str | None, temperature: float) -> BaseChatModel:
     """
     Groq API - Fast inference.
-    
+
     Models: llama-3.3-70b-versatile, mixtral-8x7b-32768
-    
+
     Requires: GROQ_API_KEY in .env
     """
     from langchain_groq import ChatGroq
-    
+
     return ChatGroq(
         model=model or "llama-3.3-70b-versatile",
         temperature=temperature,
@@ -128,16 +138,17 @@ def _get_groq_llm(model: str | None, temperature: float) -> BaseChatModel:
 # OPENAI (Placeholder)
 # =============================================================================
 
+
 def _get_openai_llm(model: str | None, temperature: float) -> BaseChatModel:
     """
     OpenAI API.
-    
+
     Models: gpt-4o, gpt-4o-mini
-    
+
     Requires: OPENAI_API_KEY in .env
     """
     from langchain_openai import ChatOpenAI
-    
+
     return ChatOpenAI(
         model=model or "gpt-4o-mini",
         temperature=temperature,
