@@ -10,26 +10,34 @@ Context injection order:
   3. Candidate's weakest assessment topics (only if rubric.include_weak_topics=True
      AND the group has an assessment stage that was completed)
 """
+
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from livekit import api as lk_api
 from sqlmodel import select, func
 
 from app.models import (
-    LiV2Session, LiV2Bank, LiV2Rubric,
-    CandidateProfile, CandidateApplication,
-    Position, CandidateGroup,
+    LiV2Session,
+    LiV2Bank,
+    LiV2Rubric,
+    CandidateProfile,
+    CandidateApplication,
+    Position,
+    CandidateGroup,
+    CVAnalysis,
+    CandidateStageProgress,
+    GroupStageConfig,
 )
 from app.core.exceptions import NotFoundException, BadRequestException
 
 logger = logging.getLogger("eramatch.live_interview.token")
 
-_LK_URL    = os.getenv("LIVEKIT_URL", "")
-_LK_KEY    = os.getenv("LIVEKIT_API_KEY", "")
+_LK_URL = os.getenv("LIVEKIT_URL", "")
+_LK_KEY = os.getenv("LIVEKIT_API_KEY", "")
 _LK_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
 
 
@@ -56,7 +64,7 @@ async def generate_session_token_service(
     """
     # --- 1. Resolve application → group → frozen bank -------------
     app_res = await db.execute(
-        select(CandidateApplication).where(CandidateApplication.application_id == application_id)
+        select(CandidateApplication).where(CandidateApplication.id == application_id)
     )
     application = app_res.scalar_one_or_none()
     if not application:
@@ -124,7 +132,7 @@ async def generate_session_token_service(
             bank_id=bank.id,
             room_name=room_name,
             state="pending",
-            context_pool=context_payload,   # store what context was given to agent
+            context_pool=context_payload,  # store what context was given to agent
         )
         db.add(session)
         await db.commit()
@@ -133,6 +141,65 @@ async def generate_session_token_service(
     else:
         room_name = session.room_name
         logger.info(f"Reusing LiV2Session {session.id} → room {room_name}")
+
+    # --- 4b. Update candidate_pipeline_progress → in_progress ----------
+    try:
+        stage_res = await db.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.organization_id == organization_id,
+                GroupStageConfig.stage_type == "live_interview",
+            )
+        )
+        stage = stage_res.scalar_one_or_none()
+        if stage:
+            prog_res = await db.execute(
+                select(CandidateStageProgress).where(
+                    CandidateStageProgress.application_id == application_id,
+                    CandidateStageProgress.stage_id == stage.stage_id,
+                )
+            )
+            progress = prog_res.scalar_one_or_none()
+            if progress:
+                progress.status = "in_progress"
+                progress.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                progress.session_id = session.id
+                progress.session_type = "live_interview"
+                db.add(progress)
+            else:
+                progress = CandidateStageProgress(
+                    application_id=application_id,
+                    stage_id=stage.stage_id,
+                    status="in_progress",
+                    session_id=session.id,
+                    session_type="live_interview",
+                    started_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                )
+                db.add(progress)
+            await db.commit()
+            logger.info(
+                "[PROGRESS] app=%s stage=%s status=in_progress",
+                application_id,
+                stage.stage_id,
+            )
+        else:
+            logger.warning(
+                "[PROGRESS] No live_interview stage found for group=%s org=%s",
+                group_id,
+                organization_id,
+            )
+    except Exception as e:
+        logger.error(
+            "[PROGRESS] Failed to update pipeline progress on token issue: %s", e
+        )
+
+    logger.info(
+        "[TOKEN] session=%s context_keys=%s bank_items=%d time_budget=%d",
+        session.id,
+        list(context_payload.keys()),
+        len(bank.items or []),
+        rubric.time_budget_minutes,
+    )
 
     # --- 5. Generate a LiveKit JWT for the candidate ---------------
     token = (
@@ -173,6 +240,7 @@ async def generate_session_token_service(
 # CONTEXT BUILDER
 # =============================================================================
 
+
 async def _build_context_payload(
     db,
     candidate,
@@ -196,6 +264,8 @@ async def _build_context_payload(
         "position_title": None,
         "job_description_excerpt": None,
         "cv_skills": [],
+        "experience_summary": [],
+        "projects": [],
         "weak_topics": None,
     }
 
@@ -217,27 +287,38 @@ async def _build_context_payload(
     except Exception as e:
         logger.warning(f"Context builder: failed to load position — {e}")
 
-    # ── CV Skills ─────────────────────────────────────────────────────────
+    # ── CV Data (Skills, Experience, Projects) ───────────────────────────
     try:
-        if candidate:
-            # CVAnalysis may be stored in candidate.parsed_data (JSONB) or
-            # in a separate cv_analyses table — try both patterns
-            cv_data = getattr(candidate, "parsed_data", None) or {}
-            skills = cv_data.get("skills", []) if isinstance(cv_data, dict) else []
-            if skills and isinstance(skills, list):
-                # Normalize — may be strings or {name, level} dicts
-                payload["cv_skills"] = [
-                    s.get("name", str(s)) if isinstance(s, dict) else str(s)
-                    for s in skills[:20]   # cap at 20 skills to keep prompt size sane
-                ]
+        cv_res = await db.execute(
+            select(CVAnalysis).where(CVAnalysis.application_id == application.id)
+        )
+        cv = cv_res.scalar_one_or_none()
+
+        if cv:
+            # 1. Skills
+            if cv.skills and isinstance(cv.skills, list):
+                payload["cv_skills"] = [str(s) for s in cv.skills[:20]]
+
+            # 2. Experience & Projects (from parsed_data JSONB)
+            if cv.parsed_data and isinstance(cv.parsed_data, dict):
+                work_hist = cv.parsed_data.get("work_history", [])
+                if work_hist and isinstance(work_hist, list):
+                    payload["experience_summary"] = [
+                        f"{w.get('title')} at {w.get('company')} ({w.get('duration')})"
+                        for w in work_hist[:2]
+                    ]
+
+                projects = cv.parsed_data.get("projects", [])
+                if projects and isinstance(projects, list):
+                    payload["projects"] = [p.get("name", str(p)) for p in projects[:3]]
     except Exception as e:
-        logger.warning(f"Context builder: failed to load CV skills — {e}")
+        logger.warning(f"Context builder: failed to load CV data — {e}")
 
     # ── Weak Assessment Topics ─────────────────────────────────────────────
     if rubric.include_weak_topics:
         try:
             payload["weak_topics"] = await _get_weak_topics(
-                db, application_id=application.application_id
+                db, application_id=application.id
             )
         except Exception as e:
             logger.warning(f"Context builder: failed to load weak topics — {e}")
@@ -263,10 +344,13 @@ async def _get_weak_topics(db, application_id: UUID) -> list[str]:
 
     # Find the assessment session for this application
     sess_res = await db.execute(
-        select(OngoingAssessment).where(
+        select(OngoingAssessment)
+        .where(
             OngoingAssessment.application_id == application_id,
             OngoingAssessment.status == "completed",
-        ).order_by(OngoingAssessment.created_at.desc()).limit(1)
+        )
+        .order_by(OngoingAssessment.created_at.desc())
+        .limit(1)
     )
     assessment_session = sess_res.scalar_one_or_none()
     if not assessment_session:
@@ -285,6 +369,7 @@ async def _get_weak_topics(db, application_id: UUID) -> list[str]:
 
     # Look up question topics for these answers
     from app.models import Question
+
     topic_counts: dict[str, int] = {}
     for ans in wrong_answers:
         q_res = await db.execute(
@@ -303,9 +388,14 @@ async def _get_weak_topics(db, application_id: UUID) -> list[str]:
 # AGENT DISPATCH
 # =============================================================================
 
+
 async def _dispatch_agent_if_not_present(
-    room_name: str, session, candidate_name: str,
-    rubric, bank, context_payload: dict,
+    room_name: str,
+    session,
+    candidate_name: str,
+    rubric,
+    bank,
+    context_payload: dict,
 ):
     """
     Dispatches the EraMatch Interviewer agent to the room via the LiveKit API.
@@ -313,30 +403,36 @@ async def _dispatch_agent_if_not_present(
 
     The metadata JSON is what the agent_server.py reads in `interviewer_session()`.
     """
-    metadata = json.dumps({
-        "session_id": str(session.id),
-        "candidate_id": str(session.candidate_id),
-        "candidate_name": candidate_name,
-        "rubric_id": str(rubric.id),
-        "bank_id": str(bank.id),
-        "time_budget_minutes": rubric.time_budget_minutes,
-        "language": rubric.language or "en",
-        "group_id": str(session.group_id),
-        "organization_id": str(session.organization_id),
-        # Context injected into agent opening prompt:
-        "context": context_payload,
-    })
+    metadata = json.dumps(
+        {
+            "session_id": str(session.id),
+            "candidate_id": str(session.candidate_id),
+            "candidate_name": candidate_name,
+            "rubric_id": str(rubric.id),
+            "bank_id": str(bank.id),
+            "time_budget_minutes": rubric.time_budget_minutes,
+            "language": rubric.language or "en",
+            "group_id": str(session.group_id),
+            "organization_id": str(session.organization_id),
+            # Context injected into agent opening prompt:
+            "context": context_payload,
+        }
+    )
 
     try:
-        lk_client = lk_api.LiveKitAPI(url=_LK_URL, api_key=_LK_KEY, api_secret=_LK_SECRET)
-        await lk_client.agent.create_dispatch(
-            lk_api.CreateAgentDispatchRequest(
-                agent_name="eramatch-interviewer",
-                room=room_name,
-                metadata=metadata,
+        async with lk_api.LiveKitAPI(
+            url=_LK_URL, api_key=_LK_KEY, api_secret=_LK_SECRET
+        ) as lk_client:
+            await lk_client.agent_dispatch.create_dispatch(
+                lk_api.CreateAgentDispatchRequest(
+                    agent_name="eramatch-interviewer",
+                    room=room_name,
+                    metadata=metadata,
+                )
             )
-        )
-        logger.info(f"Agent dispatched to room {room_name} with context keys: {list(context_payload.keys())}")
+            logger.info(
+                f"Agent dispatched to room {room_name} with context keys: {list(context_payload.keys())}"
+            )
     except Exception as e:
         # Non-fatal: candidate can still join; agent will retry on reconnect
         logger.warning(f"Agent dispatch failed (non-fatal): {e}")
