@@ -21,6 +21,7 @@ Identify 2-3 Archetypes that describe this candidate's technical identity (e.g.,
 
 3. Interview Questions:
 Draft 10 conceptual questions to verify the engineering principles behind the audit findings. Ask as if discussing general engineering scenarios.
+For each question, also provide a short rubric, 10 yes/no QAG checklist items with weights that sum to 1.0, and a short reference answer.
 
 4. Executive Summary:
 A high-level technical evaluation (max 4 sentences).
@@ -45,6 +46,10 @@ REQUIRED OUTPUT JSON FORMAT:
             "context": "Brief conceptual context",
             "question": "The question text...",
             "reference_answer": "Expected explanation... (MAX 2 SENTENCES)",
+            "rubric": "Short grading rubric for the question",
+            "rubric_yes_no_checks": [
+                {"id": 1, "check": "Does the answer ...?", "weight": 0.10}
+            ],
             "difficulty": "expert",
             "source_file": "file_path",
             "selection_reason": "Technical complexity reason",

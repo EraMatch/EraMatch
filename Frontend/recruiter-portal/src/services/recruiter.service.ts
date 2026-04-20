@@ -110,6 +110,29 @@ export const recruiterService = {
     getCandidate: async (candidateId: string) => fetchAPI<any>(`/candidates/${candidateId}`),
     getApplicationScoreBreakdown: async (applicationId: string) =>
         fetchAPI<ApplicationScoreBreakdown>(`/recruiter/applications/${applicationId}/score-breakdown`),
+    saveGithubAnalysisReview: async (
+        candidateId: string,
+        payload: {
+            review_notes?: string | null;
+            questions: Array<{
+                questionText: string;
+                type: string;
+                difficulty: string;
+                sourceFile?: string | null;
+                referenceAnswer?: string | null;
+                selectionReason?: string | null;
+                jdRelation?: string | null;
+                evidence?: string | null;
+                selected?: boolean;
+            }>;
+        }
+    ) => {
+        return fetchAPI(`/candidates/${candidateId}/github-analysis/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    },
     resetApplicationAssessmentTrial: async (applicationId: string) =>
         fetchAPI<{
             application_id: string;

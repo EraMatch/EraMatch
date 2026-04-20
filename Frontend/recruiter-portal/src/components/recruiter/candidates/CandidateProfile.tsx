@@ -1067,11 +1067,11 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
                   <div className="mt-3">
                     <Button
-                      onClick={() => setShowGithubAssignedQuestions(true)}
+                      onClick={() => navigate(`/recruiter/candidates/${candidateId}/github-analysis-review${applicationId ? `?applicationId=${applicationId}` : ''}`)}
                       variant="outline"
                       className="border-indigo-600 text-indigo-600 hover:bg-indigo-50"
                     >
-                      View Assigned GitHub Questions
+                      Open GitHub Analysis Review
                     </Button>
                   </div>
                 </div>

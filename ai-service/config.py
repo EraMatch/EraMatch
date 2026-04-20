@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     OLLAMA_GH_MAP_MODEL: str = "kimi-k2.5:cloud"
     OLLAMA_GH_AUDIT_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_GH_SYNTH_MODEL: str = "deepseek-v3.1:671b-cloud"
-    OLLAMA_GH_STAGE_TIMEOUT_SECONDS: int = 90
-    OLLAMA_MAX_CONCURRENT_CALLS: int = 1
+    OLLAMA_GH_STAGE_TIMEOUT_SECONDS: int = 180
+    OLLAMA_MAX_CONCURRENT_CALLS: int = 4
     OLLAMA_CV_PARSE_TIMEOUT_SECONDS: int = 120
 
     # GitHub analysis runtime controls

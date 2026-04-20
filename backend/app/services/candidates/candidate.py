@@ -334,11 +334,15 @@ class CandidateService:
                 analysis_data = gh.analysis_data or {}
                 if isinstance(analysis_data, dict):
                     synthesis = analysis_data.get("synthesis") if isinstance(analysis_data.get("synthesis"), dict) else {}
+                    question_review = analysis_data.get("question_review") if isinstance(analysis_data.get("question_review"), dict) else {}
+                    reviewed_questions = question_review.get("questions") if isinstance(question_review.get("questions"), list) else []
+                    synthesis_questions = synthesis.get("questions") if isinstance(synthesis.get("questions"), list) else []
+                    resolved_questions = reviewed_questions or synthesis_questions
                     github_analysis = {
                         "summary": synthesis.get("executive_summary") or analysis_data.get("summary") or "",
                         "archetypes": synthesis.get("archetypes") or analysis_data.get("archetypes") or [],
                         "assessment": synthesis.get("assessment") or analysis_data.get("assessment") or None,
-                        "questions": synthesis.get("questions") or analysis_data.get("questions") or [],
+                        "questions": resolved_questions or analysis_data.get("questions") or [],
                         "audit": analysis_data.get("audit") or [],
                         "contributionStats": analysis_data.get("contribution_stats") if isinstance(analysis_data.get("contribution_stats"), dict) else None,
                         "recentActivity": analysis_data.get("recent_activity") if isinstance(analysis_data.get("recent_activity"), list) else [],
@@ -349,6 +353,7 @@ class CandidateService:
                         "repoConfidence": analysis_data.get("repo_confidence") if isinstance(analysis_data.get("repo_confidence"), dict) else None,
                         "dataFreshness": analysis_data.get("data_freshness") if isinstance(analysis_data.get("data_freshness"), dict) else None,
                         "questionDelivery": analysis_data.get("question_delivery") if isinstance(analysis_data.get("question_delivery"), dict) else None,
+                        "questionReview": question_review,
                         "assignedQuestionStats": None,
                     }
 
@@ -473,6 +478,18 @@ class CandidateService:
                             "points": int(q.get("points") or 10),
                             "sourceFile": source_file,
                             "repositoryName": repository_name,
+                            "referenceAnswer": str(q.get("reference_answer") or q.get("referenceAnswer") or "").strip(),
+                            "rubric": str(q.get("rubric") or "").strip(),
+                            "rubricYesNoChecks": q.get("rubric_yes_no_checks") if isinstance(q.get("rubric_yes_no_checks"), list) else [],
+                            "selectionReason": str(q.get("selection_reason") or "").strip(),
+                            "jdRelation": str(q.get("jd_relation") or "").strip(),
+                            "evidence": str(q.get("evidence") or "").strip(),
+                            "referenceAnswer": str(q.get("reference_answer") or q.get("referenceAnswer") or "").strip(),
+                            "rubric": str(q.get("rubric") or "").strip(),
+                            "rubricYesNoChecks": q.get("rubric_yes_no_checks") if isinstance(q.get("rubric_yes_no_checks"), list) else [],
+                            "selectionReason": str(q.get("selection_reason") or "").strip(),
+                            "jdRelation": str(q.get("jd_relation") or "").strip(),
+                            "evidence": str(q.get("evidence") or "").strip(),
                         }
                     )
 

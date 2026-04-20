@@ -19,6 +19,7 @@ import { ProjectsPage } from './components/recruiter/projects/ProjectsPage';
 import { CandidatesPage } from './components/recruiter/candidates/CandidatesPage';
 import { QuestionBankPage } from './components/recruiter/assessments/QuestionBankPage';
 import { CandidateProfile } from './components/recruiter/candidates/CandidateProfile';
+import { CandidateGitHubAnalysisReviewPage } from './components/recruiter/candidates/CandidateGitHubAnalysisReviewPage';
 import { CandidateQAGAuditPage } from './components/recruiter/candidates/CandidateQAGAuditPage';
 import { AlertsNotifications } from './components/common/AlertsNotifications';
 import { EnhancedGroupOverviewV2 } from './components/recruiter/groups/EnhancedGroupOverviewV2';
@@ -316,6 +317,16 @@ const CandidateQAGAuditWrapper = () => {
     return <CandidateQAGAuditPage candidateId={id} applicationId={applicationId} />;
 };
 
+const CandidateGitHubAnalysisReviewWrapper = () => {
+    const { candidateId } = useParams();
+    const [searchParams] = useSearchParams();
+
+    const id = candidateId ?? '';
+    const applicationId = searchParams.get('applicationId') ?? undefined;
+
+    return <CandidateGitHubAnalysisReviewPage candidateId={id} applicationId={applicationId} />;
+};
+
 export const router = createBrowserRouter([
     // Landing - 2 buttons (Admin & Recruiter)
     {
@@ -596,6 +607,16 @@ export const router = createBrowserRouter([
                 </RecruiterLayout>
             </RecruiterProtectedRoute>
         ),
+    },
+    {
+        path: "/recruiter/candidates/:candidateId/github-analysis-review",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <CandidateGitHubAnalysisReviewWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        )
     },
     {
         path: "/recruiter/background-tasks",

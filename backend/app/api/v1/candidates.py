@@ -2,6 +2,7 @@
 Candidate endpoints.
 """
 from uuid import UUID
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -9,7 +10,7 @@ from sqlmodel import select
 
 from app.api.deps import DbSession, CurrentUser
 from app.services import CandidateService
-from app.models import CandidateProfile, CandidateApplication, Position, CVAnalysis, GitHubAnalysisJob
+from app.models import CandidateProfile, CandidateApplication, Position, CVAnalysis, GitHubAnalysis, GitHubAnalysisJob
 from app.schemas import (
     CandidateCreate,
     CandidateUpdate,
@@ -26,6 +27,23 @@ class PersistSuspectArtifactsRequest(BaseModel):
     application_id: UUID | None = None
     suspicious_timestamps: list[int] = Field(default_factory=list)
     window_seconds: int = Field(default=5, ge=1, le=30)
+
+
+class GitHubAnalysisReviewQuestion(BaseModel):
+    questionText: str
+    type: str = Field(default="essay")
+    difficulty: str = Field(default="Medium")
+    sourceFile: str | None = None
+    referenceAnswer: str | None = None
+    selectionReason: str | None = None
+    jdRelation: str | None = None
+    evidence: str | None = None
+    selected: bool = True
+
+
+class PersistGitHubAnalysisReviewRequest(BaseModel):
+    review_notes: str | None = None
+    questions: list[GitHubAnalysisReviewQuestion] = Field(default_factory=list)
 
 
 async def _queue_github_analysis_job(
@@ -151,6 +169,101 @@ async def _queue_github_analysis_job(
         "job_id": str(job.id),
         "status": "pending",
         "message": "GitHub analysis job queued",
+    }
+
+
+@router.post("/{candidate_id}/github-analysis/review")
+async def persist_github_analysis_review(
+    candidate_id: UUID,
+    data: PersistGitHubAnalysisReviewRequest,
+    session: DbSession,
+    current_user: CurrentUser,
+):
+    profile_result = await session.execute(
+        select(CandidateProfile).where(
+            CandidateProfile.id == candidate_id,
+            CandidateProfile.organization_id == current_user.organization_id,
+            CandidateProfile.is_deleted == False,
+        )
+    )
+    profile = profile_result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    github_res = await session.execute(
+        select(GitHubAnalysis).where(
+            GitHubAnalysis.candidate_id == candidate_id,
+            GitHubAnalysis.organization_id == current_user.organization_id,
+        )
+    )
+    github = github_res.scalar_one_or_none()
+    if not github:
+        raise HTTPException(status_code=404, detail="GitHub analysis record not found")
+
+    analysis_data = github.analysis_data if isinstance(github.analysis_data, dict) else {}
+    synthesis = analysis_data.get("synthesis") if isinstance(analysis_data.get("synthesis"), dict) else {}
+
+    normalized_questions = []
+    for item in data.questions:
+        normalized_questions.append(
+            {
+                "question": item.questionText,
+                "question_text": item.questionText,
+                "type": item.type,
+                "question_type": item.type,
+                "difficulty": item.difficulty,
+                "source_file": item.sourceFile or "",
+                "reference_answer": item.referenceAnswer or "",
+                "selection_reason": item.selectionReason or "",
+                "jd_relation": item.jdRelation or "",
+                "evidence": item.evidence or "",
+                "selected": item.selected,
+            }
+        )
+
+    reviewed_count = sum(1 for item in data.questions if item.selected)
+    review_payload = {
+        "questions": normalized_questions,
+        "selected_count": reviewed_count,
+        "total_count": len(normalized_questions),
+        "review_notes": data.review_notes,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "reviewed_by_user_id": str(getattr(current_user, "id", None) or getattr(current_user, "user_id", "")),
+    }
+
+    analysis_data["question_review"] = review_payload
+    if isinstance(synthesis, dict):
+        synthesis.setdefault("questions", synthesis.get("questions") if isinstance(synthesis.get("questions"), list) else [])
+        analysis_data["synthesis"] = synthesis
+
+    github.analysis_data = analysis_data
+    github.generated_questions = normalized_questions
+    github.analyzed_at = datetime.utcnow()
+    session.add(github)
+
+    latest_job_result = await session.execute(
+        select(GitHubAnalysisJob)
+        .where(
+            GitHubAnalysisJob.organization_id == current_user.organization_id,
+            GitHubAnalysisJob.candidate_id == candidate_id,
+            GitHubAnalysisJob.status == "completed",
+        )
+        .order_by(GitHubAnalysisJob.created_at.desc())
+        .limit(1)
+    )
+    latest_job = latest_job_result.scalar_one_or_none()
+    if latest_job:
+        latest_job.generated_questions = normalized_questions
+        latest_job.total_generated = len(normalized_questions)
+        session.add(latest_job)
+
+    await session.commit()
+
+    return {
+        "message": "GitHub analysis review saved",
+        "candidate_id": str(candidate_id),
+        "selected_count": reviewed_count,
+        "total_count": len(normalized_questions),
     }
 
 

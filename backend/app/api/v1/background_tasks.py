@@ -14,6 +14,7 @@ from app.models import InterviewResponse, OngoingInterview, CandidateApplication
 router = APIRouter(prefix="/background-tasks", tags=["Background Tasks"])
 
 DEBUG_LOG_PATH = Path("logs/video_processing_debug.json")
+GITHUB_DEBUG_LOG_PATH = Path("logs/github_analysis_debug.json")
 
 SLO_WINDOW_HOURS = 24
 
@@ -418,20 +419,28 @@ async def get_task_logs(task_id: str, current_user = Depends(get_current_user)):
     """
     Get detailed logs for a specific background task.
     """
-    if not DEBUG_LOG_PATH.exists():
-        return {"logs": []}
-        
     try:
-        content = DEBUG_LOG_PATH.read_text()
-        if not content:
-            return {"logs": []}
-            
-        logs = json.loads(content)
-        # Filter logs by response_id
-        task_logs = [
-            log for log in logs 
-            if log.get("data", {}).get("response_id") == task_id
-        ]
+        task_logs = []
+
+        if DEBUG_LOG_PATH.exists():
+            content = DEBUG_LOG_PATH.read_text()
+            if content:
+                logs = json.loads(content)
+                task_logs.extend(
+                    log for log in logs
+                    if log.get("data", {}).get("response_id") == task_id
+                )
+
+        if GITHUB_DEBUG_LOG_PATH.exists():
+            content = GITHUB_DEBUG_LOG_PATH.read_text()
+            if content:
+                logs = json.loads(content)
+                task_logs.extend(
+                    log for log in logs
+                    if log.get("data", {}).get("job_id") == task_id
+                )
+
+        task_logs.sort(key=lambda entry: entry.get("timestamp") or "")
         return {"logs": task_logs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading logs: {str(e)}")
