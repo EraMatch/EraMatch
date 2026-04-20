@@ -110,3 +110,8 @@ AGENTS.md
 **/*.json
 .serena/
 LIV2_TEST_CREDENTIALS.md
+
+# Debug scripts (one-off)
+backend/check_cv.py
+backend/check_cv2.py
+backend/test_cv_db.py
