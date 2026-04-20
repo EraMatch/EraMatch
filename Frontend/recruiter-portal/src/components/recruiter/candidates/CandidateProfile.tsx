@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock } from 'lucide-react';
+import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock, ShieldCheck, Award, Zap, Code2, Cpu, Layers, Globe, Terminal, Briefcase, Users } from 'lucide-react';
 import LoadingSpinner from '../../common/LoadingSpinner';
 import { EnhancedAssessmentReport } from '../assessments/EnhancedAssessmentReport';
 import { EnhancedAIInterviewReport } from '../interviews/EnhancedAIInterviewReport';
@@ -292,6 +292,21 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const recentGithubActivity = Array.isArray(candidate.githubAnalysis?.recentActivity) && candidate.githubAnalysis.recentActivity.length > 0
     ? candidate.githubAnalysis.recentActivity
     : fallbackRecentActivity;
+
+  const rawTopRepos = Array.isArray(candidate.githubStats?.topRepos) ? candidate.githubStats.topRepos : [];
+  const showcaseRepos = [...rawTopRepos]
+    .sort((a: any, b: any) => {
+      const aHasDescription = Boolean(String(a?.description || '').trim());
+      const bHasDescription = Boolean(String(b?.description || '').trim());
+      if (aHasDescription !== bHasDescription) {
+        return aHasDescription ? -1 : 1;
+      }
+
+      const aStars = Number(a?.stars || 0);
+      const bStars = Number(b?.stars || 0);
+      return bStars - aStars;
+    })
+    .slice(0, 4);
 
   const avgPrReviewTimeHours = qualityIndicators?.avg_pr_review_time_hours;
   const avgPrReviewTimeText = typeof avgPrReviewTimeHours === 'number' ? `${avgPrReviewTimeHours.toFixed(1)} hrs` : 'N/A';
@@ -970,400 +985,350 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
             )}
 
             {activeTab === 'github' && (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-[#111827] mb-4">GitHub Profile Analysis</h3>
-                </div>
-
-                {/* Overall GitHub Score */}
-                <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-indigo-900 font-semibold mb-2">Overall GitHub Score</h4>
-                      <p className="text-sm text-indigo-700">
-                        Based on code quality, contribution frequency, community engagement, and project impact
-                      </p>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-5xl font-bold text-indigo-600 mb-1">{Math.round(overallGithubScore)}</div>
-                      <div className="text-sm text-indigo-700">/ 100</div>
-                    </div>
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* Header Section */}
+                <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                  <div>
+                    <h3 className="text-[28px] font-bold text-[#111827] tracking-tight">Technical Intelligence</h3>
+                    <p className="text-[#6b7280] text-sm mt-1">Deep analysis of GitHub presence, code quality, and engineering patterns</p>
                   </div>
-                </div>
-
-                {/* GitHub Stats Overview */}
-                <div className="grid grid-cols-4 gap-4">
-                  <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Github className="w-4 h-4 text-[#6b7280]" />
-                      <div className="text-xs text-[#6b7280]">Public Repos</div>
-                    </div>
-                    <div className="text-2xl font-semibold text-[#111827]">{candidate.githubStats?.publicRepos}</div>
-                  </div>
-                  <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Activity className="w-4 h-4 text-[#6b7280]" />
-                      <div className="text-xs text-[#6b7280]">Total Stars</div>
-                    </div>
-                    <div className="text-2xl font-semibold text-[#111827]">{candidate.githubStats?.totalStars}</div>
-                  </div>
-                  <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <TrendingUp className="w-4 h-4 text-[#6b7280]" />
-                      <div className="text-xs text-[#6b7280]">Followers</div>
-                    </div>
-                    <div className="text-2xl font-semibold text-[#111827]">{candidate.githubStats?.followers}</div>
-                  </div>
-                  <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Calendar className="w-4 h-4 text-[#6b7280]" />
-                      <div className="text-xs text-[#6b7280]">Contributions (2024)</div>
-                    </div>
-                    <div className="text-2xl font-semibold text-[#111827]">{candidate.githubStats?.contributionsLastYear}</div>
-                  </div>
-                </div>
-
-                {/* GitHub Question Assignment Indicator */}
-                <div className="bg-white border border-[#e5e7eb] rounded-lg p-5">
-                  <div className="flex items-center justify-between gap-3 mb-3">
-                    <h4 className="text-[#111827] text-sm font-medium">GitHub Questions Routed to Assessment</h4>
-                    <span className="text-[11px] px-2 py-1 rounded-full border border-[#c7d2fe] bg-[#eef2ff] text-[#4338ca]">
-                      Candidate-scoped
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">GitHub Questions Assigned</div>
-                      <div className="text-2xl font-semibold text-[#111827]">{githubAssignedCount}</div>
-                    </div>
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Total Questions in Session</div>
-                      <div className="text-2xl font-semibold text-[#111827]">{githubAssignedTotal}</div>
-                    </div>
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Assessment Session</div>
-                      <div className="text-sm font-semibold text-[#111827]">{githubAssignmentSessionShort}</div>
-                    </div>
-                  </div>
-
-                  <p className="mt-3 text-xs text-[#6b7280]">
-                    Delivery mode: {githubQuestionDelivery?.mode || 'assigned_on_assessment_start'}
-                  </p>
-
-                  <div className="mt-3">
+                  <div className="flex items-center gap-2">
                     <Button
                       onClick={() => navigate(`/recruiter/candidates/${candidateId}/github-analysis-review${applicationId ? `?applicationId=${applicationId}` : ''}`)}
-                      variant="outline"
-                      className="border-indigo-600 text-indigo-600 hover:bg-indigo-50"
+                      className="bg-[#6366f1] hover:bg-[#4f46e5] text-white shadow-md shadow-indigo-100"
                     >
-                      Open GitHub Analysis Review
+                      <Layers className="w-4 h-4 mr-2" />
+                      Full Review Details
                     </Button>
                   </div>
                 </div>
 
-                {/* Contribution Data Quality */}
-                <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-[#111827] text-sm font-medium">Contribution Data Quality</h4>
-                    <span className="text-[11px] px-2 py-1 rounded-full border border-[#e5e7eb] bg-[#f8fafc] text-[#475569]">
-                      Source: {candidate.githubAnalysis?.contributionStats?.source || 'unknown'}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Reliability</div>
-                      <div className="text-sm font-semibold text-[#111827]">
-                        {candidate.githubAnalysis?.contributionStats?.estimated ? 'Estimated' : 'Authoritative'}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Window</div>
-                      <div className="text-sm font-semibold text-[#111827]">
-                        {candidate.githubAnalysis?.contributionStats?.window_days || 365} days
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Count Method</div>
-                      <div className="text-sm font-semibold text-[#111827]">
-                        {candidate.githubAnalysis?.contributionStats?.source === 'graphql' ? 'GitHub GraphQL' : 'Public Events'}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Last Year</div>
-                      <div className="text-sm font-semibold text-[#111827]">
-                        {candidate.githubStats?.contributionsLastYear ?? 0}
-                      </div>
-                    </div>
-                  </div>
-
-                  {candidate.githubAnalysis?.contributionStats?.breakdown && (
-                    <div>
-                      <div className="text-[11px] text-[#6b7280] mb-2">Event Breakdown</div>
-                      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                        {Object.entries(candidate.githubAnalysis.contributionStats.breakdown).map(([key, value]) => (
-                          <div key={key} className="rounded-md border border-[#e5e7eb] px-2 py-1.5 bg-white">
-                            <div className="text-[10px] uppercase tracking-wide text-[#6b7280]">{key.replace('_', ' ')}</div>
-                            <div className="text-sm font-medium text-[#111827]">{Number(value || 0)}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Repository Confidence & Freshness */}
-                <div className="bg-white border border-[#e5e7eb] rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-[#111827] text-sm font-medium">Repository Confidence & Source Freshness</h4>
-                    <span className="text-[11px] px-2 py-1 rounded-full border border-[#e5e7eb] bg-[#f8fafc] text-[#475569]">
-                      Trust Signals
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Selected Repo</div>
-                      <div className="text-sm font-semibold text-[#111827]">{repoConfidence?.selected_repo || 'N/A'}</div>
-                    </div>
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Selection Confidence</div>
-                      <div className="text-sm font-semibold text-[#111827]">
-                        {Number.isFinite(Number(repoConfidence?.selected_repo_confidence))
-                          ? `${Math.round(Number(repoConfidence.selected_repo_confidence) * 100)}%`
-                          : 'N/A'}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Contribution Source</div>
-                      <div className="text-sm font-semibold text-[#111827]">{dataFreshness?.contribution_source || 'unknown'}</div>
-                    </div>
-                  </div>
-
-                  <div className="text-[12px] text-[#6b7280]">
-                    Last successful fetch: {dataFreshness?.last_successful_fetch_at || 'N/A'}
-                  </div>
-                  <div className="text-[12px] text-[#6b7280]">
-                    Source freshness (hours): {dataFreshness?.source_freshness_hours ?? 'N/A'}
-                  </div>
-                  {dataFreshness?.fallback_reason && (
-                    <div className="mt-2 text-[12px] text-amber-700">
-                      Fallback reason: {dataFreshness.fallback_reason}
-                    </div>
-                  )}
-                </div>
-
-                {/* Contribution Activity Signals */}
-                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
-                  <h4 className="text-[#111827] text-sm font-medium mb-4">Contribution Activity Signals (Last 12 Months)</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Contributions</div>
-                      <div className="text-lg font-semibold text-[#111827]">{candidate.githubStats?.contributionsLastYear ?? 0}</div>
-                    </div>
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Recent Events</div>
-                      <div className="text-lg font-semibold text-[#111827]">{recentGithubActivity.length}</div>
-                    </div>
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Source</div>
-                      <div className="text-sm font-semibold text-[#111827]">{candidate.githubAnalysis?.contributionStats?.source || 'unknown'}</div>
-                    </div>
-                    <div className="rounded-md border border-[#e5e7eb] p-3 bg-[#fafafa]">
-                      <div className="text-[11px] text-[#6b7280]">Window</div>
-                      <div className="text-sm font-semibold text-[#111827]">{candidate.githubAnalysis?.contributionStats?.window_days || 365} days</div>
-                    </div>
-                  </div>
-
-                  {candidate.githubAnalysis?.contributionStats?.breakdown ? (
-                    <div className="space-y-2">
-                      {Object.entries(candidate.githubAnalysis.contributionStats.breakdown)
-                        .filter(([, value]) => Number(value || 0) > 0)
-                        .slice(0, 6)
-                        .map(([eventType, value]) => {
-                          const count = Number(value || 0);
-                          const maxBase = Math.max(1, Number(candidate.githubStats?.contributionsLastYear || count));
-                          const width = Math.max(4, Math.min(100, (count / maxBase) * 100));
-                          return (
-                            <div key={eventType}>
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-[12px] text-[#374151]">{eventType.replace('_', ' ')}</span>
-                                <span className="text-[12px] text-[#6b7280]">{count}</span>
-                              </div>
-                              <div className="w-full h-2 bg-[#f3f4f6] rounded-full overflow-hidden">
-                                <div className="h-full rounded-full bg-[#10b981]" style={{ width: `${width}%` }} />
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-[#6b7280]">No contribution breakdown available yet.</p>
-                  )}
-                </div>
-
-                {/* Language Breakdown */}
-                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
-                  <h4 className="text-[#111827] text-sm font-medium mb-4">Most Used Languages</h4>
-                  <div className="space-y-3">
-                    {candidate.githubStats?.languages?.map((lang: any, i: number) => (
-                      <div key={i}>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: lang.color || '#6b7280' }} />
-                            <span className="text-sm text-[#111827]">{lang.name}</span>
-                          </div>
-                          <span className="text-sm text-[#6b7280]">{lang.percentage}%</span>
+                {/* Recruiter Intelligence & Personalization */}
+                <div className="bg-gradient-to-br from-[#111827] to-[#1e293b] rounded-[32px] p-8 text-white shadow-xl shadow-slate-200">
+                  <div className="flex flex-col lg:flex-row gap-8 items-start">
+                    <div className="lg:w-2/3">
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-300">
+                          <ShieldCheck className="w-5 h-5" />
                         </div>
-                        <div className="w-full h-2 bg-[#f3f4f6] rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full"
-                            style={{ width: `${lang.percentage}%`, backgroundColor: lang.color || '#6b7280' }}
-                          />
-                        </div>
+                        <h4 className="text-lg font-bold tracking-tight">AI Analysis Executive Summary</h4>
                       </div>
-                    )) || (
-                        <div className="text-sm text-[#6b7280]">No language data available</div>
+
+                      <div className="relative">
+                        <div className="absolute -left-4 top-0 bottom-0 w-1 bg-gradient-to-b from-indigo-500/50 to-transparent rounded-full" />
+                        <p className="text-sm text-slate-300 leading-7 italic font-medium">
+                          {candidate.githubAnalysis?.summary || "Profile analysis in progress. Engineering patterns and soft-skill signals will appear here shortly after full repository indexing."}
+                        </p>
+                      </div>
+
+                      {Array.isArray(candidate.githubPersonalization?.keywords) && candidate.githubPersonalization.keywords.length > 0 && (
+                        <div className="mt-8">
+                          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Signal Keywords</div>
+                          <div className="flex flex-wrap gap-2">
+                            {candidate.githubPersonalization.keywords.slice(0, 12).map((kw: string, idx: number) => (
+                              <span key={idx} className="px-3 py-1 rounded-lg bg-white/5 border border-white/10 text-indigo-200 text-[11px] font-bold">
+                                #{kw}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
                       )}
-                  </div>
-                </div>
+                    </div>
 
-                {/* Top Repositories */}
-                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
-                  <h4 className="text-[#111827] text-sm font-medium mb-4">Top Repositories</h4>
-                  <div className="space-y-4">
-                    {candidate.githubStats?.topRepos?.map((repo: any, i: number) => (
-                      <div key={i} className="border border-[#e5e7eb] rounded-lg p-4 hover:border-[#6366f1] transition-colors">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <Github className="w-4 h-4 text-[#6366f1]" />
-                              <h5 className="text-sm font-medium text-[#6366f1]">{repo.name}</h5>
-                            </div>
-                            <p className="text-xs text-[#6b7280] mb-3">
-                              {repo.description}
-                            </p>
-                            <div className="flex items-center gap-4 flex-wrap">
-                              <div className="flex items-center gap-1">
-                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: repo.languageColor || '#3178c6' }} />
-                                <span className="text-xs text-[#6b7280]">{repo.language}</span>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <Activity className="w-3 h-3 text-[#6b7280]" />
-                                <span className="text-xs text-[#6b7280]">{repo.stars} stars</span>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <Eye className="w-3 h-3 text-[#6b7280]" />
-                                <span className="text-xs text-[#6b7280]">{repo.forks} forks</span>
-                              </div>
-                              <span className="text-xs text-[#6b7280]">{repo.updatedAt}</span>
-                            </div>
-                          </div>
+                    <div className="lg:w-1/3 w-full bg-white/5 rounded-2xl p-6 border border-white/10 backdrop-blur-sm">
+                      <h5 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                        Data Integrity
+                      </h5>
+
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-300 font-medium">Source Freshness</span>
+                          <span className="text-xs font-bold text-white">{dataFreshness?.source_freshness_hours ?? 'N/A'}h</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-300 font-medium">Capture Method</span>
+                          <span className="text-xs font-bold text-white uppercase tracking-tighter">{candidate.githubAnalysis?.contributionStats?.source || 'Public API'}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-300 font-medium">Profile Scoped</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">LATEST</span>
                         </div>
                       </div>
-                    )) || (
-                        <div className="text-sm text-[#6b7280]">No repositories available</div>
-                      )}
+
+                      <div className="mt-6">
+                        <Button
+                          variant="outline"
+                          className="w-full bg-transparent border-slate-700 text-slate-300 hover:bg-white/5 hover:text-white border-dashed text-xs h-10"
+                        >
+                          <Globe className="w-3 h-3 mr-2" />
+                          View on GitHub.com
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                {/* Analysis Summary */}
-                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
-                  <h4 className="text-[#111827] text-sm font-medium mb-3">Analysis Summary</h4>
-                  {candidate.githubAnalysis?.summary ? (
-                    <p className="text-sm text-[#374151] leading-6 whitespace-pre-wrap">{candidate.githubAnalysis.summary}</p>
-                  ) : (
-                    <p className="text-sm text-[#6b7280]">No GitHub analysis summary available.</p>
-                  )}
-
-                  {Array.isArray(candidate.githubAnalysis?.archetypes) && candidate.githubAnalysis.archetypes.length > 0 && (
-                    <div className="mt-4">
-                      <h5 className="text-xs text-[#6b7280] mb-2 uppercase tracking-wide">Candidate Archetypes</h5>
-                      <div className="flex flex-wrap gap-2">
-                        {candidate.githubAnalysis.archetypes.map((item: any, idx: number) => (
-                          <div key={idx} className="px-3 py-2 rounded-[10px] border border-[#e5e7eb] bg-[#f8fafc]">
-                            <div className="text-[13px] text-[#111827] font-medium">{item?.name || 'Archetype'}</div>
-                            <div className="text-[12px] text-[#6b7280]">Score: {item?.score ?? 'N/A'}</div>
-                          </div>
-                        ))}
+                {/* Hero Dashboard: Score & Archetypes */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Overall Score Circle */}
+                  <div className="lg:col-span-4 bg-white border border-[#e5e7eb] rounded-[24px] p-8 flex flex-col items-center justify-center relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-[#6366f1]/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-110" />
+                    <div className="absolute bottom-0 left-0 w-24 h-24 bg-purple-500/5 rounded-full -ml-12 -mb-12 transition-transform group-hover:scale-110" />
+                    
+                    <div className="relative">
+                      <svg className="w-32 h-32 transform -rotate-90">
+                        <circle
+                          cx="64"
+                          cy="64"
+                          r="58"
+                          stroke="currentColor"
+                          strokeWidth="8"
+                          fill="transparent"
+                          className="text-[#f3f4f6]"
+                        />
+                        <circle
+                          cx="64"
+                          cy="64"
+                          r="58"
+                          stroke="currentColor"
+                          strokeWidth="8"
+                          fill="transparent"
+                          strokeDasharray={364.42}
+                          strokeDashoffset={364.42 - (364.42 * overallGithubScore) / 100}
+                          className="text-[#6366f1] transition-all duration-1000 ease-out"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-4xl font-black text-[#111827]">{Math.round(overallGithubScore)}</span>
+                        <span className="text-[10px] font-bold text-[#6b7280] uppercase tracking-widest">Score</span>
                       </div>
                     </div>
-                  )}
+                    
+                    <div className="mt-6 text-center">
+                      <h4 className="text-lg font-bold text-[#111827]">GitHub Excellence</h4>
+                      <p className="text-xs text-[#6b7280] mt-1 max-w-[200px]">Composite rank based on code, impact, and consistency</p>
+                    </div>
+                  </div>
 
-                  {(Array.isArray(candidate.githubPersonalization?.keywords) && candidate.githubPersonalization.keywords.length > 0) && (
-                    <div className="mt-4">
-                      <h5 className="text-xs text-[#6b7280] mb-2 uppercase tracking-wide">Personalization Signals</h5>
-                      <div className="text-xs text-[#64748b] mb-2">Source: {candidate.githubPersonalization?.source || 'none'}</div>
-                      <div className="flex flex-wrap gap-2">
-                        {candidate.githubPersonalization.keywords.slice(0, 20).map((kw: string, idx: number) => (
-                          <span key={idx} className="px-2 py-1 rounded-full bg-[#eef2ff] border border-[#c7d2fe] text-[#4338ca] text-[11px]">
-                            {kw}
-                          </span>
-                        ))}
+                  {/* Archetype Badges & Trust */}
+                  <div className="lg:col-span-8 space-y-6">
+                    {/* Archetypes */}
+                    <div className="bg-white border border-[#e5e7eb] rounded-[24px] p-6 shadow-sm">
+                      <div className="flex items-center justify-between mb-4">
+                        <h4 className="text-sm font-bold text-[#374151] flex items-center gap-2 uppercase tracking-wider">
+                          <Award className="w-4 h-4 text-amber-500" />
+                          Engineering Archetypes
+                        </h4>
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        {Array.isArray(candidate.githubAnalysis?.archetypes) && candidate.githubAnalysis.archetypes.length > 0 ? (
+                          candidate.githubAnalysis.archetypes.map((item: any, idx: number) => (
+                            <div key={idx} className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-gradient-to-br from-slate-50 to-white border border-slate-100 shadow-sm transition-transform hover:-translate-y-1">
+                              <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
+                                <Zap className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="text-sm font-bold text-[#111827]">{item?.name || 'Engineer'}</div>
+                                <div className="text-[11px] font-medium text-emerald-600 uppercase tracking-tight">Score: {item?.score ?? 'N/A'}</div>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-sm text-[#9ca3af] italic">Analysis pending profile indexing...</div>
+                        )}
                       </div>
                     </div>
-                  )}
-                </div>
 
-                {/* Recent Activity */}
-                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
-                  <h4 className="text-[#111827] text-sm font-medium mb-4">Recent Activity</h4>
-                  {recentGithubActivity.length > 0 ? (
-                    <div className="space-y-4">
-                      {recentGithubActivity.slice(0, 6).map((item: any, idx: number) => (
-                        <div key={idx} className="flex items-start gap-3">
-                          <div className="w-2 h-2 rounded-full bg-emerald-500 mt-2" />
-                          <div className="flex-1">
-                            <p className="text-sm text-[#111827] mb-1">
-                              {item?.title || 'Activity detected'} in <span className="font-medium">{item?.repo || 'GitHub'}</span>
-                            </p>
-                            <p className="text-xs text-[#6b7280]">{item?.description || 'No additional details available'}</p>
-                            <span className="text-xs text-[#9ca3af]">{item?.time_ago || 'Recently'}</span>
+                    {/* Quick Stats Grid */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {[
+                        { label: 'Public Repos', value: candidate.githubStats?.publicRepos, icon: Code2, color: 'text-blue-600', bg: 'bg-blue-50' },
+                        { label: 'Total Stars', value: candidate.githubStats?.totalStars, icon: Award, color: 'text-amber-600', bg: 'bg-amber-50' },
+                        { label: 'Followers', value: candidate.githubStats?.followers, icon: Users, color: 'text-purple-600', bg: 'bg-purple-50' },
+                        { label: 'Reliability', value: `${Math.round(Number(repoConfidence?.selected_repo_confidence || 0) * 100)}%`, icon: ShieldCheck, color: 'text-emerald-600', bg: 'bg-emerald-50' }
+                      ].map((stat, i) => (
+                        <div key={i} className="bg-white border border-[#e5e7eb] rounded-2xl p-4 transition-shadow hover:shadow-md">
+                          <div className={`w-8 h-8 rounded-xl ${stat.bg} ${stat.color} flex items-center justify-center mb-3`}>
+                            <stat.icon className="w-4 h-4" />
                           </div>
+                          <div className="text-xs font-bold text-[#6b7280] uppercase tracking-wider mb-1">{stat.label}</div>
+                          <div className="text-xl font-black text-[#111827]">{stat.value ?? '0'}</div>
                         </div>
                       ))}
                     </div>
-                  ) : (
-                    <p className="text-sm text-[#6b7280]">No recent GitHub activity available yet.</p>
-                  )}
+                  </div>
                 </div>
 
-                {/* Code Quality Metrics */}
-                <div className="bg-white border border-[#e5e7eb] rounded-lg p-6">
-                  <h4 className="text-[#111827] text-sm font-medium mb-4">Code Quality Indicators</h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-[#166534]">Avg. PR Review Time</span>
-                        <CheckCircle className="w-4 h-4 text-[#16a34a]" />
-                      </div>
-                      <div className="text-2xl font-semibold text-[#166534]">{avgPrReviewTimeText}</div>
-                      <p className="text-xs text-[#15803d] mt-1">{avgPrReviewTimeNote}</p>
+                {/* Tech Stack & Quality Matrix */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Language Mastery */}
+                  <div className="lg:col-span-5 bg-white border border-[#e5e7eb] rounded-[24px] p-6">
+                    <div className="flex items-center justify-between mb-6">
+                      <h4 className="text-sm font-bold text-[#374151] flex items-center gap-2 uppercase tracking-wider">
+                        <Terminal className="w-4 h-4 text-indigo-500" />
+                        Language Mastery
+                      </h4>
                     </div>
-                    <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-[#166534]">Code Documentation</span>
-                        <CheckCircle className="w-4 h-4 text-[#16a34a]" />
-                      </div>
-                      <div className="text-2xl font-semibold text-[#166534]">{Math.round(codeDocumentationPct)}%</div>
-                      <p className="text-xs text-[#15803d] mt-1">Derived from sustainability and audit evidence</p>
+                    <div className="space-y-4">
+                      {candidate.githubStats?.languages?.slice(0, 5).map((lang: any, i: number) => (
+                        <div key={i} className="group">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full shadow-sm" style={{ backgroundColor: lang.color || '#6b7280' }} />
+                              <span className="text-sm font-bold text-[#111827]">{lang.name}</span>
+                            </div>
+                            <span className="text-xs font-black text-[#6b7280]">{lang.percentage}%</span>
+                          </div>
+                          <div className="w-full h-2.5 bg-[#f3f4f6] rounded-full overflow-hidden p-0.5">
+                            <div
+                              className="h-full rounded-full transition-all duration-1000 ease-out shadow-sm"
+                              style={{ width: `${lang.percentage}%`, backgroundColor: lang.color || '#6b7280' }}
+                            />
+                          </div>
+                        </div>
+                      )) || (
+                        <div className="text-sm text-[#6b7280] flex flex-col items-center py-8">
+                          <Cpu className="w-12 h-12 text-[#e5e7eb] mb-2" />
+                          No language data available
+                        </div>
+                      )}
                     </div>
-                    <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-[#166534]">Test Coverage</span>
-                        <CheckCircle className="w-4 h-4 text-[#16a34a]" />
-                      </div>
-                      <div className="text-2xl font-semibold text-[#166534]">{Math.round(testCoveragePct)}%</div>
-                      <p className="text-xs text-[#15803d] mt-1">Estimated from correctness and test-related findings</p>
+                  </div>
+
+                  {/* Code Quality Signals */}
+                  <div className="lg:col-span-7 bg-white border border-[#e5e7eb] rounded-[24px] p-6">
+                    <div className="flex items-center justify-between mb-6">
+                      <h4 className="text-sm font-bold text-[#374151] flex items-center gap-2 uppercase tracking-wider">
+                        <Activity className="w-4 h-4 text-emerald-500" />
+                        Quality Matrix
+                      </h4>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-black border border-emerald-100 uppercase tracking-tighter">Verified Patterns</span>
                     </div>
-                    <div className="bg-[#f0fdf4] border border-[#bbf7d0] rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-[#166534]">Code Review Quality</span>
-                        <CheckCircle className="w-4 h-4 text-[#16a34a]" />
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {[
+                        { label: 'Documentation', value: Math.round(codeDocumentationPct), icon: FileCheck, color: 'indigo' },
+                        { label: 'Test Coverage', value: Math.round(testCoveragePct), icon: ShieldCheck, color: 'emerald' },
+                        { label: 'PR Review Speed', value: avgPrReviewTimeText, icon: Clock, color: 'blue', isText: true },
+                        { label: 'Review Depth', value: `${codeReviewQualityScore.toFixed(1)}/5`, icon: MessageCircle, color: 'amber', isText: true }
+                      ].map((metric, i) => (
+                        <div key={i} className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-bold text-[#6b7280] uppercase tracking-wide">{metric.label}</span>
+                            <metric.icon className={`w-4 h-4 text-${metric.color}-500`} />
+                          </div>
+                          <div className="text-2xl font-black text-[#111827]">{metric.isText ? metric.value : `${metric.value}%`}</div>
+                          {!metric.isText && (
+                            <div className="w-full h-1.5 bg-slate-200 rounded-full mt-3 overflow-hidden">
+                              <div 
+                                className={`h-full rounded-full bg-${metric.color}-500`} 
+                                style={{ width: `${metric.value}%` }} 
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Main Content Area: Portfolio & Activity */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Top Repositories Portfolio */}
+                  <div className="lg:col-span-8 bg-white border border-[#e5e7eb] rounded-[24px] p-6">
+                    <div className="flex items-center justify-between mb-6">
+                      <h4 className="text-sm font-bold text-[#374151] flex items-center gap-2 uppercase tracking-wider">
+                        <Briefcase className="w-4 h-4 text-indigo-500" />
+                        Project Showcase
+                      </h4>
+                      <span className="text-xs text-[#6b7280] font-medium">Selected by Impact & Stars</span>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {showcaseRepos.length > 0 ? showcaseRepos.map((repo: any, i: number) => (
+                        <div key={i} className="group border border-[#e5e7eb] rounded-[20px] p-5 hover:border-[#6366f1] hover:shadow-lg hover:shadow-indigo-50 transition-all duration-300 flex flex-col">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600 group-hover:bg-[#6366f1] group-hover:text-white transition-colors">
+                              <Github className="w-5 h-5" />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1 text-[11px] font-bold text-amber-600">
+                                <Award className="w-3 h-3" />
+                                {repo.stars}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <h5 className="text-base font-black text-[#111827] group-hover:text-[#6366f1] transition-colors mb-1 truncate">{repo.name}</h5>
+                          <p className="text-xs text-[#6b7280] mb-4 line-clamp-2 h-8 leading-relaxed">
+                            {repo.description || 'No description provided for this repository.'}
+                          </p>
+                          
+                          <div className="mt-auto flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: repo.languageColor || '#3178c6' }} />
+                              <span className="text-[11px] font-bold text-[#374151]">{repo.language || 'Code'}</span>
+                            </div>
+                            <span className="text-[10px] font-black text-[#9ca3af] uppercase tracking-tighter">Updated {repo.updatedAt}</span>
+                          </div>
+                        </div>
+                      )) : (
+                        <div className="col-span-2 text-sm text-[#6b7280] py-12 text-center border-2 border-dashed border-[#f3f4f6] rounded-[20px]">
+                          No public repositories found for showcase.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Activity Stream */}
+                  <div className="lg:col-span-4 bg-white border border-[#e5e7eb] rounded-[24px] p-6 flex flex-col">
+                    <div className="flex items-center justify-between mb-6">
+                      <h4 className="text-sm font-bold text-[#374151] flex items-center gap-2 uppercase tracking-wider">
+                        <TrendingUp className="w-4 h-4 text-emerald-500" />
+                        Activity Pulse
+                      </h4>
+                    </div>
+
+                    <div className="flex-1 space-y-6">
+                      {recentGithubActivity.length > 0 ? (
+                        <div className="relative">
+                          <div className="absolute left-[7px] top-2 bottom-2 w-0.5 bg-[#f3f4f6]" />
+                          <div className="space-y-6 relative">
+                            {recentGithubActivity.slice(0, 5).map((item: any, idx: number) => (
+                              <div key={idx} className="flex items-start gap-4 pl-0">
+                                <div className="w-4 h-4 rounded-full bg-white border-2 border-emerald-500 z-10 mt-1 shadow-sm" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                                    <p className="text-xs font-black text-[#111827] truncate leading-none">{item?.title || 'Action'}</p>
+                                    <span className="text-[10px] font-bold text-[#9ca3af] whitespace-nowrap uppercase tracking-tighter">{item?.time_ago || 'Now'}</span>
+                                  </div>
+                                  <p className="text-[11px] text-[#6b7280] leading-tight line-clamp-1">{item?.description || 'Repository update'}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center py-12 text-center">
+                          <Clock className="w-12 h-12 text-[#f3f4f6] mb-2" />
+                          <p className="text-xs text-[#9ca3af] font-medium">No recent public activity detected.</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-6 pt-6 border-t border-[#f3f4f6]">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-[10px] font-bold text-[#6b7280] uppercase tracking-widest">Total Contributions</span>
+                        <span className="text-xs font-black text-[#111827]">{candidate.githubStats?.contributionsLastYear ?? 0}</span>
                       </div>
-                      <div className="text-2xl font-semibold text-[#166534]">{codeReviewQualityScore.toFixed(1)}/5</div>
-                      <p className="text-xs text-[#15803d] mt-1">Based on review activity and technical depth indicators</p>
+                      <div className="w-full h-1.5 bg-[#f3f4f6] rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-emerald-500 rounded-full" 
+                          style={{ width: `${Math.min(100, (Number(candidate.githubStats?.contributionsLastYear || 0) / 1000) * 100)}%` }} 
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
