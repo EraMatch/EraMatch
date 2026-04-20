@@ -21,6 +21,7 @@ import { Card } from './ui/card';
 import { Sparkles, Camera, Mic, Play, AlertCircle, Loader2, PhoneOff } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { api } from '../services/api';
+import { liveInterviewService } from '../services/live-interview.service';
 import { LiveInterviewRoom } from './live-interview-v2/LiveInterviewRoom';
 
 interface LiveInterviewFlowProps {
@@ -78,8 +79,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
 
     useEffect(() => {
         if (currentStep === 2) startCamera();
-        else if (currentStep !== 3) stopCamera();
-        // Step 3 keeps the stream for LiveKit (it hands off to the room component)
+        else stopCamera();
     }, [currentStep]);
 
     useEffect(() => {
@@ -153,14 +153,26 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
     const renderStepContent = () => {
         // --- Step 3: Live Room (takes over the full screen) ---
         if (currentStep === 3 && roomToken && roomUrl && roomName) {
+            const handleCompletion = async () => {
+                if (sessionId) {
+                    try { await liveInterviewService.completeSession(sessionId); } catch { /* safety-net, don't block */ }
+                }
+                onCompletion();
+            };
+            const handleExit = async () => {
+                if (sessionId) {
+                    try { await liveInterviewService.completeSession(sessionId); } catch { /* safety-net, don't block */ }
+                }
+                onExit();
+            };
             return (
                 <LiveInterviewRoom
                     token={roomToken}
                     serverUrl={roomUrl}
                     roomName={roomName}
                     sessionId={sessionId!}
-                    onComplete={onCompletion}
-                    onExit={onExit}
+                    onComplete={handleCompletion}
+                    onExit={handleExit}
                 />
             );
         }
@@ -187,7 +199,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                                     'Natural, conversational back-and-forth',
                                     'Approximately 30 minutes total',
                                     'Speak clearly; take your time to think',
-                                    'Ensure you're in a quiet, well-lit environment',
+                                    'Ensure you\'re in a quiet, well-lit environment',
                                 ].map(item => (
                                     <li key={item} className="flex items-start gap-3 text-gray-600 text-sm">
                                         <span className="text-emerald-500 mt-0.5">✓</span>
@@ -322,17 +334,8 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
         }
     };
 
-    // Step 3 fullscreen — no header/stepper
-    if (currentStep === 3 && roomToken) {
-        return (
-            <div className="min-h-screen bg-slate-950">
-                {renderStepContent()}
-            </div>
-        );
-    }
-
     return (
-        <div className="min-h-screen bg-[#EDF0F8]">
+        <div className="min-h-screen bg-[#EDF0F8] flex flex-col">
             {/* Header */}
             <header className="bg-white border-b border-gray-100 px-12 py-4 flex items-center justify-between">
                 <img src={logo} alt="EraMatch" className="h-8" />
@@ -376,7 +379,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
             </div>
 
             {/* Step content */}
-            <main className="px-12 py-6">
+            <main className="px-12 pb-6 flex-1 flex flex-col max-w-7xl mx-auto w-full">
                 {renderStepContent()}
             </main>
         </div>
