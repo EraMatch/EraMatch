@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ShieldCheck, Loader2, ChevronLeft, AlertTriangle, Info, Brain } from 'lucide-react';
-import { api } from '../../../../services/api';
+import { fetchAPI } from '../../../services/client';
 
 interface FreezeConfirmationProps {
   groupId: string;
@@ -29,19 +29,29 @@ export function FreezeConfirmation({ groupId, bankId, rubricId, isFrozen, onBack
       setError(null);
 
       // Step 1: Persist the include_weak_topics setting to the rubric
-      await api.client.put(`/live-interview-v2/rubric/${rubricId}/settings`, {
-        include_weak_topics: includeWeakTopics,
+      await fetchAPI(`/live-interview-v2/rubric/${rubricId}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          include_weak_topics: includeWeakTopics,
+        }),
       });
 
       // Step 2: Freeze rubric
-      await api.client.post(`/live-interview-v2/rubric/${rubricId}/freeze`);
+      await fetchAPI(`/live-interview-v2/rubric/${rubricId}/freeze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
 
       // Step 3: Freeze bank
-      await api.client.post(`/live-interview-v2/bank/${bankId}/freeze`);
+      await fetchAPI(`/live-interview-v2/bank/${bankId}/freeze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
 
       onFreeze();
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Validation failed during freeze process');
+      setError(e instanceof Error ? e.message : 'Validation failed during freeze process');
     } finally {
       setIsFreezing(false);
     }
