@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Save, Plus, Trash2, AlertCircle, Loader2, Clock } from 'lucide-react';
-import { api } from '../../../../services/api';
+import { Sparkles, Save, Plus, Trash2, AlertCircle, Loader2, Clock, ChevronRight } from 'lucide-react';
+import { fetchAPI } from '../../../services/client';
 
 interface Dimension {
   name: string;
@@ -19,16 +19,13 @@ interface DimensionSelectorProps {
 const DURATION_PRESETS: { label: string; value: number; hint: string }[] = [
   { label: '5 min',  value: 5,  hint: '1–2 pillars' },
   { label: '10 min', value: 10, hint: '2–3 pillars' },
-  { label: '15 min', value: 15, hint: '3–4 pillars' },
-  { label: '20 min', value: 20, hint: '4–5 pillars' },
-  { label: '30 min', value: 30, hint: '5–6 pillars' },
 ];
 
 export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: DimensionSelectorProps) {
   const [dimensions, setDimensions] = useState<Dimension[]>([
     { name: '', weight: 0, description: '' }
   ]);
-  const [timeBudget, setTimeBudget] = useState<number>(20);
+  const [timeBudget, setTimeBudget] = useState<number>(10);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +39,7 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
   const loadDraft = async () => {
     try {
       setIsLoading(true);
-      const res = await api.client.get(`/live-interview-v2/rubric/group/${groupId}`);
+      const res = await fetchAPI<{ dimensions?: any[]; time_budget_minutes?: number }>(`/live-interview-v2/rubric/group/${groupId}`);
       if (res && res.dimensions && res.dimensions.length > 0) {
         setDimensions(res.dimensions);
       }
@@ -60,8 +57,12 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
     try {
       setIsLoading(true);
       setError(null);
-      const res = await api.client.post('/live-interview-v2/rubric/suggest-dimensions', {
-        group_id: groupId
+      const res = await fetchAPI<{ suggestions?: any[] }>('/live-interview-v2/rubric/suggest-dimensions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          group_id: groupId
+        }),
       });
       if (res && res.suggestions) {
         setDimensions(res.suggestions.map((s: any) => ({
@@ -71,7 +72,7 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
         })));
       }
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Failed to generate suggestions');
+      setError(e instanceof Error ? e.message : 'Failed to generate suggestions');
     } finally {
       setIsLoading(false);
     }
@@ -113,18 +114,26 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
 
       let res;
       if (rubricId) {
-        res = await api.client.put(`/live-interview-v2/rubric/${rubricId}`, {
-          dimensions,
-          time_budget_minutes: timeBudget,
+        res = await fetchAPI<{ rubric_id?: string }>(`/live-interview-v2/rubric/${rubricId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dimensions,
+            time_budget_minutes: timeBudget,
+          }),
         });
       } else {
-        res = await api.client.post('/live-interview-v2/rubric', {
-          group_id: groupId,
-          organization_id: '00000000-0000-0000-0000-000000000000', // filled by backend CurrentUser
-          dimensions,
-          time_budget_minutes: timeBudget,
-          language: 'en',
-          include_weak_topics: false,
+        res = await fetchAPI<{ rubric_id?: string }>('/live-interview-v2/rubric', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            group_id: groupId,
+            organization_id: '00000000-0000-0000-0000-000000000000', // filled by backend CurrentUser
+            dimensions,
+            time_budget_minutes: timeBudget,
+            language: 'en',
+            include_weak_topics: false,
+          }),
         });
       }
 
@@ -132,7 +141,7 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
         onSave(res.rubric_id);
       }
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Failed to save dimensions');
+      setError(e instanceof Error ? e.message : 'Failed to save dimensions');
     } finally {
       setIsSaving(false);
     }
@@ -295,5 +304,3 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
     </div>
   );
 }
-
-import { ChevronRight } from 'lucide-react';
