@@ -102,13 +102,30 @@ class CandidateAuthService:
         return candidate
 
     async def _get_candidate_by_email(self, email: str) -> CandidateProfile | None:
-        """Get candidate by email."""
+        """Get candidate by email.
+        
+        Uses .first() instead of .scalar_one_or_none() to gracefully handle
+        cases where duplicate email rows exist (e.g., during development/seeding).
+        Prefers rows that have a password_hash set.
+        """
+        # First try to find a row with a password set (seeded/real account)
         statement = select(CandidateProfile).where(
             CandidateProfile.email == email,
-            CandidateProfile.is_deleted == False
+            CandidateProfile.is_deleted == False,
+            CandidateProfile.password_hash != None,  # noqa: E711
         )
         result = await self.session.execute(statement)
-        return result.scalar_one_or_none()
+        candidate = result.scalars().first()
+        if candidate:
+            return candidate
+
+        # Fallback: any row with this email
+        statement_any = select(CandidateProfile).where(
+            CandidateProfile.email == email,
+            CandidateProfile.is_deleted == False,
+        )
+        result_any = await self.session.execute(statement_any)
+        return result_any.scalars().first()
 
     async def _get_candidate_by_id(self, candidate_id: UUID) -> CandidateProfile | None:
         """Get candidate by ID."""

@@ -363,6 +363,8 @@ class CandidateService:
                         }
                 elif p.session_type == "live_interview":
                     pipeline_status["liveInterview"]["status"] = p.status
+                    if p.session_id:
+                        pipeline_status["liveInterview"]["sessionId"] = str(p.session_id)
 
         # Calculate Overall
         active_scores = [v for k, v in scores.items() if v > 0]
@@ -389,6 +391,13 @@ class CandidateService:
         response.pipelineStatus = pipeline_status
         response.assessmentData = assessment_data
         response.interviewData = interview_data
+        # Expose live interview session ID so the front-end results panel can load it
+        liv2_status = pipeline_status.get("liveInterview", {})
+        if liv2_status.get("sessionId"):
+            response.liveInterviewData = {
+                "sessionId": liv2_status["sessionId"],
+                "status": liv2_status.get("status"),
+            }
         response.githubStats = github_stats
         response.githubAnalysis = github_analysis
         response.githubPersonalization = github_personalization
