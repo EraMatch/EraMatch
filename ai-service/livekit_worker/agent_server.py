@@ -16,18 +16,38 @@ env vars:
     ELEVEN_API_KEY     — ElevenLabs fallback TTS key
 
 Dev LLM Config (override in .env for prod):
-    INTERVIEWER_PRIMARY_MODEL = gemini-2.5-flash-lite    (all roles in dev)
-    COVERAGE_CHECK_MODEL      = qwen3.5:4b-cloud         (small + fast inline checks)
+    INTERVIEWER_PRIMARY_MODEL   = gemini-2.5-flash-lite    (primary LLM)
+    INTERVIEWER_SECONDARY_MODEL = gemma3:12b-cloud          (Ollama fallback LLM via local proxy)
+    COVERAGE_CHECK_MODEL       = qwen3.5:4b-cloud          (small + fast inline checks)
 """
 
 import json
 import logging
 import os
+from pathlib import Path
+
+# ── Load .env BEFORE any livekit import (framework reads env at import time) ──
+try:
+    from dotenv import load_dotenv
+
+    # Try ai-service root .env first, then walk up to project root
+    _env_candidates = [
+        Path(__file__).resolve().parent.parent / ".env",  # ai-service/.env
+        Path(__file__).resolve().parents[3] / ".env",  # project root .env
+    ]
+    for _ep in _env_candidates:
+        if _ep.exists():
+            load_dotenv(dotenv_path=_ep, override=False)
+            break
+except ImportError:
+    pass  # python-dotenv not installed; rely on shell env
+
 import asyncpg
 
 from livekit import agents
 from livekit.agents import AgentSession, AgentServer, room_io, TurnHandlingOptions
-from livekit.plugins import google, silero
+from livekit.agents import stt as stt_module
+from livekit.plugins import google, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from interviewer_agent import InterviewerAgent
@@ -49,7 +69,7 @@ def prewarm(proc: agents.JobProcess):
     logger.info("Prewarming: loading Silero VAD...")
     proc.userdata["vad"] = silero.VAD.load(
         min_speech_duration=0.05,
-        min_silence_duration=0.8,      # Interview-tuned: allow longer pauses
+        min_silence_duration=0.8,  # Interview-tuned: allow longer pauses
         activation_threshold=0.4,
         prefix_padding_duration=0.5,
         sample_rate=16000,
@@ -94,6 +114,7 @@ async def _fetch_bank_items(bank_id: str) -> list[dict]:
 # SESSION ENTRYPOINT
 # =============================================================================
 
+
 @server.rtc_session(agent_name="eramatch-interviewer")
 async def interviewer_session(ctx: agents.JobContext):
     """
@@ -112,12 +133,12 @@ async def interviewer_session(ctx: agents.JobContext):
     }
     """
     metadata = json.loads(ctx.job.metadata or "{}")
-    session_id     = metadata.get("session_id", "unknown")
+    session_id = metadata.get("session_id", "unknown")
     candidate_name = metadata.get("candidate_name", "Candidate")
-    bank_id        = metadata.get("bank_id", "")
-    time_budget    = metadata.get("time_budget_minutes", 30)
-    language       = metadata.get("language", "en")
-    context        = metadata.get("context", {})
+    bank_id = metadata.get("bank_id", "")
+    time_budget = metadata.get("time_budget_minutes", 30)
+    language = metadata.get("language", "en")
+    context = metadata.get("context", {})
 
     logger.info(
         f"Session {session_id}: agent joining room for {candidate_name} "
@@ -133,17 +154,112 @@ async def interviewer_session(ctx: agents.JobContext):
 
     # --- Build the pipeline ---
     gcp_creds = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    primary_model = os.getenv("INTERVIEWER_PRIMARY_MODEL", "gemma3:12b-cloud")
+    secondary_model = os.getenv("INTERVIEWER_SECONDARY_MODEL", "gemini-2.5-flash-lite")
+    primary_provider = os.getenv("INTERVIEWER_PRIMARY_PROVIDER", "").lower()
+
+    # --- LLM selection: try primary, fallback to secondary ---
+    # Determine provider from env var or model name:
+    #   - model names with ':cloud' or known Ollama prefixes → Ollama (openai.LLM)
+    #   - model names starting with 'gemini' → Google (google.LLM)
+    #   - explicit INTERVIEWER_PRIMARY_PROVIDER overrides inference
+    def _is_ollama_model(model_name: str) -> bool:
+        return ":cloud" in model_name or model_name.startswith(
+            ("gemma", "qwen", "llama", "mistral", "codellama", "deepseek")
+        )
+
+    llm = None
+
+    # --- PRIMARY LLM ---
+    use_ollama_primary = primary_provider == "ollama" or (
+        not primary_provider and _is_ollama_model(primary_model)
+    )
+
+    if use_ollama_primary:
+        ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        ollama_api_key = os.getenv("OLLAMA_API_KEY", "") or "ollama"
+        llm = openai.LLM(
+            model=primary_model,
+            base_url=ollama_base + "/v1",
+            api_key=ollama_api_key,
+        )
+        logger.info(
+            "[LLM-PRIMARY] Using %s via Ollama (base=%s)", primary_model, ollama_base
+        )
+    else:
+        try:
+            llm = google.LLM(model=primary_model)
+            import asyncio
+            from livekit.agents import llm as llm_mod
+
+            test_chat_ctx = llm_mod.ChatContext()
+            test_chat_ctx.messages.append(
+                llm_mod.ChatMessage(role="user", content="hi")
+            )
+
+            async def _test_gemini():
+                async for _chunk in llm.chat(chat_ctx=test_chat_ctx):
+                    break
+
+            await asyncio.wait_for(_test_gemini(), timeout=15.0)
+            logger.info(
+                "[LLM-PRIMARY] Gemini %s is available (test passed)", primary_model
+            )
+        except Exception as e:
+            logger.warning(
+                "[LLM-FALLBACK] Gemini LLM unavailable: %s. Switching to %s",
+                e,
+                secondary_model,
+            )
+            llm = None
+
+    # --- SECONDARY (fallback) LLM ---
+    if llm is None:
+        use_ollama_secondary = _is_ollama_model(secondary_model)
+        if use_ollama_secondary:
+            ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            ollama_api_key = os.getenv("OLLAMA_API_KEY", "") or "ollama"
+            llm = openai.LLM(
+                model=secondary_model,
+                base_url=ollama_base + "/v1",
+                api_key=ollama_api_key,
+            )
+            logger.info(
+                "[LLM-FALLBACK] Using %s via Ollama (base=%s)",
+                secondary_model,
+                ollama_base,
+            )
+        else:
+            llm = google.LLM(model=secondary_model)
+            logger.info("[LLM-FALLBACK] Using %s via Google", secondary_model)
+
+    # STT with fallback: Google Cloud chirp_2 → LiveKit Inference Deepgram
+    google_stt = google.STT(
+        languages=["en-US"],
+        model="chirp_2",
+        spoken_punctuation=True,
+        credentials_file=gcp_creds,
+    )
+
+    # LiveKit Inference STT uses existing LIVEKIT_API_KEY/SECRET — no extra key needed
+    from livekit.agents import inference
+
+    fallback_stt = inference.STT(model="deepgram/nova-3", language="en")
+
+    stt_adapter = stt_module.FallbackAdapter(
+        [google_stt, fallback_stt],
+        attempt_timeout=10.0,
+        max_retry_per_stt=1,
+        retry_interval=30.0,
+    )
+
+    logger.info(
+        "[STT] Primary: google chirp_2, Fallback: deepgram/nova-3 (via LiveKit Inference)"
+    )
 
     session = AgentSession(
-        stt=google.STT(
-            languages=["en-US"],
-            model="chirp_2",
-            spoken_punctuation=True,
-            credentials_file=gcp_creds,
-        ),
-        # Dev: gemini-2.5-flash-lite for ALL roles (fast + affordable)
-        # Prod: swap Judge role to gemini-2.5-pro in Phase 4
-        llm=f"google/{os.getenv('INTERVIEWER_PRIMARY_MODEL', 'gemini-2.5-flash-lite')}",
+        stt=stt_adapter,
+        llm=llm,
         tts=google.TTS(
             language="en-US",
             gender="neutral",
@@ -156,26 +272,57 @@ async def interviewer_session(ctx: agents.JobContext):
         ),
     )
 
-    # --- Instantiate our stateful agent (with context from token dispatch) ---
-    interviewer = InterviewerAgent(metadata=metadata)
-
-    # Store bank items in userdata so on_session_start can access them
-    ctx.proc.userdata["bank_items"] = bank_items
+    # --- Instantiate our stateful agent — pass bank_items directly so
+    # on_session_start doesn't depend on userdata timing
+    interviewer = InterviewerAgent(metadata=metadata, bank_items=bank_items)
 
     # --- Shutdown callback: persist transcript to DB, trigger Judge Agent ---
+    # IMPORTANT: read from `session.userdata` first (where InterviewerAgent writes it),
+    # but also fall back to the agent's own `transcript` attribute in case _close()
+    # never ran (e.g. unexpected disconnect before _close() could write userdata).
+    # ctx.proc.userdata is a different object (process-level) and is NOT used here.
     async def on_shutdown():
-        transcript = ctx.proc.userdata.get("transcript", [])
-        session_complete = ctx.proc.userdata.get("session_complete", False)
+        # Defensive: session.userdata raises ValueError if session never fully started
+        try:
+            transcript = session.userdata.get("transcript", [])
+            session_complete = session.userdata.get("session_complete", False)
+            source = "session.userdata"
+            userdata_available = True
+        except ValueError:
+            logger.warning(
+                f"[SHUTDOWN] session={session_id} session never started, userdata not available"
+            )
+            transcript = []
+            session_complete = False
+            source = "interviewer.transcript (session never started)"
+            userdata_available = False
+
+        # Fallback: if userdata is empty but the agent has transcript turns,
+        # it means _close() never ran (unexpected disconnect). Grab from agent directly.
+        if (
+            not transcript
+            and hasattr(interviewer, "transcript")
+            and interviewer.transcript
+        ):
+            transcript = list(interviewer.transcript)  # copy to avoid mutation
+            source = "interviewer.transcript (fallback)"
+            # Only persist to userdata if it's accessible
+            if userdata_available:
+                session.userdata["transcript"] = transcript
+
         logger.info(
-            f"Session {session_id}: shutting down. "
-            f"complete={session_complete}, turns={len(transcript)}"
+            f"[SHUTDOWN] session={session_id} transcript_turns={len(transcript)} "
+            f"source={source} session_complete={session_complete}"
         )
 
         if transcript:
             backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
-            endpoint = f"{backend_url}/api/v1/li-v2/session/{session_id}/complete"
+            endpoint = (
+                f"{backend_url}/api/v1/live-interview-v2/session/{session_id}/complete"
+            )
             try:
                 import httpx
+
                 async with httpx.AsyncClient(timeout=30) as client:
                     resp = await client.post(
                         endpoint,
@@ -183,26 +330,56 @@ async def interviewer_session(ctx: agents.JobContext):
                         headers={"Content-Type": "application/json"},
                     )
                     resp.raise_for_status()
-                    logger.info(f"Session {session_id}: transcript POSTed to backend ({len(transcript)} turns)")
+                    logger.info(
+                        f"Session {session_id}: transcript POSTed to backend ({len(transcript)} turns)"
+                    )
             except Exception as e:
-                logger.error(f"Session {session_id}: failed to POST transcript to backend: {e}")
+                logger.error(
+                    f"Session {session_id}: failed to POST transcript to backend: {e}"
+                )
         else:
-            logger.warning(f"Session {session_id}: no transcript to save")
+            logger.warning(
+                f"Session {session_id}: no transcript to save (source={source})"
+            )
 
     ctx.add_shutdown_callback(on_shutdown)
 
     # --- Start the session ---
-    await session.start(
-        room=ctx.room,
-        agent=interviewer,
-        room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(
-                noise_cancellation=None,
+    # Defensive: session.start() connects to the LiveKit room. If the
+    # connection token is invalid/expired (e.g. 401 Unauthorized) or the
+    # room is unreachable, the error is caught here so on_shutdown can
+    # still run gracefully (transcript may be empty for never-started sessions).
+    try:
+        await session.start(
+            room=ctx.room,
+            agent=interviewer,
+            room_options=room_io.RoomOptions(
+                audio_input=room_io.AudioInputOptions(
+                    noise_cancellation=None,
+                ),
             ),
-        ),
+        )
+    except Exception as e:
+        logger.error(
+            "[AGENT-START-FAILED] session=%s error=%s — "
+            "room connection failed. The on_shutdown callback will handle cleanup.",
+            session_id,
+            e,
+        )
+        # Let the error propagate so the LiveKit worker can mark the job as failed
+        # and potentially retry. on_shutdown will still fire (defensive via BUG D fix).
+        raise
+
+    logger.info(
+        "[AGENT-READY] session=%s bank_items=%d lang=%s budget=%d",
+        session_id,
+        len(bank_items),
+        language,
+        time_budget,
     )
 
     logger.info(f"Session {session_id}: agent is live and listening.")
+
 
 if __name__ == "__main__":
     agents.cli.run_app(server)
