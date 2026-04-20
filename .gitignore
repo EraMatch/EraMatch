@@ -54,7 +54,8 @@ ENV/
 *.local
 .claude/
 txt code/
-*.txt
+# Specific text files to ignore (NOT requirements.txt — it must be committed)
+requirements.freeze.bak
 Eramatchcombineduicopycopy/
 transform_ts_to_txt.js
 .github/rulesets/development-branch-ruleset.json
@@ -80,12 +81,8 @@ uploads/
 *.sql
 backend/*.json
 backend/logs/video_processing_debug.json
-backend/uv.lock
 backend/seed_test_users.py
-backend/pyproject.toml
 COMMIT_SUMMARY.md
-backend/uv.lock
-backend/uv.lock
 
 
 # Non-dev markdown files (agent notes, memory docs, QWEN exports)
@@ -112,3 +109,4 @@ tests/recruiter-view/unit_testing/logs/reports
 AGENTS.md
 **/*.json
 .serena/
+LIV2_TEST_CREDENTIALS.md
