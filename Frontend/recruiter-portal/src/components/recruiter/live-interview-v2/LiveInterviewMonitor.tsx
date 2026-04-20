@@ -11,9 +11,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, RefreshCw, CircleDot, UserCheck, Bot, MessageSquare,
   CheckCircle, Zap, Star, AlertTriangle, Clock,
-  ChevronDown, ChevronRight, Activity, Users, Brain, AlertCircle,
+  ChevronDown, ChevronRight, Activity, Users, Brain, AlertCircle, Eye,
 } from 'lucide-react';
-import { api } from '../../../../services/api';
+import { fetchAPI } from '../../../services/client';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -63,6 +63,7 @@ interface LiveInterviewMonitorProps {
   groupId: string;
   groupName?: string;
   onClose: () => void;
+  onViewResults?: (sessionId: string) => void;
 }
 
 // ─── Icon resolver ──────────────────────────────────────────────────────────
@@ -154,7 +155,7 @@ const fmtDuration = (secs: number | null) => {
 };
 
 // ─── Main Component ──────────────────────────────────────────────────────────
-export function LiveInterviewMonitor({ groupId, groupName, onClose }: LiveInterviewMonitorProps) {
+export function LiveInterviewMonitor({ groupId, groupName, onClose, onViewResults }: LiveInterviewMonitorProps) {
   const [data, setData] = useState<MonitorData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [lastPoll, setLastPoll] = useState<Date | null>(null);
@@ -165,12 +166,12 @@ export function LiveInterviewMonitor({ groupId, groupName, onClose }: LiveInterv
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await api.client.get(`/live-interview-v2/group/${groupId}/sessions-monitor`);
+      const res = await fetchAPI<MonitorData>(`/live-interview-v2/group/${groupId}/sessions-monitor`);
       setData(res);
       setLastPoll(new Date());
       setError(null);
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Failed to fetch monitoring data');
+      setError(e instanceof Error ? e.message : 'Failed to fetch monitoring data');
     } finally {
       setIsLoading(false);
     }
@@ -409,6 +410,22 @@ export function LiveInterviewMonitor({ groupId, groupName, onClose }: LiveInterv
                         <><span>·</span><span>Confidence: {session.evaluation.evaluation_confidence}</span></>
                       )}
                     </div>
+
+                    {/* View Results button for graded sessions */}
+                    {session.judge_status === 'complete' && onViewResults && (
+                      <div className="px-5 py-3 border-t border-gray-700/30">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onViewResults(session.session_id);
+                          }}
+                          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          View Full Results
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
