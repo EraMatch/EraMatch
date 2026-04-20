@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, Loader2, ChevronLeft, ChevronRight, AlertCircle, Trash2, Plus, MessageSquare, ChevronDown, ChevronUp } from 'lucide-react';
-import { api } from '../../../../services/api';
+import { fetchAPI } from '../../../services/client';
 
 interface SubCriterion {
   name: string;
@@ -43,7 +43,7 @@ export function QuestionBankEditor({ groupId, rubricId, bankId, isFrozen, onBack
   const loadBank = async () => {
     try {
       setIsLoading(true);
-      const res = await api.client.get(`/live-interview-v2/bank/group/${groupId}`);
+      const res = await fetchAPI<{ items?: BankItem[] }>(`/live-interview-v2/bank/group/${groupId}`);
       if (res && res.items) {
         setItems(res.items);
       }
@@ -62,14 +62,18 @@ export function QuestionBankEditor({ groupId, rubricId, bankId, isFrozen, onBack
     try {
       setIsGenerating(true);
       setError(null);
-      const res = await api.client.post('/live-interview-v2/bank/generate', {
-        rubric_id: rubricId
+      const res = await fetchAPI<{ items?: BankItem[] }>('/live-interview-v2/bank/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rubric_id: rubricId
+        }),
       });
       if (res && res.items) {
         setItems(res.items);
       }
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Failed to generate question bank');
+      setError(e instanceof Error ? e.message : 'Failed to generate question bank');
     } finally {
       setIsGenerating(false);
     }
@@ -87,12 +91,20 @@ export function QuestionBankEditor({ groupId, rubricId, bankId, isFrozen, onBack
       
       let res;
       if (bankId) {
-        res = await api.client.put(`/live-interview-v2/bank/${bankId}`, { items });
+        res = await fetchAPI<{ bank_id?: string }>(`/live-interview-v2/bank/${bankId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items }),
+        });
       } else {
-        res = await api.client.post('/live-interview-v2/bank', {
-           group_id: groupId,
-           organization_id: "00000000-0000-0000-0000-000000000000",
-           items
+        res = await fetchAPI<{ bank_id?: string }>('/live-interview-v2/bank', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            group_id: groupId,
+            organization_id: "00000000-0000-0000-0000-000000000000",
+            items
+          }),
         });
       }
       
@@ -100,7 +112,7 @@ export function QuestionBankEditor({ groupId, rubricId, bankId, isFrozen, onBack
          onSave(res.bank_id);
       }
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Failed to save question bank');
+      setError(e instanceof Error ? e.message : 'Failed to save question bank');
     } finally {
       setIsSaving(false);
     }
