@@ -21,9 +21,17 @@ Dev LLM Config (override in .env for prod):
     COVERAGE_CHECK_MODEL       = qwen3.5:4b-cloud          (small + fast inline checks)
 """
 
+import os
+
+# ── CRITICAL: Set KMP_DUPLICATE_LIB_OK BEFORE any numpy/torch imports ──
+# On macOS, multiprocessing.spawn child processes inherit the parent's
+# OpenMP runtime. When numpy/torch load their own copy, the duplicate
+# libiomp5.dylib causes an OMP Error #15 crash (or fatal hang), which
+# kills the job process before it can initialize within the 10s timeout.
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import json
 import logging
-import os
 from pathlib import Path
 
 # ── Load .env BEFORE any livekit import (framework reads env at import time) ──
@@ -60,7 +68,7 @@ logger = logging.getLogger("eramatch.livekit_worker")
 # AGENT SERVER SETUP
 # =============================================================================
 
-server = AgentServer()
+server = AgentServer(initialize_process_timeout=60.0)
 
 
 def prewarm(proc: agents.JobProcess):

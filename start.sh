@@ -142,6 +142,7 @@ log "${C_MAGENTA}🤖" "Starting LiveKit Agent Worker..."
     cd "$AI_DIR"
     source .venv/bin/activate
     # Explicitly pass env vars so the forked subprocess inherits them
+    export KMP_DUPLICATE_LIB_OK=TRUE
     export LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET
     export GOOGLE_APPLICATION_CREDENTIALS
     export INTERVIEWER_PRIMARY_MODEL INTERVIEWER_SECONDARY_MODEL COVERAGE_CHECK_MODEL
