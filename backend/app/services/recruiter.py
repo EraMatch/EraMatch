@@ -1297,76 +1297,8 @@ class RecruiterService:
 
     # Application management
     async def update_application_status(self, application_id: UUID, data: ApplicationUpdate) -> CandidateApplication:
-        """Update application status or group."""
-        query = select(CandidateApplication).where(
-            CandidateApplication.id == application_id,
-            CandidateApplication.organization_id == self.organization_id,
-            CandidateApplication.is_deleted == False
-        )
-        result = await self.session.execute(query)
-        application = result.scalar_one_or_none()
-        if not application:
-            from app.core.exceptions import NotFoundException
-            raise NotFoundException("Application not found")
-        
-        if data.status is not None:
-            application.status = data.status
-        if data.group_id is not None:
-            application.group_id = data.group_id
-        
-        self.session.add(application)
-        await self.session.commit()
-        await self.session.refresh(application)
-        return application
-
-    async def delete_application(self, application_id: UUID) -> None:
-        """Soft delete an application."""
-        query = select(CandidateApplication).where(
-            CandidateApplication.id == application_id,
-            CandidateApplication.organization_id == self.organization_id,
-            CandidateApplication.is_deleted == False
-        )
-        result = await self.session.execute(query)
-        application = result.scalar_one_or_none()
-        if not application:
-            from app.core.exceptions import NotFoundException
-            raise NotFoundException("Application not found")
-        
-        application.is_deleted = True
-        self.session.add(application)
-        await self.session.commit()
-
-    async def bulk_archive_applications(self, application_ids: list[UUID]) -> int:
-        """Archive multiple applications at once."""
-        from sqlalchemy import update
-        stmt = (
-            update(CandidateApplication)
-            .where(
-                CandidateApplication.id.in_(application_ids),
-                CandidateApplication.organization_id == self.organization_id,
-                CandidateApplication.is_deleted == False
-            )
-            .values(status="archived")
-        )
-        result = await self.session.execute(stmt)
-        await self.session.commit()
-        return int(result.rowcount or 0)
-
-    async def bulk_delete_applications(self, application_ids: list[UUID]) -> int:
-        """Soft delete multiple applications at once."""
-        from sqlalchemy import update
-        stmt = (
-            update(CandidateApplication)
-            .where(
-                CandidateApplication.id.in_(application_ids),
-                CandidateApplication.organization_id == self.organization_id,
-                CandidateApplication.is_deleted == False
-            )
-            .values(is_deleted=True)
-        )
-        result = await self.session.execute(stmt)
-        await self.session.commit()
-        return int(result.rowcount or 0)
+        # TODO: Update application status
+        pass
 
     async def get_project_summary(self, project_id: UUID) -> ProjectSummaryResponse:
         """Get stats for a specific project with parallel fetching."""
