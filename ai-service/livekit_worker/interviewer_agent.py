@@ -520,5 +520,11 @@ class InterviewerAgent(Agent):
             f"Total time: {self._elapsed():.0f}s"
         )
         # Phase 4: persist transcript for the Judge Agent via session userdata
-        session.userdata["transcript"] = self.transcript
-        session.userdata["session_complete"] = True
+        try:
+            session.userdata["transcript"] = self.transcript
+            session.userdata["session_complete"] = True
+        except ValueError:
+            logger.warning(
+                f"[{self.session_id}] session.userdata not set in _close, "
+                "transcript stored on agent only"
+            )

@@ -278,11 +278,10 @@ async def interviewer_session(ctx: agents.JobContext):
     # Deepgram aura-2 is primary (no GCP creds needed). Google TTS is secondary
     # (only if GCP credentials exist and init succeeds — same pattern as STT).
     tts_list = []
-    # Primary: Deepgram aura-2 via LiveKit Inference (works without any credentials)
     tts_list.append(
         inference.TTS(
             model="deepgram/aura-2",
-            voice=os.getenv("TTS_PRIMARY_VOICE", "aura-2-asteria-en"),
+            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-asteria-en"),
             language="en",
         )
     )
