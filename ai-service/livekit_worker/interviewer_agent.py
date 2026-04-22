@@ -449,7 +449,14 @@ class InterviewerAgent(Agent):
                 "elapsed_seconds": round(self._elapsed()),
             }
         )
-        self.session.userdata["transcript"] = self.transcript
+        # Defensive: session.userdata may raise ValueError if session not fully initialized
+        try:
+            self.session.userdata["transcript"] = self.transcript
+        except ValueError:
+            logger.warning(
+                f"[{self.session_id}] session.userdata not set in on_user_turn_completed, "
+                "transcript stored on agent only"
+            )
 
         if not self.pillars or self.current_pillar_idx >= len(self.pillars):
             await self._close(self.session)

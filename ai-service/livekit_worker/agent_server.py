@@ -47,6 +47,8 @@ import asyncpg
 from livekit import agents
 from livekit.agents import AgentSession, AgentServer, room_io, TurnHandlingOptions
 from livekit.agents import stt as stt_module
+from livekit.agents import tts as tts_module
+from livekit.agents import inference
 from livekit.plugins import google, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -96,7 +98,7 @@ async def _fetch_bank_items(bank_id: str) -> list[dict]:
     # Convert SQLAlchemy URL to asyncpg DSN (strip +asyncpg prefix)
     dsn = _DB_URL.replace("postgresql+asyncpg://", "postgresql://")
     try:
-        conn = await asyncpg.connect(dsn)
+        conn = await asyncpg.connect(dsn, statement_cache_size=0)
         row = await conn.fetchrow(
             "SELECT items FROM li_v2_banks WHERE bank_id=$1::uuid", bank_id
         )
@@ -234,38 +236,93 @@ async def interviewer_session(ctx: agents.JobContext):
             logger.info("[LLM-FALLBACK] Using %s via Google", secondary_model)
 
     # STT with fallback: Google Cloud chirp_2 → LiveKit Inference Deepgram
-    google_stt = google.STT(
-        languages=["en-US"],
-        model="chirp_2",
-        spoken_punctuation=True,
-        credentials_file=gcp_creds,
-    )
+    # If Google STT credentials are missing or lack IAM permission, skip to Deepgram directly
+    stt_provider = os.getenv("STT_PRIMARY_PROVIDER", "google").lower()
+    stt_list = []
 
-    # LiveKit Inference STT uses existing LIVEKIT_API_KEY/SECRET — no extra key needed
-    from livekit.agents import inference
+    if stt_provider == "google" and gcp_creds and os.path.exists(gcp_creds):
+        try:
+            google_stt = google.STT(
+                languages=["en-US"],
+                model="chirp_2",
+                spoken_punctuation=True,
+                credentials_file=gcp_creds,
+            )
+            stt_list.append(google_stt)
+            logger.info(
+                "[STT] Primary: google chirp_2 (credentials_file=%s)", gcp_creds
+            )
+        except Exception as e:
+            logger.warning("[STT] Failed to initialize Google STT: %s — skipping", e)
+    else:
+        logger.info(
+            "[STT] Google STT skipped (no credentials or STT_PRIMARY_PROVIDER=%s)",
+            stt_provider,
+        )
 
     fallback_stt = inference.STT(model="deepgram/nova-3", language="en")
+    stt_list.append(fallback_stt)
+    logger.info("[STT] Fallback: deepgram/nova-3 (via LiveKit Inference)")
 
-    stt_adapter = stt_module.FallbackAdapter(
-        [google_stt, fallback_stt],
-        attempt_timeout=10.0,
-        max_retry_per_stt=1,
-        retry_interval=30.0,
-    )
+    if len(stt_list) > 1:
+        stt_adapter = stt_module.FallbackAdapter(
+            stt_list,
+            attempt_timeout=10.0,
+            max_retry_per_stt=1,
+            retry_interval=30.0,
+        )
+    else:
+        stt_adapter = stt_list[0]
 
-    logger.info(
-        "[STT] Primary: google chirp_2, Fallback: deepgram/nova-3 (via LiveKit Inference)"
+    # TTS with fallback: LiveKit Inference Deepgram → Google Cloud TTS
+    # Deepgram aura-2 is primary (no GCP creds needed). Google TTS is secondary
+    # (only if GCP credentials exist and init succeeds — same pattern as STT).
+    tts_list = []
+    # Primary: Deepgram aura-2 via LiveKit Inference (works without any credentials)
+    tts_list.append(
+        inference.TTS(
+            model="deepgram/aura-2",
+            voice=os.getenv("TTS_PRIMARY_VOICE", "aura-2-asteria-en"),
+            language="en",
+        )
     )
+    logger.info("[TTS] Primary: deepgram/aura-2 (via LiveKit Inference)")
+
+    # Secondary: Google Cloud TTS (only if creds exist and init succeeds)
+    tts_provider = os.getenv("TTS_PRIMARY_PROVIDER", "deepgram").lower()
+    if tts_provider == "google" and gcp_creds and os.path.exists(gcp_creds):
+        try:
+            google_tts = google.TTS(
+                language="en-US",
+                gender="neutral",
+                voice_name=os.getenv("TTS_PRIMARY_VOICE", "en-US-Wavenet-D"),
+                credentials_file=gcp_creds,
+            )
+            tts_list.append(google_tts)
+            logger.info(
+                "[TTS] Secondary: google en-US-Wavenet-D (credentials_file=%s)",
+                gcp_creds,
+            )
+        except Exception as e:
+            logger.warning("[TTS] Failed to initialize Google TTS: %s — skipping", e)
+    else:
+        logger.info(
+            "[TTS] Google TTS skipped (no credentials or TTS_PRIMARY_PROVIDER=%s)",
+            tts_provider,
+        )
+
+    if len(tts_list) > 1:
+        tts_adapter = tts_module.FallbackAdapter(
+            tts_list,
+            max_retry_per_tts=1,
+        )
+    else:
+        tts_adapter = tts_list[0]
 
     session = AgentSession(
         stt=stt_adapter,
         llm=llm,
-        tts=google.TTS(
-            language="en-US",
-            gender="neutral",
-            voice_name=os.getenv("TTS_PRIMARY_VOICE", "en-US-Wavenet-D"),
-            credentials_file=gcp_creds,
-        ),
+        tts=tts_adapter,
         vad=vad,
         turn_handling=TurnHandlingOptions(
             turn_detection=MultilingualModel(),
