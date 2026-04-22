@@ -267,3 +267,76 @@ def recompute_position_prescores(self, position_id: str, organization_id: str, u
             job.error_message = str(exc)
             job.completed_at = datetime.now(timezone.utc)
             session.commit()
+
+@celery_app.task(
+    bind=True,
+    name="qag.generate_position_qag",
+    max_retries=0,
+    soft_time_limit=600,
+    time_limit=660,
+)
+def generate_position_qag(self, position_id: str, job_id: str):
+    """Background task to generate QAG questions for a position."""
+    logger.info("[QAG] Starting generation for position_id=%s, job_id=%s", position_id, job_id)
+
+    with sync_session_factory() as session:
+        job = session.get(QAGProcessingJob, UUID(job_id))
+        position = session.get(Position, UUID(position_id))
+        
+        if not position or not job:
+            if job:
+                job.status = "failed"
+                job.error_message = "Position not found"
+                job.completed_at = datetime.now(timezone.utc)
+                session.commit()
+            return
+            
+        try:
+            scorer = PreScoreService()
+            
+            async def _run():
+                return await scorer.run_position_jd_critic(
+                    job_title=position.job_title,
+                    job_description=position.job_description,
+                    required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
+                    years_of_experience=position.years_of_experience,
+                )
+            
+            critic = asyncio.run(_run())
+            
+            position.jd_hdeval_qag = critic
+            flag_modified(position, "jd_hdeval_qag")
+            session.add(position)
+            
+            question_count = len(critic.get("questions") or []) if isinstance(critic, dict) else 0
+            status = str(critic.get("status") or "completed") if isinstance(critic, dict) else "completed"
+            provider = str(critic.get("provider") or "ai-service:ollama") if isinstance(critic, dict) else "ai-service:ollama"
+            job.source_provider = provider
+
+            if status == "ai_generation_failed" or question_count == 0:
+                job.status = "failed"
+                job.processed_items = 0
+                job.error_message = str(critic.get("feedback") or "AI-only QAG generation failed") if isinstance(critic, dict) else "AI-only QAG generation failed"
+                job.summary = {
+                    "status": status,
+                    "question_count": question_count,
+                }
+            else:
+                job.status = "completed"
+                job.processed_items = question_count
+                job.summary = {
+                    "status": status,
+                    "question_count": question_count,
+                    "fallback_used": bool(critic.get("fallback_used", False)) if isinstance(critic, dict) else False,
+                }
+            
+            job.completed_at = datetime.now(timezone.utc)
+            session.commit()
+            logger.info("[QAG] Generated QAG for position=%s: %d questions", position_id, question_count)
+            
+        except Exception as exc:
+            logger.error("[QAG] Fatal error generating QAG for job_id=%s: %s", job_id, exc, exc_info=True)
+            job.status = "failed"
+            job.error_message = str(exc)
+            job.completed_at = datetime.now(timezone.utc)
+            session.commit()

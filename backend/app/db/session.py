@@ -63,12 +63,38 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Initialize database tables with safety against locking contention."""
+    # 1. Create tables defined in SQLModel (metadata)
+    # We do this in a separate block to avoid holding locks during subsequent checks
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-        await conn.execute(
-            text("ALTER TABLE IF EXISTS cv_analysis ADD COLUMN IF NOT EXISTS github_profile JSONB")
+    
+    # 2. Add missing columns with short lock timeouts to avoid blocking the whole app
+    # We use a new connection for each to ensure we don't hold a long transaction.
+    async with engine.connect() as conn:
+        # Set a short lock timeout (2 seconds) for this connection.
+        # This prevents ALTER TABLE from waiting forever and blocking other queries.
+        await conn.execute(text("SET lock_timeout = '2s'"))
+        
+        # Check and add 'github_profile' to 'cv_analysis'
+        res = await conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name='cv_analysis' AND column_name='github_profile'")
         )
-        await conn.execute(
-            text("ALTER TABLE IF EXISTS positions ADD COLUMN IF NOT EXISTS jd_hdeval_qag JSONB")
+        if not res.fetchone():
+            try:
+                await conn.execute(text("ALTER TABLE cv_analysis ADD COLUMN github_profile JSONB"))
+                await conn.commit()
+            except Exception:
+                # If we couldn't get the lock in 2s, we skip it. It will try again on next startup.
+                pass
+                
+        # Check and add 'jd_hdeval_qag' to 'positions'
+        res = await conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name='positions' AND column_name='jd_hdeval_qag'")
         )
+        if not res.fetchone():
+            try:
+                await conn.execute(text("ALTER TABLE positions ADD COLUMN jd_hdeval_qag JSONB"))
+                await conn.commit()
+            except Exception:
+                pass

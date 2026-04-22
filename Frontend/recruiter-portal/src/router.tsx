@@ -130,6 +130,7 @@ const ProjectsPageWrapper = () => {
     return (
         <ProjectsPage
             onViewProject={(projectId) => navigateWithStack(`/recruiter/project/${projectId}`)}
+            onViewPosition={(positionId) => navigateWithStack(`/recruiter/position/${positionId}`)}
             onCreateAssessment={() => console.log('Create Assessment')}
         />
     );

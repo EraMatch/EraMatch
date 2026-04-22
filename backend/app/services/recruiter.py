@@ -854,23 +854,43 @@ class RecruiterService:
         if self.current_user.role != "technical" or position.assigned_tech_id != self.current_user.id:
             raise UnauthorizedException("Only assigned technical recruiter can approve QAG questions")
 
-        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
-        questions = artifact.get("questions") if isinstance(artifact.get("questions"), list) else []
-        approved = [q for q in questions if isinstance(q, dict) and bool(q.get("approved", True))]
-        if not approved:
-            raise NotFoundException("No approved yes/no questions found")
+        with self.session.no_autoflush:
+            artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+            questions = artifact.get("questions") if isinstance(artifact.get("questions"), list) else []
+            approved = [q for q in questions if isinstance(q, dict) and bool(q.get("approved", True))]
+            if not approved:
+                raise NotFoundException("No approved yes/no questions found")
 
-        artifact["approved_questions"] = approved
-        artifact["status"] = "approved"
-        artifact["approved_at"] = datetime.utcnow().isoformat()
-        artifact["approved_by"] = str(self.current_user.id)
-        position.jd_hdeval_qag = artifact
-        flag_modified(position, "jd_hdeval_qag")
-        self.session.add(position)
+            artifact["approved_questions"] = approved
+            artifact["status"] = "approved"
+            artifact["approved_at"] = datetime.utcnow().isoformat()
+            artifact["approved_by"] = str(self.current_user.id)
+            position.jd_hdeval_qag = artifact
+            flag_modified(position, "jd_hdeval_qag")
+            self.session.add(position)
 
-        await self._recompute_position_prescores(position)
-        await self.session.commit()
-        await self.session.refresh(position)
+            # Start tracking job for background task
+            job = await self._start_qag_job(
+                position=position,
+                job_type="qag_resume_correction",
+                total_items=0,
+                source_provider="ai-service:ollama",
+            )
+            
+            # Commit once for everything
+            await self.session.commit()
+            await self.session.refresh(position)
+
+        # Dispatch background task AFTER commit to avoid statement timeouts 
+        # caused by long transactions during task dispatch.
+        from worker.tasks.qag import recompute_position_prescores as celery_recompute_task
+        celery_recompute_task.delay(
+            position_id=str(position.id),
+            organization_id=str(self.organization_id),
+            user_id=str(self.current_user.id),
+            job_id=str(job.id),
+        )
+
         return artifact
 
     async def recompute_position_prescores(self, position_id: UUID) -> dict:
@@ -881,8 +901,24 @@ class RecruiterService:
         if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
             raise UnauthorizedException("You are not assigned to this position")
 
-        applications_scored = await self._recompute_position_prescores(position)
+        # Start tracking job for background task
+        job = await self._start_qag_job(
+            position=position,
+            job_type="qag_resume_correction",
+            total_items=0,
+            source_provider="ai-service:ollama",
+        )
         await self.session.commit()
+
+        # Dispatch background task to avoid statement timeouts
+        from worker.tasks.qag import recompute_position_prescores as celery_recompute_task
+        celery_recompute_task.delay(
+            position_id=str(position.id),
+            organization_id=str(self.organization_id),
+            user_id=str(self.current_user.id),
+            job_id=str(job.id),
+        )
+        
         await self.session.refresh(position)
 
         artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
@@ -890,10 +926,10 @@ class RecruiterService:
 
         return {
             "position_id": str(position.id),
-            "applications_scored": int(applications_scored),
+            "applications_scored": 0,
             "qag_status": artifact.get("status"),
             "approved_question_count": len(approved_questions),
-            "message": "Recompute finished successfully",
+            "message": "Recompute started successfully in the background",
         }
 
     async def get_position_details(self, position_id: UUID) -> PositionDetailsResponse:
@@ -2223,56 +2259,22 @@ class RecruiterService:
             total_items=50,
             source_provider="ai-service:ollama",
         )
+        
+        # Commit the transaction so the background task can see the latest position and job
+        await self.session.commit()
+        await self.session.refresh(position)
 
-        try:
-            scorer = PreScoreService()
-            critic = await scorer.run_position_jd_critic(
-                job_title=position.job_title,
-                job_description=position.job_description,
-                required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
-                years_of_experience=position.years_of_experience,
-            )
-            position.jd_hdeval_qag = critic
-            self.session.add(position)
+        from worker.tasks.qag import generate_position_qag as celery_generate_task
+        celery_generate_task.delay(
+            position_id=str(position.id),
+            job_id=str(job.id),
+        )
 
-            question_count = len(critic.get("questions") or []) if isinstance(critic, dict) else 0
-            status = str(critic.get("status") or "completed") if isinstance(critic, dict) else "completed"
-            provider = str(critic.get("provider") or "ai-service:ollama") if isinstance(critic, dict) else "ai-service:ollama"
-            job.source_provider = provider
-
-            if status == "ai_generation_failed" or question_count == 0:
-                self._finish_qag_job(
-                    job=job,
-                    status="failed",
-                    processed_items=0,
-                    error_message=str(critic.get("feedback") or "AI-only QAG generation failed") if isinstance(critic, dict) else "AI-only QAG generation failed",
-                    summary={
-                        "status": status,
-                        "question_count": question_count,
-                    },
-                )
-            else:
-                self._finish_qag_job(
-                    job=job,
-                    status="completed",
-                    processed_items=question_count,
-                    summary={
-                        "status": status,
-                        "question_count": question_count,
-                        "fallback_used": bool(critic.get("fallback_used", False)) if isinstance(critic, dict) else False,
-                    },
-                )
-
-            return critic
-        except Exception as exc:
-            self._finish_qag_job(
-                job=job,
-                status="failed",
-                processed_items=0,
-                error_message=str(exc),
-                summary={"status": "error"},
-            )
-            raise
+        return {
+            "status": "pending",
+            "message": "QAG generation started in the background",
+            "job_id": str(job.id)
+        }
 
     async def _recompute_position_prescores(self, position: Position) -> int:
         """Recompute ingestion pre-scores for all applications in a position."""
@@ -2415,52 +2417,52 @@ class RecruiterService:
              from fastapi import HTTPException
              raise HTTPException(status_code=400, detail="Request is not in technical review stage")
 
-        # Update Request
-        req.status = "approved" if status == "approved" else "rejected"
-        req.review_notes = review_notes
-        req.updated_at = datetime.utcnow()
-        self.session.add(req)
-        
-        # Update Position
-        if req.request_type == "position":
-            p_res = await self.session.execute(select(Position).where(Position.id == req.entity_id))
-            position = p_res.scalar_one_or_none()
-            if position:
-                if status == "approved":
-                    position.status = "open"
-                    msg = f"Position '{position.job_title}' reviewed and approved by Technical Recruiter."
-                    # Generate 50 yes/no HD Eval + QAG questions for explicit technical edit/approval.
-                    await self._evaluate_position_hdeval_qag(position, force=True)
-                else:
-                    position.status = "rejected"
-                    position.is_deleted = True
-                    msg = f"Position '{position.job_title}' rejected by Technical Recruiter."
-                
-                self.session.add(position)
+        with self.session.no_autoflush:
+            # Update Request
+            req.status = "approved" if status == "approved" else "rejected"
+            req.review_notes = review_notes
+            req.updated_at = datetime.utcnow()
+            self.session.add(req)
+            
+            # Update Position
+            if req.request_type == "position":
+                p_res = await self.session.execute(select(Position).where(Position.id == req.entity_id))
+                position = p_res.scalar_one_or_none()
+                if position:
+                    if status == "approved":
+                        position.status = "open"
+                        msg = f"Position '{position.job_title}' reviewed and approved by Technical Recruiter."
+                        # Generate 50 yes/no HD Eval + QAG questions for explicit technical edit/approval (only if they don't exist)
+                        await self._evaluate_position_hdeval_qag(position, force=False)
+                    else:
+                        position.status = "rejected"
+                        position.is_deleted = True
+                        msg = f"Position '{position.job_title}' rejected by Technical Recruiter."
+                    
+                    self.session.add(position)
 
-                # Notify requester only when requester_id maps to an org user.
-                # Some legacy admin-created requests store org_id in requester_id.
-                recipient_query = select(OrganizationUser.id).where(
-                    OrganizationUser.id == req.requester_id,
-                    OrganizationUser.organization_id == self.organization_id,
-                    OrganizationUser.is_deleted == False,
-                )
-                recipient_res = await self.session.execute(recipient_query)
-                recipient_user_id = recipient_res.scalar_one_or_none()
-
-                if recipient_user_id:
-                    notif = Notification(
-                        organization_id=self.organization_id,
-                        recipient_user_id=recipient_user_id,
-                        type="alert",
-                        title=f"Position {status.capitalize()}",
-                        message=msg,
-                        is_read=False,
-                        created_at=datetime.utcnow()
+                    # Notify requester only when requester_id maps to an org user.
+                    recipient_query = select(OrganizationUser.id).where(
+                        OrganizationUser.id == req.requester_id,
+                        OrganizationUser.organization_id == self.organization_id,
+                        OrganizationUser.is_deleted == False,
                     )
-                    self.session.add(notif)
-                
-        await self.session.commit()
+                    recipient_res = await self.session.execute(recipient_query)
+                    recipient_user_id = recipient_res.scalar_one_or_none()
+
+                    if recipient_user_id:
+                        notif = Notification(
+                            organization_id=self.organization_id,
+                            recipient_user_id=recipient_user_id,
+                            type="alert",
+                            title=f"Position {status.capitalize()}",
+                            message=msg,
+                            is_read=False,
+                            created_at=datetime.utcnow()
+                        )
+                        self.session.add(notif)
+                    
+            await self.session.commit()
         return True
 
     # =========================================================================
