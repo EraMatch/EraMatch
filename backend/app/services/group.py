@@ -1166,7 +1166,7 @@ class GroupService:
             # 2. Add an Offer record so it's tracked explicitly
             new_offer = Offer(
                 application_id=app.id,
-                organization_id=self.current_user.organization_id,
+                organization_id=self.user.organization_id,
                 position_id=app.position_id,
                 status="sent"
             )
@@ -1175,8 +1175,8 @@ class GroupService:
             # 3. Create a system log / activity log
             log = SystemLog(
                 event_type="offer_sent",
-                user_id=self.current_user.id,
-                organization_id=self.current_user.organization_id,
+                user_id=self.user.id,
+                organization_id=self.user.organization_id,
                 entity_type="candidate_application",
                 entity_id=app.id,
                 details={"candidate_name": profile.full_name, "subject": subject}
@@ -1965,7 +1965,7 @@ class GroupService:
             )
             self.session.add(job)
             await self.session.flush()
-            jd_text = str(position.job_description or position.description or "")
+            jd_text = str(position.job_description or "")
             queued_jobs.append((job.id, profile.id, github_url, jd_text))
 
         await self.session.commit()
