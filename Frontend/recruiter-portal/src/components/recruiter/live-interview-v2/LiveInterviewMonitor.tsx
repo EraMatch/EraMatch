@@ -64,6 +64,7 @@ interface LiveInterviewMonitorProps {
   groupName?: string;
   onClose: () => void;
   onViewResults?: (sessionId: string) => void;
+  mockMode?: boolean;
 }
 
 // ─── Icon resolver ──────────────────────────────────────────────────────────
@@ -155,7 +156,7 @@ const fmtDuration = (secs: number | null) => {
 };
 
 // ─── Main Component ──────────────────────────────────────────────────────────
-export function LiveInterviewMonitor({ groupId, groupName, onClose, onViewResults }: LiveInterviewMonitorProps) {
+export function LiveInterviewMonitor({ groupId, groupName, onClose, onViewResults, mockMode }: LiveInterviewMonitorProps) {
   const [data, setData] = useState<MonitorData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [lastPoll, setLastPoll] = useState<Date | null>(null);
@@ -165,6 +166,90 @@ export function LiveInterviewMonitor({ groupId, groupName, onClose, onViewResult
   const logRef = useRef<HTMLDivElement | null>(null);
 
   const fetchData = useCallback(async () => {
+    if (mockMode) {
+      const now = Date.now();
+      setData({
+        group_id: groupId,
+        summary: { active: 1, judging: 1, completed: 1, failed: 0, total: 3 },
+        sessions: [
+          {
+            session_id: 'a1b2c3d4-e5f6-7890-1234-56789abcdef0',
+            candidate_id: 'c1-123',
+            candidate_name: 'Maya Hassan',
+            room_name: 'li-v2-abc123',
+            state: 'in_progress',
+            transcript_turns: 8,
+            duration_seconds: 720,
+            started_at: new Date(now - 720000).toISOString(),
+            ended_at: null,
+            created_at: new Date(now - 800000).toISOString(),
+            judge_status: 'pending',
+            evaluation: null,
+            events: [
+              { time: new Date(now - 800000).toISOString(), type: 'session_created', icon: 'circle-dot', label: 'Session Created', detail: 'Room allocated', level: 'info' },
+              { time: new Date(now - 720000).toISOString(), type: 'candidate_joined', icon: 'user-check', label: 'Candidate Joined', detail: 'Maya Hassan connected', level: 'success' },
+              { time: new Date(now - 718000).toISOString(), type: 'agent_dispatched', icon: 'bot', label: 'Agent Dispatched', detail: 'AI Interviewer connected', level: 'info' },
+              { time: new Date(now - 360000).toISOString(), type: 'transcript_turns', icon: 'message-square', label: 'Conversation Active', detail: '8 turns recorded', level: 'info' },
+            ],
+          },
+          {
+            session_id: 'b2c3d4e5-f6a7-8901-2345-6789abcdef01',
+            candidate_id: 'c2-123',
+            candidate_name: 'Omar Farid',
+            room_name: 'li-v2-def456',
+            state: 'completed',
+            transcript_turns: 15,
+            duration_seconds: 1680,
+            started_at: new Date(now - 2000000).toISOString(),
+            ended_at: new Date(now - 320000).toISOString(),
+            created_at: new Date(now - 2100000).toISOString(),
+            judge_status: 'running',
+            evaluation: null,
+            events: [
+              { time: new Date(now - 2100000).toISOString(), type: 'session_created', icon: 'circle-dot', label: 'Session Created', detail: 'Room allocated', level: 'info' },
+              { time: new Date(now - 2000000).toISOString(), type: 'candidate_joined', icon: 'user-check', label: 'Candidate Joined', detail: 'Omar Farid connected', level: 'success' },
+              { time: new Date(now - 1998000).toISOString(), type: 'agent_dispatched', icon: 'bot', label: 'Agent Dispatched', detail: 'AI Interviewer connected', level: 'info' },
+              { time: new Date(now - 1000000).toISOString(), type: 'transcript_turns', icon: 'message-square', label: 'Conversation Active', detail: '15 turns recorded', level: 'info' },
+              { time: new Date(now - 320000).toISOString(), type: 'session_completed', icon: 'check-circle', label: 'Session Completed', detail: 'Candidate finished interview', level: 'success' },
+              { time: new Date(now - 310000).toISOString(), type: 'judge_queued', icon: 'zap', label: 'Judge Pipeline Queued', detail: 'Processing transcript', level: 'info' },
+            ],
+          },
+          {
+            session_id: 'c3d4e5f6-a7b8-9012-3456-789abcdef012',
+            candidate_id: 'c3-123',
+            candidate_name: 'Sara Nasser',
+            room_name: 'li-v2-ghi789',
+            state: 'completed',
+            transcript_turns: 22,
+            duration_seconds: 1920,
+            started_at: new Date(now - 4000000).toISOString(),
+            ended_at: new Date(now - 2080000).toISOString(),
+            created_at: new Date(now - 4100000).toISOString(),
+            judge_status: 'complete',
+            evaluation: {
+              overall_score_pct: 78,
+              auto_verdict: 'pass',
+              evaluation_confidence: 'high',
+              judged_at: '2026-04-25T19:45:00Z',
+            },
+            events: [
+              { time: new Date(now - 4100000).toISOString(), type: 'session_created', icon: 'circle-dot', label: 'Session Created', detail: 'Room allocated', level: 'info' },
+              { time: new Date(now - 4000000).toISOString(), type: 'candidate_joined', icon: 'user-check', label: 'Candidate Joined', detail: 'Sara Nasser connected', level: 'success' },
+              { time: new Date(now - 3998000).toISOString(), type: 'agent_dispatched', icon: 'bot', label: 'Agent Dispatched', detail: 'AI Interviewer connected', level: 'info' },
+              { time: new Date(now - 3000000).toISOString(), type: 'transcript_turns', icon: 'message-square', label: 'Conversation Active', detail: '22 turns recorded', level: 'info' },
+              { time: new Date(now - 2080000).toISOString(), type: 'session_completed', icon: 'check-circle', label: 'Session Completed', detail: 'Candidate finished interview', level: 'success' },
+              { time: new Date(now - 2070000).toISOString(), type: 'judge_queued', icon: 'zap', label: 'Judge Pipeline Queued', detail: 'Processing transcript', level: 'info' },
+              { time: new Date('2026-04-25T19:45:00Z').toISOString(), type: 'evaluation_complete', icon: 'star', label: 'Evaluation Complete', detail: 'Score and verdict generated', level: 'success' },
+            ],
+          },
+        ],
+      });
+      setLastPoll(new Date());
+      setError(null);
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const res = await fetchAPI<MonitorData>(`/live-interview-v2/group/${groupId}/sessions-monitor`);
       setData(res);
@@ -175,7 +260,7 @@ export function LiveInterviewMonitor({ groupId, groupName, onClose, onViewResult
     } finally {
       setIsLoading(false);
     }
-  }, [groupId]);
+  }, [groupId, mockMode]);
 
   useEffect(() => {
     fetchData();
@@ -183,6 +268,8 @@ export function LiveInterviewMonitor({ groupId, groupName, onClose, onViewResult
 
   // Adaptive polling: 3s if active sessions, 10s if all done
   useEffect(() => {
+    if (mockMode) return;
+    
     const hasActive = data?.sessions.some(s =>
       s.state === 'in_progress' || s.judge_status === 'running'
     );
@@ -190,7 +277,7 @@ export function LiveInterviewMonitor({ groupId, groupName, onClose, onViewResult
 
     pollRef.current = setTimeout(() => fetchData(), interval);
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
-  }, [data, fetchData]);
+  }, [data, fetchData, mockMode]);
 
   // Auto-scroll log area when expanded session's events change
   useEffect(() => {

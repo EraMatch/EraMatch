@@ -1,6 +1,7 @@
 """
 Schemas for group management endpoints (EnhancedGroupOverviewV2 page).
 """
+
 from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel, Field
@@ -8,8 +9,10 @@ from pydantic import BaseModel, Field
 
 # ─── Get Group Details ────────────────────────────────────────────────────────
 
+
 class SendOffersRequest(BaseModel):
     """Payload for sending final offers to candidates."""
+
     application_ids: list[str]
     email_subject: str
     email_body: str
@@ -17,6 +20,7 @@ class SendOffersRequest(BaseModel):
 
 class BulkProgressRequest(BaseModel):
     """Payload for progressing candidates in bulk after a stage ends."""
+
     application_ids: list[UUID]
     action: str  # 'progress', 'reject', 'hold'
     current_stage_type: str | None = None
@@ -52,12 +56,14 @@ class PipelineStage(BaseModel):
     actual_end_date: datetime | None = None
 
 
-
 class CandidateStageStatus(BaseModel):
     score: float | None = None
     status: str = "pending"
     scheduled_at: datetime | None = None
     meeting_link: str | None = None
+    session_id: UUID | None = None  # LiV2 session ID
+    verdict: str | None = None  # auto_verdict from LiV2Evaluation
+    evaluated_at: datetime | None = None  # judged_at from LiV2Evaluation
 
 
 class IntegrityFlag(BaseModel):
@@ -128,9 +134,13 @@ class GroupDetailResponse(BaseModel):
     filtration_flow: list[FiltrationFlowStage] = []
     assessment_config_id: UUID | None = None
     interview_config_id: UUID | None = None
-    acceptance_criteria: AcceptanceCriteriaResponse = Field(default_factory=AcceptanceCriteriaResponse)
+    acceptance_criteria: AcceptanceCriteriaResponse = Field(
+        default_factory=AcceptanceCriteriaResponse
+    )
     candidates: list[CandidateProgressItem] = []
-    pipeline_stages: list[PipelineStage] = Field(default_factory=list, alias="pipelineStages")
+    pipeline_stages: list[PipelineStage] = Field(
+        default_factory=list, alias="pipelineStages"
+    )
     assessments: list[GroupAssessmentItem] = []
     interviews: list[GroupInterviewItem] = []
     github_questions_count: int = 10
@@ -140,6 +150,7 @@ class GroupDetailResponse(BaseModel):
 
 
 # ─── Get Group Statistics ─────────────────────────────────────────────────────
+
 
 class StageStatsResponse(BaseModel):
     completed: int = 0
@@ -158,8 +169,10 @@ class GroupStatsResponse(BaseModel):
 
 # ─── Schedule Interview ────────────────────────────────────────────────────────
 
+
 class ScheduleInterviewRequest(BaseModel):
     """Payload for scheduling a live interview."""
+
     application_id: UUID
     scheduled_at: datetime
     duration_minutes: int = 60
@@ -170,9 +183,8 @@ class ScheduleInterviewRequest(BaseModel):
 # ─── Candidate Progress Matrix ───────────────────────────────────────────────
 
 
-
-
 # ─── Group Creation ──────────────────────────────────────────────────────────
+
 
 class GroupCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -186,17 +198,25 @@ class GroupCreateRequest(BaseModel):
 class GroupUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     status: str | None = None
-    filtration_flow: list[str] | None = None  # e.g. ["assessment", "ai-interview", "live-interview"]
+    filtration_flow: list[str] | None = (
+        None  # e.g. ["assessment", "ai-interview", "live-interview"]
+    )
     github_questions_count: int | None = Field(default=None, ge=1, le=30)
 
 
 class GroupDeleteRequest(BaseModel):
     """Payload for group deletion with candidate handling options."""
-    action: str = Field(..., description="Action for candidates: 'release', 'reject', or 'transfer'")
-    transfer_group_id: UUID | None = Field(default=None, description="Target group ID if action is 'transfer'")
+
+    action: str = Field(
+        ..., description="Action for candidates: 'release', 'reject', or 'transfer'"
+    )
+    transfer_group_id: UUID | None = Field(
+        default=None, description="Target group ID if action is 'transfer'"
+    )
 
 
 # ─── Start Stage ──────────────────────────────────────────────────────────────
+
 
 class StartStageRequest(BaseModel):
     stage: str  # "assessment", "ai_interview", "review"
@@ -211,6 +231,7 @@ class StartStageResponse(BaseModel):
 
 # ─── Close Stage ──────────────────────────────────────────────────────────────
 
+
 class CloseStageRequest(BaseModel):
     stage: str  # "assessment", "ai_interview", "live_interview", "review"
 
@@ -222,6 +243,7 @@ class CloseStageResponse(BaseModel):
 
 
 # ─── Activity Log ────────────────────────────────────────────────────────────
+
 
 class ActivityUser(BaseModel):
     id: UUID
@@ -245,6 +267,7 @@ class ActivityLogResponse(BaseModel):
 
 
 # ─── Assessment Monitoring ───────────────────────────────────────────────────
+
 
 class MonitoringFlag(BaseModel):
     type: str
@@ -272,6 +295,7 @@ class AssessmentMonitoringResponse(BaseModel):
     pass_threshold: float = 70.0
     candidates: list[AssessmentMonitoringCandidate] = []
 
+
 # Assign Interview
 class AssignInterviewRequest(BaseModel):
     interview_config_id: UUID | None = None
@@ -284,29 +308,44 @@ class AssignInterviewResponse(BaseModel):
     interview_config_id: UUID | None = None
     message: str
 
+
 # Update Acceptance Criteria
 class AcceptanceCriteriaUpdate(BaseModel):
     minimum_technical_score: float = Field(ge=0, le=100)
     allowed_integrity_risk: str = "Low"
     required_verdict: str = "Pass"
 
+
 class AcceptanceCriteriaUpdateResponse(BaseModel):
     status: int
     criteria: AcceptanceCriteriaResponse
+
 
 class CandidateNoteCreate(BaseModel):
     application_id: UUID
     content: str
     tags: list[str] = []
+
+
 class CandidateNoteResponse(BaseModel):
     status: int
     note_id: UUID
+
 
 class CandidateScores(BaseModel):
     Overall: int = 0
     Assessment: int = 0
     Interview: int = 0
     Github: int = 0
+
+
+class LiveInterviewData(BaseModel):
+    sessionId: UUID | None = None
+    status: str = "not-started"
+    score: float | None = None
+    verdict: str | None = None
+
+
 class CandidateDetailResponse(BaseModel):
     Name: str
     Position: str | None = None
@@ -315,9 +354,11 @@ class CandidateDetailResponse(BaseModel):
     Location: str | None = None
     Scores: CandidateScores = Field(default_factory=CandidateScores)
     Resume_Link: str | None = Field(default=None, alias="Resume Link")
+    liveInterviewData: LiveInterviewData | None = None
 
     class Config:
         populate_by_name = True
+
 
 # Integrity Flags
 class IntegrityFlagDetail(BaseModel):
@@ -327,8 +368,12 @@ class IntegrityFlagDetail(BaseModel):
     description: str
     evidence_url: str | None = None
     timestamp: datetime
+
+
 class IntegrityFlagsResponse(BaseModel):
     flags: list[IntegrityFlagDetail] = []
+
+
 # ─── Export (CSV is handled at the route level, this schema is for request) ─
 class ExportGroupRequest(BaseModel):
     id: UUID
