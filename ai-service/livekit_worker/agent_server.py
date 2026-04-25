@@ -51,6 +51,7 @@ except ImportError:
     pass  # python-dotenv not installed; rely on shell env
 
 import asyncpg
+import httpx
 
 from livekit import agents
 from livekit.agents import AgentSession, AgentServer, room_io, TurnHandlingOptions
@@ -192,6 +193,7 @@ async def interviewer_session(ctx: agents.JobContext):
             model=primary_model,
             base_url=ollama_base + "/v1",
             api_key=ollama_api_key,
+            timeout=httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=30.0),
         )
         logger.info(
             "[LLM-PRIMARY] Using %s via Ollama (base=%s)", primary_model, ollama_base
@@ -200,12 +202,10 @@ async def interviewer_session(ctx: agents.JobContext):
         try:
             llm = google.LLM(model=primary_model)
             import asyncio
-            from livekit.agents import llm as llm_mod
+            from livekit.agents.llm import ChatContext
 
-            test_chat_ctx = llm_mod.ChatContext()
-            test_chat_ctx.messages.append(
-                llm_mod.ChatMessage(role="user", content="hi")
-            )
+            test_chat_ctx = ChatContext()
+            test_chat_ctx.add_message(role="user", content="hi")
 
             async def _test_gemini():
                 async for _chunk in llm.chat(chat_ctx=test_chat_ctx):
@@ -233,6 +233,7 @@ async def interviewer_session(ctx: agents.JobContext):
                 model=secondary_model,
                 base_url=ollama_base + "/v1",
                 api_key=ollama_api_key,
+                timeout=httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=30.0),
             )
             logger.info(
                 "[LLM-FALLBACK] Using %s via Ollama (base=%s)",
@@ -286,14 +287,21 @@ async def interviewer_session(ctx: agents.JobContext):
     # Deepgram aura-2 is primary (no GCP creds needed). Google TTS is secondary
     # (only if GCP credentials exist and init succeeds — same pattern as STT).
     tts_list = []
+    # IMPORTANT: inference.TTS uses the LiveKit Inference gateway, which expects
+    # voice NAMES (e.g. "athena", "apollo"), NOT Deepgram plugin model IDs
+    # (e.g. "aura-2-asteria-en"). The old default "aura-2-asteria-en" caused
+    # 400 errors from the gateway: "invalid voice specification: voice ID must be a valid UUID"
+    tts_voice = os.getenv("DEEPGRAM_INFERENCE_VOICE", "athena")
     tts_list.append(
         inference.TTS(
             model="deepgram/aura-2",
-            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-asteria-en"),
+            voice=tts_voice,
             language="en",
         )
     )
-    logger.info("[TTS] Primary: deepgram/aura-2 (via LiveKit Inference)")
+    logger.info(
+        "[TTS] Primary: deepgram/aura-2 (voice=%s) via LiveKit Inference", tts_voice
+    )
 
     # Secondary: Google Cloud TTS (only if creds exist and init succeeds)
     tts_provider = os.getenv("TTS_PRIMARY_PROVIDER", "deepgram").lower()
