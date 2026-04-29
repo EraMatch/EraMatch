@@ -244,24 +244,26 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
             )}
 
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-white shadow-sm z-10 relative">
-                <div className="flex items-center gap-3">
+            <div className="flex items-center justify-between px-4 py-3 md:px-6 md:py-4 border-b border-gray-100 bg-white shadow-sm z-10 relative flex-wrap gap-2">
+                <div className="w-full md:w-auto order-first md:order-last flex justify-center md:justify-end">
+                    <div className="flex items-center gap-2 text-gray-400 text-[10px] md:text-xs font-medium bg-gray-50 px-3 py-1 rounded-full border border-gray-100 w-full md:w-auto justify-center md:justify-start">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                        {remoteParticipants.length} connected
+                    </div>
+                </div>
+                <div className="flex items-center gap-3 order-last md:order-first">
                     <div className="relative flex items-center justify-center w-3 h-3">
                         <div className="absolute w-full h-full bg-emerald-500 rounded-full animate-ping opacity-75"></div>
                         <div className="relative w-2 h-2 bg-emerald-500 rounded-full"></div>
                     </div>
                     <span className="text-gray-800 text-sm font-semibold tracking-wide uppercase">Live Interview</span>
                 </div>
-                <div className="flex items-center gap-2 text-gray-400 text-xs font-medium bg-gray-50 px-3 py-1 rounded-full border border-gray-100">
-                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
-                    {remoteParticipants.length} connected
-                </div>
             </div>
 
             {/* Main grid */}
-            <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6 p-6 min-h-[500px] bg-[#F8FAFC]">
+            <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 p-4 md:p-6 min-h-0 bg-[#F8FAFC] overflow-y-auto">
                 {/* Left: Candidate camera */}
-                <div className="relative rounded-3xl overflow-hidden bg-gray-900 flex items-center justify-center shadow-md group border border-gray-200/50 h-full max-h-[70vh]">
+                <div className="relative rounded-2xl md:rounded-3xl overflow-hidden bg-gray-900 flex items-center justify-center shadow-md group border border-gray-200/50 h-[45vh] md:h-full md:max-h-[70vh]">
                     {localVideoTrack && camEnabled ? (
                         <VideoTrack
                             trackRef={localVideoTrack}
@@ -278,35 +280,35 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
                     )}
 
                     {/* Candidate label */}
-                    <div className="absolute top-4 left-4 bg-white/10 text-white text-xs font-medium px-4 py-1.5 rounded-full backdrop-blur-md border border-white/20 shadow-sm">
+                    <div className="absolute top-3 left-3 md:top-4 md:left-4 bg-white/10 text-white text-[10px] md:text-xs font-medium px-3 py-1 md:px-4 md:py-1.5 rounded-full backdrop-blur-md border border-white/20 shadow-sm z-20">
                         You
                     </div>
 
                     {/* Timer overlay */}
-                    <div className={`absolute top-4 right-4 bg-black/40 text-xs font-medium px-4 py-1.5 rounded-full backdrop-blur-md shadow-sm flex items-center ${
+                    <div className={`absolute top-3 right-3 md:top-4 md:right-4 z-20 text-[10px] md:text-xs font-medium px-3 md:px-4 py-1 md:py-1.5 rounded-full backdrop-blur-md shadow-sm flex items-center ${
                         isCritical ? "text-red-500 animate-pulse border border-red-500/50 bg-red-500/10" 
                         : isWarning ? "text-amber-400 border border-amber-400/50 bg-amber-400/10" 
-                        : "text-gray-100 border border-white/20"
+                        : "text-gray-100 border border-white/20 bg-black/40"
                     }`}>
-                        <Clock className="w-3.5 h-3.5 mr-1.5" />
+                        <Clock className="w-3 h-3 md:w-3.5 md:h-3.5 mr-1 md:mr-1.5" />
                         {minutes}:{seconds.toString().padStart(2, '0')} / {timeBudgetMin}:00
                     </div>
                     
                     {/* Live Captions Subtitle (Candidate) */}
-                    <div className={`absolute bottom-6 left-6 right-6 text-center pointer-events-none transition-all duration-500 ${activeCandidateText ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
-                        <span className="inline-block bg-black/70 text-white text-sm md:text-base px-5 py-3 rounded-2xl backdrop-blur-lg shadow-xl border border-white/10 max-w-full truncate">
+                    <div className={`absolute bottom-4 md:bottom-6 left-2 right-2 md:left-6 md:right-6 text-center pointer-events-none transition-all duration-500 z-20 ${activeCandidateText ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
+                        <span className="inline-block bg-black/70 text-white text-[11px] md:text-base px-3 py-2 md:px-5 md:py-3 rounded-xl md:rounded-2xl backdrop-blur-lg shadow-xl border border-white/10 max-w-full truncate">
                             {activeCandidateText}
                         </span>
                     </div>
                 </div>
 
                 {/* Right: AI agent visualizer */}
-                <div className={`relative rounded-3xl flex flex-col items-center justify-between p-8 border border-gray-200 shadow-md transition-colors duration-1000 overflow-hidden h-full max-h-[70vh] ${aiPanelBgClass}`}>
+                <div className={`relative rounded-2xl md:rounded-3xl flex flex-col items-center justify-between p-4 md:p-8 border border-gray-200 shadow-md transition-colors duration-1000 overflow-hidden h-[45vh] md:h-full md:max-h-[70vh] ${aiPanelBgClass}`}>
                     
-                    <div className="w-full flex-1 overflow-y-auto mb-6 pr-2 space-y-4 scrollbar-thin scrollbar-thumb-gray-200">
+                    <div className="w-full flex-1 overflow-y-auto mb-4 md:mb-6 pr-2 space-y-3 md:space-y-4 scrollbar-thin scrollbar-thumb-gray-200">
                         {transcript.map((msg, idx) => (
                             <div key={idx} className={`flex ${msg.role === 'ai' ? 'justify-start' : 'justify-end'}`}>
-                                <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm ${msg.role === 'ai' ? 'bg-white border border-indigo-100 text-gray-700 shadow-sm rounded-tl-sm' : 'bg-indigo-50 text-indigo-900 border border-indigo-100 rounded-tr-sm'}`}>
+                                <div className={`max-w-[85%] px-3 py-2 md:px-4 md:py-2.5 rounded-xl md:rounded-2xl text-[11px] md:text-sm ${msg.role === 'ai' ? 'bg-white border border-indigo-100 text-gray-700 shadow-sm rounded-tl-sm' : 'bg-indigo-50 text-indigo-900 border border-indigo-100 rounded-tr-sm'}`}>
                                     {msg.text}
                                 </div>
                             </div>
@@ -314,7 +316,7 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
                         <div ref={transcriptEndRef} />
                     </div>
 
-                    <div className="flex flex-col items-center gap-6 z-10 mt-auto bg-white/60 p-6 rounded-3xl backdrop-blur-sm border border-white/40 shadow-sm w-full">
+                    <div className="flex flex-col items-center gap-3 md:gap-6 z-10 mt-auto bg-white/60 p-4 md:p-6 rounded-2xl md:rounded-3xl backdrop-blur-sm border border-white/40 shadow-sm w-full">
                         <AIAgentOrb agentState={agentState} />
 
                         <div className="text-center space-y-1">
@@ -359,45 +361,45 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
             </div>
 
             {/* Control bar */}
-            <div className="flex items-center justify-center gap-6 py-6 border-t border-gray-100 bg-white z-10 relative shadow-[0_-4px_20px_-15px_rgba(0,0,0,0.1)]">
-                <div className="flex flex-col items-center gap-2">
+            <div className="flex flex-wrap items-center justify-center gap-4 md:gap-6 py-4 md:py-6 border-t border-gray-100 bg-white z-10 relative shadow-[0_-4px_20px_-15px_rgba(0,0,0,0.1)] pb-8 md:pb-6">
+                <div className="flex flex-col items-center gap-1.5 md:gap-2">
                     <Button
                         variant="outline"
                         size="icon"
-                        className={`w-14 h-14 rounded-full transition-all duration-300 shadow-sm ${micEnabled ? 'border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300' : 'bg-red-50 border-red-200 text-red-500 hover:bg-red-100'}`}
+                        className={`w-12 h-12 md:w-14 md:h-14 rounded-full transition-all duration-300 shadow-sm ${micEnabled ? 'border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300' : 'bg-red-50 border-red-200 text-red-500 hover:bg-red-100'}`}
                         onClick={toggleMic}
                         title={micEnabled ? 'Mute microphone' : 'Unmute microphone'}
                     >
-                        {micEnabled ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
+                        {micEnabled ? <Mic className="w-5 h-5 md:w-6 md:h-6" /> : <MicOff className="w-5 h-5 md:w-6 md:h-6" />}
                     </Button>
-                    <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">Mic</span>
+                    <span className="text-[9px] md:text-[10px] font-medium text-gray-500 uppercase tracking-wider">Mic</span>
                 </div>
 
-                <div className="flex flex-col items-center gap-2">
+                <div className="flex flex-col items-center gap-1.5 md:gap-2">
                     <Button
                         variant="outline"
                         size="icon"
-                        className={`w-14 h-14 rounded-full transition-all duration-300 shadow-sm ${camEnabled ? 'border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300' : 'bg-red-50 border-red-200 text-red-500 hover:bg-red-100'}`}
+                        className={`w-12 h-12 md:w-14 md:h-14 rounded-full transition-all duration-300 shadow-sm ${camEnabled ? 'border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300' : 'bg-red-50 border-red-200 text-red-500 hover:bg-red-100'}`}
                         onClick={toggleCam}
                         title={camEnabled ? 'Turn off camera' : 'Turn on camera'}
                     >
-                        {camEnabled ? <VideoIcon className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
+                        {camEnabled ? <VideoIcon className="w-5 h-5 md:w-6 md:h-6" /> : <VideoOff className="w-5 h-5 md:w-6 md:h-6" />}
                     </Button>
-                    <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">Camera</span>
+                    <span className="text-[9px] md:text-[10px] font-medium text-gray-500 uppercase tracking-wider">Camera</span>
                 </div>
 
-                <div className="w-px h-10 bg-gray-200 mx-2"></div>
+                <div className="hidden md:block w-px h-10 bg-gray-200 mx-2"></div>
 
-                <div className="flex flex-col items-center gap-2">
+                <div className="fixed bottom-6 right-6 md:static md:bottom-auto md:right-auto flex flex-col items-center gap-1.5 md:gap-2 z-50">
                     <Button
-                        className="w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-md border-0 hover:shadow-lg hover:shadow-red-500/20 transition-all duration-300"
+                        className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-xl md:shadow-md border border-white/20 md:border-0 hover:shadow-2xl hover:shadow-red-500/20 transition-all duration-300"
                         size="icon"
                         onClick={handleEndInterview}
                         title="End interview"
                     >
-                        <PhoneOff className="w-7 h-7" />
+                        <PhoneOff className="w-6 h-6 md:w-7 md:h-7" />
                     </Button>
-                    <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider">End</span>
+                    <span className="hidden md:block text-[10px] font-bold text-red-500 uppercase tracking-wider">End</span>
                 </div>
             </div>
         </div>
