@@ -130,6 +130,21 @@ def _normalize_sub_criteria(
 
 async def run_judge_pipeline(session_id: str):
     logger.info(f"[Judge] Starting pipeline for session {session_id}")
+
+    # ── Mock LLM path (for E2E tests / CI) ──
+    if os.getenv("JUDGE_MOCK_LLM") == "true":
+        logger.info(f"[Judge] MOCK mode enabled — skipping real LLM calls")
+        try:
+            async for db in get_session():
+                await _mock_judge_pipeline(db, session_id)
+                break
+        except Exception as e:
+            logger.error(
+                f"[Judge] Mock pipeline failed for session {session_id}: {e}",
+                exc_info=True,
+            )
+        return
+
     try:
         async for db in get_session():
             await _execute_pipeline(db, session_id)
@@ -138,6 +153,199 @@ async def run_judge_pipeline(session_id: str):
         logger.error(
             f"[Judge] Pipeline failed for session {session_id}: {e}", exc_info=True
         )
+
+
+async def _mock_judge_pipeline(db, session_id: str):
+    """Produce a deterministic evaluation using pre-computed scores (no LLM calls).
+
+    Activated via JUDGE_MOCK_LLM=true env var.  Used by E2E tests and CI
+    so that the judge pipeline can run to completion without requiring
+    a real LLM backend.
+    """
+    result = await db.execute(select(LiV2Session).where(LiV2Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        logger.error("[Judge-Mock] Session %s not found", session_id)
+        return
+
+    transcript = session.transcript or []
+    if not transcript:
+        await _create_fail_evaluation(db, session, reason="Empty transcript (mock)")
+        return
+
+    rubric_result = await db.execute(
+        select(LiV2Rubric).where(LiV2Rubric.id == session.rubric_id)
+    )
+    rubric = rubric_result.scalar_one_or_none()
+    if not rubric:
+        logger.error("[Judge-Mock] Rubric %s not found", session.rubric_id)
+        return
+
+    dimensions = rubric.dimensions or []
+    if not dimensions:
+        logger.warning("[Judge-Mock] No dimensions on rubric — skipping")
+        return
+
+    bank_result = await db.execute(
+        select(LiV2Bank).where(LiV2Bank.id == session.bank_id)
+    )
+    bank = bank_result.scalar_one_or_none()
+    bank_items = bank.items if bank else []
+
+    candidate_answers = [
+        t
+        for t in transcript
+        if t.get("role") == "candidate" and t.get("text", "").strip()
+    ]
+    answer_quality = min(len(candidate_answers), 3)
+
+    anchor_map = {0: "substandard", 1: "proficient", 2: "proficient", 3: "excellent"}
+    score_map = {0: 1, 1: 2, 2: 2, 3: 3}
+
+    dimension_results = {}
+    per_question_results = []
+
+    if bank_items:
+        for idx, item in enumerate(bank_items):
+            dim_id = item.get(
+                "primary_dimension_id",
+                dimensions[0].get("dimension_id", "dim_1") if dimensions else "dim_1",
+            )
+            dim = next(
+                (d for d in dimensions if d.get("dimension_id") == dim_id),
+                dimensions[0] if dimensions else {},
+            )
+            dim_name = dim.get("name", dim_id)
+            weight = float(dim.get("weight", 1.0 / max(len(dimensions), 1)))
+
+            q_score = float(score_map.get(answer_quality, 2))
+            anchor = anchor_map.get(answer_quality, "proficient")
+
+            sub_criteria = item.get("question_rubric", {}).get("sub_criteria", [])
+            sub_criteria_names = []
+            if isinstance(sub_criteria, list) and sub_criteria:
+                if isinstance(sub_criteria[0], dict):
+                    sub_criteria_names = [s.get("text", str(s)) for s in sub_criteria]
+                else:
+                    sub_criteria_names = [str(s) for s in sub_criteria]
+            if not sub_criteria_names:
+                sub_criteria_names = ["Demonstrate knowledge of the topic"]
+
+            sub_scores = []
+            for sc_name in sub_criteria_names:
+                cited = ""
+                for ca in candidate_answers:
+                    if len(ca.get("text", "")) > 20:
+                        cited = ca["text"][:120]
+                        break
+                sub_scores.append(
+                    {
+                        "name": sc_name,
+                        "score": score_map.get(answer_quality, 2),
+                        "covered": True,
+                        "cited_quote": cited,
+                    }
+                )
+
+            mock_cited = ""
+            for ca in candidate_answers:
+                if len(ca.get("text", "")) > 20:
+                    mock_cited = ca["text"][:150]
+                    break
+
+            per_question_results.append(
+                {
+                    "question_text": item.get("text", f"Question {idx + 1}"),
+                    "question_score": q_score,
+                    "dimension_id": dim_id,
+                    "dimension_name": dim_name,
+                    "sub_criteria": sub_scores,
+                    "reasoning": f"Mock evaluation: candidate provided {len(candidate_answers)} substantive responses.",
+                    "anchor_matched": anchor,
+                    "cited_quote": mock_cited,
+                    "weight": weight,
+                    "pillar_idx": idx,
+                }
+            )
+
+        overall_score_pct, overall_score, coverage_ratio, dimension_results = (
+            _phase_c_score_with_questions(per_question_results, dimensions)
+        )
+    else:
+        for dim in dimensions:
+            dim_id = dim.get("dimension_id", dim.get("name", ""))
+            weight = Decimal(str(dim.get("weight", 1.0 / max(len(dimensions), 1))))
+            mock_cited = ""
+            for ca in candidate_answers:
+                if len(ca.get("text", "")) > 20:
+                    mock_cited = ca["text"][:150]
+                    break
+            dimension_results[dim_id] = {
+                "score": score_map.get(answer_quality, 2),
+                "anchor_matched": anchor_map.get(answer_quality, "proficient"),
+                "cited_quote": mock_cited,
+                "reasoning": f"Mock evaluation: candidate provided {len(candidate_answers)} substantive responses.",
+                "weight": float(weight),
+                "dimension_name": dim.get("name", dim_id),
+            }
+
+        overall_score_pct, overall_score, coverage_ratio = _phase_c_score(
+            dimension_results, dimensions
+        )
+
+    verdict = _auto_verdict(overall_score_pct)
+    meets_criteria = overall_score_pct >= 60
+    confidence = _confidence_from_results(dimension_results)
+
+    per_question_results_or_none = (
+        per_question_results if per_question_results else None
+    )
+
+    await _upsert_evaluation(
+        db=db,
+        session=session,
+        dimension_results=dimension_results,
+        overall_score=overall_score,
+        overall_score_pct=overall_score_pct,
+        coverage_ratio=coverage_ratio,
+        verdict=verdict,
+        meets_criteria=meets_criteria,
+        confidence=confidence,
+        per_question_results=per_question_results_or_none,
+    )
+
+    logger.info(
+        f"[Judge-Mock] Completed session {session_id}: "
+        f"score={overall_score_pct}% verdict={verdict} confidence={confidence}"
+    )
+
+    try:
+        stage_res = await db.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == session.group_id,
+                GroupStageConfig.organization_id == session.organization_id,
+                GroupStageConfig.stage_type == "live_interview",
+            )
+        )
+        stage = stage_res.scalar_one_or_none()
+        if stage:
+            prog_res = await db.execute(
+                select(CandidateStageProgress).where(
+                    CandidateStageProgress.application_id == session.application_id,
+                    CandidateStageProgress.stage_id == stage.stage_id,
+                )
+            )
+            progress = prog_res.scalar_one_or_none()
+            if progress:
+                progress.status = "completed"
+                progress.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                progress.score = Decimal(str(overall_score_pct))
+                progress.max_score = Decimal("100")
+                progress.passed = meets_criteria
+                db.add(progress)
+                await db.commit()
+    except Exception as e:
+        logger.error("[Judge-Mock] Failed to update pipeline progress: %s", e)
 
 
 async def _create_fail_evaluation(db, session, reason: str):
