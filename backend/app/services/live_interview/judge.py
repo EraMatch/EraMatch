@@ -1,21 +1,18 @@
 """
 Live Interview V2 — Judge Agent Pipeline.
 
-This is a POST-SESSION process. It runs asynchronously after a session is
-marked complete. It never runs during the live interview.
+POST-SESSION process. Runs asynchronously after a session is marked complete.
+Never runs during the live interview.
 
-Pipeline (4 phases):
-  A. Segmentation   — split transcript into evidence blocks per dimension
-  B. Anchor Match   — score each evidence block vs behavioral anchors (1/2/3)
-  C. Weighted Score — Σ(dimension_score × weight) → overall score 0-100
-  D. Report         — cited quotes + anchor matched + confidence per dimension
+Pipeline (5 phases):
+  A. Segmentation       — split transcript into evidence blocks per dimension
+  B. Question Segments  — map transcript turns to questions via pillar_idx
+  C. Per-Question Score — score each Q&A pair against sub-criteria (1-3)
+  D. Weighted Score     — aggregate per-question → dimension → overall 0-100
+  E. Report             — cited quotes + anchor matched + confidence per dimension
 
-LLM: gemini-2.5-flash-lite for all dev phases.
-     Swap to gemini-2.5-pro for Phase D in production for richer reasoning.
-
-Key constraint: The Judge is LOCKED to the frozen rubric dimensions and
-behavioral anchors captured at bank freeze time. It cannot introduce new
-criteria or alter the weighting after candidates have already been assessed.
+Backwards-compatible: dimension-level scoring (Phase A) is preserved as fallback
+when bank items are unavailable or per-question scoring fails.
 """
 
 import json
@@ -23,6 +20,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlmodel import select
@@ -31,6 +29,7 @@ from app.db import get_session
 from app.models import (
     LiV2Session,
     LiV2Rubric,
+    LiV2Bank,
     LiV2Evaluation,
     CandidateStageProgress,
     GroupStageConfig,
@@ -44,15 +43,11 @@ _FALLBACK_JUDGE_MODEL = os.getenv("FALLBACK_JUDGE_MODEL", "gemma3:4b-cloud")
 
 
 # =============================================================================
-# ENTRY POINT — called as a BackgroundTask
+# ENTRY POINT
 # =============================================================================
 
 
 async def run_judge_pipeline(session_id: str):
-    """
-    Main entrypoint for the Judge pipeline.
-    Called as a FastAPI BackgroundTask after session completion.
-    """
     logger.info(f"[Judge] Starting pipeline for session {session_id}")
     try:
         async for db in get_session():
@@ -65,7 +60,6 @@ async def run_judge_pipeline(session_id: str):
 
 
 async def _execute_pipeline(db, session_id: str):
-    # --- Load session ---
     result = await db.execute(select(LiV2Session).where(LiV2Session.id == session_id))
     session = result.scalar_one_or_none()
     if not session:
@@ -77,7 +71,6 @@ async def _execute_pipeline(db, session_id: str):
         logger.warning(f"[Judge] Empty transcript for session {session_id} — skipping")
         return
 
-    # --- Load frozen rubric ---
     rubric_result = await db.execute(
         select(LiV2Rubric).where(LiV2Rubric.id == session.rubric_id)
     )
@@ -91,13 +84,20 @@ async def _execute_pipeline(db, session_id: str):
         logger.warning(f"[Judge] Rubric has no dimensions — skipping")
         return
 
+    bank_result = await db.execute(
+        select(LiV2Bank).where(LiV2Bank.id == session.bank_id)
+    )
+    bank = bank_result.scalar_one_or_none()
+    bank_items = []
+    if bank and bank.items:
+        bank_items = bank.items
+
     llm = get_llm("gemini", model=_JUDGE_MODEL, temperature=0.1)
     fallback_llm = get_llm("ollama", model=_FALLBACK_JUDGE_MODEL, temperature=0.1)
 
-    # Format transcript to plain text for LLM input
     transcript_text = _format_transcript(transcript)
 
-    # --- Phase A: Segmentation (per-dimension evidence extraction) ---
+    # --- Phase A: Dimension-level evidence extraction ---
     logger.info(
         "[JUDGE-P1] session=%s entry turns=%d dimensions=%d",
         session_id,
@@ -111,48 +111,68 @@ async def _execute_pipeline(db, session_id: str):
         1 for v in evidence_blocks.values() if v and v != "No relevant content found."
     )
     logger.info(
-        "[JUDGE-P1] session=%s complete result=%d dimensions_with_evidence",
+        "[JUDGE-P1] session=%s complete dimensions_with_evidence=%d",
         session_id,
         evidence_with_content,
     )
 
-    # --- Phase B: Anchor Matching (1=Substandard, 2=Proficient, 3=Excellent) ---
-    logger.info("[JUDGE-P2] session=%s entry", session_id)
-    dimension_results = await _phase_b_anchor_match(
-        llm, fallback_llm, evidence_blocks, dimensions
-    )
+    # --- Phase B: Per-question segmentation via pillar_idx ---
+    question_evidence = _extract_question_evidence(transcript, bank_items)
+    per_question_results = []
     logger.info(
-        "[JUDGE-P2] session=%s complete dimensions_scored=%d",
+        "[JUDGE-P2-Q] session=%s question_segments=%d",
         session_id,
-        len(dimension_results),
+        len(question_evidence),
     )
 
-    # --- Phase C: Weighted Score ---
-    logger.info("[JUDGE-P3] session=%s entry", session_id)
-    overall_score_pct, overall_score, coverage_ratio = _phase_c_score(
-        dimension_results, dimensions
-    )
+    # --- Phase C: Per-question scoring ---
+    if question_evidence:
+        per_question_results = await _phase_b_question(
+            llm, fallback_llm, question_evidence, dimensions
+        )
+        logger.info(
+            "[JUDGE-P2-Q] session=%s questions_scored=%d",
+            session_id,
+            len(per_question_results),
+        )
+
+        # --- Phase D: Weighted aggregation (per-question → dimension → overall) ---
+        overall_score_pct, overall_score, coverage_ratio, dimension_results = (
+            _phase_c_score_with_questions(per_question_results, dimensions)
+        )
+    else:
+        # Fallback: dimension-level scoring only (original path)
+        logger.info(
+            "[JUDGE-P2] session=%s no question evidence — falling back to dimension-level scoring",
+            session_id,
+        )
+        dimension_results = await _phase_b_anchor_match(
+            llm, fallback_llm, evidence_blocks, dimensions
+        )
+        overall_score_pct, overall_score, coverage_ratio = _phase_c_score(
+            dimension_results, dimensions
+        )
+
     logger.info(
-        "[JUDGE-P3] session=%s complete score_pct=%d coverage=%.3f",
+        "[JUDGE-P3] session=%s score_pct=%d coverage=%.3f",
         session_id,
         overall_score_pct,
         float(coverage_ratio),
     )
 
-    # --- Phase D: Verdict + Confidence ---
-    logger.info("[JUDGE-P4] session=%s entry", session_id)
+    # --- Phase E: Verdict + Confidence ---
     verdict = _auto_verdict(overall_score_pct)
     meets_criteria = overall_score_pct >= 60
     confidence = _confidence_from_results(dimension_results)
     logger.info(
-        "[JUDGE-P4] session=%s complete verdict=%s meets_criteria=%s confidence=%s",
+        "[JUDGE-P4] session=%s verdict=%s meets_criteria=%s confidence=%s",
         session_id,
         verdict,
         meets_criteria,
         confidence,
     )
 
-    # --- Persist Evaluation ---
+    # --- Persist ---
     evaluation = await _upsert_evaluation(
         db=db,
         session=session,
@@ -163,6 +183,7 @@ async def _execute_pipeline(db, session_id: str):
         verdict=verdict,
         meets_criteria=meets_criteria,
         confidence=confidence,
+        per_question_results=per_question_results if per_question_results else None,
     )
 
     logger.info(
@@ -219,17 +240,13 @@ async def _execute_pipeline(db, session_id: str):
 
 
 # =============================================================================
-# PHASE A: Segmentation
+# PHASE A: Segmentation (dimension-level, unchanged)
 # =============================================================================
 
 
 async def _phase_a_segmentation(
     llm, fallback_llm, transcript_text: str, dimensions: list[dict]
 ) -> dict:
-    """
-    Ask the LLM to extract the most relevant parts of the transcript
-    for each rubric dimension. Returns {dimension_id: evidence_text}.
-    """
     dimension_list = "\n".join(
         f"- {d.get('dimension_id', d.get('name', ''))}: {d.get('name', '')}"
         for d in dimensions
@@ -280,7 +297,236 @@ Respond ONLY with valid JSON in this exact format:
 
 
 # =============================================================================
-# PHASE B: Anchor Matching
+# PHASE B: Question-Evidence Extraction
+# =============================================================================
+
+
+def _extract_question_evidence(
+    transcript: list[dict], bank_items: list[dict]
+) -> list[dict]:
+    """
+    Split transcript into per-question Q&A pairs using pillar_idx.
+    Each question (pillar) gets the AI question + candidate answer text.
+
+    Returns [{question_text, dimension_id, candidate_answer, sub_criteria, pillar_idx}]
+    """
+    if not bank_items:
+        return []
+
+    # Build pillar_idx → question mapping from bank items
+    # Bank items are ordered: mandatory first, then optional.
+    # pillar_idx in transcript corresponds to their position in bank.items list.
+    question_map: dict[int, dict] = {}
+    for idx, item in enumerate(bank_items):
+        rubric = item.get("question_rubric") or {}
+        raw_sub = rubric.get("sub_criteria", [])
+        sub_criteria_names = []
+        if isinstance(raw_sub, list) and raw_sub:
+            if isinstance(raw_sub[0], dict):
+                sub_criteria_names = [s.get("text", str(s)) for s in raw_sub]
+            else:
+                sub_criteria_names = [str(s) for s in raw_sub]
+
+        question_map[idx] = {
+            "question_text": item.get("text", ""),
+            "dimension_id": item.get("primary_dimension_id", ""),
+            "sub_criteria": sub_criteria_names
+            if sub_criteria_names
+            else ["Demonstrate knowledge of the topic"],
+            "pillar_idx": idx,
+        }
+
+    # Group transcript turns by pillar_idx
+    # Turns without pillar_idx (welcome=0, closing) are excluded
+    pillar_turns: dict[int, list[dict]] = {}
+    for turn in transcript:
+        pidx = turn.get("pillar_idx")
+        if pidx is None:
+            continue
+        pillar_turns.setdefault(pidx, []).append(turn)
+
+    results = []
+    for pidx, qinfo in question_map.items():
+        turns = pillar_turns.get(pidx, [])
+        if not turns:
+            continue
+
+        ai_questions = []
+        candidate_answers = []
+        for turn in turns:
+            role = turn.get("role", "")
+            text = turn.get("text", "").strip()
+            if not text:
+                continue
+            if role == "agent":
+                ai_questions.append(text)
+            elif role == "candidate":
+                candidate_answers.append(text)
+
+        if not candidate_answers:
+            continue
+
+        results.append(
+            {
+                "question_text": qinfo["question_text"],
+                "dimension_id": qinfo["dimension_id"],
+                "candidate_answer": " ".join(candidate_answers),
+                "sub_criteria": qinfo["sub_criteria"],
+                "pillar_idx": pidx,
+            }
+        )
+
+    return results
+
+
+# =============================================================================
+# PHASE C: Per-Question Scoring
+# =============================================================================
+
+
+async def _phase_b_question(
+    llm, fallback_llm, question_evidence: list[dict], dimensions: list[dict]
+) -> list[dict]:
+    """
+    Score each question's sub-criteria individually via LLM.
+
+    Returns a list of per-question result dicts:
+    [{
+        question_text, question_score, dimension_id, dimension_name,
+        sub_criteria: [{name, score, covered, cited_quote}],
+        reasoning, anchor_matched, cited_quote, weight
+    }]
+    """
+    dim_by_id = {}
+    for d in dimensions:
+        dim_id = d.get("dimension_id", d.get("name", ""))
+        dim_by_id[dim_id] = d
+
+    results = []
+    for qe in question_evidence:
+        dim_id = qe["dimension_id"]
+        dim = dim_by_id.get(dim_id, {})
+        dim_name = dim.get("name", dim_id)
+        anchors = dim.get("anchors", {})
+        weight = float(dim.get("weight", 1.0 / max(len(dimensions), 1)))
+        sub_criteria = qe["sub_criteria"]
+
+        sub_criteria_text = "\n".join(
+            f"  {i + 1}. {sc}" for i, sc in enumerate(sub_criteria)
+        )
+        anchors_text = (
+            f"- Substandard (1): {anchors.get('substandard', 'Below expectations')}\n"
+            f"- Proficient  (2): {anchors.get('proficient', 'Meets expectations')}\n"
+            f"- Excellent   (3): {anchors.get('excellent', 'Exceeds expectations')}"
+        )
+
+        prompt = f"""You are a structured interview judge evaluating a SINGLE question-answer pair.
+
+INTERVIEW QUESTION: {qe["question_text"]}
+
+CANDIDATE'S ANSWER: {qe["candidate_answer"]}
+
+RUBRIC DIMENSION: {dim_name}
+BEHAVIORAL ANCHORS (frozen by recruiter):
+{anchors_text}
+
+SUB-CRITERIA — score EACH one individually:
+{sub_criteria_text}
+
+For each sub-criterion:
+1. Assign a score (1=Substandard, 2=Proficient, 3=Excellent).
+2. Mark whether the candidate addressed it (covered: true/false).
+3. Cite a specific quote from the answer supporting the score.
+
+Then provide:
+- question_score: average of all sub-criteria scores (1.0-3.0)
+- anchor_matched: the best-fitting overall anchor (substandard/proficient/excellent)
+- reasoning: 1-2 sentences explaining the overall assessment
+- cited_quote: the single most compelling quote from the candidate
+
+Respond ONLY with valid JSON:
+{{
+  "sub_criteria_scores": [
+    {{"name": "<sub-criterion name>", "score": <1|2|3>, "covered": <true|false>, "cited_quote": "<quote>"}}
+  ],
+  "question_score": <float 1.0-3.0>,
+  "anchor_matched": "<substandard|proficient|excellent>",
+  "reasoning": "<1-2 sentence explanation>",
+  "cited_quote": "<best quote>"
+}}"""
+
+        result_base = {
+            "question_text": qe["question_text"],
+            "dimension_id": dim_id,
+            "dimension_name": dim_name,
+            "weight": weight,
+            "pillar_idx": qe["pillar_idx"],
+        }
+
+        try:
+            resp = await llm.ainvoke([HumanMessage(content=prompt)])
+            raw = (
+                resp.content.strip()
+                .lstrip("```json")
+                .lstrip("```")
+                .rstrip("```")
+                .strip()
+            )
+            parsed = json.loads(raw)
+            result_base["question_score"] = float(parsed.get("question_score", 1.0))
+            result_base["anchor_matched"] = parsed.get("anchor_matched", "substandard")
+            result_base["reasoning"] = parsed.get("reasoning", "")
+            result_base["cited_quote"] = parsed.get("cited_quote", "")
+            result_base["sub_criteria"] = parsed.get("sub_criteria_scores", [])
+        except Exception as primary_exc:
+            logger.warning(
+                "[JUDGE-P2-Q] pillar %s primary failed: %s — trying fallback",
+                qe["pillar_idx"],
+                primary_exc,
+            )
+            try:
+                resp = await fallback_llm.ainvoke([HumanMessage(content=prompt)])
+                raw = (
+                    resp.content.strip()
+                    .lstrip("```json")
+                    .lstrip("```")
+                    .rstrip("```")
+                    .strip()
+                )
+                parsed = json.loads(raw)
+                result_base["question_score"] = float(parsed.get("question_score", 1.0))
+                result_base["anchor_matched"] = parsed.get(
+                    "anchor_matched", "substandard"
+                )
+                result_base["reasoning"] = parsed.get("reasoning", "")
+                result_base["cited_quote"] = parsed.get("cited_quote", "")
+                result_base["sub_criteria"] = parsed.get("sub_criteria_scores", [])
+                logger.info(
+                    "[JUDGE-P2-Q] pillar %s fallback succeeded", qe["pillar_idx"]
+                )
+            except Exception as fallback_exc:
+                logger.warning(
+                    "[JUDGE-P2-Q] pillar %s both LLMs failed — defaulting to substandard",
+                    qe["pillar_idx"],
+                )
+                result_base["question_score"] = 1.0
+                result_base["anchor_matched"] = "substandard"
+                result_base["reasoning"] = (
+                    f"Evaluation failed (primary: {primary_exc}; fallback: {fallback_exc})"
+                )
+                result_base["cited_quote"] = ""
+                result_base["sub_criteria"] = [
+                    {"name": sc, "score": 1, "covered": False, "cited_quote": ""}
+                    for sc in sub_criteria
+                ]
+
+        results.append(result_base)
+
+    return results
+
+
+# =============================================================================
+# PHASE B (Legacy): Dimension-level Anchor Matching
 # =============================================================================
 
 
@@ -288,19 +534,8 @@ async def _phase_b_anchor_match(
     llm, fallback_llm, evidence_blocks: dict, dimensions: list[dict]
 ) -> dict:
     """
-    For each dimension, compare the extracted evidence against the 3 behavioral
-    anchors and assign a score (1=Substandard, 2=Proficient, 3=Excellent).
-
-    Returns per-dimension result:
-    {
-        dimension_id: {
-            score: 1|2|3,
-            anchor_matched: "substandard"|"proficient"|"excellent",
-            cited_quote: "...",
-            reasoning: "...",
-            weight: float
-        }
-    }
+    Dimension-level scoring (legacy fallback).
+    For each dimension, compare extracted evidence vs behavioral anchors.
     """
     results = {}
 
@@ -405,12 +640,122 @@ Respond ONLY with valid JSON:
 # =============================================================================
 
 
+def _phase_c_score_with_questions(
+    per_question_results: list[dict], dimensions: list[dict]
+) -> tuple[int, Decimal, Decimal, dict]:
+    """
+    Aggregate per-question scores into dimension scores, then weighted overall.
+
+    For each dimension:
+      dimension_score = avg(q.question_score for q in dimension_questions) / 3 * 100
+    Overall: weighted average of dimension_score * dimension_weight.
+    Coverage: fraction of dimensions with at least one proficient/excellent question.
+
+    Returns (overall_pct, overall_raw, coverage_ratio, dimension_results_dict).
+    """
+    score_map = {1: 0.0, 2: 0.5, 3: 1.0}
+    dim_by_id = {d.get("dimension_id", d.get("name", "")): d for d in dimensions}
+
+    # Group questions by dimension
+    dim_questions: dict[str, list] = {}
+    for qr in per_question_results:
+        dim_id = qr.get("dimension_id", "")
+        dim_questions.setdefault(dim_id, []).append(qr)
+
+    # Compute per-dimension results from per-question averages
+    dimension_results = {}
+
+    for dim in dimensions:
+        dim_id = dim.get("dimension_id", dim.get("name", ""))
+        dim_name = dim.get("name", dim_id)
+        weight = float(dim.get("weight", 1.0 / max(len(dimensions), 1)))
+        anchors = dim.get("anchors", {})
+        questions = dim_questions.get(dim_id, [])
+
+        if not questions:
+            # No questions for this dimension — default to substandard
+            dimension_results[dim_id] = {
+                "score": 1,
+                "anchor_matched": "substandard",
+                "cited_quote": "",
+                "reasoning": "No questions were asked for this dimension.",
+                "weight": weight,
+                "dimension_name": dim_name,
+            }
+            continue
+
+        # Average question scores, map 1-3 scale to 0-100%
+        avg_q_score = sum(q.get("question_score", 1.0) for q in questions) / len(
+            questions
+        )
+        # Normalize: 1→0%, 2→50%, 3→100%
+        normalized_pct = round((avg_q_score - 1) / 2 * 100)
+        # Map back to 1-3 for anchor matching
+        if avg_q_score >= 2.5:
+            anchor = "excellent"
+            dim_score = 3
+        elif avg_q_score >= 1.5:
+            anchor = "proficient"
+            dim_score = 2
+        else:
+            anchor = "substandard"
+            dim_score = 1
+
+        # Collect all sub-criteria cited quotes as dimension-level evidence
+        all_cited = []
+        all_reasoning = []
+        for q in questions:
+            if q.get("cited_quote"):
+                all_cited.append(q["cited_quote"])
+            if q.get("reasoning"):
+                all_reasoning.append(
+                    f"[{q.get('question_text', 'Q')[:60]}]: {q['reasoning']}"
+                )
+
+        dimension_results[dim_id] = {
+            "score": dim_score,
+            "anchor_matched": anchor,
+            "cited_quote": all_cited[0] if all_cited else "",
+            "reasoning": "; ".join(all_reasoning) if all_reasoning else "",
+            "weight": weight,
+            "dimension_name": dim_name,
+        }
+
+    # Weighted aggregation across dimensions
+    total_weight = 0.0
+    weighted_sum = 0.0
+    covered_dimensions = 0
+
+    for dim_id, result in dimension_results.items():
+        weight = float(result.get("weight", 0.0))
+        raw_score = int(result.get("score", 1))
+        normalized = score_map.get(raw_score, 0.0)
+
+        weighted_sum += normalized * weight
+        total_weight += weight
+        if result.get("anchor_matched") in ("proficient", "excellent"):
+            covered_dimensions += 1
+
+    if total_weight == 0:
+        return 0, Decimal("0.0"), Decimal("0.0"), dimension_results
+
+    overall_raw = weighted_sum / total_weight
+    overall_pct = round(overall_raw * 100)
+    coverage_ratio = Decimal(str(round(covered_dimensions / len(dimension_results), 3)))
+
+    return (
+        overall_pct,
+        Decimal(str(round(overall_raw, 4))),
+        coverage_ratio,
+        dimension_results,
+    )
+
+
 def _phase_c_score(
     dimension_results: dict, dimensions: list[dict]
 ) -> tuple[int, Decimal, Decimal]:
     """
-    Compute overall score as a weighted average, normalized to 0-100.
-
+    Legacy dimension-level weighted score.
     dimension score: 1-3 (maps to 0%, 50%, 100%)
     """
     if not dimension_results:
@@ -435,7 +780,7 @@ def _phase_c_score(
     if total_weight == 0:
         return 0, Decimal("0.0"), Decimal("0.0")
 
-    overall_raw = weighted_sum / total_weight  # 0.0 - 1.0
+    overall_raw = weighted_sum / total_weight
     overall_pct = round(overall_raw * 100)
     coverage_ratio = Decimal(str(round(covered_dimensions / len(dimension_results), 3)))
 
@@ -459,11 +804,6 @@ def _auto_verdict(score_pct: int) -> str:
 
 
 def _confidence_from_results(dimension_results: dict) -> str:
-    """
-    High confidence: all dimensions have a cited quote.
-    Medium: most do.
-    Low: few or none.
-    """
     if not dimension_results:
         return "low"
     cited = sum(1 for r in dimension_results.values() if r.get("cited_quote"))
@@ -490,9 +830,8 @@ async def _upsert_evaluation(
     verdict: str,
     meets_criteria: bool,
     confidence: str,
+    per_question_results: Optional[list] = None,
 ) -> LiV2Evaluation:
-    """Create or replace the evaluation record for this session."""
-    # Check for existing evaluation
     existing = await db.execute(
         select(LiV2Evaluation).where(LiV2Evaluation.session_id == session.id)
     )
@@ -513,6 +852,23 @@ async def _upsert_evaluation(
     evaluation.evaluation_confidence = confidence
     evaluation.judged_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
+    if per_question_results is not None:
+        evaluation.per_question_results = {
+            qr.get("question_text", f"pillar_{qr.get('pillar_idx', 'unknown')}"): {
+                "question_score": qr.get("question_score"),
+                "dimension_id": qr.get("dimension_id"),
+                "dimension_name": qr.get("dimension_name"),
+                "sub_criteria": qr.get("sub_criteria", []),
+                "reasoning": qr.get("reasoning"),
+                "anchor_matched": qr.get("anchor_matched"),
+                "cited_quote": qr.get("cited_quote"),
+                "weight": qr.get("weight"),
+            }
+            for qr in per_question_results
+        }
+    elif evaluation.per_question_results is None:
+        evaluation.per_question_results = None
+
     db.add(evaluation)
     await db.commit()
     await db.refresh(evaluation)
@@ -525,7 +881,6 @@ async def _upsert_evaluation(
 
 
 def _format_transcript(transcript: list[dict]) -> str:
-    """Convert raw transcript turns to readable text for LLM consumption."""
     lines = []
     for turn in transcript:
         role = turn.get("role", "unknown").upper()
