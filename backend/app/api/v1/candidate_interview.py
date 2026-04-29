@@ -11,8 +11,8 @@ import json
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form
 from pydantic import BaseModel
-from sqlalchemy import text, bindparam
-from sqlalchemy.dialects.postgresql import UUID as pgUUID
+from sqlalchemy import text, bindparam, String
+from sqlalchemy.dialects.postgresql import UUID as pgUUID, JSONB
 
 from app.api.deps import CurrentCandidate, DbSession
 
@@ -148,23 +148,18 @@ async def get_interview_config(candidate: CurrentCandidate, session: DbSession):
     
     Returns questions, time limits, and instructions.
     """
-    # Get the candidate's ai_interview stage config
-    result = await session.execute(
+    # Resolve the active stage first so live interviews can use their AI mirror config.
+    stage_result = await session.execute(
         text("""
             SELECT 
-                aic.config_id,
-                aic.title,
-                aic.instructions,
-                aic.questions,
-                COALESCE(aic.think_time_seconds, 30) as think_time,
-                COALESCE(aic.answer_time_seconds, 120) as answer_time,
-                COALESCE(aic.max_retakes, 1) as max_retakes
+                gps.stage_type,
+                gps.config_id,
+                gps.acceptance_criteria
             FROM candidate_applications ca
-            JOIN group_pipeline_stages gps ON ca.group_id = gps.group_id AND gps.stage_type = 'ai_interview'
+            JOIN group_pipeline_stages gps ON ca.group_id = gps.group_id AND gps.stage_type IN ('ai_interview', 'live_interview')
             JOIN candidate_pipeline_progress cpp
                 ON cpp.application_id = ca.application_id
                 AND cpp.stage_id = gps.stage_id
-            JOIN ai_interview_configs aic ON gps.config_id = aic.config_id
             WHERE ca.candidate_id = :cid
               AND gps.state = 'active'
               AND cpp.status IN ('unlocked', 'in_progress')
@@ -175,13 +170,107 @@ async def get_interview_config(candidate: CurrentCandidate, session: DbSession):
         ),
         {"cid": candidate.candidate_id}
     )
-    row = result.fetchone()
+    stage_row = stage_result.mappings().first()
     
+    if not stage_row:
+        raise HTTPException(status_code=404, detail="No AI interview configured for this candidate")
+
+    if stage_row["stage_type"] == "live_interview":
+        criteria = stage_row["acceptance_criteria"] or {}
+        mirror_id = None
+        if isinstance(criteria, dict):
+            mirror_id = criteria.get("candidate_interview_config_id") or criteria.get("interview_config_id")
+
+        if mirror_id:
+            result = await session.execute(
+                text("""
+                    SELECT 
+                        aic.config_id,
+                        aic.title,
+                        aic.instructions,
+                        aic.questions,
+                        COALESCE(aic.think_time_seconds, 30) as think_time,
+                        COALESCE(aic.answer_time_seconds, 120) as answer_time,
+                        COALESCE(aic.max_retakes, 1) as max_retakes
+                    FROM ai_interview_configs aic
+                    WHERE aic.config_id = :cid
+                      AND aic.is_deleted = false
+                    LIMIT 1
+                """).bindparams(
+                    bindparam("cid", type_=pgUUID(as_uuid=True)),
+                ),
+                {"cid": UUID(str(mirror_id))}
+            )
+            row = result.fetchone()
+            if row:
+                normalized_questions = _normalize_questions(row[3] or {})
+                return InterviewConfigResponse(
+                    config_id=str(row[0]),
+                    title=row[1],
+                    instructions=row[2],
+                    questions=normalized_questions,
+                    think_time_seconds=row[4],
+                    answer_time_seconds=row[5],
+                    max_retakes=row[6],
+                )
+
+        live_result = await session.execute(
+            text("""
+                SELECT 
+                    lic.config_id,
+                    lic.title,
+                    lic.instructions,
+                    lic.suggested_questions,
+                    COALESCE(lic.duration_minutes, 60) as duration_minutes
+                FROM live_interview_configs lic
+                WHERE lic.config_id = :cid
+                  AND lic.is_deleted = false
+                LIMIT 1
+            """).bindparams(
+                bindparam("cid", type_=pgUUID(as_uuid=True)),
+            ),
+            {"cid": UUID(str(stage_row["config_id"]))}
+        )
+        row = live_result.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No live interview configured for this candidate")
+
+        normalized_questions = _normalize_questions(row[3] or {})
+        return InterviewConfigResponse(
+            config_id=str(row[0]),
+            title=row[1],
+            instructions=row[2],
+            questions=normalized_questions,
+            think_time_seconds=30,
+            answer_time_seconds=120,
+            max_retakes=1,
+        )
+
+    result = await session.execute(
+        text("""
+            SELECT 
+                aic.config_id,
+                aic.title,
+                aic.instructions,
+                aic.questions,
+                COALESCE(aic.think_time_seconds, 30) as think_time,
+                COALESCE(aic.answer_time_seconds, 120) as answer_time,
+                COALESCE(aic.max_retakes, 1) as max_retakes
+            FROM ai_interview_configs aic
+            WHERE aic.config_id = :cid
+              AND aic.is_deleted = false
+            LIMIT 1
+        """).bindparams(
+            bindparam("cid", type_=pgUUID(as_uuid=True)),
+        ),
+        {"cid": UUID(str(stage_row["config_id"]))}
+    )
+    row = result.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="No AI interview configured for this candidate")
-    
+
     normalized_questions = _normalize_questions(row[3] or {})
-    
+
     return InterviewConfigResponse(
         config_id=str(row[0]),
         title=row[1],
@@ -213,52 +302,121 @@ async def start_interview_session(
         text("""
             SELECT 
                 ca.application_id,
-                aic.organization_id,
-                aic.interview_type,
+                gps.stage_type,
+                gps.config_id,
+                gps.acceptance_criteria,
                 cpp.progress_id,
                 cpp.status
             FROM candidate_applications ca
             JOIN group_pipeline_stages gps ON ca.group_id = gps.group_id 
-                AND gps.stage_type = 'ai_interview'
+                AND gps.stage_type IN ('ai_interview', 'live_interview')
             JOIN candidate_pipeline_progress cpp
                 ON cpp.application_id = ca.application_id
                 AND cpp.stage_id = gps.stage_id
-            JOIN ai_interview_configs aic ON gps.config_id = aic.config_id
             WHERE ca.candidate_id = :cid 
-                AND aic.config_id = :config_id
                 AND gps.state = 'active'
                 AND cpp.status IN ('unlocked', 'in_progress')
                 AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
             LIMIT 1
         """).bindparams(
             bindparam("cid", type_=pgUUID(as_uuid=True)),
-            bindparam("config_id", type_=pgUUID(as_uuid=True)),
         ),
-        {"cid": candidate.candidate_id, "config_id": UUID(request.config_id)}
+        {"cid": candidate.candidate_id}
     )
-    row = result.fetchone()
+    row = result.mappings().first()
     
     if not row:
         raise HTTPException(status_code=404, detail="No matching interview configuration found")
     
-    application_id = str(row[0])
-    organization_id = str(row[1])
-    interview_type = row[2] or "recorded"
-    progress_id = row[3]
+    application_id = str(row["application_id"])
+    stage_type = row["stage_type"]
+    stage_config_id = row["config_id"]
+    criteria = row["acceptance_criteria"] or {}
+    progress_id = row["progress_id"]
+    interview_type = "recorded"
+
+    # Resolve the actual AI interview config used for the ongoing session.
+    resolved_config_id = None
+    if stage_type == "live_interview" and isinstance(criteria, dict):
+        resolved_config_id = criteria.get("candidate_interview_config_id") or criteria.get("interview_config_id")
+    else:
+        resolved_config_id = stage_config_id
+
+    if not resolved_config_id:
+        raise HTTPException(status_code=404, detail="No interview configuration found for this stage")
+
+    config_lookup = await session.execute(
+        text("""
+            SELECT config_id, organization_id, interview_type
+            FROM ai_interview_configs
+            WHERE config_id = :config_id
+              AND is_deleted = false
+            LIMIT 1
+        """).bindparams(
+            bindparam("config_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"config_id": UUID(str(resolved_config_id))}
+    )
+    config_row = config_lookup.mappings().first()
+    if config_row:
+        organization_id = str(config_row["organization_id"])
+        interview_type = config_row["interview_type"] or ("live_ai" if stage_type == "live_interview" else "recorded")
+    elif stage_type == "live_interview":
+        # Fallback: if the AI mirror is missing, create a minimal one from the live config.
+        from app.models import AIInterviewConfig, LiveInterviewConfig
+
+        live_lookup = await session.execute(
+            text("""
+                SELECT config_id, organization_id, position_id, title, instructions, suggested_questions, duration_minutes
+                FROM live_interview_configs
+                WHERE config_id = :config_id
+                  AND is_deleted = false
+                LIMIT 1
+            """).bindparams(
+                bindparam("config_id", type_=pgUUID(as_uuid=True)),
+            ),
+            {"config_id": UUID(str(stage_config_id))}
+        )
+        live_row = live_lookup.mappings().first()
+        if not live_row:
+            raise HTTPException(status_code=404, detail="No matching interview configuration found")
+
+        mirror_cfg = AIInterviewConfig(
+            organization_id=UUID(str(live_row["organization_id"])),
+            position_id=live_row["position_id"],
+            title=live_row["title"] or "Live Interview",
+            interview_type="live_ai",
+            instructions=live_row["instructions"],
+            max_retakes=1,
+            questions=live_row["suggested_questions"] or {"items": []},
+            total_duration_minutes=live_row["duration_minutes"] or 60,
+            show_ai_feedback=True,
+            recording_required=True,
+        )
+        session.add(mirror_cfg)
+        await session.flush()
+        resolved_config_id = mirror_cfg.config_id
+        organization_id = str(mirror_cfg.organization_id)
+        interview_type = mirror_cfg.interview_type
+    else:
+        raise HTTPException(status_code=404, detail="No matching interview configuration found")
+    
+    # Map interview_type to stage_type
+    current_stage_type = 'ai_interview' if interview_type == 'recorded' else 'live_interview'
 
     existing_result = await session.execute(
         text("""
             SELECT session_id
             FROM ongoing_interviews
             WHERE application_id = :app_id
-              AND config_id = :config_id
+                AND config_id = :config_id
               AND status IN ('in_progress', 'not_started')
             LIMIT 1
         """).bindparams(
             bindparam("app_id", type_=pgUUID(as_uuid=True)),
             bindparam("config_id", type_=pgUUID(as_uuid=True)),
         ),
-        {"app_id": UUID(application_id), "config_id": UUID(request.config_id)}
+        {"app_id": UUID(application_id), "config_id": UUID(str(resolved_config_id))}
     )
     existing_session = existing_result.fetchone()
     if existing_session:
@@ -278,14 +436,15 @@ async def start_interview_session(
                 UPDATE candidate_pipeline_progress
                 SET status = 'in_progress',
                     session_id = :sid,
-                    session_type = 'ai_interview',
+                    session_type = :stype,
                     started_at = COALESCE(started_at, NOW())
                 WHERE progress_id = :progress_id
             """).bindparams(
                 bindparam("sid", type_=pgUUID(as_uuid=True)),
                 bindparam("progress_id", type_=pgUUID(as_uuid=True)),
+                bindparam("stype", type_=String),
             ),
-            {"sid": existing_session[0], "progress_id": progress_id}
+            {"sid": existing_session[0], "progress_id": progress_id, "stype": current_stage_type}
         )
         await session.commit()
         return StartSessionResponse(
@@ -307,14 +466,15 @@ async def start_interview_session(
             bindparam("sid", type_=pgUUID(as_uuid=True)),
             bindparam("config_id", type_=pgUUID(as_uuid=True)),
             bindparam("app_id", type_=pgUUID(as_uuid=True)),
-            bindparam("org_id", type_=pgUUID(as_uuid=True)),
+                bindparam("org_id", type_=pgUUID(as_uuid=True)),
+                bindparam("itype", type_=String),
         ),
         {
             "sid": UUID(session_id),
-            "config_id": UUID(request.config_id),
             "app_id": UUID(application_id),
             "org_id": UUID(organization_id),
-            "itype": interview_type,
+                "config_id": UUID(str(resolved_config_id)),
+                "itype": interview_type,
         }
     )
 
@@ -588,7 +748,7 @@ async def complete_interview_session(
     # Verify the session belongs to this candidate
     result = await session.execute(
         text("""
-            SELECT oi.session_id, ca.application_id, ca.group_id
+            SELECT oi.session_id, ca.application_id, ca.group_id, oi.interview_type
             FROM ongoing_interviews oi
             JOIN candidate_applications ca ON oi.application_id = ca.application_id
             WHERE oi.session_id = :sid AND ca.candidate_id = :cid
@@ -605,6 +765,7 @@ async def complete_interview_session(
     
     application_id = row["application_id"]
     group_id = row["group_id"]
+    interview_type = row["interview_type"]
     
     # Update session status
     await session.execute(
@@ -618,25 +779,38 @@ async def complete_interview_session(
         {"sid": UUID(request.session_id)}
     )
     
+    # Map backend interview types to pipeline stage types
+    stage_type = 'ai_interview' if interview_type == 'recorded' else 'live_interview'
+    
     # Update candidate pipeline progress for this stage
     await session.execute(
         text("""
-            UPDATE candidate_pipeline_progress cpp
+            UPDATE candidate_pipeline_progress
             SET status = 'completed',
                 completed_at = NOW(),
                 session_id = :sid,
-                session_type = 'ai_interview'
-            FROM ongoing_interviews oi
-            JOIN candidate_applications ca ON oi.application_id = ca.application_id
-            JOIN group_pipeline_stages gps ON ca.group_id = gps.group_id 
-                AND gps.stage_type = 'ai_interview'
-            WHERE oi.session_id = :sid
-              AND cpp.application_id = ca.application_id
-              AND cpp.stage_id = gps.stage_id
+                session_type = :session_type
+            WHERE application_id = :application_id
+              AND stage_id IN (
+                  SELECT gps.stage_id 
+                  FROM group_pipeline_stages gps
+                  WHERE gps.group_id = :group_id
+                    AND gps.stage_type = :stage_type
+              )
         """).bindparams(
             bindparam("sid", type_=pgUUID(as_uuid=True)),
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            bindparam("group_id", type_=pgUUID(as_uuid=True)),
+            bindparam("session_type", type_=String),
+            bindparam("stage_type", type_=String),
         ),
-        {"sid": UUID(request.session_id)}
+        {
+            "sid": UUID(request.session_id),
+            "application_id": application_id,
+            "group_id": group_id,
+            "session_type": stage_type,
+            "stage_type": stage_type
+        }
     )
     
     # --- Trigger Recruiter Notification ---
@@ -670,12 +844,18 @@ async def complete_interview_session(
                     gen_random_uuid(), :org_id, :uid,
                     'stage_completed', :title, :msg, :data, false, NOW()
                 )
-            """),
+            """).bindparams(
+                bindparam("org_id", type_=pgUUID(as_uuid=True)),
+                bindparam("uid", type_=pgUUID(as_uuid=True)),
+                bindparam("title", type_=String),
+                bindparam("msg", type_=String),
+                bindparam("data", type_=JSONB),
+            ),
             {
-                "org_id": str(recruiter_row[1]),
-                "uid": str(recruiter_row[0]),
-                "title": "AI Interview Completed",
-                "msg": f"Candidate {recruiter_row[2]} has completed their AI interview for group {recruiter_row[3]}.",
+                "org_id": UUID(str(recruiter_row[1])),
+                "uid": UUID(str(recruiter_row[0])),
+                "title": f"{'Live' if interview_type != 'recorded' else 'AI'} Interview Completed",
+                "msg": f"Candidate {recruiter_row[2]} has completed their {'live' if interview_type != 'recorded' else 'AI'} interview for group {recruiter_row[3]}.",
                 "data": {"session_id": str(request.session_id), "application_id": str(recruiter_row[4])}
             }
         )

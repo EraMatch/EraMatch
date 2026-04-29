@@ -63,6 +63,7 @@ from app.schemas.group import (
     CandidateProgressResponse,
     CandidateScores,
     CandidateStageStatus,
+    GroupCreateRequest,
     FiltrationFlowStage,
     GroupAssessmentItem,
     GroupInterviewItem,
@@ -74,6 +75,7 @@ from app.schemas.group import (
     MonitoringFlag,
     StageStatsResponse,
     ScheduleInterviewRequest,
+    GroupUpdateRequest,
     GroupDeleteRequest,
 )
 
@@ -215,7 +217,6 @@ class GroupService:
     async def _get_candidates_progress_data(
         self, group_id: UUID, filter_str: str | None = None, sort_str: str | None = None, stage_type_filter: str | None = None
     ) -> list[CandidateProgressItem]:
-        # Acceptance criteria for meets_criteria calculation
         sc_res = await self.session.execute(
             select(GroupStageConfig)
             .where(
@@ -225,20 +226,20 @@ class GroupService:
             .order_by(GroupStageConfig.stage_order.asc())
         )
         stage_configs = sc_res.scalars().all()
+
         ordered_flow_types: list[str] = []
         for sc in stage_configs:
             if sc.stage_type not in ordered_flow_types:
                 ordered_flow_types.append(sc.stage_type)
+
         min_score = 70.0
         allowed_risk = "Low"
         for sc in stage_configs:
             if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
                 min_score = sc.acceptance_criteria.get("min_technical_score", min_score)
-                min_score = sc.acceptance_criteria.get("min_technical_score", min_score)
-                allowed_integrity_risk = sc.acceptance_criteria.get("allowed_integrity_risk", allowed_risk)
+                allowed_risk = sc.acceptance_criteria.get("allowed_integrity_risk", allowed_risk)
 
-        # Fetch applications + candidate profiles
-        q = (
+        app_res = await self.session.execute(
             select(CandidateApplication, CandidateProfile)
             .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
             .where(
@@ -246,15 +247,12 @@ class GroupService:
                 CandidateApplication.is_deleted == False,
             )
         )
-        res = await self.session.execute(q)
-        rows = res.all()
-
+        rows = app_res.all()
         if not rows:
             return []
 
         app_ids = [app.id for app, _ in rows]
 
-        # Fetch stage progress for all apps in one query
         prog_res = await self.session.execute(
             select(CandidateStageProgress, GroupStageConfig.stage_type)
             .join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id)
@@ -263,33 +261,24 @@ class GroupService:
                 GroupStageConfig.group_id == group_id,
             )
         )
-        all_progress = prog_res.all()
-        # Index by (application_id, stage_type)
         prog_map: dict[tuple[UUID, str], CandidateStageProgress] = {}
-        for p, s_type in all_progress:
-            prog_map[(p.application_id, s_type)] = p
+        for prog, stage_type in prog_res.all():
+            prog_map[(prog.application_id, stage_type)] = prog
 
-        # Fetch live interview sessions
         live_res = await self.session.execute(
             select(LiveInterviewSession).where(LiveInterviewSession.application_id.in_(app_ids))
         )
-        all_live_sessions = live_res.scalars().all()
-        live_map = {ls.application_id: ls for ls in all_live_sessions}
+        live_map = {ls.application_id: ls for ls in live_res.scalars().all()}
 
-        # Fetch flags
         flag_res = await self.session.execute(
             select(ProctoringFlag).where(ProctoringFlag.application_id.in_(app_ids))
         )
-        all_flags = flag_res.scalars().all()
         flag_map: dict[UUID, list[ProctoringFlag]] = {}
-        for f in all_flags:
-            flag_map.setdefault(f.application_id, []).append(f)
+        for flag in flag_res.scalars().all():
+            flag_map.setdefault(flag.application_id, []).append(flag)
 
-        # Fetch notes existence
         notes_res = await self.session.execute(
-            select(RecruiterNote.application_id).where(
-                RecruiterNote.application_id.in_(app_ids)
-            )
+            select(RecruiterNote.application_id).where(RecruiterNote.application_id.in_(app_ids))
         )
         apps_with_notes = set(notes_res.scalars().all())
 
@@ -298,23 +287,20 @@ class GroupService:
 
         items: list[CandidateProgressItem] = []
         for app, cand in rows:
-            # Build dynamic stage statuses and scores for ALL stages in the flow
             stage_statuses: dict[str, str] = {}
             stage_scores: dict[str, float | None] = {}
             stage_passed: dict[str, bool | None] = {}
-            
+
             for st_type in ordered_flow_types:
                 prog = prog_map.get((app.id, st_type))
                 stage_statuses[st_type] = prog.status if prog else "locked"
-                stage_scores[st_type] = float(prog.score) if (prog and prog.score is not None) else None
+                stage_scores[st_type] = float(prog.score) if prog and prog.score is not None else None
                 stage_passed[st_type] = prog.passed if prog else None
 
-            # Hard gate downstream stages by previous-stage completion to prevent
-            # stale progress rows from exposing candidates in later-stage views.
-            for idx, stage_type in enumerate(ordered_flow_types):
-                if idx == 0:
+            for index, stage_type in enumerate(ordered_flow_types):
+                if index == 0:
                     continue
-                prev_stage_type = ordered_flow_types[idx - 1]
+                prev_stage_type = ordered_flow_types[index - 1]
                 if stage_statuses.get(prev_stage_type) != "completed":
                     stage_statuses[stage_type] = "locked"
                     stage_scores[stage_type] = None
@@ -336,69 +322,57 @@ class GroupService:
 
             app_flags = flag_map.get(app.id, [])
             integrity_flags = [
-                IntegrityFlag(
-                    severity=f.severity,
-                    stage=f.session_type,
-                    description=f.event_type,
-                )
+                IntegrityFlag(severity=f.severity, stage=f.session_type, description=f.event_type)
                 for f in app_flags
             ]
 
-            # Determine meets_criteria
-            max_flag_sev = max(
-                (risk_levels.get(f.severity.lower(), 0) for f in app_flags), default=0
-            )
+            max_flag_sev = max((risk_levels.get(f.severity.lower(), 0) for f in app_flags), default=0)
             score_ok = (assess_score is not None and assess_score >= min_score) if assess_score is not None else True
             risk_ok = max_flag_sev <= allowed_level
             meets = score_ok and risk_ok
 
-            # Verdict
-            # Respect explicit passed/failed status from bulk_progress if set
             if assess_status == "failed" or ai_status == "failed":
                 verdict = "fail"
             elif assess_status == "completed" and ai_status == "completed":
-                # Check for explicit 'passed' boolean if available, otherwise use meets_criteria
-                # Note: In this context, we are looking at the status strings.
                 verdict = "pass" if meets else "fail"
             elif assess_status == "completed" or ai_status == "completed":
                 verdict = "conditional"
             else:
                 verdict = "pending"
 
-            # Construct dynamic stages dict
-            dynamic_stages = {}
+            stages: dict[str, CandidateStageStatus] = {}
             for st_type in ordered_flow_types:
-                s_at = scheduled_at if st_type == "live_interview" else None
-                m_l = meeting_link if st_type == "live_interview" else None
-                dynamic_stages[st_type] = CandidateStageStatus(
+                stages[st_type] = CandidateStageStatus(
                     score=stage_scores.get(st_type),
                     status=stage_statuses.get(st_type, "locked"),
                     passed=stage_passed.get(st_type),
-                    scheduled_at=s_at,
-                    meeting_link=m_l
+                    scheduled_at=scheduled_at if st_type == "live_interview" else None,
+                    meeting_link=meeting_link if st_type == "live_interview" else None,
                 )
 
-            items.append(CandidateProgressItem(
-                application_id=app.id,
-                candidate_id=cand.id,
-                name=cand.full_name,
-                email=cand.email,
-                assessment=CandidateStageStatus(score=assess_score, status=assess_status, passed=assess_passed),
-                ai_interview=CandidateStageStatus(score=ai_score, status=ai_status, passed=ai_passed),
-                live_interview=CandidateStageStatus(
-                    score=live_score,
-                    status=live_status,
-                    passed=live_passed,
-                    scheduled_at=scheduled_at,
-                    meeting_link=meeting_link
-                ),
-                stages=dynamic_stages,
-                meets_criteria=meets,
-                verdict=verdict,
-                flags=integrity_flags,
-                status=app.status if app.status else "active",
-                has_notes=app.id in apps_with_notes,
-            ))
+            items.append(
+                CandidateProgressItem(
+                    application_id=app.id,
+                    candidate_id=cand.id,
+                    name=cand.full_name,
+                    email=cand.email,
+                    assessment=CandidateStageStatus(score=assess_score, status=assess_status, passed=assess_passed),
+                    ai_interview=CandidateStageStatus(score=ai_score, status=ai_status, passed=ai_passed),
+                    live_interview=CandidateStageStatus(
+                        score=live_score,
+                        status=live_status,
+                        passed=live_passed,
+                        scheduled_at=scheduled_at,
+                        meeting_link=meeting_link,
+                    ),
+                    stages=stages,
+                    meets_criteria=meets,
+                    verdict=verdict,
+                    flags=integrity_flags,
+                    status=app.status if app.status else "active",
+                    has_notes=app.id in apps_with_notes,
+                )
+            )
 
         # Filter by stage_type_filter if provided
         if stage_type_filter:
@@ -472,10 +446,8 @@ class GroupService:
         for sc in stage_configs:
             if sc.stage_type == "assessment" and sc.acceptance_criteria:
                 assessment_config_id = sc.acceptance_criteria.get("assessment_id") if isinstance(sc.acceptance_criteria, dict) else None
-            if sc.stage_type in ["ai_interview", "live_interview"] and sc.acceptance_criteria:
-                found_id = sc.acceptance_criteria.get("interview_config_id") if isinstance(sc.acceptance_criteria, dict) else None
-                if found_id:
-                    interview_config_id = found_id
+            if sc.stage_type in ["ai_interview", "live_interview"] and sc.config_id:
+                interview_config_id = sc.config_id
 
         # Acceptance criteria — merge from all stage configs
         criteria = AcceptanceCriteriaResponse()
@@ -576,38 +548,89 @@ class GroupService:
                     )
                 )
 
-        interviews_res = await self.session.execute(
-            select(AIInterviewConfig).where(
-                AIInterviewConfig.position_id == group.position_id,
-                AIInterviewConfig.is_deleted == False
-            ).order_by(AIInterviewConfig.created_at.desc())
+        ai_interviews_res = await self.session.execute(
+            select(AIInterviewConfig, GroupStageConfig.stage_type)
+            .join(GroupStageConfig, GroupStageConfig.config_id == AIInterviewConfig.config_id)
+            .where(
+                GroupStageConfig.group_id == group.id,
+                GroupStageConfig.stage_type == "ai_interview",
+                AIInterviewConfig.organization_id == self.org_id,
+                AIInterviewConfig.is_deleted == False,
+            )
+            .order_by(GroupStageConfig.stage_order.asc(), AIInterviewConfig.updated_at.desc(), AIInterviewConfig.created_at.desc())
         )
-        interviews_db = interviews_res.scalars().all()
+        live_interviews_res = await self.session.execute(
+            select(LiveInterviewConfig, GroupStageConfig.stage_type)
+            .join(GroupStageConfig, GroupStageConfig.config_id == LiveInterviewConfig.id)
+            .where(
+                GroupStageConfig.group_id == group.id,
+                GroupStageConfig.stage_type == "live_interview",
+                LiveInterviewConfig.organization_id == self.org_id,
+            )
+            .order_by(GroupStageConfig.stage_order.asc(), LiveInterviewConfig.created_at.desc())
+        )
 
         interviews_data = []
-        if interviews_db:
-            if not interview_config_id:
-                interview_config_id = interviews_db[0].config_id
+        ai_interviews_db = ai_interviews_res.all()
+        live_interviews_db = live_interviews_res.all()
 
-            for ic_db in interviews_db:
-                q_count = len(ic_db.questions.get("items", [])) if isinstance(ic_db.questions, dict) else 0
+        combined_interviews = [
+            (cfg, stage_type, "ai") for cfg, stage_type in ai_interviews_db
+        ] + [
+            (cfg, stage_type, "live") for cfg, stage_type in live_interviews_db
+        ]
+        combined_interviews.sort(
+            key=lambda item: (
+                next((sc.stage_order for sc in stage_configs if sc.stage_type == item[1] and sc.config_id == (item[0].config_id if item[2] == "ai" else item[0].id)), 0),
+                item[0].updated_at if item[2] == "ai" and hasattr(item[0], "updated_at") else item[0].created_at,
+            )
+        )
+
+        if combined_interviews and not interview_config_id:
+            first_cfg = combined_interviews[0][0]
+            interview_config_id = first_cfg.config_id if hasattr(first_cfg, "config_id") else first_cfg.id
+
+        for cfg, stage_type, cfg_kind in combined_interviews:
+            if cfg_kind == "ai":
+                q_count = len(cfg.questions.get("items", [])) if isinstance(cfg.questions, dict) else 0
                 interviews_data.append(
                     GroupInterviewItem(
-                        id=ic_db.config_id,
-                        title=ic_db.title,
-                        interview_type=ic_db.interview_type,
-                        max_retakes=ic_db.max_retakes,
+                        id=cfg.config_id,
+                        title=cfg.title,
+                        interview_type=cfg.interview_type,
+                        max_retakes=cfg.max_retakes,
                         questions_count=q_count,
-                        instructions=ic_db.instructions,
-                        questions=ic_db.questions,
-                        think_time_seconds=ic_db.think_time_seconds,
-                        answer_time_seconds=ic_db.answer_time_seconds,
-                        live_interview_context=ic_db.live_interview_context,
-                        difficulty=ic_db.difficulty,
-                        show_ai_feedback=ic_db.show_ai_feedback,
-                        recording_required=ic_db.recording_required,
-                        total_duration_minutes=ic_db.total_duration_minutes,
-                        live_flow_config=ic_db.live_flow_config
+                        instructions=cfg.instructions,
+                        questions=cfg.questions,
+                        think_time_seconds=cfg.think_time_seconds,
+                        answer_time_seconds=cfg.answer_time_seconds,
+                        live_interview_context=cfg.live_interview_context,
+                        difficulty=cfg.difficulty,
+                        show_ai_feedback=cfg.show_ai_feedback,
+                        recording_required=cfg.recording_required,
+                        total_duration_minutes=cfg.total_duration_minutes,
+                        live_flow_config=cfg.live_flow_config,
+                    )
+                )
+            else:
+                q_count = len(cfg.suggested_questions.get("items", [])) if isinstance(cfg.suggested_questions, dict) else 0
+                interviews_data.append(
+                    GroupInterviewItem(
+                        id=cfg.id,
+                        title=cfg.title,
+                        interview_type="live_ai",
+                        max_retakes=1,
+                        questions_count=q_count,
+                        instructions=cfg.instructions,
+                        questions=cfg.suggested_questions or {},
+                        think_time_seconds=None,
+                        answer_time_seconds=None,
+                        live_interview_context=None,
+                        difficulty="Mid Level",
+                        show_ai_feedback=True,
+                        recording_required=True,
+                        total_duration_minutes=cfg.duration_minutes,
+                        live_flow_config=cfg.scoring_rubric,
                     )
                 )
         return GroupDetailResponse(
@@ -933,7 +956,8 @@ class GroupService:
                         await EmailService.send_stage_invitation_email(
                             email=profile.email,
                             name=profile.full_name,
-                            stage_title=stage_name_title
+                            stage_title=stage_name_title,
+                            group_id=str(group_id)
                         )
                     except Exception as e:
                         print(f"Failed to send real stage invitation email to {profile.email}: {e}")
@@ -1243,11 +1267,27 @@ class GroupService:
             )
         elif request.action == "transfer" and request.transfer_group_id:
             # Move to another group
+            # First, collect candidate_ids before the bulk update
+            transfer_res = await self.session.execute(
+                select(CandidateApplication.candidate_id, CandidateApplication.position_id)
+                .where(CandidateApplication.group_id == group_id)
+            )
+            transfer_rows = transfer_res.all()
+            transferred_candidate_ids = [row.candidate_id for row in transfer_rows]
+            transfer_position_id = transfer_rows[0].position_id if transfer_rows else None
+
             await self.session.execute(
                 update(CandidateApplication)
                 .where(CandidateApplication.group_id == group_id)
                 .values(group_id=request.transfer_group_id)
             )
+
+            # Generate new credentials for the transferred candidates in their new group
+            if transferred_candidate_ids and transfer_position_id:
+                target_group = await self._get_group(request.transfer_group_id)
+                await self._generate_and_send_group_credentials(
+                    transferred_candidate_ids, transfer_position_id, target_group
+                )
         else: # "release" or default
             # Just unassign
             await self.session.execute(
@@ -1406,79 +1446,246 @@ class GroupService:
         self, group_id: UUID, data: AssignInterviewRequest
     ) -> AssignInterviewResponse:
         group = await self._get_group(group_id)
+        interview_cfg = data.interview_config or data.config or data.interviewConfig
+        should_create_new = bool(data.create_new or (interview_cfg and not data.interview_config_id))
 
         config_id: UUID | None = None
+        stage_type_to_update: str | None = None
 
-        if data.interview_config_id:
-            # Validate existence
-            res = await self.session.execute(
-                select(AIInterviewConfig).where(
-                    AIInterviewConfig.config_id == data.interview_config_id,
-                    AIInterviewConfig.organization_id == self.org_id,
-                )
-            )
-            cfg = res.scalars().first()
-            if not cfg:
-                return AssignInterviewResponse(status=-1, message="Interview configuration not found")
-            
-            # If config data is provided, update existing
-            if data.interview_config:
-                ic = data.interview_config
-                cfg.title = ic.get("title", cfg.title)
-                cfg.instructions = ic.get("instructions", cfg.instructions)
-                cfg.max_retakes = ic.get("max_retakes", cfg.max_retakes)
-                cfg.questions = ic.get("questions", cfg.questions)
-                cfg.live_interview_context = ic.get("live_interview_context", cfg.live_interview_context)
-                cfg.difficulty = ic.get("difficulty", cfg.difficulty)
-                cfg.total_duration_minutes = ic.get("duration", cfg.total_duration_minutes)
-                cfg.show_ai_feedback = ic.get("showAIFeedback", cfg.show_ai_feedback)
-                cfg.recording_required = ic.get("recordingRequired", cfg.recording_required)
-                cfg.live_flow_config = ic.get("live_flow_config", cfg.live_flow_config)
-                cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                self.session.add(cfg)
-            
-            config_id = cfg.config_id
-            ic_type = cfg.interview_type
-
-        elif data.create_new and data.interview_config:
-            # Create new AI interview config
-            ic = data.interview_config
-            ic_type = ic.get("interview_type", "recorded")
-            new_cfg = AIInterviewConfig(
-                organization_id=self.org_id,
-                position_id=group.position_id,
-                title=ic.get("title", "Untitled Interview"),
-                interview_type=ic_type,
-                instructions=ic.get("instructions"),
-                max_retakes=ic.get("max_retakes", 1),
-                questions=ic.get("questions", []),
-                live_interview_context=ic.get("live_interview_context"),
-                difficulty=ic.get("difficulty", "Mid Level"),
-                total_duration_minutes=ic.get("duration", 30),
-                show_ai_feedback=ic.get("showAIFeedback", True),
-                recording_required=ic.get("recordingRequired", True),
-                live_flow_config=ic.get("live_flow_config"),
-                created_by_user_id=self.user.id,
-            )
-            self.session.add(new_cfg)
-            await self.session.flush()
-            config_id = new_cfg.config_id
-        else:
-            return AssignInterviewResponse(status=-1, message="Provide interview_config_id or create_new with config")
-
-        stage_type_to_update = "live_interview" if ic_type == "live" else "ai_interview"
-
-        # Update the group's AI interview stage config
         sc_res = await self.session.execute(
             select(GroupStageConfig).where(
                 GroupStageConfig.group_id == group_id,
-                GroupStageConfig.stage_type == stage_type_to_update,
+                GroupStageConfig.stage_type.in_(["ai_interview", "live_interview"]),
             )
         )
-        sc = sc_res.scalars().first()
+        stage_configs = sc_res.scalars().all()
+
+        if should_create_new and interview_cfg:
+            # Create new AI interview config
+            ic = interview_cfg
+            ic_type = ic.get("interview_type", "recorded")
+            stage_type_to_update = "live_interview" if ic_type == "live_ai" else "ai_interview"
+            existing_stage_config = next((sc for sc in stage_configs if sc.stage_type == stage_type_to_update), None)
+            if existing_stage_config and existing_stage_config.config_id:
+                if stage_type_to_update == "live_interview":
+                    current_cfg_res = await self.session.execute(
+                        select(LiveInterviewConfig).where(
+                            LiveInterviewConfig.id == existing_stage_config.config_id,
+                            LiveInterviewConfig.organization_id == self.org_id,
+                        )
+                    )
+                    current_cfg = current_cfg_res.scalars().first()
+                    if current_cfg:
+                        raise BadRequestException("Only one interview configuration can be created for this stage")
+                    existing_stage_config.config_id = None
+                    if existing_stage_config.acceptance_criteria and isinstance(existing_stage_config.acceptance_criteria, dict):
+                        criteria = existing_stage_config.acceptance_criteria.copy()
+                        criteria.pop("interview_config_id", None)
+                        criteria.pop("candidate_interview_config_id", None)
+                        existing_stage_config.acceptance_criteria = criteria
+                    self.session.add(existing_stage_config)
+                else:
+                    current_cfg_res = await self.session.execute(
+                        select(AIInterviewConfig).where(
+                            AIInterviewConfig.config_id == existing_stage_config.config_id,
+                            AIInterviewConfig.organization_id == self.org_id,
+                            AIInterviewConfig.is_deleted == False,
+                        )
+                    )
+                    current_cfg = current_cfg_res.scalars().first()
+                    if current_cfg:
+                        raise BadRequestException("Only one interview configuration can be created for this stage")
+                    existing_stage_config.config_id = None
+                    if existing_stage_config.acceptance_criteria and isinstance(existing_stage_config.acceptance_criteria, dict):
+                        criteria = existing_stage_config.acceptance_criteria.copy()
+                        criteria.pop("interview_config_id", None)
+                        criteria.pop("candidate_interview_config_id", None)
+                        existing_stage_config.acceptance_criteria = criteria
+                    self.session.add(existing_stage_config)
+            if stage_type_to_update == "live_interview":
+                new_live_cfg = LiveInterviewConfig(
+                    organization_id=self.org_id,
+                    position_id=group.position_id,
+                    title=ic.get("title", "Untitled Interview"),
+                    duration_minutes=ic.get("duration", 60),
+                    instructions=ic.get("instructions"),
+                    suggested_questions=ic.get("questions", {"items": []}),
+                    scoring_rubric=ic.get("live_flow_config"),
+                )
+                self.session.add(new_live_cfg)
+                await self.session.flush()
+
+                mirror_ai_cfg = AIInterviewConfig(
+                    organization_id=self.org_id,
+                    position_id=group.position_id,
+                    title=ic.get("title", "Untitled Interview"),
+                    interview_type="live_ai",
+                    instructions=ic.get("instructions"),
+                    max_retakes=ic.get("max_retakes", 1),
+                    questions=ic.get("questions", {"items": []}),
+                    live_interview_context=ic.get("live_interview_context"),
+                    difficulty=ic.get("difficulty", "Mid Level"),
+                    total_duration_minutes=ic.get("duration", 30),
+                    show_ai_feedback=ic.get("showAIFeedback", True),
+                    recording_required=ic.get("recordingRequired", True),
+                    live_flow_config=ic.get("live_flow_config"),
+                    created_by_user_id=self.user.id,
+                )
+                self.session.add(mirror_ai_cfg)
+                await self.session.flush()
+                config_id = new_live_cfg.id
+                # Store the AI mirror so the candidate live flow can still start a session.
+                ic = {**ic, "candidate_interview_config_id": str(mirror_ai_cfg.config_id)}
+            else:
+                new_cfg = AIInterviewConfig(
+                    organization_id=self.org_id,
+                    position_id=group.position_id,
+                    title=ic.get("title", "Untitled Interview"),
+                    interview_type=ic_type,
+                    instructions=ic.get("instructions"),
+                    max_retakes=ic.get("max_retakes", 1),
+                    questions=ic.get("questions", []),
+                    live_interview_context=ic.get("live_interview_context"),
+                    difficulty=ic.get("difficulty", "Mid Level"),
+                    total_duration_minutes=ic.get("duration", 30),
+                    show_ai_feedback=ic.get("showAIFeedback", True),
+                    recording_required=ic.get("recordingRequired", True),
+                    live_flow_config=ic.get("live_flow_config"),
+                    created_by_user_id=self.user.id,
+                )
+                self.session.add(new_cfg)
+                await self.session.flush()
+                config_id = new_cfg.config_id
+
+        elif data.interview_config_id:
+            if interview_cfg and isinstance(interview_cfg, dict):
+                payload_type = str(interview_cfg.get("interview_type", "")).strip().lower()
+                if payload_type in {"live", "live_ai", "live-interview", "live_interview"}:
+                    stage_type_to_update = "live_interview"
+                elif payload_type:
+                    stage_type_to_update = "ai_interview"
+
+            if not stage_type_to_update:
+                linked_stage = next(
+                    (
+                        sc
+                        for sc in stage_configs
+                        if sc.config_id and str(sc.config_id) == str(data.interview_config_id)
+                    ),
+                    None,
+                )
+                if linked_stage:
+                    stage_type_to_update = linked_stage.stage_type
+
+            if not stage_type_to_update:
+                live_probe_res = await self.session.execute(
+                    select(LiveInterviewConfig).where(
+                        LiveInterviewConfig.id == data.interview_config_id,
+                        LiveInterviewConfig.organization_id == self.org_id,
+                    )
+                )
+                if live_probe_res.scalars().first():
+                    stage_type_to_update = "live_interview"
+
+            if stage_type_to_update == "live_interview":
+                res = await self.session.execute(
+                    select(LiveInterviewConfig).where(
+                        LiveInterviewConfig.id == data.interview_config_id,
+                        LiveInterviewConfig.organization_id == self.org_id,
+                    )
+                )
+                live_cfg = res.scalars().first()
+                if not live_cfg:
+                    raise BadRequestException("Interview configuration not found")
+
+                if interview_cfg:
+                    ic = interview_cfg
+                    live_cfg.title = ic.get("title", live_cfg.title)
+                    live_cfg.instructions = ic.get("instructions", live_cfg.instructions)
+                    live_cfg.duration_minutes = ic.get("duration", live_cfg.duration_minutes)
+                    live_cfg.suggested_questions = ic.get("questions", live_cfg.suggested_questions)
+                    live_cfg.scoring_rubric = ic.get("live_flow_config", live_cfg.scoring_rubric)
+                    self.session.add(live_cfg)
+
+                config_id = live_cfg.id
+                ic_type = "live_ai"
+            else:
+                # Validate existence
+                res = await self.session.execute(
+                    select(AIInterviewConfig).where(
+                        AIInterviewConfig.config_id == data.interview_config_id,
+                            AIInterviewConfig.organization_id == self.org_id,
+                    )
+                )
+                cfg = res.scalars().first()
+                if not cfg:
+                    raise BadRequestException("Interview configuration not found")
+                
+                # Prevent reusing an interview config that is already attached to another group stage
+                assigned_res = await self.session.execute(
+                    select(GroupStageConfig.group_id).where(
+                        GroupStageConfig.config_id == cfg.config_id,
+                        GroupStageConfig.stage_type == "ai_interview",
+                        GroupStageConfig.group_id != group_id,
+                    )
+                )
+                if assigned_res.scalars().first():
+                    raise BadRequestException("Interview configuration is already assigned to another group")
+                
+                if interview_cfg:
+                    ic = interview_cfg
+                    cfg.title = ic.get("title", cfg.title)
+                    cfg.instructions = ic.get("instructions", cfg.instructions)
+                    cfg.max_retakes = ic.get("max_retakes", cfg.max_retakes)
+                    cfg.questions = ic.get("questions", cfg.questions)
+                    cfg.live_interview_context = ic.get("live_interview_context", cfg.live_interview_context)
+                    cfg.difficulty = ic.get("difficulty", cfg.difficulty)
+                    cfg.total_duration_minutes = ic.get("duration", cfg.total_duration_minutes)
+                    cfg.show_ai_feedback = ic.get("showAIFeedback", cfg.show_ai_feedback)
+                    cfg.recording_required = ic.get("recordingRequired", cfg.recording_required)
+                    cfg.live_flow_config = ic.get("live_flow_config", cfg.live_flow_config)
+                    cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    self.session.add(cfg)
+                
+                config_id = cfg.config_id
+                ic_type = cfg.interview_type
+
+        else:
+            raise BadRequestException("Provide interview_config_id or create_new with config")
+
+        stage_type_to_update = stage_type_to_update or ("live_interview" if ic_type in ("live", "live_ai") else "ai_interview")
+
+        existing_stage_config = next((sc for sc in stage_configs if sc.stage_type == stage_type_to_update), None)
+        if existing_stage_config and existing_stage_config.config_id and str(existing_stage_config.config_id) != str(config_id):
+            raise BadRequestException("Only one interview configuration can be created for this stage")
+
+        # Update the group's stage config
+        sc = existing_stage_config
+        if sc is None:
+            order_res = await self.session.execute(
+                select(func.coalesce(func.max(GroupStageConfig.stage_order), 0)).where(
+                    GroupStageConfig.group_id == group_id
+                )
+            )
+            max_order = order_res.scalars().first() or 0
+            sc = GroupStageConfig(
+                group_id=group_id,
+                organization_id=self.org_id,
+                stage_type=stage_type_to_update,
+                stage_order=max_order + 1,
+                stage_name="AI Interview" if stage_type_to_update == "ai_interview" else "Live Interview",
+                state="not_started",
+                config_id=config_id,
+            )
+            self.session.add(sc)
+
         if sc:
             criteria = sc.acceptance_criteria or {}
             criteria["interview_config_id"] = str(config_id)
+            if stage_type_to_update == "live_interview" and should_create_new and interview_cfg:
+                candidate_ai_id = ic.get("candidate_interview_config_id")
+                if candidate_ai_id:
+                    criteria["candidate_interview_config_id"] = candidate_ai_id
             sc.acceptance_criteria = criteria
             sc.config_id = config_id
             self.session.add(sc)
@@ -1502,16 +1709,49 @@ class GroupService:
     async def delete_interview(self, group_id: UUID, interview_id: UUID) -> dict:
         """Removes interview ID from stage config and soft-deletes the config itself."""
         # 1. Soft delete the config itself
-        res = await self.session.execute(
-            select(AIInterviewConfig).where(
-                AIInterviewConfig.config_id == interview_id,
-                AIInterviewConfig.organization_id == self.org_id
+        sc_res = await self.session.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.config_id == interview_id,
             )
         )
-        cfg = res.scalars().first()
-        if cfg:
-            cfg.is_deleted = True
-            self.session.add(cfg)
+        sc = sc_res.scalars().first()
+
+        if sc and sc.stage_type == "live_interview":
+            res = await self.session.execute(
+                select(LiveInterviewConfig).where(
+                    LiveInterviewConfig.id == interview_id,
+                    LiveInterviewConfig.organization_id == self.org_id,
+                )
+            )
+            cfg = res.scalars().first()
+            if cfg:
+                self.session.delete(cfg)
+
+            if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
+                candidate_ai_id = sc.acceptance_criteria.get("candidate_interview_config_id")
+                if candidate_ai_id:
+                    ai_res = await self.session.execute(
+                        select(AIInterviewConfig).where(
+                            AIInterviewConfig.config_id == UUID(str(candidate_ai_id)),
+                            AIInterviewConfig.organization_id == self.org_id,
+                        )
+                    )
+                    ai_cfg = ai_res.scalars().first()
+                    if ai_cfg:
+                        ai_cfg.is_deleted = True
+                        self.session.add(ai_cfg)
+        else:
+            res = await self.session.execute(
+                select(AIInterviewConfig).where(
+                    AIInterviewConfig.config_id == interview_id,
+                    AIInterviewConfig.organization_id == self.org_id
+                )
+            )
+            cfg = res.scalars().first()
+            if cfg:
+                cfg.is_deleted = True
+                self.session.add(cfg)
 
         # 2. Cleanup GroupStageConfig referencing this interview
         sc_res = await self.session.execute(
@@ -1522,11 +1762,16 @@ class GroupService:
         stage_configs = sc_res.scalars().all()
         for sc in stage_configs:
             if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
-                if str(sc.acceptance_criteria.get("interview_config_id")) == str(interview_id):
+                if str(sc.acceptance_criteria.get("interview_config_id")) == str(interview_id) or str(sc.config_id) == str(interview_id):
                     criteria = sc.acceptance_criteria.copy()
                     del criteria["interview_config_id"]
+                    criteria.pop("candidate_interview_config_id", None)
                     sc.acceptance_criteria = criteria
+                    sc.config_id = None
                     self.session.add(sc)
+            elif str(sc.config_id) == str(interview_id):
+                sc.config_id = None
+                self.session.add(sc)
 
         await self.session.commit()
         return {"status": 1, "message": "Interview deleted successfully"}
@@ -1735,6 +1980,69 @@ class GroupService:
             ]
         )
 
+    async def _generate_and_send_group_credentials(
+        self,
+        candidate_ids: list[UUID],
+        position_id: UUID,
+        group: CandidateGroup,
+    ) -> None:
+        """Generate a new password for each candidate added to a group,
+        send the plaintext password via email, and store the bcrypt hash in DB.
+        Also logs each email to EmailLog for debugging."""
+        import secrets
+        import string
+        from app.core.security import hash_password
+        from app.services.email import EmailService
+
+        # Fetch applications joined with profiles for the given candidate_ids
+        query = (
+            select(CandidateApplication, CandidateProfile)
+            .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .where(
+                CandidateApplication.candidate_id.in_(candidate_ids),
+                CandidateApplication.position_id == position_id,
+                CandidateApplication.organization_id == self.org_id,
+            )
+        )
+        res = await self.session.execute(query)
+        rows = res.all()
+
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+
+        for app, profile in rows:
+            # 1. Generate random 12-char password (plaintext)
+            temp_password = ''.join(secrets.choice(alphabet) for _ in range(12))
+
+            # 2. Store hashed password on the candidate profile
+            profile.password_hash = hash_password(temp_password)
+            self.session.add(profile)
+
+            # 3. Send plaintext credentials via email (email + password + login URL)
+            try:
+                await EmailService.send_group_credentials_email(
+                    email=profile.email,
+                    name=profile.full_name,
+                    group_name=group.group_name,
+                    temp_password=temp_password,   # plaintext, NOT the hash
+                    group_id=str(group.id),
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(
+                    f"Failed to send group credentials email to {profile.email}: {e}"
+                )
+
+            # 4. Log email to EmailLog for debugging
+            email_log = EmailLog(
+                organization_id=self.org_id,
+                recipient_email=profile.email,
+                subject="EraMatch - Your New Group Credentials",
+                template_type="group_credentials",
+                status="sent",
+                sent_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            self.session.add(email_log)
+
     async def create_group(self, data: GroupCreateRequest) -> CandidateGroup:
         """Create a new candidate group."""
         if self.user.role == "technical":
@@ -1777,6 +2085,10 @@ class GroupService:
                     CandidateApplication.organization_id == self.org_id
                 )
                 .values(group_id=group.id, status="screening")
+            )
+            # Generate and send credentials for candidates added to this new group
+            await self._generate_and_send_group_credentials(
+                data.candidate_ids, data.position_id, group
             )
 
         # 4. Audit Log

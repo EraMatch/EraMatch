@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, AlertCircle, Clock, Eye, Trash2, UserPlus, UserMinus, Activity, MoreVertical, Flag, Filter, X, ChevronDown, Plus, UserCog, Shield, Lock, MessageSquare, FileText, CheckSquare, Ban, Archive, AlertTriangle, BarChart3, Target, Video, Loader2 } from 'lucide-react';
+import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, AlertCircle, Clock, Eye, Trash2, UserPlus, UserMinus, MoreVertical, Flag, Filter, X, ChevronDown, Plus, UserCog, Shield, Lock, MessageSquare, FileText, CheckSquare, Ban, Archive, AlertTriangle, BarChart3, Target, Video, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SuspectReviewPage } from '../candidates/SuspectReviewPage';
 import { CreateAdvancedAssessment } from '../assessments/CreateAdvancedAssessment';
@@ -232,7 +232,13 @@ export function EnhancedGroupOverviewV2({
   const [activeFlow, setActiveFlow] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [positionId, setPositionId] = useState<string>('');
-  const [interviewConfigId, setInterviewConfigId] = useState<string | null>(null);
+
+  // Reset any editing interview payload when switching flows or stages
+  // This prevents stale `editingInterviewData` causing "Edit" UI to appear
+  // when the user expects to create a new configuration for a different stage.
+  useEffect(() => {
+    setEditingInterviewData(null);
+  }, [activeFlow, currentStage]);
 
   // Fetch data on mount
   useEffect(() => {
@@ -243,10 +249,6 @@ export function EnhancedGroupOverviewV2({
         if (data.position_id) {
           setPositionId(data.position_id);
         }
-        if (data.interview_config_id) {
-          setInterviewConfigId(data.interview_config_id);
-        }
-
         let activeFlowRaw = filtrationFlow; // Default to prop
         if (data.group && data.group.filtration_flow) {
           // Parse backend response which might be object array or strings
@@ -407,7 +409,7 @@ export function EnhancedGroupOverviewV2({
       await api.recruiter.updateGroup(groupId, {
         filtration_flow: flowConfig,
         github_questions_count: configuredGithubQuestionsCount,
-      });
+      } as any);
       setGithubQuestionsCount(configuredGithubQuestionsCount);
       setShowFlowConfigModal(false);
       setRefreshKey(prev => prev + 1); // Trigger refresh
@@ -1413,9 +1415,13 @@ export function EnhancedGroupOverviewV2({
                           showToast('Cannot modify configuration - stage is active');
                           return;
                         }
+                        if (groupAssessments.length > 0) {
+                          showToast('Only one assessment can be created for this group');
+                          return;
+                        }
                         setShowAssessmentCreation(true);
                       }}
-                      disabled={stageConfigLocked}
+                      disabled={stageConfigLocked || groupAssessments.length > 0}
                       className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Plus size={16} />
@@ -1424,29 +1430,37 @@ export function EnhancedGroupOverviewV2({
                       </span>
                     </button>
                   )}
-                  {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
-                    <button
-                      onClick={() => {
-                        if (stageConfigLocked) {
-                          showToast('Cannot modify configuration - stage is active');
-                          return;
-                        }
-                        const hasLive = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');
-                        const hasRecorded = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');
-                        if (hasRecorded || hasLive) {
+                  {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (() => {
+                    const hasRecordedReq = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');
+                    const hasLiveReq = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');
+                    const hasRecordedCfg = groupInterviews.some(i => i.interview_type === 'recorded');
+                    const hasLiveCfg = groupInterviews.some(i => i.interview_type === 'live' || i.interview_type === 'live_ai');
+                    const isFullyConfigured = (!hasRecordedReq || hasRecordedCfg) && (!hasLiveReq || hasLiveCfg);
+                    
+                    return (
+                      <button
+                        onClick={() => {
+                          if (stageConfigLocked) {
+                            showToast('Cannot modify configuration - stage is active');
+                            return;
+                          }
+                          if (isFullyConfigured) {
+                            showToast('Only one interview can be created for each stage');
+                            return;
+                          }
+                          setEditingInterviewData(null);
                           setShowUnifiedAIInterviewSetup(true);
-                        }
-                      }}
-                      disabled={stageConfigLocked}
-                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Activity size={16} />
-                      <span className="font-['Arimo',sans-serif] text-[14px]">
-                        {interviewConfigId ? 'Edit AI Interview Settings' : 'AI Interview Settings'}
-                      </span>
-                      {interviewConfigId && <CheckCircle size={16} className="text-white ml-1" />}
-                    </button>
-                  )}
+                        }}
+                        disabled={stageConfigLocked || isFullyConfigured}
+                        className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Plus size={16} />
+                        <span className="font-['Arimo',sans-serif] text-[14px]">
+                          Add AI Interview Settings
+                        </span>
+                      </button>
+                    );
+                  })()}
                 </div>
 
               </div>

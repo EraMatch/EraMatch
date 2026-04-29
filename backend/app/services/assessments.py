@@ -18,6 +18,15 @@ class AssessmentService:
 
     async def create_assessment(self, request_data: AssessmentCreateRequest, user_id: UUID, organization_id: UUID) -> Assessment:
         try:
+            existing_assessment_q = select(Assessment.id).where(
+                Assessment.group_id == request_data.group_id,
+                Assessment.organization_id == organization_id,
+                Assessment.is_deleted == False,
+            )
+            existing_assessment_res = await self.session.execute(existing_assessment_q)
+            if existing_assessment_res.scalars().first():
+                raise HTTPException(status_code=400, detail="Only one assessment can be created for this group")
+
             # 1. Create Assessment Record
             # Combine basic settings with specific fields from the request
             assessment = Assessment(
@@ -52,7 +61,7 @@ class AssessmentService:
                     section_order=section_data.order,
                     section_title=f"Section {section_data.order}", # Using a default title as none was provided by the frontend payload mapping
                     question_type=db_section_type,
-                    variants_to_select=len(section_data.variants), # By default, selecting all created variants
+                    variants_to_select=section_data.variantsToSelect or 1,
                     points_per_question=section_data.points,
                     selection_strategy=section_data.selectionStrategy
                 )
@@ -257,7 +266,8 @@ class AssessmentService:
                 "type": sec_frontend_type,
                 "variants": variants,
                 "points": sec.points_per_question,
-                "selectionStrategy": sec.selection_strategy
+                "selectionStrategy": sec.selection_strategy,
+                "variantsToSelect": sec.variants_to_select
             })
 
         return {
@@ -323,7 +333,7 @@ class AssessmentService:
                     section_order=section_data.order,
                     section_title=f"Section {section_data.order}",
                     question_type=db_section_type,
-                    variants_to_select=len(section_data.variants),
+                    variants_to_select=section_data.variantsToSelect or 1,
                     points_per_question=section_data.points,
                     selection_strategy=section_data.selectionStrategy
                 )

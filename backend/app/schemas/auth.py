@@ -78,6 +78,7 @@ class CandidateLoginRequest(BaseModel):
     """Candidate login request body."""
     email: EmailStr
     password: str
+    group_id: UUID | None = None  # Optional group ID from frontend login URL
 
 
 class CandidateAuthResponse(BaseModel):
