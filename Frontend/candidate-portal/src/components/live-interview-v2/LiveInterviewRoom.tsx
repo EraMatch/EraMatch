@@ -25,7 +25,7 @@ import {
     useTrackTranscription,
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
-import { Mic, MicOff, VideoIcon, VideoOff, PhoneOff, Loader2, AlertCircle } from 'lucide-react';
+import { Mic, MicOff, VideoIcon, VideoOff, PhoneOff, Loader2, AlertCircle, Clock } from 'lucide-react';
 import { Button } from '../ui/button';
 import { liveInterviewService } from '../../services/live-interview.service';
 import { API_URL } from '../../services/client';
@@ -67,6 +67,25 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
     const [isConnected, setIsConnected] = useState(false);
     const [agentTimeout, setAgentTimeout] = useState(false);
     const transcriptEndRef = useRef<HTMLDivElement>(null);
+
+    // Timer state
+    const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    const [timeBudgetMin, setTimeBudgetMin] = useState(30);
+
+    // useEffect for timer
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setElapsedSeconds(prev => prev + 1);
+        }, 1000);
+        return () => clearInterval(interval);
+    }, []);
+
+    // Compute progress and warning state
+    const progress = Math.min(elapsedSeconds / (timeBudgetMin * 60), 1);
+    const isCritical = progress >= 0.95;
+    const isWarning = progress >= 0.80 && !isCritical;
+    const minutes = Math.floor(elapsedSeconds / 60);
+    const seconds = elapsedSeconds % 60;
 
     useEffect(() => {
         setIsConnected(room.state === 'connected');
@@ -261,6 +280,16 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
                     {/* Candidate label */}
                     <div className="absolute top-4 left-4 bg-white/10 text-white text-xs font-medium px-4 py-1.5 rounded-full backdrop-blur-md border border-white/20 shadow-sm">
                         You
+                    </div>
+
+                    {/* Timer overlay */}
+                    <div className={`absolute top-4 right-4 bg-black/40 text-xs font-medium px-4 py-1.5 rounded-full backdrop-blur-md shadow-sm flex items-center ${
+                        isCritical ? "text-red-500 animate-pulse border border-red-500/50 bg-red-500/10" 
+                        : isWarning ? "text-amber-400 border border-amber-400/50 bg-amber-400/10" 
+                        : "text-gray-100 border border-white/20"
+                    }`}>
+                        <Clock className="w-3.5 h-3.5 mr-1.5" />
+                        {minutes}:{seconds.toString().padStart(2, '0')} / {timeBudgetMin}:00
                     </div>
                     
                     {/* Live Captions Subtitle (Candidate) */}
