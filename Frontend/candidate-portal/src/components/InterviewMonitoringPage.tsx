@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
-import { CheckCircle2, XCircle, Clock, User, FileText, BarChart3, RefreshCw, Code2, BookOpen, ListChecks } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, User, FileText, BarChart3, RefreshCw, Code2, BookOpen, ListChecks, Activity, AlertTriangle } from 'lucide-react';
 
 // ─── Interview Interfaces ────────────────────────────────────────────
 interface InterviewResponse {
@@ -57,7 +57,31 @@ interface AssessmentAnswer {
     answered_at: string | null;
 }
 
-type TabType = 'interviews' | 'assessments';
+type TabType = 'interviews' | 'assessments' | 'live_interviews';
+
+interface LiveInterviewSession {
+    session_id: string;
+    state: string;
+    duration_seconds: number | null;
+    started_at: string | null;
+    ended_at: string | null;
+    transcript: Array<{ role: string; text: string }>;
+    evaluation: {
+        overall_score_pct: number;
+        auto_verdict: string;
+        evaluation_confidence: string;
+        dimension_scores: Record<string, {
+            score: number; anchor_matched: string;
+            cited_quote: string; reasoning: string;
+            weight: number; dimension_name: string;
+        }>;
+        per_question_results?: Record<string, {
+            question_score: number; question_text: string;
+            sub_criteria: Array<{ name: string; score: number; covered: boolean }>;
+            cited_quote: string; reasoning: string;
+        }>;
+    } | null;
+}
 
 export function InterviewMonitoringPage() {
     const [activeTab, setActiveTab] = useState<TabType>('interviews');
@@ -71,6 +95,10 @@ export function InterviewMonitoringPage() {
     const [assessmentCandidates, setAssessmentCandidates] = useState<AssessmentCandidate[]>([]);
     const [selectedAssessmentCandidate, setSelectedAssessmentCandidate] = useState<string | null>(null);
     const [assessmentAnswers, setAssessmentAnswers] = useState<AssessmentAnswer[]>([]);
+
+    // Live Interview state
+    const [liveSession, setLiveSession] = useState<LiveInterviewSession | null>(null);
+    const [liveLoading, setLiveLoading] = useState(false);
 
     const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
@@ -128,15 +156,38 @@ export function InterviewMonitoringPage() {
         }
     };
 
+    // ─── Live Interview fetchers ─────────────────────────────────────
+    const fetchLiveInterview = async () => {
+        try {
+            setLiveLoading(true);
+            const response = await fetch('http://localhost:8000/api/v1/live-interview-v2/session', { headers });
+            if (response.ok) {
+                const data = await response.json();
+                setLiveSession(data);
+            } else {
+                setLiveSession(null);
+            }
+        } catch (error) {
+            console.error('No live interview session yet or backend not ready:', error);
+            setLiveSession(null);
+        } finally {
+            setLiveLoading(false);
+        }
+    };
+
     // ─── Effects ─────────────────────────────────────────────────────
     useEffect(() => {
         if (activeTab === 'interviews') {
             fetchCandidates();
             const interval = setInterval(fetchCandidates, 10000);
             return () => clearInterval(interval);
-        } else {
+        } else if (activeTab === 'assessments') {
             fetchAssessmentCandidates();
             const interval = setInterval(fetchAssessmentCandidates, 10000);
+            return () => clearInterval(interval);
+        } else if (activeTab === 'live_interviews') {
+            fetchLiveInterview();
+            const interval = setInterval(fetchLiveInterview, 5000); // 5s polling
             return () => clearInterval(interval);
         }
     }, [activeTab]);
@@ -178,7 +229,8 @@ export function InterviewMonitoringPage() {
 
     const handleRefresh = () => {
         if (activeTab === 'interviews') fetchCandidates();
-        else fetchAssessmentCandidates();
+        else if (activeTab === 'assessments') fetchAssessmentCandidates();
+        else fetchLiveInterview();
     };
 
     // ─── Render ──────────────────────────────────────────────────────
@@ -219,10 +271,172 @@ export function InterviewMonitoringPage() {
                     >
                         Assessments
                     </button>
+                    <button
+                        onClick={() => { setActiveTab('live_interviews'); setLiveSession(null); }}
+                        className={`px-5 py-2.5 rounded-lg font-medium text-sm transition-all ${
+                            activeTab === 'live_interviews'
+                                ? 'bg-indigo-600 text-white shadow-md'
+                                : 'bg-white text-gray-600 hover:bg-gray-100'
+                        }`}
+                    >
+                        Live Interview
+                    </button>
                 </div>
 
                 <div className="grid grid-cols-3 gap-6">
-                    {/* ═══ LEFT: CANDIDATES LIST ═══ */}
+                    {activeTab === 'live_interviews' ? (
+                        <div className="col-span-3">
+                            <Card className="p-6">
+                                <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
+                                    <Activity className="w-5 h-5 text-indigo-600" />
+                                    Live Interview Session
+                                </h2>
+                                {liveLoading && !liveSession ? (
+                                    <div className="flex items-center justify-center py-12">
+                                        <RefreshCw className="w-8 h-8 animate-spin text-indigo-600" />
+                                    </div>
+                                ) : !liveSession ? (
+                                    <div className="text-center py-12 text-gray-500">
+                                        No live interview session yet.
+                                    </div>
+                                ) : liveSession.state === 'completed' && !liveSession.evaluation ? (
+                                    <div className="text-center py-12">
+                                        <RefreshCw className="w-8 h-8 animate-spin text-indigo-600 mx-auto mb-4" />
+                                        <p className="text-gray-600 font-medium">Grading in progress...</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-6">
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            {/* Score Ring & Verdict */}
+                                            <Card className="p-6 flex flex-col items-center justify-center text-center col-span-1 border-t-4 border-indigo-500">
+                                                <div className="relative w-32 h-32 flex items-center justify-center rounded-full border-8 border-gray-100 mb-4">
+                                                    <div 
+                                                        className="absolute inset-0 rounded-full border-8 border-indigo-600"
+                                                        style={{
+                                                            clipPath: liveSession.evaluation?.overall_score_pct 
+                                                                ? `polygon(0 0, 100% 0, 100% ${liveSession.evaluation.overall_score_pct}%, 0 ${liveSession.evaluation.overall_score_pct}%)` 
+                                                                : 'none'
+                                                        }}
+                                                    />
+                                                    <span className="text-3xl font-bold text-gray-800">
+                                                        {liveSession.evaluation?.overall_score_pct || 0}%
+                                                    </span>
+                                                </div>
+                                                <h3 className="text-sm font-medium text-gray-500 mb-1">Verdict</h3>
+                                                <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                                                    liveSession.evaluation?.auto_verdict === 'strong_pass' || liveSession.evaluation?.auto_verdict === 'pass' 
+                                                        ? 'bg-green-100 text-green-800' 
+                                                        : liveSession.evaluation?.auto_verdict === 'borderline' 
+                                                            ? 'bg-yellow-100 text-yellow-800' 
+                                                            : 'bg-red-100 text-red-800'
+                                                }`}>
+                                                    {(liveSession.evaluation?.auto_verdict || 'N/A').replace('_', ' ').toUpperCase()}
+                                                </span>
+                                                <p className="text-xs text-gray-400 mt-2">
+                                                    Confidence: {liveSession.evaluation?.evaluation_confidence || 'N/A'}
+                                                </p>
+                                            </Card>
+
+                                            {/* Dimension Breakdown */}
+                                            <Card className="p-6 col-span-1 md:col-span-2">
+                                                <h3 className="text-sm font-bold text-gray-700 mb-4 uppercase tracking-wider">Dimension Breakdown</h3>
+                                                <div className="space-y-4">
+                                                    {liveSession.evaluation?.dimension_scores && Object.entries(liveSession.evaluation.dimension_scores).map(([key, dim]) => (
+                                                        <div key={key}>
+                                                            <div className="flex justify-between mb-1">
+                                                                <span className="text-sm font-medium text-gray-700">{dim.dimension_name}</span>
+                                                                <span className="text-sm font-bold text-indigo-600">{(dim.score * 100).toFixed(0)}%</span>
+                                                            </div>
+                                                            <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                                                                <div className="bg-indigo-600 h-2 rounded-full" style={{ width: `${dim.score * 100}%` }}></div>
+                                                            </div>
+                                                            <p className="text-xs text-gray-500 line-clamp-2" title={dim.reasoning}>{dim.reasoning}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </Card>
+                                        </div>
+
+                                        {/* Per-Question Results */}
+                                        {liveSession.evaluation?.per_question_results && Object.keys(liveSession.evaluation.per_question_results).length > 0 && (
+                                            <div>
+                                                <h3 className="text-lg font-semibold text-gray-800 mb-4">Question Results</h3>
+                                                <div className="space-y-4">
+                                                    {Object.entries(liveSession.evaluation.per_question_results).map(([qId, qData], idx) => (
+                                                        <Card key={qId} className="p-5 border-l-4 border-blue-500">
+                                                            <div className="flex justify-between items-start mb-4">
+                                                                <div>
+                                                                    <span className="text-xs font-bold text-blue-600 uppercase mb-1 block">Question {idx + 1}</span>
+                                                                    <p className="text-sm font-medium text-gray-800">{qData.question_text}</p>
+                                                                </div>
+                                                                <div className="text-right ml-4">
+                                                                    <span className="text-xl font-bold text-gray-800">{(qData.question_score * 100).toFixed(0)}%</span>
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            {qData.sub_criteria && qData.sub_criteria.length > 0 && (
+                                                                <div className="bg-gray-50 rounded-lg p-3 mb-3">
+                                                                    <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Sub-criteria</p>
+                                                                    <div className="space-y-2">
+                                                                        {qData.sub_criteria.map((criteria, cIdx) => (
+                                                                            <div key={cIdx} className="flex items-start gap-2">
+                                                                                {criteria.covered ? (
+                                                                                    <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+                                                                                ) : criteria.score > 0 ? (
+                                                                                    <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
+                                                                                ) : (
+                                                                                    <XCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                                                                                )}
+                                                                                <span className="text-sm text-gray-700">{criteria.name}</span>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                            <div className="text-sm text-gray-600">
+                                                                <span className="font-medium text-gray-700">Reasoning:</span> {qData.reasoning}
+                                                            </div>
+                                                        </Card>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Transcript Accordion */}
+                                        {liveSession.transcript && liveSession.transcript.length > 0 && (
+                                            <details className="group bg-white rounded-xl shadow-sm border border-gray-200">
+                                                <summary className="p-4 font-semibold text-gray-800 cursor-pointer list-none flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <FileText className="w-5 h-5 text-indigo-500" />
+                                                        Session Transcript
+                                                    </div>
+                                                    <span className="transition group-open:rotate-180">
+                                                        <svg fill="none" height="24" shape-rendering="geometricPrecision" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="24"><path d="M6 9l6 6 6-6"></path></svg>
+                                                    </span>
+                                                </summary>
+                                                <div className="p-4 pt-0 border-t border-gray-100 max-h-96 overflow-y-auto space-y-4">
+                                                    {liveSession.transcript.map((msg, i) => (
+                                                        <div key={i} className={`flex ${msg.role === 'ai' ? 'justify-start' : 'justify-end'}`}>
+                                                            <div className={`max-w-[80%] rounded-2xl px-4 py-2 ${
+                                                                msg.role === 'ai' 
+                                                                    ? 'bg-indigo-50 text-indigo-900 rounded-tl-sm' 
+                                                                    : 'bg-gray-100 text-gray-800 rounded-tr-sm'
+                                                            }`}>
+                                                                <p className="text-xs font-bold mb-1 opacity-70 uppercase tracking-wider">{msg.role === 'ai' ? 'Interviewer' : 'You'}</p>
+                                                                <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </details>
+                                        )}
+                                    </div>
+                                )}
+                            </Card>
+                        </div>
+                    ) : (
+                        <>
+                            {/* ═══ LEFT: CANDIDATES LIST ═══ */}
                     <div className="col-span-1 space-y-4">
                         <Card className="p-4">
                             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -581,6 +795,8 @@ export function InterviewMonitoringPage() {
                             )
                         )}
                     </div>
+                        </>
+                    )}
                 </div>
             </div>
         </div>
