@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2, Circle, ChevronRight, Loader2, Sparkles, Save, ShieldAlert } from 'lucide-react';
+import { CheckCircle2, Circle, ChevronRight, Loader2, Sparkles, Save, ShieldAlert, Clock } from 'lucide-react';
 
 import { DimensionSelector } from './DimensionSelector';
 import { RubricEditor } from './RubricEditor';
@@ -20,6 +20,8 @@ export function ConfigWizardV2({ groupId, stageId, onComplete }: ConfigWizardV2P
   const [bankId, setBankId] = useState<string | null>(null);
   const [isFrozen, setIsFrozen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [timeBudgetMinutes, setTimeBudgetMinutes] = useState<number>(30);
+  const [settingsSaved, setSettingsSaved] = useState<boolean>(false);
 
   const steps = [
     { id: 1, title: 'Dimensions', description: 'Define what to measure' },
@@ -34,9 +36,12 @@ export function ConfigWizardV2({ groupId, stageId, onComplete }: ConfigWizardV2P
       try {
         setIsLoading(true);
         // Try getting existing rubric
-        const rubricRes = await fetchAPI<{ rubric_id?: string; state?: string }>(`/live-interview-v2/rubric/group/${groupId}`);
+        const rubricRes = await fetchAPI<{ rubric_id?: string; state?: string; time_budget_minutes?: number }>(`/live-interview-v2/rubric/group/${groupId}`);
         if (rubricRes && rubricRes.rubric_id) {
           setRubricId(rubricRes.rubric_id);
+          if (rubricRes.time_budget_minutes) {
+             setTimeBudgetMinutes(rubricRes.time_budget_minutes);
+          }
           
           if (rubricRes.state === 'frozen') {
             setIsFrozen(true);
@@ -74,6 +79,21 @@ export function ConfigWizardV2({ groupId, stageId, onComplete }: ConfigWizardV2P
 
   const handleNext = () => setCurrentStep(prev => Math.min(prev + 1, 4));
   const handlePrev = () => setCurrentStep(prev => Math.max(prev - 1, 1));
+
+  const handleTimeBudgetChange = async (minutes: number) => {
+    if (!rubricId) return;
+    setTimeBudgetMinutes(minutes);
+    try {
+        await fetchAPI(`/live-interview-v2/rubric/${rubricId}/settings`, {
+            method: 'PUT',
+            body: JSON.stringify({ time_budget_minutes: minutes }),
+        });
+        setSettingsSaved(true);
+        setTimeout(() => setSettingsSaved(false), 2000);
+    } catch (e) {
+        console.error("Failed to save time budget", e);
+    }
+  };
 
   if (isLoading) {
       return (
@@ -153,13 +173,40 @@ export function ConfigWizardV2({ groupId, stageId, onComplete }: ConfigWizardV2P
             )}
             
             {currentStep === 2 && (
-              <RubricEditor 
-                groupId={groupId} 
-                rubricId={rubricId}
-                isFrozen={isFrozen}
-                onBack={handlePrev}
-                onSave={() => handleNext()} 
-              />
+              <div className="space-y-6">
+                <div className="bg-white p-4 rounded-xl border border-gray-200 flex items-center justify-between">
+                   <div className="flex items-center gap-3">
+                      <Clock className="w-5 h-5 text-indigo-500" />
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900">Interview Time Budget</h3>
+                        <p className="text-xs text-gray-500">Maximum duration for the AI interview session.</p>
+                      </div>
+                   </div>
+                   <div className="flex items-center gap-3">
+                     {settingsSaved && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                     <select
+                        value={timeBudgetMinutes}
+                        onChange={(e) => handleTimeBudgetChange(Number(e.target.value))}
+                        disabled={isFrozen}
+                        className="text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 py-1.5 pl-3 pr-8"
+                     >
+                        <option value={5}>5 Minutes</option>
+                        <option value={10}>10 Minutes</option>
+                        <option value={15}>15 Minutes</option>
+                        <option value={20}>20 Minutes</option>
+                        <option value={25}>25 Minutes</option>
+                        <option value={30}>30 Minutes</option>
+                     </select>
+                   </div>
+                </div>
+                <RubricEditor 
+                  groupId={groupId} 
+                  rubricId={rubricId}
+                  isFrozen={isFrozen}
+                  onBack={handlePrev}
+                  onSave={() => handleNext()} 
+                />
+              </div>
             )}
             
             {currentStep === 3 && (
