@@ -104,6 +104,7 @@ interface CandidateStatus {
   offer: 'completed' | 'pending' | 'not-started' | 'failed';
   assessmentScore: number;
   aiInterviewScore: number;
+  liveInterviewScore: number;
   flags: string[];
   currentStage: string;
   technicalVerdict?: 'pass' | 'fail' | 'conditional';
@@ -362,6 +363,7 @@ export function EnhancedGroupOverviewV2({
           offer: 'not-started',
           assessmentScore: c.assessment?.score || 0,
           aiInterviewScore: c.ai_interview?.score || 0,
+          liveInterviewScore: c.live_interview?.score || 0,
           flags: c.flags ? c.flags.map((f: any) => f.description) : [],
           currentStage: c.currentStage || 'assessment',
           technicalVerdict: c.verdict === 'pass' || c.verdict === 'fail' || c.verdict === 'conditional' ? c.verdict : undefined,
@@ -1084,6 +1086,7 @@ export function EnhancedGroupOverviewV2({
             phone: c.phone || `+1-555-${String(c.id).padStart(4, '0')}`,
             assessmentScore: c.assessmentScore,
             aiInterviewScore: c.aiInterviewScore,
+            liveInterviewScore: c.liveInterviewScore,
             flags: c.flags,
             meetsCriteria: c.meetsCriteria,
             technicalVerdict: c.technicalVerdict,
@@ -1419,20 +1422,22 @@ export function EnhancedGroupOverviewV2({
                       {(!activeFlow.includes('live-interview') && interviewConfigId) && <CheckCircle size={16} className="text-white ml-1" />}
                     </button>
                   )}
-
-                  {/* Session Monitor button — only for Live Interview V2 groups */}
-                  {(activeFlow.includes('live-interview') || activeFlow.includes('live_interview')) && (
-                    <button
-                      onClick={() => setShowLiveMonitor(true)}
-                      className="flex items-center justify-center gap-2 h-[40px] px-[14px] rounded-[8px] bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors"
-                      title="Open real-time session monitoring dashboard"
-                    >
-                      <Activity size={16} />
-                      <span className="font-['Arimo',sans-serif] text-[14px]">Monitor</span>
-                    </button>
-                  )}
                 </div>
 
+              </div>
+            )}
+
+            {/* Session Monitor button — available to both HR and Technical */}
+            {(activeFlow.includes('live-interview') || activeFlow.includes('live_interview')) && (userRole === 'technical' || userRole === 'recruiter') && (
+              <div className="mt-3">
+                <button
+                  onClick={() => setShowLiveMonitor(true)}
+                  className="flex items-center justify-center gap-2 h-[40px] px-[14px] rounded-[8px] bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors"
+                  title="Open real-time session monitoring dashboard"
+                >
+                  <Activity size={16} />
+                  <span className="font-['Arimo',sans-serif] text-[14px]">Monitor</span>
+                </button>
               </div>
             )}
           </div>
@@ -1917,6 +1922,11 @@ export function EnhancedGroupOverviewV2({
                                 <td key={stageType} className="p-4 text-center">
                                   <div className="flex flex-col items-center gap-1 mx-auto">
                                     {getStatusIcon(candidate.liveInterview)}
+                                    {candidate.liveInterviewScore > 0 && (
+                                      <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1]">
+                                        {candidate.liveInterviewScore}%
+                                      </span>
+                                    )}
 
                                     {candidate.liveInterviewScheduledAt ? (
                                       <div className="flex flex-col items-center mt-1">
