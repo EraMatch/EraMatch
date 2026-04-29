@@ -17,9 +17,10 @@ when bank items are unavailable or per-question scoring fails.
 
 import json
 import logging
+import math
 import os
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -43,6 +44,86 @@ _FALLBACK_JUDGE_MODEL = os.getenv("FALLBACK_JUDGE_MODEL", "gemma3:4b-cloud")
 
 
 # =============================================================================
+# HELPERS — safe numeric conversions
+# =============================================================================
+
+
+def _safe_int(value, default: int = 0) -> int:
+    """Convert a value to int, returning default if conversion fails or value is NaN/Inf."""
+    try:
+        f = float(value)
+        if math.isnan(f) or math.isinf(f):
+            return default
+        return int(f)
+    except (TypeError, ValueError):
+        return default
+
+
+def _clamp(value, low, high):
+    """Clamp a numeric value to [low, high]."""
+    try:
+        f = float(value)
+        if math.isnan(f) or math.isinf(f):
+            return low
+        return max(low, min(high, f))
+    except (TypeError, ValueError):
+        return low
+
+
+def _safe_decimal(value, default: Decimal = Decimal("0")) -> Decimal:
+    """Convert a value to Decimal, returning default if conversion fails."""
+    try:
+        d = Decimal(str(value))
+        if d.is_nan() or d.is_infinite():
+            return default
+        return d
+    except (InvalidOperation, TypeError, ValueError):
+        return default
+
+
+def _normalize_sub_criteria(
+    raw_sub_criteria: list, expected_names: list[str]
+) -> list[dict]:
+    """Normalize and validate LLM-returned sub_criteria scores.
+
+    - Clamp each score to [1, 3]
+    - Ensure every expected sub-criterion has an entry
+    - Fill missing entries with score=1, covered=False
+    """
+    result = []
+    seen_names = set()
+
+    for sc in raw_sub_criteria:
+        if not isinstance(sc, dict):
+            continue
+        name = str(sc.get("name", ""))
+        score = _safe_int(sc.get("score"), default=1)
+        score = max(1, min(3, score))
+        result.append(
+            {
+                "name": name,
+                "score": score,
+                "covered": bool(sc.get("covered", False)),
+                "cited_quote": str(sc.get("cited_quote", "")),
+            }
+        )
+        seen_names.add(name.lower().strip())
+
+    for expected_name in expected_names:
+        if expected_name.lower().strip() not in seen_names:
+            result.append(
+                {
+                    "name": expected_name,
+                    "score": 1,
+                    "covered": False,
+                    "cited_quote": "",
+                }
+            )
+
+    return result
+
+
+# =============================================================================
 # ENTRY POINT
 # =============================================================================
 
@@ -59,29 +140,96 @@ async def run_judge_pipeline(session_id: str):
         )
 
 
+async def _create_fail_evaluation(db, session, reason: str):
+    """Create a minimal evaluation record marking the session as failed."""
+    try:
+        existing = await db.execute(
+            select(LiV2Evaluation).where(LiV2Evaluation.session_id == session.id)
+        )
+        evaluation = existing.scalar_one_or_none()
+        if not evaluation:
+            evaluation = LiV2Evaluation(
+                session_id=session.id,
+                organization_id=session.organization_id,
+            )
+        evaluation.overall_score = Decimal("0.0")
+        evaluation.overall_score_pct = 0
+        evaluation.auto_verdict = "fail"
+        evaluation.meets_criteria = False
+        evaluation.coverage_ratio = Decimal("0.0")
+        evaluation.dimension_scores = {}
+        evaluation.evaluation_confidence = "low"
+        evaluation.judged_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.add(evaluation)
+        await db.commit()
+        await db.refresh(evaluation)
+
+        stage_res = await db.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == session.group_id,
+                GroupStageConfig.organization_id == session.organization_id,
+                GroupStageConfig.stage_type == "live_interview",
+            )
+        )
+        stage = stage_res.scalar_one_or_none()
+        if stage:
+            prog_res = await db.execute(
+                select(CandidateStageProgress).where(
+                    CandidateStageProgress.application_id == session.application_id,
+                    CandidateStageProgress.stage_id == stage.stage_id,
+                )
+            )
+            progress = prog_res.scalar_one_or_none()
+            if progress:
+                progress.status = "completed"
+                progress.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                progress.score = Decimal("0")
+                progress.max_score = Decimal("100")
+                progress.passed = False
+                db.add(progress)
+                await db.commit()
+    except Exception as e:
+        logger.error("[Judge] Failed to create fail evaluation: %s", e, exc_info=True)
+
+
 async def _execute_pipeline(db, session_id: str):
     result = await db.execute(select(LiV2Session).where(LiV2Session.id == session_id))
     session = result.scalar_one_or_none()
     if not session:
-        logger.error(f"[Judge] Session {session_id} not found")
+        logger.error("[Judge] Session %s not found", session_id)
         return
 
     transcript = session.transcript or []
     if not transcript:
-        logger.warning(f"[Judge] Empty transcript for session {session_id} — skipping")
+        logger.warning(
+            "[Judge] Empty transcript for session %s — creating fail evaluation",
+            session_id,
+        )
+        await _create_fail_evaluation(
+            db,
+            session,
+            reason="Empty transcript — no interview content to evaluate",
+        )
         return
+
+    if len(transcript) < 3:
+        logger.warning(
+            "[Judge] Very short transcript (%d turns) for session %s — confidence will be low",
+            len(transcript),
+            session_id,
+        )
 
     rubric_result = await db.execute(
         select(LiV2Rubric).where(LiV2Rubric.id == session.rubric_id)
     )
     rubric = rubric_result.scalar_one_or_none()
     if not rubric:
-        logger.error(f"[Judge] Rubric {session.rubric_id} not found")
+        logger.error("[Judge] Rubric %s not found", session.rubric_id)
         return
 
     dimensions = rubric.dimensions or []
     if not dimensions:
-        logger.warning(f"[Judge] Rubric has no dimensions — skipping")
+        logger.warning("[Judge] Rubric has no dimensions — skipping")
         return
 
     bank_result = await db.execute(
@@ -91,6 +239,11 @@ async def _execute_pipeline(db, session_id: str):
     bank_items = []
     if bank and bank.items:
         bank_items = bank.items
+    else:
+        logger.warning(
+            "[Judge] No bank items for session %s — will use dimension-level scoring only",
+            session_id,
+        )
 
     llm = get_llm("gemini", model=_JUDGE_MODEL, temperature=0.1)
     fallback_llm = get_llm("ollama", model=_FALLBACK_JUDGE_MODEL, temperature=0.1)
@@ -313,9 +466,6 @@ def _extract_question_evidence(
     if not bank_items:
         return []
 
-    # Build pillar_idx → question mapping from bank items
-    # Bank items are ordered: mandatory first, then optional.
-    # pillar_idx in transcript corresponds to their position in bank.items list.
     question_map: dict[int, dict] = {}
     for idx, item in enumerate(bank_items):
         rubric = item.get("question_rubric") or {}
@@ -336,14 +486,22 @@ def _extract_question_evidence(
             "pillar_idx": idx,
         }
 
-    # Group transcript turns by pillar_idx
-    # Turns without pillar_idx (welcome=0, closing) are excluded
     pillar_turns: dict[int, list[dict]] = {}
+    out_of_bounds_indices = set()
     for turn in transcript:
         pidx = turn.get("pillar_idx")
         if pidx is None:
             continue
+        if pidx not in question_map:
+            out_of_bounds_indices.add(pidx)
         pillar_turns.setdefault(pidx, []).append(turn)
+
+    if out_of_bounds_indices:
+        logger.warning(
+            "[JUDGE-P2] Found out-of-bounds pillar_idx values: %s (bank has %d items)",
+            sorted(out_of_bounds_indices),
+            len(bank_items),
+        )
 
     results = []
     for pidx, qinfo in question_map.items():
@@ -364,6 +522,15 @@ def _extract_question_evidence(
                 candidate_answers.append(text)
 
         if not candidate_answers:
+            results.append(
+                {
+                    "question_text": qinfo["question_text"],
+                    "dimension_id": qinfo["dimension_id"],
+                    "candidate_answer": "",
+                    "sub_criteria": qinfo["sub_criteria"],
+                    "pillar_idx": pidx,
+                }
+            )
             continue
 
         results.append(
@@ -473,11 +640,27 @@ Respond ONLY with valid JSON:
                 .strip()
             )
             parsed = json.loads(raw)
-            result_base["question_score"] = float(parsed.get("question_score", 1.0))
+            result_base["question_score"] = _clamp(
+                float(parsed.get("question_score", 1.0)), 1.0, 3.0
+            )
             result_base["anchor_matched"] = parsed.get("anchor_matched", "substandard")
+            if result_base["anchor_matched"] not in (
+                "substandard",
+                "proficient",
+                "excellent",
+            ):
+                logger.warning(
+                    "[JUDGE-P2-Q] pillar %s invalid anchor '%s' — defaulting to substandard",
+                    qe["pillar_idx"],
+                    result_base["anchor_matched"],
+                )
+                result_base["anchor_matched"] = "substandard"
             result_base["reasoning"] = parsed.get("reasoning", "")
             result_base["cited_quote"] = parsed.get("cited_quote", "")
-            result_base["sub_criteria"] = parsed.get("sub_criteria_scores", [])
+            raw_sub_criteria = parsed.get("sub_criteria_scores", [])
+            result_base["sub_criteria"] = _normalize_sub_criteria(
+                raw_sub_criteria, sub_criteria
+            )
         except Exception as primary_exc:
             logger.warning(
                 "[JUDGE-P2-Q] pillar %s primary failed: %s — trying fallback",
@@ -494,13 +677,24 @@ Respond ONLY with valid JSON:
                     .strip()
                 )
                 parsed = json.loads(raw)
-                result_base["question_score"] = float(parsed.get("question_score", 1.0))
+                result_base["question_score"] = _clamp(
+                    float(parsed.get("question_score", 1.0)), 1.0, 3.0
+                )
                 result_base["anchor_matched"] = parsed.get(
                     "anchor_matched", "substandard"
                 )
+                if result_base["anchor_matched"] not in (
+                    "substandard",
+                    "proficient",
+                    "excellent",
+                ):
+                    result_base["anchor_matched"] = "substandard"
                 result_base["reasoning"] = parsed.get("reasoning", "")
                 result_base["cited_quote"] = parsed.get("cited_quote", "")
-                result_base["sub_criteria"] = parsed.get("sub_criteria_scores", [])
+                raw_sub_criteria = parsed.get("sub_criteria_scores", [])
+                result_base["sub_criteria"] = _normalize_sub_criteria(
+                    raw_sub_criteria, sub_criteria
+                )
                 logger.info(
                     "[JUDGE-P2-Q] pillar %s fallback succeeded", qe["pillar_idx"]
                 )
@@ -593,6 +787,14 @@ Respond ONLY with valid JSON:
                 .strip()
             )
             parsed = json.loads(raw)
+            score_val = _safe_int(parsed.get("score"), default=1)
+            parsed["score"] = max(1, min(3, score_val))
+            if parsed.get("anchor_matched") not in (
+                "substandard",
+                "proficient",
+                "excellent",
+            ):
+                parsed["anchor_matched"] = "substandard"
             parsed["weight"] = weight
             parsed["dimension_name"] = dim.get("name", dim_id)
             results[dim_id] = parsed
@@ -612,6 +814,14 @@ Respond ONLY with valid JSON:
                     .strip()
                 )
                 parsed = json.loads(raw)
+                score_val = _safe_int(parsed.get("score"), default=1)
+                parsed["score"] = max(1, min(3, score_val))
+                if parsed.get("anchor_matched") not in (
+                    "substandard",
+                    "proficient",
+                    "excellent",
+                ):
+                    parsed["anchor_matched"] = "substandard"
                 parsed["weight"] = weight
                 parsed["dimension_name"] = dim.get("name", dim_id)
                 results[dim_id] = parsed
@@ -653,55 +863,52 @@ def _phase_c_score_with_questions(
 
     Returns (overall_pct, overall_raw, coverage_ratio, dimension_results_dict).
     """
-    score_map = {1: 0.0, 2: 0.5, 3: 1.0}
+    score_map = {1: Decimal("0"), 2: Decimal("0.5"), 3: Decimal("1")}
     dim_by_id = {d.get("dimension_id", d.get("name", "")): d for d in dimensions}
 
-    # Group questions by dimension
     dim_questions: dict[str, list] = {}
     for qr in per_question_results:
         dim_id = qr.get("dimension_id", "")
         dim_questions.setdefault(dim_id, []).append(qr)
 
-    # Compute per-dimension results from per-question averages
     dimension_results = {}
 
     for dim in dimensions:
         dim_id = dim.get("dimension_id", dim.get("name", ""))
         dim_name = dim.get("name", dim_id)
-        weight = float(dim.get("weight", 1.0 / max(len(dimensions), 1)))
+        weight = Decimal(str(dim.get("weight", 1.0 / max(len(dimensions), 1))))
         anchors = dim.get("anchors", {})
         questions = dim_questions.get(dim_id, [])
 
         if not questions:
-            # No questions for this dimension — default to substandard
             dimension_results[dim_id] = {
                 "score": 1,
                 "anchor_matched": "substandard",
                 "cited_quote": "",
                 "reasoning": "No questions were asked for this dimension.",
-                "weight": weight,
+                "weight": float(weight),
                 "dimension_name": dim_name,
             }
             continue
 
-        # Average question scores, map 1-3 scale to 0-100%
-        avg_q_score = sum(q.get("question_score", 1.0) for q in questions) / len(
-            questions
+        avg_q_score = sum(
+            Decimal(str(_clamp(q.get("question_score", 1.0), 1.0, 3.0)))
+            for q in questions
+        ) / Decimal(str(len(questions)))
+        normalized_pct = int(
+            ((avg_q_score - Decimal("1")) / Decimal("2")) * Decimal("100")
         )
-        # Normalize: 1→0%, 2→50%, 3→100%
-        normalized_pct = round((avg_q_score - 1) / 2 * 100)
-        # Map back to 1-3 for anchor matching
-        if avg_q_score >= 2.5:
+
+        if avg_q_score >= Decimal("2.5"):
             anchor = "excellent"
             dim_score = 3
-        elif avg_q_score >= 1.5:
+        elif avg_q_score >= Decimal("1.5"):
             anchor = "proficient"
             dim_score = 2
         else:
             anchor = "substandard"
             dim_score = 1
 
-        # Collect all sub-criteria cited quotes as dimension-level evidence
         all_cited = []
         all_reasoning = []
         for q in questions:
@@ -717,19 +924,18 @@ def _phase_c_score_with_questions(
             "anchor_matched": anchor,
             "cited_quote": all_cited[0] if all_cited else "",
             "reasoning": "; ".join(all_reasoning) if all_reasoning else "",
-            "weight": weight,
+            "weight": float(weight),
             "dimension_name": dim_name,
         }
 
-    # Weighted aggregation across dimensions
-    total_weight = 0.0
-    weighted_sum = 0.0
+    total_weight = Decimal("0")
+    weighted_sum = Decimal("0")
     covered_dimensions = 0
 
     for dim_id, result in dimension_results.items():
-        weight = float(result.get("weight", 0.0))
-        raw_score = int(result.get("score", 1))
-        normalized = score_map.get(raw_score, 0.0)
+        weight = Decimal(str(result.get("weight", 0.0)))
+        raw_score = _safe_int(result.get("score", 1), default=1)
+        normalized = score_map.get(raw_score, Decimal("0"))
 
         weighted_sum += normalized * weight
         total_weight += weight
@@ -739,13 +945,21 @@ def _phase_c_score_with_questions(
     if total_weight == 0:
         return 0, Decimal("0.0"), Decimal("0.0"), dimension_results
 
+    if abs(total_weight - Decimal("1")) > Decimal("0.05"):
+        logger.warning(
+            "[JUDGE-P3] Dimension weights sum to %s (expected ~1.0) — normalizing",
+            total_weight,
+        )
+
     overall_raw = weighted_sum / total_weight
-    overall_pct = round(overall_raw * 100)
-    coverage_ratio = Decimal(str(round(covered_dimensions / len(dimension_results), 3)))
+    overall_pct = int(overall_raw * Decimal("100"))
+    coverage_ratio = Decimal(
+        str(round(covered_dimensions / max(len(dimension_results), 1), 3))
+    )
 
     return (
         overall_pct,
-        Decimal(str(round(overall_raw, 4))),
+        overall_raw.quantize(Decimal("0.0001")),
         coverage_ratio,
         dimension_results,
     )
@@ -761,16 +975,16 @@ def _phase_c_score(
     if not dimension_results:
         return 0, Decimal("0.0"), Decimal("0.0")
 
-    score_map = {1: 0.0, 2: 0.5, 3: 1.0}
+    score_map = {1: Decimal("0"), 2: Decimal("0.5"), 3: Decimal("1")}
 
-    total_weight = 0.0
-    weighted_sum = 0.0
+    total_weight = Decimal("0")
+    weighted_sum = Decimal("0")
     covered_dimensions = 0
 
     for dim_id, result in dimension_results.items():
-        weight = float(result.get("weight", 0.0))
-        raw_score = int(result.get("score", 1))
-        normalized = score_map.get(raw_score, 0.0)
+        weight = Decimal(str(result.get("weight", 0.0)))
+        raw_score = _safe_int(result.get("score", 1), default=1)
+        normalized = score_map.get(raw_score, Decimal("0"))
 
         weighted_sum += normalized * weight
         total_weight += weight
@@ -780,11 +994,19 @@ def _phase_c_score(
     if total_weight == 0:
         return 0, Decimal("0.0"), Decimal("0.0")
 
-    overall_raw = weighted_sum / total_weight
-    overall_pct = round(overall_raw * 100)
-    coverage_ratio = Decimal(str(round(covered_dimensions / len(dimension_results), 3)))
+    if abs(total_weight - Decimal("1")) > Decimal("0.05"):
+        logger.warning(
+            "[JUDGE-P3] Dimension weights sum to %s (expected ~1.0) — normalizing",
+            total_weight,
+        )
 
-    return overall_pct, Decimal(str(round(overall_raw, 4))), coverage_ratio
+    overall_raw = weighted_sum / total_weight
+    overall_pct = int(overall_raw * Decimal("100"))
+    coverage_ratio = Decimal(
+        str(round(covered_dimensions / max(len(dimension_results), 1), 3))
+    )
+
+    return overall_pct, overall_raw.quantize(Decimal("0.0001")), coverage_ratio
 
 
 # =============================================================================
@@ -792,7 +1014,11 @@ def _phase_c_score(
 # =============================================================================
 
 
-def _auto_verdict(score_pct: int) -> str:
+def _auto_verdict(score_pct) -> str:
+    if isinstance(score_pct, Decimal):
+        score_pct = int(score_pct)
+    else:
+        score_pct = _safe_int(score_pct, default=0)
     if score_pct >= 80:
         return "strong_pass"
     elif score_pct >= 60:
@@ -854,7 +1080,8 @@ async def _upsert_evaluation(
 
     if per_question_results is not None:
         evaluation.per_question_results = {
-            qr.get("question_text", f"pillar_{qr.get('pillar_idx', 'unknown')}"): {
+            f"pillar_{qr.get('pillar_idx', idx)}": {
+                "question_text": qr.get("question_text"),
                 "question_score": qr.get("question_score"),
                 "dimension_id": qr.get("dimension_id"),
                 "dimension_name": qr.get("dimension_name"),
@@ -864,7 +1091,7 @@ async def _upsert_evaluation(
                 "cited_quote": qr.get("cited_quote"),
                 "weight": qr.get("weight"),
             }
-            for qr in per_question_results
+            for idx, qr in enumerate(per_question_results)
         }
     elif evaluation.per_question_results is None:
         evaluation.per_question_results = None

@@ -890,11 +890,287 @@ def validate_per_question_results(pq_results: list) -> list[str]:
 
 
 # ===========================================================================
+# EDGE CASE UNIT TESTS
+# ===========================================================================
+
+
+def test_empty_transcript_question_evidence():
+    """Empty transcript should produce no question evidence."""
+    result = _extract_question_evidence([], MOCK_BANK_ITEMS)
+    assert result == [], f"Expected empty list, got {result}"
+    print("  ✓ test_empty_transcript_question_evidence passed")
+
+
+def test_single_turn_transcript_question_evidence():
+    """Single turn (welcome only, no pillar_idx) should produce no question evidence."""
+    single_turn = [
+        {
+            "role": "agent",
+            "text": "Welcome to the interview",
+            "pillar_idx": None,
+            "phase": "welcome",
+        },
+    ]
+    result = _extract_question_evidence(single_turn, MOCK_BANK_ITEMS)
+    assert result == [], f"Expected empty list for single welcome turn, got {result}"
+    print("  ✓ test_single_turn_transcript_question_evidence passed")
+
+
+def test_empty_bank_items():
+    """Empty bank items should produce no question evidence regardless of transcript."""
+    result = _extract_question_evidence(MOCK_TRANSCRIPT, [])
+    assert result == [], f"Expected empty list for empty bank, got {result}"
+    print("  ✓ test_empty_bank_items passed")
+
+
+def test_out_of_bounds_pillar_idx():
+    """Transcript turns with out-of-bounds pillar_idx should be handled."""
+    transcript_with_oob = [
+        {"role": "agent", "text": "Welcome.", "pillar_idx": None, "phase": "welcome"},
+        {
+            "role": "agent",
+            "text": "Tell me about X.",
+            "pillar_idx": 5,
+            "phase": "question",
+        },
+        {
+            "role": "candidate",
+            "text": "I know about X.",
+            "pillar_idx": 5,
+            "phase": "answer",
+        },
+    ]
+    result = _extract_question_evidence(transcript_with_oob, MOCK_BANK_ITEMS)
+    assert result == [], (
+        f"Out-of-bounds pillar_idx 5 should produce no results (bank has 3 items), got {result}"
+    )
+    print("  ✓ test_out_of_bounds_pillar_idx passed")
+
+
+def test_candidate_empty_answer():
+    """Questions where candidate gave empty answers should still appear with empty string."""
+    transcript_silent = [
+        {"role": "agent", "text": "Welcome.", "pillar_idx": None, "phase": "welcome"},
+        {
+            "role": "agent",
+            "text": "Tell me about React.",
+            "pillar_idx": 0,
+            "phase": "question",
+        },
+        {"role": "candidate", "text": "", "pillar_idx": 0, "phase": "answer"},
+    ]
+    result = _extract_question_evidence(transcript_silent, MOCK_BANK_ITEMS)
+    assert len(result) == 1, (
+        f"Expected 1 result for silent candidate, got {len(result)}"
+    )
+    assert result[0]["candidate_answer"] == "", (
+        f"Expected empty candidate_answer for silent candidate, got '{result[0]['candidate_answer']}'"
+    )
+    print("  ✓ test_candidate_empty_answer passed")
+
+
+def test_no_candidate_turns():
+    """Pillar with only agent turns (no candidate response) should produce entry with empty answer."""
+    transcript_no_answer = [
+        {
+            "role": "agent",
+            "text": "Tell me about React.",
+            "pillar_idx": 0,
+            "phase": "question",
+        },
+        {
+            "role": "agent",
+            "text": "Can you elaborate?",
+            "pillar_idx": 0,
+            "phase": "follow_up",
+        },
+    ]
+    result = _extract_question_evidence(transcript_no_answer, MOCK_BANK_ITEMS)
+    assert len(result) == 1, f"Expected 1 result, got {len(result)}"
+    assert result[0]["candidate_answer"] == "", (
+        f"Expected empty answer when no candidate turns, got '{result[0]['candidate_answer']}'"
+    )
+    print("  ✓ test_no_candidate_turns passed")
+
+
+def test_auto_verdict_boundary():
+    """Verdict thresholds should handle boundary values correctly."""
+    assert _auto_verdict(80) == "strong_pass"
+    assert _auto_verdict(79) == "pass"
+    assert _auto_verdict(60) == "pass"
+    assert _auto_verdict(59) == "borderline"
+    assert _auto_verdict(40) == "borderline"
+    assert _auto_verdict(39) == "fail"
+    assert _auto_verdict(0) == "fail"
+    assert _auto_verdict(100) == "strong_pass"
+    print("  ✓ test_auto_verdict_boundary passed")
+
+
+def test_confidence_empty_results():
+    """Confidence should be 'low' for empty results."""
+    assert _confidence_from_results({}) == "low"
+    assert _confidence_from_results({"d1": {"cited_quote": ""}}) == "low"
+    assert _confidence_from_results({"d1": {"cited_quote": "hello"}}) == "low"
+    assert (
+        _confidence_from_results(
+            {"d1": {"cited_quote": "hello"}, "d2": {"cited_quote": "world"}}
+        )
+        == "medium"
+    )
+    print("  ✓ test_confidence_empty_results passed")
+
+
+def test_score_with_empty_per_question_results():
+    """If no per-question results for a dimension, it defaults to substandard."""
+    dimensions = MOCK_RUBRIC_DIMENSIONS
+    per_question_results = []
+    overall_pct, overall_score, coverage_ratio, dim_results = (
+        _phase_c_score_with_questions(per_question_results, dimensions)
+    )
+    assert overall_pct == 0, (
+        f"Expected 0% for empty per-question results, got {overall_pct}%"
+    )
+    for dim_id, result in dim_results.items():
+        assert result["score"] == 1, (
+            f"Expected substandard (1) for dimension {dim_id}, got {result['score']}"
+        )
+        assert result["anchor_matched"] == "substandard"
+    print("  ✓ test_score_with_empty_per_question_results passed")
+
+
+def test_score_with_dimension_weights_not_summing_to_one():
+    """Weights that don't sum to 1.0 should still produce correct scores via normalization."""
+    dimensions_bad_weights = [
+        {
+            "dimension_id": "d1",
+            "name": "Dim1",
+            "weight": 0.5,
+            "anchors": {"substandard": "bad", "proficient": "ok", "excellent": "great"},
+        },
+        {
+            "dimension_id": "d2",
+            "name": "Dim2",
+            "weight": 0.3,
+            "anchors": {"substandard": "bad", "proficient": "ok", "excellent": "great"},
+        },
+        {
+            "dimension_id": "d3",
+            "name": "Dim3",
+            "weight": 0.2,
+            "anchors": {"substandard": "bad", "proficient": "ok", "excellent": "great"},
+        },
+    ]
+    dimension_results = {
+        "d1": {
+            "score": 2,
+            "anchor_matched": "proficient",
+            "cited_quote": "test",
+            "reasoning": "ok",
+            "weight": 0.5,
+            "dimension_name": "Dim1",
+        },
+        "d2": {
+            "score": 2,
+            "anchor_matched": "proficient",
+            "cited_quote": "test",
+            "reasoning": "ok",
+            "weight": 0.3,
+            "dimension_name": "Dim2",
+        },
+        "d3": {
+            "score": 1,
+            "anchor_matched": "substandard",
+            "cited_quote": "",
+            "reasoning": "weak",
+            "weight": 0.2,
+            "dimension_name": "Dim3",
+        },
+    }
+    overall_pct, overall_score, coverage_ratio = _phase_c_score(
+        dimension_results, dimensions_bad_weights
+    )
+    assert isinstance(overall_pct, int), (
+        f"overall_pct should be int, got {type(overall_pct)}"
+    )
+    assert 0 <= overall_pct <= 100, f"overall_pct out of range: {overall_pct}"
+    assert 0.0 <= float(coverage_ratio) <= 1.0, (
+        f"coverage_ratio out of range: {coverage_ratio}"
+    )
+    expected = round((0.5 + 0.15) / 1.0 * 100)
+    assert overall_pct == expected, (
+        f"Expected {expected}% for weights [0.5,0.3,0.2] scores [2,2,1], got {overall_pct}%"
+    )
+    print("  ✓ test_score_with_dimension_weights_not_summing_to_one passed")
+
+
+def test_per_question_scoring_all_zeros():
+    """All substandard question scores should yield 0% overall."""
+    pq_results = [
+        {
+            "question_text": "Q1",
+            "question_score": 1.0,
+            "dimension_id": "technical_depth",
+            "dimension_name": "Technical Depth",
+            "weight": 0.4,
+            "pillar_idx": 0,
+            "anchor_matched": "substandard",
+            "reasoning": "weak",
+            "cited_quote": "",
+            "sub_criteria": [],
+        },
+    ]
+    overall_pct, overall_score, coverage_ratio, dim_results = (
+        _phase_c_score_with_questions(pq_results, MOCK_RUBRIC_DIMENSIONS)
+    )
+    assert overall_pct == 0, f"Expected 0% for all substandard, got {overall_pct}%"
+    print("  ✓ test_per_question_scoring_all_zeros passed")
+
+
+def test_format_transcript_empty():
+    """Formatting empty transcript should return fallback message."""
+    result = _format_transcript([])
+    assert result == "No transcript available.", f"Unexpected result: {result}"
+    print("  ✓ test_format_transcript_empty passed")
+
+
+def test_format_transcript_single_turn():
+    """Formatting a single turn transcript should work."""
+    result = _format_transcript([{"role": "agent", "text": "Hello"}])
+    assert "AGENT: Hello" in result, f"Expected 'AGENT: Hello' in: {result}"
+    print("  ✓ test_format_transcript_single_turn passed")
+
+
+def run_edge_case_tests():
+    print("\n" + "=" * 70)
+    print("         EDGE CASE UNIT TESTS")
+    print("=" * 70)
+
+    test_empty_transcript_question_evidence()
+    test_single_turn_transcript_question_evidence()
+    test_empty_bank_items()
+    test_out_of_bounds_pillar_idx()
+    test_candidate_empty_answer()
+    test_no_candidate_turns()
+    test_auto_verdict_boundary()
+    test_confidence_empty_results()
+    test_score_with_empty_per_question_results()
+    test_score_with_dimension_weights_not_summing_to_one()
+    test_per_question_scoring_all_zeros()
+    test_format_transcript_empty()
+    test_format_transcript_single_turn()
+
+    print("\n  ✅ All edge case tests passed!")
+    print("=" * 70)
+
+
+# ===========================================================================
 # MAIN
 # ===========================================================================
 
 
 async def main():
+    run_edge_case_tests()
+
     use_ollama = ollama_available()
     transcript_text = _format_transcript(MOCK_TRANSCRIPT)
 
