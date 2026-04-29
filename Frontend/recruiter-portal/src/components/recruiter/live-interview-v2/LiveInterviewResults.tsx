@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Clock, Award, TrendingUp, MessageSquare, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Clock, Award, TrendingUp, MessageSquare, RefreshCw, MinusCircle } from 'lucide-react';
 import { fetchAPI } from '../../../services/client';
 
 interface Anchor {
@@ -150,11 +150,25 @@ function DimensionCard({ dimId, result }: { dimId: string; result: DimensionScor
     const anchorClass = ANCHOR_COLOR[result.anchor_matched] || '';
     const scoreLabel = ['', 'Substandard', 'Proficient', 'Excellent'][result.score];
 
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            const next = (e.currentTarget.parentElement?.parentElement?.nextElementSibling?.querySelector('button') as HTMLElement);
+            if (next) next.focus();
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            const prev = (e.currentTarget.parentElement?.parentElement?.previousElementSibling?.querySelector('button') as HTMLElement);
+            if (prev) prev.focus();
+        }
+    };
+
     return (
-        <div className="border border-gray-200 rounded-xl overflow-hidden">
+        <div className="border border-gray-200 rounded-xl overflow-hidden h-full flex flex-col">
             <button
-                className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors"
+                aria-expanded={expanded}
+                className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 onClick={() => setExpanded(v => !v)}
+                onKeyDown={handleKeyDown}
             >
                 <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full flex items-center justify-center bg-indigo-100 text-indigo-700 text-sm font-bold">
@@ -166,7 +180,8 @@ function DimensionCard({ dimId, result }: { dimId: string; result: DimensionScor
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${anchorClass}`}>
+                    <span className={`flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full border ${anchorClass}`}>
+                        {result.score === 3 ? <CheckCircle className="w-3 h-3" /> : result.score === 2 ? <MinusCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                         {scoreLabel}
                     </span>
                     {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
@@ -178,7 +193,7 @@ function DimensionCard({ dimId, result }: { dimId: string; result: DimensionScor
                     {result.cited_quote && (
                         <div>
                             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Cited Quote</p>
-                            <blockquote className="border-l-4 border-indigo-400 pl-3 text-sm text-gray-700 italic">
+                            <blockquote className="border-l-4 border-indigo-400 pl-3 text-sm md:text-base text-gray-700 italic">
                                 "{result.cited_quote}"
                             </blockquote>
                         </div>
@@ -186,7 +201,7 @@ function DimensionCard({ dimId, result }: { dimId: string; result: DimensionScor
                     {result.reasoning && (
                         <div>
                             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Reasoning</p>
-                            <p className="text-sm text-gray-700">{result.reasoning}</p>
+                            <p className="text-sm md:text-base text-gray-700">{result.reasoning}</p>
                         </div>
                     )}
                 </div>
@@ -203,44 +218,58 @@ function PerQuestionCard({ result }: { result: PerQuestionResult }) {
     const anchorClass = ANCHOR_COLOR[result.anchor_matched] || '';
     const scoreLabel = result.question_score.toFixed(1);
 
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setExpanded(!expanded);
+        }
+    };
+
     return (
-        <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-            <button
-                className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors"
-                onClick={() => setExpanded((v) => !v)}
+        <details 
+            className="border border-gray-200 rounded-xl overflow-hidden bg-white group" 
+            aria-expanded={expanded} 
+            open={expanded}
+            onClick={(e) => { e.preventDefault(); setExpanded(!expanded); }}
+        >
+            <summary
+                className="w-full flex flex-col md:flex-row items-start md:items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors cursor-pointer focus:ring-2 focus:ring-indigo-500 focus:outline-none list-none [&::-webkit-details-marker]:hidden gap-3"
+                aria-label={`Question: ${result.question_text}. Score: ${scoreLabel} out of 3`}
+                onKeyDown={handleKeyDown}
+                tabIndex={0}
             >
-                <div className="flex items-center gap-3 overflow-hidden">
+                <div className="flex items-center gap-3 overflow-hidden w-full md:w-auto md:flex-1">
                     <div className="text-left truncate flex-1">
-                        <p className="font-medium text-gray-800 text-sm truncate" title={result.question_text}>
+                        <p className="font-medium text-gray-800 text-sm md:text-base truncate" title={result.question_text}>
                             {result.question_text}
                         </p>
                     </div>
                 </div>
-                <div className="flex items-center gap-3 ml-4 shrink-0">
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${anchorClass}`}>
+                <div className="flex items-center justify-between w-full md:w-auto gap-3 shrink-0">
+                    <span className={`flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full border ${anchorClass}`}>
+                        {result.question_score >= 2.5 ? <CheckCircle className="w-3 h-3" /> : result.question_score >= 1.5 ? <MinusCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                         Score: {scoreLabel} / 3.0
                     </span>
-                    {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+                    {expanded ? <ChevronUp className="w-4 h-4 text-gray-400 group-open:block" /> : <ChevronDown className="w-4 h-4 text-gray-400 group-open:hidden" />}
                 </div>
-            </button>
+            </summary>
 
-            {expanded && (
-                <div className="px-5 pb-5 border-t border-gray-100 bg-gray-50 space-y-4 pt-4">
+            <div className="px-5 pb-5 border-t border-gray-100 bg-gray-50 space-y-4 pt-4">
                     <div>
                         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Sub-Criteria</p>
-                        <div className="space-y-2">
+                        <div role="list" aria-label="Sub-criteria" className="space-y-2">
                             {result.sub_criteria.map((sub, idx) => (
-                                <div key={idx} className="flex items-start gap-2">
+                                <div role="listitem" aria-label={`${sub.name}: ${sub.score} out of 3`} key={idx} className="flex items-start gap-2">
                                     {sub.score === 3 ? (
-                                        <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                                        <CheckCircle className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
                                     ) : sub.score === 2 ? (
-                                        <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                                        <MinusCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
                                     ) : (
-                                        <XCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                                        <XCircle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
                                     )}
                                     <div>
-                                        <p className="text-sm text-gray-800">{sub.name}</p>
-                                        <p className="text-xs text-gray-500">Score: {sub.score}/3</p>
+                                        <p className="text-sm md:text-base text-gray-800 font-medium">{sub.name}</p>
+                                        <p className="text-xs md:text-sm text-gray-600">Score: {sub.score}/3</p>
                                     </div>
                                 </div>
                             ))}
@@ -250,7 +279,7 @@ function PerQuestionCard({ result }: { result: PerQuestionResult }) {
                     {result.cited_quote && (
                         <div>
                             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Cited Quote</p>
-                            <blockquote className="border-l-4 border-indigo-400 pl-3 text-sm text-gray-700 italic">
+                            <blockquote className="border-l-4 border-indigo-400 pl-3 text-sm md:text-base text-gray-700 italic">
                                 "{result.cited_quote}"
                             </blockquote>
                         </div>
@@ -259,12 +288,11 @@ function PerQuestionCard({ result }: { result: PerQuestionResult }) {
                     {result.reasoning && (
                         <div>
                             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Reasoning</p>
-                            <p className="text-sm text-gray-700">{result.reasoning}</p>
+                            <p className="text-sm md:text-base text-gray-700">{result.reasoning}</p>
                         </div>
                     )}
                 </div>
-            )}
-        </div>
+        </details>
     );
 }
 
@@ -294,7 +322,7 @@ function TranscriptAccordion({ turns }: { turns: TranscriptTurn[] }) {
                             <span className={`text-xs font-bold uppercase tracking-wide ${t.role === 'ai' ? 'text-indigo-500' : 'text-gray-500'} mr-2`}>
                                 {t.role === 'ai' ? 'Interviewer' : 'Candidate'}
                             </span>
-                            <span className="text-sm text-gray-700">{t.text}</span>
+                            <span className="text-sm md:text-base text-gray-700">{t.text}</span>
                         </div>
                     ))}
                 </div>
@@ -308,6 +336,16 @@ function TranscriptAccordion({ turns }: { turns: TranscriptTurn[] }) {
 // ---------------------------------------------------------------------------
 export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResultsProps) {
     const [data, setData] = useState<SessionData | null>(null);
+
+    useEffect(() => {
+        const handleGlobalKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && onClose) {
+                onClose();
+            }
+        };
+        window.addEventListener('keydown', handleGlobalKeyDown);
+        return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+    }, [onClose]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -365,7 +403,7 @@ export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResult
             {/* Header */}
             <div className="flex items-start justify-between">
                 <div>
-                    <h2 className="text-xl font-semibold text-gray-800">Live Interview Results</h2>
+                    <h2 className="text-xl md:text-2xl font-semibold text-gray-800">Live Interview Results</h2>
                     <p className="text-gray-500 text-sm mt-1">
                         Duration: {formatDuration(data.duration_seconds)}
                         {data.ended_at && ` · ${new Date(data.ended_at).toLocaleDateString()}`}
@@ -438,9 +476,11 @@ export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResult
                         {ev ? (
                             <>
                                 {/* Score + verdict */}
-                                <div className="bg-white border border-gray-200 rounded-2xl p-6 flex items-center gap-8 shadow-sm">
+                                <div role="region" aria-label={`Interview evaluation for session`} className="bg-white border border-gray-200 rounded-2xl p-6 flex flex-col md:flex-row items-center md:items-start gap-8 shadow-sm">
+                                    <div role="img" aria-label={`Score: ${ev.overall_score_pct} percent, ${ev.auto_verdict} verdict`} className="w-full md:w-auto flex justify-center">
                                     <ScoreRing pct={ev.overall_score_pct} />
-                                    <div className="space-y-3 flex-1">
+                                    </div>
+                                    <div className="space-y-3 flex-1 w-full text-center md:text-left">
                                         {verdictCfg && VerdictIcon && (
                                             <div className={`inline-flex items-center gap-2 text-white text-sm font-semibold px-4 py-1.5 rounded-full ${verdictCfg.color}`}>
                                                 <VerdictIcon className="w-4 h-4" />
@@ -478,9 +518,11 @@ export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResult
                                         <TrendingUp className="w-4 h-4" />
                                         Dimension Breakdown
                                     </h3>
-                                    <div className="space-y-2">
+                                    <div role="list" aria-label="Dimension scores" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                         {Object.entries(ev.dimension_scores || {}).map(([dimId, result]) => (
-                                            <DimensionCard key={dimId} dimId={dimId} result={result} />
+                                            <div role="listitem" key={dimId} aria-label={`${result.dimension_name || dimId}: ${result.score} out of 3`}>
+                                                <DimensionCard dimId={dimId} result={result} />
+                                            </div>
                                         ))}
                                     </div>
                                 </div>
