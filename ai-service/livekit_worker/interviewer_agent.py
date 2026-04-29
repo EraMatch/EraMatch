@@ -307,7 +307,7 @@ def _time_warning_closing_prompt(candidate_name: str, remaining_pillars: int) ->
 # ---------------------------------------------------------------------------
 class InterviewerAgent(Agent):
     """
-    on_session_start → set system prompt, generate greeting
+    on_enter → set system prompt, generate greeting
     on_user_turn_completed → check coverage, enforce time, decide next action
     """
 
@@ -347,9 +347,9 @@ class InterviewerAgent(Agent):
     # ------------------------------------------------------------------
     # Session start: fetch bank from metadata passed by agent_server.py
     # ------------------------------------------------------------------
-    async def on_session_start(self, session: AgentSession):
-        """Called by LiveKit when the agent joins the room and is ready."""
-        logger.info(f"[{self.session_id}] Session start — loading bank from context")
+    async def on_enter(self) -> None:
+        """Called by LiveKit when the agent joins the room."""
+        logger.info(f"[{self.session_id}] on_enter — loading bank from context")
         self.session_start_time = time.time()
 
         # bank_items injected at construction time (no userdata timing dependency)
@@ -391,7 +391,7 @@ class InterviewerAgent(Agent):
                 "You've seen the candidate's profile. "
                 "Greet them naturally by name only — no mention of their CV. "
             )
-        await session.generate_reply(
+        opening_reply = await self.session.generate_reply(
             instructions=(
                 f"Welcome {self.candidate_name} warmly to the EraMatch live interview. "
                 f"{cv_mention}"
@@ -399,6 +399,15 @@ class InterviewerAgent(Agent):
                 "Briefly explain how it works (you ask, they answer, natural back-and-forth). "
                 "Then ask them to introduce themselves."
             )
+        )
+        self.transcript.append(
+            {
+                "role": "agent",
+                "text": opening_reply.content or "",
+                "pillar_idx": None,
+                "phase": "welcome",
+                "elapsed_seconds": 0,
+            }
         )
         self.phase = "topic"
 
