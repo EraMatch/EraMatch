@@ -32,6 +32,25 @@ interface DimensionScore {
     dimension_name: string;
 }
 
+interface PerQuestionSubCriterion {
+    name: string;
+    score: 1 | 2 | 3;
+    covered: boolean;
+    cited_quote: string;
+}
+
+interface PerQuestionResult {
+    question_text: string;
+    question_score: number;
+    dimension_id: string;
+    dimension_name: string;
+    sub_criteria: PerQuestionSubCriterion[];
+    reasoning: string;
+    anchor_matched: 'substandard' | 'proficient' | 'excellent';
+    cited_quote: string;
+    weight: number;
+}
+
 interface Evaluation {
     evaluation_id: string;
     overall_score: number;
@@ -40,6 +59,7 @@ interface Evaluation {
     meets_criteria: boolean;
     coverage_ratio: number;
     dimension_scores: Record<string, DimensionScore>;
+    per_question_results?: Record<string, PerQuestionResult>;
     auto_tags: Record<string, string[]>;
     evaluation_confidence: 'high' | 'medium' | 'low';
     judged_at: string;
@@ -163,6 +183,79 @@ function DimensionCard({ dimId, result }: { dimId: string; result: DimensionScor
                             </blockquote>
                         </div>
                     )}
+                    {result.reasoning && (
+                        <div>
+                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Reasoning</p>
+                            <p className="text-sm text-gray-700">{result.reasoning}</p>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Per-Question Card
+// ---------------------------------------------------------------------------
+function PerQuestionCard({ result }: { result: PerQuestionResult }) {
+    const [expanded, setExpanded] = useState(false);
+    const anchorClass = ANCHOR_COLOR[result.anchor_matched] || '';
+    const scoreLabel = result.question_score.toFixed(1);
+
+    return (
+        <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+            <button
+                className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors"
+                onClick={() => setExpanded((v) => !v)}
+            >
+                <div className="flex items-center gap-3 overflow-hidden">
+                    <div className="text-left truncate flex-1">
+                        <p className="font-medium text-gray-800 text-sm truncate" title={result.question_text}>
+                            {result.question_text}
+                        </p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-3 ml-4 shrink-0">
+                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${anchorClass}`}>
+                        Score: {scoreLabel} / 3.0
+                    </span>
+                    {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+                </div>
+            </button>
+
+            {expanded && (
+                <div className="px-5 pb-5 border-t border-gray-100 bg-gray-50 space-y-4 pt-4">
+                    <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Sub-Criteria</p>
+                        <div className="space-y-2">
+                            {result.sub_criteria.map((sub, idx) => (
+                                <div key={idx} className="flex items-start gap-2">
+                                    {sub.score === 3 ? (
+                                        <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+                                    ) : sub.score === 2 ? (
+                                        <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                                    ) : (
+                                        <XCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                                    )}
+                                    <div>
+                                        <p className="text-sm text-gray-800">{sub.name}</p>
+                                        <p className="text-xs text-gray-500">Score: {sub.score}/3</p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {result.cited_quote && (
+                        <div>
+                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Cited Quote</p>
+                            <blockquote className="border-l-4 border-indigo-400 pl-3 text-sm text-gray-700 italic">
+                                "{result.cited_quote}"
+                            </blockquote>
+                        </div>
+                    )}
+                    
                     {result.reasoning && (
                         <div>
                             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Reasoning</p>
@@ -391,6 +484,33 @@ export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResult
                                         ))}
                                     </div>
                                 </div>
+
+                                {/* Per-Question Breakdown */}
+                                {ev.per_question_results && Object.keys(ev.per_question_results).length > 0 && (
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3 flex items-center gap-2">
+                                            <MessageSquare className="w-4 h-4" />
+                                            Per-Question Breakdown
+                                        </h3>
+                                        <div className="space-y-2">
+                                            {Object.entries(
+                                                Object.entries(ev.per_question_results).reduce((acc, [, result]) => {
+                                                    const dim = result.dimension_name || result.dimension_id || 'Other';
+                                                    if (!acc[dim]) acc[dim] = [];
+                                                    acc[dim].push(result);
+                                                    return acc;
+                                                }, {} as Record<string, PerQuestionResult[]>)
+                                            ).map(([dimName, results]) => (
+                                                <div key={dimName} className="space-y-2">
+                                                    <h4 className="text-xs font-semibold text-gray-500 uppercase mt-4 mb-2">{dimName}</h4>
+                                                    {results.map((result, idx) => (
+                                                        <PerQuestionCard key={`${dimName}-${idx}`} result={result} />
+                                                    ))}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Auto-tags */}
                                 {ev.auto_tags && Object.keys(ev.auto_tags).length > 0 && (
