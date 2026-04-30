@@ -14,6 +14,7 @@ interface Section {
   type: 'mcq' | 'essay' | 'code';
   variants: QuestionVariant[];
   points: number;
+  variantsToSelect: number;
   selectionStrategy?: 'random' | 'sequential';
 }
 
@@ -65,9 +66,13 @@ type CreationMethod = null | 'manual' | 'ai' | 'bank';
 type EditingVariant = { index: number; variant: QuestionVariant } | null;
 
 export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps) {
-  // Ensure selectionStrategy has a default value if missing
-  const initialSection = { ...section, selectionStrategy: section.selectionStrategy || 'random' };
-  const [currentSection, setCurrentSection] = useState<Section>(initialSection as Section);
+  // Ensure defaults exist when editing older section payloads.
+  const initialSection: Section = {
+    ...section,
+    selectionStrategy: section.selectionStrategy || 'random',
+    variantsToSelect: section.variantsToSelect || 1,
+  };
+  const [currentSection, setCurrentSection] = useState<Section>(initialSection);
   const [creationMethod, setCreationMethod] = useState<CreationMethod>(null);
   const [showQuestionBank, setShowQuestionBank] = useState(false);
   const [showAIGenerator, setShowAIGenerator] = useState(false);

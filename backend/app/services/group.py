@@ -1726,7 +1726,7 @@ class GroupService:
             )
             cfg = res.scalars().first()
             if cfg:
-                self.session.delete(cfg)
+                await self.session.delete(cfg)
 
             if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
                 candidate_ai_id = sc.acceptance_criteria.get("candidate_interview_config_id")
