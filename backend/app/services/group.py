@@ -2457,6 +2457,7 @@ class GroupService:
                     group_name=group.group_name,
                     temp_password=temp_password,   # plaintext, NOT the hash
                     group_id=str(group.id),
+                    username=profile.username or "",
                 )
             except Exception as e:
                 import logging

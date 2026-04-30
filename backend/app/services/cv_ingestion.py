@@ -1,7 +1,9 @@
 import io
 import logging
 import os
+import random
 import re
+import string
 import tempfile
 import zipfile
 import base64
@@ -121,10 +123,21 @@ class CVIngestionService:
         if candidate:
             return candidate.id
 
+        # Generate unique username (10-char random lowercase + digits)
+        chars = string.ascii_lowercase + string.digits
+        for _ in range(20):
+            username = ''.join(random.choice(chars) for _ in range(10))
+            check = await self.session.execute(
+                select(CandidateProfile).where(CandidateProfile.username == username)
+            )
+            if not check.scalar_one_or_none():
+                break
+
         new_candidate = CandidateProfile(
             organization_id=organization_id,
             full_name=name,
-            email=email
+            email=email,
+            username=username,
         )
         self.session.add(new_candidate)
         await self.session.commit()
@@ -474,10 +487,21 @@ class CVIngestionWorkerService:
         if candidate:
             return candidate.id
 
+        # Generate unique username (10-char random lowercase + digits)
+        chars = string.ascii_lowercase + string.digits
+        for _ in range(20):
+            username = ''.join(random.choice(chars) for _ in range(10))
+            check = self.session.execute(
+                select(CandidateProfile).where(CandidateProfile.username == username)
+            )
+            if not check.scalar_one_or_none():
+                break
+
         new_candidate = CandidateProfile(
             organization_id=organization_id,
             full_name=name,
-            email=email
+            email=email,
+            username=username,
         )
         self.session.add(new_candidate)
         self.session.commit()

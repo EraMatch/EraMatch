@@ -25,12 +25,12 @@ router = APIRouter(prefix="/candidate", tags=["Candidate Portal"])
 @router.post("/login", response_model=TokenResponse)
 async def candidate_login(data: CandidateLoginRequest, session: DbSession):
     """
-    Candidate login with email and password.
+    Candidate login with username and password.
     
     Returns access and refresh tokens.
     """
     service = CandidateAuthService(session)
-    return await service.login(data.email, data.password, data.group_id)
+    return await service.login(data.username, data.password)
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -54,8 +54,15 @@ async def get_candidate_me(candidate: CurrentCandidate):
 # DASHBOARD
 # =============================================================================
 
+from typing import Optional
+from fastapi import Header
+
 @router.get("/home")
-async def get_candidate_home(candidate: CurrentCandidate, session: DbSession):
+async def get_candidate_home(
+    candidate: CurrentCandidate, 
+    session: DbSession,
+    x_group_id: Optional[str] = Header(None)
+):
     """
     Get candidate dashboard home data.
     
@@ -66,22 +73,30 @@ async def get_candidate_home(candidate: CurrentCandidate, session: DbSession):
         - Current stage info
     """
     from app.services.candidates import CandidateDashboardService
+    from uuid import UUID
     
     service = CandidateDashboardService(session)
-    return await service.get_home(candidate.candidate_id)
+    group_id_val = UUID(x_group_id) if x_group_id else None
+    return await service.get_home(candidate.candidate_id, group_id=group_id_val)
 
 
 @router.get("/assessments")
-async def get_candidate_assessments(candidate: CurrentCandidate, session: DbSession):
+async def get_candidate_assessments(
+    candidate: CurrentCandidate, 
+    session: DbSession,
+    x_group_id: Optional[str] = Header(None)
+):
     """
     Get available assessments/stages for the candidate.
     
     Returns list of stages with their status (locked, unlocked, in_progress, completed).
     """
     from app.services.candidates import CandidateDashboardService
+    from uuid import UUID
     
     service = CandidateDashboardService(session)
-    return await service.get_assessments(candidate.candidate_id)
+    group_id_val = UUID(x_group_id) if x_group_id else None
+    return await service.get_assessments(candidate.candidate_id, group_id=group_id_val)
 
 
 @router.post("/stages/{stage_type}/start")

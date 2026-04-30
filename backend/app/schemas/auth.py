@@ -76,15 +76,15 @@ class ResetPasswordRequest(BaseModel):
 
 class CandidateLoginRequest(BaseModel):
     """Candidate login request body."""
-    email: EmailStr
+    username: str
     password: str
-    group_id: UUID | None = None  # Optional group ID from frontend login URL
 
 
 class CandidateAuthResponse(BaseModel):
     """Candidate profile response after authentication."""
     candidate_id: UUID
     email: str
+    username: str | None = None
     full_name: str
     phone: str | None
     location: str | None

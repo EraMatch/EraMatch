@@ -67,7 +67,6 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
   const [isLoading, setIsLoading] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<string[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [questionsData, setQuestionsData] = useState<Array<{ id: string; text: string }>>([]);
   const eventThrottleRef = useRef<Record<string, number>>({});
   const proctoringCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -86,7 +85,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
       try {
         setIsLoading(true);
         const configData = await api.candidate.getInterviewConfig() as any;
-        
+
         let questionsList = [];
         if (configData?.questions) {
           if (Array.isArray(configData.questions)) {
@@ -95,7 +94,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
             questionsList = configData.questions.items;
           }
         }
-        
+
         const normalizedQuestions = questionsList.map((q: any, idx: number) => ({
           id: q.id || `q${idx + 1}`,
           text: q.text || q.question || '',
@@ -370,48 +369,48 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
         signal: 'face' | 'voice' | 'gaze' | 'emotion';
         payload: Record<string, unknown>;
       }> = [
-        {
-          signal: 'face',
-          payload: {
-            ...payloadBase,
-            faces_detected: sampleMetrics.sample_count > 0 ? 1 : 0,
-            multiple_faces: false,
-            liveness_score: Number(sampleMetrics.face_motion_avg.toFixed(4)),
-            frame_b64: frameB64,
+          {
+            signal: 'face',
+            payload: {
+              ...payloadBase,
+              faces_detected: sampleMetrics.sample_count > 0 ? 1 : 0,
+              multiple_faces: false,
+              liveness_score: Number(sampleMetrics.face_motion_avg.toFixed(4)),
+              frame_b64: frameB64,
+            },
           },
-        },
-        {
-          signal: 'voice',
-          payload: {
-            ...payloadBase,
-            silence_ratio: Number(sampleMetrics.voice_silent_ratio.toFixed(4)),
-            background_speaker_count: 0,
-            speaker_profile_id: SPEAKER_PROFILE_ID,
-            audio_waveform: audioWaveform,
-            audio_sample_rate: audioSampleRate,
+          {
+            signal: 'voice',
+            payload: {
+              ...payloadBase,
+              silence_ratio: Number(sampleMetrics.voice_silent_ratio.toFixed(4)),
+              background_speaker_count: 0,
+              speaker_profile_id: SPEAKER_PROFILE_ID,
+              audio_waveform: audioWaveform,
+              audio_sample_rate: audioSampleRate,
+            },
           },
-        },
-        {
-          signal: 'gaze',
-          payload: {
-            ...payloadBase,
-            off_screen_ratio: Number(sampleMetrics.gaze_off_ratio.toFixed(4)),
-            away_duration_seconds: Number(((elapsedMs / 1000) * sampleMetrics.gaze_off_ratio).toFixed(3)),
-            rapid_shift_count: 0,
-            frame_b64: frameB64,
+          {
+            signal: 'gaze',
+            payload: {
+              ...payloadBase,
+              off_screen_ratio: Number(sampleMetrics.gaze_off_ratio.toFixed(4)),
+              away_duration_seconds: Number(((elapsedMs / 1000) * sampleMetrics.gaze_off_ratio).toFixed(3)),
+              rapid_shift_count: 0,
+              frame_b64: frameB64,
+            },
           },
-        },
-        {
-          signal: 'emotion',
-          payload: {
-            ...payloadBase,
-            stress_score: Number((0.6 * sampleMetrics.gaze_off_ratio + 0.4 * (1 - sampleMetrics.voice_silent_ratio)).toFixed(4)),
-            negative_ratio: Number(sampleMetrics.gaze_off_ratio.toFixed(4)),
-            dominant_emotion: sampleMetrics.gaze_off_ratio > 0.55 ? 'fear' : 'neutral',
-            frame_b64: frameB64,
+          {
+            signal: 'emotion',
+            payload: {
+              ...payloadBase,
+              stress_score: Number((0.6 * sampleMetrics.gaze_off_ratio + 0.4 * (1 - sampleMetrics.voice_silent_ratio)).toFixed(4)),
+              negative_ratio: Number(sampleMetrics.gaze_off_ratio.toFixed(4)),
+              dominant_emotion: sampleMetrics.gaze_off_ratio > 0.55 ? 'fear' : 'neutral',
+              frame_b64: frameB64,
+            },
           },
-        },
-      ];
+        ];
 
       for (const { signal, payload } of signalPayloads) {
         const result = await postProctoringSignal(signal, payload);
@@ -452,7 +451,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
       analysisAudioAnalyserRef.current = null;
       analysisAudioBufferRef.current = null;
       if (analysisAudioContextRef.current) {
-        analysisAudioContextRef.current.close().catch(() => {});
+        analysisAudioContextRef.current.close().catch(() => { });
       }
       analysisAudioContextRef.current = null;
     };

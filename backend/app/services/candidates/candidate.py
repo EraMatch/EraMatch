@@ -22,19 +22,59 @@ class CandidateService:
         self.session = session
         self.organization_id = organization_id
 
-    # Profile operations
-    async def create_profile(self, data: CandidateCreate) -> CandidateProfile:
-        # Check if email exists in this org
-        query = select(CandidateProfile).where(
-            CandidateProfile.organization_id == self.organization_id,
-            CandidateProfile.email == data.email
-        )
-        result = await self.session.execute(query)
-        existing = result.scalar_one_or_none()
+    async def _generate_username(self) -> str:
+        """Generate a unique 10-character username of random lowercase letters and digits."""
+        import random
+        chars = string.ascii_lowercase + string.digits
+        for _ in range(20):  # max retries
+            username = ''.join(random.choice(chars) for _ in range(10))
+            # Check uniqueness across all candidates (global unique)
+            result = await self.session.execute(
+                select(CandidateProfile).where(CandidateProfile.username == username)
+            )
+            if not result.scalar_one_or_none():
+                return username
+        # Extremely unlikely fallback
+        return ''.join(random.choice(chars) for _ in range(10))
 
-        if existing:
-            # Update existing? Or just return it? For now, let's return it.
-            return existing
+    # Profile operations
+    async def create_profile(self, data: CandidateCreate, position_id: UUID | None = None) -> CandidateProfile:
+        # Position-aware email duplicate check
+        if position_id:
+            from app.models import CandidateApplication
+            # Check if this email already has an application for the SAME position
+            dup_query = (
+                select(CandidateApplication)
+                .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+                .where(
+                    CandidateProfile.email == data.email,
+                    CandidateProfile.organization_id == self.organization_id,
+                    CandidateApplication.position_id == position_id,
+                    CandidateApplication.is_deleted == False,
+                )
+            )
+            dup_result = await self.session.execute(dup_query)
+            if dup_result.scalar_one_or_none():
+                # Same email + same position → return existing profile
+                existing_query = select(CandidateProfile).where(
+                    CandidateProfile.organization_id == self.organization_id,
+                    CandidateProfile.email == data.email,
+                )
+                existing_result = await self.session.execute(existing_query)
+                return existing_result.scalar_one()
+        else:
+            # Legacy behavior: check if email exists in org (no position context)
+            query = select(CandidateProfile).where(
+                CandidateProfile.organization_id == self.organization_id,
+                CandidateProfile.email == data.email
+            )
+            result = await self.session.execute(query)
+            existing = result.scalar_one_or_none()
+            if existing:
+                return existing
+
+        # Generate unique username
+        username = await self._generate_username()
 
         # Generate a temporary password
         alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
@@ -43,19 +83,21 @@ class CandidateService:
         candidate = CandidateProfile(
             organization_id=self.organization_id,
             password_hash=hash_password(temp_password),
+            username=username,
             **data.model_dump()
         )
         self.session.add(candidate)
         await self.session.commit()
         await self.session.refresh(candidate)
 
-        # Send welcome email with the temporary password
+        # Send welcome email with the temporary password and username
         try:
             await EmailService.send_welcome_email(
                 email=candidate.email,
                 name=candidate.full_name,
                 role="Candidate",
-                temp_password=temp_password
+                temp_password=temp_password,
+                username=username,
             )
         except Exception as e:
             print(f"Failed to send welcome email to {candidate.email}: {e}")
