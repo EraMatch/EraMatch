@@ -447,7 +447,7 @@ export const recruiterService = {
         });
     },
 
-    updateGroup: async (groupId: string, data: { name?: string; status?: string; filtration_flow?: string[] }) => {
+    updateGroup: async (groupId: string, data: { name?: string; status?: string; filtration_flow?: string[]; github_questions_count?: number }) => {
         return fetchAPI<any>(`/recruiter/groups/${groupId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },

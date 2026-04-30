@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate, useNavigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { CandidateLoginPage } from './components/CandidateLoginPage';
 import { CandidateHomePage } from './components/CandidateHomePage';
 import { CandidateDashboard } from './components/CandidateDashboard';
@@ -21,10 +21,13 @@ const ErrorPage = () => (
 // Wrapper Components for Navigation
 const CandidateLoginWrapper = () => {
     const navigate = useNavigate();
+    const { groupId } = useParams();
+    
     return (
         <CandidateLoginPage
             onBack={() => window.location.href = 'http://localhost:5173'}
             onSignIn={() => navigate('/home')}
+            groupId={groupId}
         />
     );
 };
@@ -93,7 +96,7 @@ export const router = createBrowserRouter([
         errorElement: <ErrorPage />,
     },
     {
-        path: "/login",
+        path: "/login/:groupId?",
         element: <CandidateLoginWrapper />,
         errorElement: <ErrorPage />,
     },

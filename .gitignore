@@ -91,5 +91,4 @@ backend/uv.lock
 # testing reports
 tests/recruiter-view/unit_testing/logs/reports
 
-
 backend/static/cvs

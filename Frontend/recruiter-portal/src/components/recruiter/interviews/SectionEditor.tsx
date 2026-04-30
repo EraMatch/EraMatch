@@ -14,6 +14,7 @@ interface Section {
   type: 'mcq' | 'essay' | 'code';
   variants: QuestionVariant[];
   points: number;
+  variantsToSelect: number;
   selectionStrategy?: 'random' | 'sequential';
 }
 
@@ -65,9 +66,13 @@ type CreationMethod = null | 'manual' | 'ai' | 'bank';
 type EditingVariant = { index: number; variant: QuestionVariant } | null;
 
 export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps) {
-  // Ensure selectionStrategy has a default value if missing
-  const initialSection = { ...section, selectionStrategy: section.selectionStrategy || 'random' };
-  const [currentSection, setCurrentSection] = useState<Section>(initialSection as Section);
+  // Ensure defaults exist when editing older section payloads.
+  const initialSection: Section = {
+    ...section,
+    selectionStrategy: section.selectionStrategy || 'random',
+    variantsToSelect: section.variantsToSelect || 1,
+  };
+  const [currentSection, setCurrentSection] = useState<Section>(initialSection);
   const [creationMethod, setCreationMethod] = useState<CreationMethod>(null);
   const [showQuestionBank, setShowQuestionBank] = useState(false);
   const [showAIGenerator, setShowAIGenerator] = useState(false);
@@ -310,7 +315,7 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
           </div>
 
           {/* Points & Strategy */}
-          <div className="grid grid-cols-2 gap-6 mb-6">
+          <div className="grid grid-cols-3 gap-6 mb-6">
             <div>
               <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
                 Points for this Section
@@ -321,6 +326,23 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                 onChange={(e) => setCurrentSection({ ...currentSection, points: parseInt(e.target.value) || 0 })}
                 min="1"
                 max="100"
+                className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Questions per candidate
+              </label>
+              <input
+                type="number"
+                value={currentSection.variantsToSelect || 1}
+                onChange={(e) => {
+                  let val = parseInt(e.target.value) || 1;
+                  if (val < 1) val = 1;
+                  setCurrentSection({ ...currentSection, variantsToSelect: val });
+                }}
+                min="1"
                 className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
               />
             </div>

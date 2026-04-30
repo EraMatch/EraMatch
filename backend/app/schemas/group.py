@@ -280,6 +280,8 @@ class AssignInterviewRequest(BaseModel):
     interview_config_id: UUID | None = None
     create_new: bool = False
     interview_config: dict | None = None
+    config: dict | None = None
+    interviewConfig: dict | None = None
 
 
 class AssignInterviewResponse(BaseModel):
