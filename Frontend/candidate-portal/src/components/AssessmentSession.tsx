@@ -1,9 +1,28 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { AlertCircle, ChevronLeft, ChevronRight, Clock, CheckCircle2, Code2, Flag, Play, Loader2, Send } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { api } from '../services/api';
+import { captureVideoFrameBase64, toWaveformPayload, quantizeWaveform, quantizeTimestampBucket } from '../utils/proctoringPayload';
+
+const AI_SERVICE_BASE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
+const ENABLE_BIOMETRIC_BETA = ((import.meta as any).env?.VITE_ENABLE_BIOMETRIC_BETA ?? 'true') !== 'false';
+const BIOMETRIC_SAMPLE_INTERVAL_MS = Number((import.meta as any).env?.VITE_BIOMETRIC_SAMPLE_INTERVAL_MS || 2000);
+const BIOMETRIC_ANALYSIS_INTERVAL_MS = Number((import.meta as any).env?.VITE_BIOMETRIC_ANALYSIS_INTERVAL_MS || 20000);
+const BIOMETRIC_RISK_THRESHOLD = Number((import.meta as any).env?.VITE_BIOMETRIC_RISK_THRESHOLD || 0.45);
+const SPEAKER_PROFILE_ID = (import.meta as any).env?.VITE_SPEAKER_PROFILE_ID || 'yousef_said_wavlm';
+
+type ProctoringSignalResult = {
+  signal_type: 'face' | 'voice' | 'gaze' | 'emotion';
+  event_type: string;
+  severity: 'low' | 'medium' | 'high';
+  risk_score: number;
+  confidence: number;
+  adapter_mode: string;
+  recommendation: string;
+  metadata: Record<string, unknown>;
+};
 
 interface AssessmentSessionProps {
   onSignOut: () => void;
@@ -38,8 +57,12 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const [codeOutput, setCodeOutput] = useState<Record<string, string>>({});
   const [testResults, setTestResults] = useState<Record<string, { passed: boolean; output: string; expected: string; actual: string }[]>>({});
   const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
+  const [integrityBlocked, setIntegrityBlocked] = useState(false);
+  const [integrityReason, setIntegrityReason] = useState<string | null>(null);
+  const [screenRecordingActive, setScreenRecordingActive] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isRunningCode, setIsRunningCode] = useState(false);
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -48,6 +71,49 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const [attemptCounts, setAttemptCounts] = useState<Record<string, number>>({});
   const [maxAttempts, setMaxAttempts] = useState<Record<string, number>>({});
   const containerRef = useRef<HTMLDivElement>(null);
+  const eventThrottleRef = useRef<Record<string, number>>({});
+  const proctoringStreamRef = useRef<MediaStream | null>(null);
+  const proctoringVideoRef = useRef<HTMLVideoElement | null>(null);
+  const proctoringCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastFrameRef = useRef<Uint8ClampedArray | null>(null);
+  const lastFrameDimensionsRef = useRef<{ width: number; height: number } | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioAnalyserRef = useRef<AnalyserNode | null>(null);
+  const audioBufferRef = useRef<Float32Array | null>(null);
+  const latestAudioFrameRef = useRef<Float32Array | null>(null);
+  const screenCaptureStreamRef = useRef<MediaStream | null>(null);
+  const screenCaptureVideoRef = useRef<HTMLVideoElement | null>(null);
+  const screenRecorderRef = useRef<MediaRecorder | null>(null);
+  const screenRecordingChunksRef = useRef<BlobPart[]>([]);
+  const screenRecordingBlobRef = useRef<Blob | null>(null);
+  const screenRecordingStopPromiseRef = useRef<Promise<Blob | null> | null>(null);
+  const screenRecordingStopResolveRef = useRef<((blob: Blob | null) => void) | null>(null);
+  const screenRecordingUploadStartedRef = useRef(false);
+  const suspiciousTimestampBucketsRef = useRef<number[]>([]);
+  const focusHiddenMsRef = useRef(0);
+  const hiddenStartedAtRef = useRef<number | null>(null);
+  const rapidShiftCountRef = useRef(0);
+  const lastShiftTsRef = useRef(0);
+  const sampleWindowStartRef = useRef(Date.now());
+  const silentSamplesRef = useRef(0);
+  const totalAudioSamplesRef = useRef(0);
+  const assessmentTimerRef = useRef(assessmentTimer);
+  const initialTimerRef = useRef(initialTimer);
+  const currentQuestionIdRef = useRef<string | undefined>(undefined);
+  const currentQuestionIndexRef = useRef(0);
+
+  useEffect(() => {
+    assessmentTimerRef.current = assessmentTimer;
+  }, [assessmentTimer]);
+
+  useEffect(() => {
+    initialTimerRef.current = initialTimer;
+  }, [initialTimer]);
+
+  useEffect(() => {
+    currentQuestionIdRef.current = questions[currentQuestionIndex]?.id;
+    currentQuestionIndexRef.current = currentQuestionIndex;
+  }, [questions, currentQuestionIndex]);
 
   // Programming languages
   const programmingLanguages = [
@@ -70,6 +136,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     const fetchAndStartAssessment = async () => {
       try {
         setIsLoading(true);
+        setLoadError(null);
         // Step 1: Get assessment config
         const config = await api.candidate.getAssessmentConfig() as any;
         setAssessmentId(config.assessment_id);
@@ -158,6 +225,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       } catch (error) {
         console.error('Failed to fetch/start assessment:', error);
         console.error('Error details:', error instanceof Error ? error.message : String(error));
+        setLoadError(error instanceof Error ? error.message : 'Unknown error while loading assessment');
         setQuestions([]);
         setSessionId(null);
       } finally {
@@ -168,6 +236,499 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   }, []);
 
   const currentQuestion = questions[currentQuestionIndex];
+
+  const emitIntegrityEvent = useCallback(async (
+    eventType: string,
+    severity: 'low' | 'medium' | 'high',
+    metadata: Record<string, unknown> = {},
+    throttleMs = 8000,
+  ) => {
+    if (!sessionId) return;
+
+    const now = Date.now();
+    const key = `${eventType}:${severity}`;
+    const lastSent = eventThrottleRef.current[key] || 0;
+    if (now - lastSent < throttleMs) return;
+    eventThrottleRef.current[key] = now;
+
+    try {
+      const response = await api.candidate.reportIntegrityEvent({
+        session_id: sessionId,
+        event_type: eventType,
+        severity,
+        source: 'candidate_portal',
+        metadata: {
+          question_id: currentQuestionIdRef.current,
+          question_index: currentQuestionIndexRef.current,
+          timer_remaining_seconds: assessmentTimerRef.current,
+          ...metadata,
+        },
+      });
+
+      const action = response?.enforcement_action;
+      if (action === 'terminate') {
+        setIntegrityBlocked(true);
+        setIntegrityReason(response?.enforcement_reason || 'critical_event_detected');
+        try {
+          await api.candidate.submitAssessment({ session_id: sessionId });
+        } catch (submitErr) {
+          console.error('Failed to auto-submit after terminate action:', submitErr);
+        }
+        setAssessmentComplete(true);
+      } else if (action === 'pause') {
+        setIntegrityBlocked(true);
+        setIntegrityReason(response?.enforcement_reason || 'repeated_high_risk_pattern');
+      }
+    } catch (error) {
+      console.error('Failed to report integrity event:', error);
+    }
+  }, [sessionId]);
+
+  const finalizeSystemScreenRecording = useCallback(async (): Promise<Blob | null> => {
+    const recorder = screenRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+    }
+
+    if (screenRecordingStopPromiseRef.current) {
+      const timeoutPromise = new Promise<Blob | null>((resolve) => {
+        window.setTimeout(() => resolve(screenRecordingBlobRef.current), 4000);
+      });
+      return Promise.race([screenRecordingStopPromiseRef.current, timeoutPromise]);
+    }
+
+    return screenRecordingBlobRef.current;
+  }, []);
+
+  const uploadSystemScreenRecording = useCallback(async () => {
+    if (!sessionId || screenRecordingUploadStartedRef.current) {
+      return;
+    }
+    screenRecordingUploadStartedRef.current = true;
+
+    try {
+      const blob = await finalizeSystemScreenRecording();
+      if (!blob || blob.size === 0) {
+        return;
+      }
+      await api.candidate.uploadAssessmentRecording(sessionId, blob);
+    } catch (error) {
+      console.error('Failed to upload system-captured assessment recording:', error);
+    }
+  }, [sessionId, finalizeSystemScreenRecording]);
+
+  useEffect(() => {
+    if (!assessmentComplete || !sessionId) return;
+    void uploadSystemScreenRecording();
+  }, [assessmentComplete, sessionId, uploadSystemScreenRecording]);
+
+  const postProctoringSignal = useCallback(async (
+    signal: 'face' | 'voice' | 'gaze' | 'emotion',
+    payload: Record<string, unknown>,
+  ): Promise<ProctoringSignalResult | null> => {
+    try {
+      const response = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/${signal}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        if (response.status === 422 && errorPayload?.detail?.proof) {
+          return {
+            signal_type: signal,
+            event_type: 'model_required_violation',
+            severity: 'high',
+            risk_score: 1,
+            confidence: 1,
+            adapter_mode: 'model_required_block',
+            recommendation: 'Model-required mode blocked fallback inference for this signal.',
+            metadata: {
+              proof: errorPayload.detail.proof,
+            },
+          } as ProctoringSignalResult;
+        }
+        return null;
+      }
+      return await response.json() as ProctoringSignalResult;
+    } catch (error) {
+      console.error(`Failed proctoring ${signal} request:`, error);
+      return null;
+    }
+  }, []);
+
+  const measureFaceMotion = useCallback((): number => {
+    const video = proctoringVideoRef.current;
+    if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      return 0;
+    }
+
+    if (!proctoringCanvasRef.current) {
+      proctoringCanvasRef.current = document.createElement('canvas');
+    }
+    const canvas = proctoringCanvasRef.current;
+    const width = 96;
+    const height = 72;
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return 0;
+
+    ctx.drawImage(video, 0, 0, width, height);
+    const frame = ctx.getImageData(0, 0, width, height).data;
+
+    if (!lastFrameRef.current || !lastFrameDimensionsRef.current) {
+      lastFrameRef.current = new Uint8ClampedArray(frame);
+      lastFrameDimensionsRef.current = { width, height };
+      return 0.2;
+    }
+
+    const prev = lastFrameRef.current;
+    let diffSum = 0;
+    let samples = 0;
+    for (let i = 0; i < frame.length; i += 12) {
+      diffSum += Math.abs(frame[i] - prev[i]);
+      samples += 1;
+    }
+
+    lastFrameRef.current = new Uint8ClampedArray(frame);
+    const avgDiff = samples > 0 ? diffSum / samples : 0;
+    return Math.max(0, Math.min(1, avgDiff / 40));
+  }, []);
+
+  const sampleAudioSilence = useCallback(() => {
+    const analyser = audioAnalyserRef.current;
+    const buffer = audioBufferRef.current;
+    if (!analyser || !buffer) return;
+
+    (analyser as any).getFloatTimeDomainData(buffer);
+    let sumSquares = 0;
+    for (let i = 0; i < buffer.length; i += 1) {
+      sumSquares += buffer[i] * buffer[i];
+    }
+    const rms = Math.sqrt(sumSquares / buffer.length);
+    latestAudioFrameRef.current = new Float32Array(buffer);
+    totalAudioSamplesRef.current += 1;
+    if (rms < 0.015) {
+      silentSamplesRef.current += 1;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (assessmentComplete || !sessionId) return;
+    if (!ENABLE_BIOMETRIC_BETA) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      void emitIntegrityEvent('biometric_capture_unavailable', 'medium', {
+        reason: 'media_devices_not_supported',
+      }, 60000);
+      return;
+    }
+
+    let stopped = false;
+
+    const handleBlur = () => {
+      const now = Date.now();
+      if (now - lastShiftTsRef.current < 4000) {
+        rapidShiftCountRef.current += 1;
+      }
+      lastShiftTsRef.current = now;
+      if (hiddenStartedAtRef.current === null) {
+        hiddenStartedAtRef.current = now;
+      }
+    };
+
+    const handleFocus = () => {
+      const now = Date.now();
+      if (hiddenStartedAtRef.current !== null) {
+        focusHiddenMsRef.current += now - hiddenStartedAtRef.current;
+        hiddenStartedAtRef.current = null;
+      }
+      if (now - lastShiftTsRef.current < 4000) {
+        rapidShiftCountRef.current += 1;
+      }
+      lastShiftTsRef.current = now;
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        handleBlur();
+      } else {
+        handleFocus();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('focus', handleFocus);
+
+    const startCapture = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: true,
+        });
+        if (stopped) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        proctoringStreamRef.current = stream;
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.muted = true;
+        video.playsInline = true;
+        await video.play().catch(() => undefined);
+        proctoringVideoRef.current = video;
+
+        const audioCtx = new AudioContext();
+        audioContextRef.current = audioCtx;
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+        audioAnalyserRef.current = analyser;
+        audioBufferRef.current = new Float32Array(analyser.fftSize);
+
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+          setIntegrityBlocked(true);
+          setIntegrityReason('screen_recording_not_supported');
+          void emitIntegrityEvent('screen_recording_unavailable', 'high', {
+            reason: 'get_display_media_not_supported',
+          }, 30000);
+          return;
+        }
+
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            frameRate: { ideal: 12, max: 20 },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+        if (stopped) {
+          displayStream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        const screenVideo = document.createElement('video');
+        screenVideo.srcObject = displayStream;
+        screenVideo.muted = true;
+        screenVideo.playsInline = true;
+        await screenVideo.play().catch(() => undefined);
+
+        const displayTrack = displayStream.getVideoTracks()[0];
+        if (displayTrack) {
+          displayTrack.onended = () => {
+            setScreenRecordingActive(false);
+            setIntegrityBlocked(true);
+            setIntegrityReason('screen_recording_stopped');
+            void emitIntegrityEvent('screen_recording_stopped', 'high', {
+              reason: 'candidate_ended_screen_share',
+            }, 4000);
+          };
+        }
+
+        if (typeof MediaRecorder !== 'undefined') {
+          const recorder = new MediaRecorder(displayStream, { mimeType: 'video/webm' });
+          screenRecordingChunksRef.current = [];
+          screenRecordingBlobRef.current = null;
+          screenRecordingStopPromiseRef.current = new Promise<Blob | null>((resolve) => {
+            screenRecordingStopResolveRef.current = resolve;
+          });
+          recorder.ondataavailable = (event: BlobEvent) => {
+            if (event.data && event.data.size > 0) {
+              screenRecordingChunksRef.current.push(event.data);
+            }
+          };
+          recorder.onstop = () => {
+            const blob = screenRecordingChunksRef.current.length > 0
+              ? new Blob(screenRecordingChunksRef.current, { type: 'video/webm' })
+              : null;
+            screenRecordingBlobRef.current = blob;
+            if (screenRecordingStopResolveRef.current) {
+              screenRecordingStopResolveRef.current(blob);
+            }
+          };
+          recorder.start(10000);
+          screenRecorderRef.current = recorder;
+        }
+
+        screenCaptureStreamRef.current = displayStream;
+        screenCaptureVideoRef.current = screenVideo;
+        setScreenRecordingActive(true);
+      } catch (error) {
+        console.error('Biometric capture init failed:', error);
+        const err = error as { name?: string };
+        if (err?.name === 'NotAllowedError') {
+          setIntegrityBlocked(true);
+          setIntegrityReason('screen_recording_permission_denied');
+          void emitIntegrityEvent('screen_recording_permission_denied', 'high', {
+            reason: 'candidate_denied_screen_share_permission',
+          }, 15000);
+          return;
+        }
+        void emitIntegrityEvent('biometric_capture_unavailable', 'medium', {
+          reason: 'permission_or_device_error_or_screen_capture_failed',
+        }, 60000);
+      }
+    };
+
+    const sampleInterval = window.setInterval(() => {
+      sampleAudioSilence();
+      measureFaceMotion();
+    }, BIOMETRIC_SAMPLE_INTERVAL_MS);
+
+    const analysisInterval = window.setInterval(async () => {
+      if (!sessionId || assessmentComplete) return;
+
+      if (hiddenStartedAtRef.current !== null) {
+        const now = Date.now();
+        focusHiddenMsRef.current += now - hiddenStartedAtRef.current;
+        hiddenStartedAtRef.current = now;
+      }
+
+      const elapsedWindowMs = Math.max(1, Date.now() - sampleWindowStartRef.current);
+      const offScreenRatio = Math.max(0, Math.min(1, focusHiddenMsRef.current / elapsedWindowMs));
+      const awayDurationSeconds = focusHiddenMsRef.current / 1000;
+      const rapidShiftCount = rapidShiftCountRef.current;
+      const silenceRatio = totalAudioSamplesRef.current > 0
+        ? silentSamplesRef.current / totalAudioSamplesRef.current
+        : 0;
+
+      const stream = proctoringStreamRef.current;
+      const videoTrack = stream?.getVideoTracks()[0];
+      const audioTrack = stream?.getAudioTracks()[0];
+      const hasLiveVideo = !!videoTrack && videoTrack.readyState === 'live' && videoTrack.enabled;
+      const hasLiveAudio = !!audioTrack && audioTrack.readyState === 'live' && audioTrack.enabled;
+      const faceMotion = measureFaceMotion();
+      const frameB64 = hasLiveVideo ? captureVideoFrameBase64(proctoringVideoRef.current, 224, 224) : null;
+      const screenFrameB64 = screenRecordingActive ? captureVideoFrameBase64(screenCaptureVideoRef.current, 320, 180) : null;
+      const audioWaveformRaw = hasLiveAudio ? toWaveformPayload(latestAudioFrameRef.current, 16000) : null;
+      const audioWaveform = quantizeWaveform(audioWaveformRaw, 24);
+      const audioSampleRate = audioContextRef.current?.sampleRate ?? 16000;
+      const elapsedAssessmentSeconds = Math.max(0, initialTimerRef.current - assessmentTimerRef.current);
+      const quantizedSecond = quantizeTimestampBucket(elapsedAssessmentSeconds, 5);
+
+      const [faceResult, voiceResult, gazeResult, emotionResult] = await Promise.all([
+        postProctoringSignal('face', {
+          session_id: sessionId,
+          faces_detected: hasLiveVideo ? 1 : 0,
+          multiple_faces: false,
+          face_match_score: hasLiveVideo ? 0.8 : 0.0,
+          liveness_score: hasLiveVideo ? Math.max(0.2, faceMotion) : 0.0,
+          frame_b64: frameB64,
+          screen_frame_b64: screenFrameB64,
+          capture_quantization: {
+            timestamp_bucket_seconds: 5,
+            waveform_levels: 24,
+            screen_frame_resolution: '320x180',
+          },
+          client_capture_second: quantizedSecond,
+          suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
+        }),
+        postProctoringSignal('voice', {
+          session_id: sessionId,
+          speaker_match_score: hasLiveAudio ? 0.78 : 0.2,
+          voice_switch_detected: false,
+          silence_ratio: silenceRatio,
+          background_speaker_count: 0,
+          speaker_profile_id: SPEAKER_PROFILE_ID,
+          audio_waveform: audioWaveform,
+          audio_sample_rate: audioSampleRate,
+          capture_quantization: {
+            timestamp_bucket_seconds: 5,
+            waveform_levels: 24,
+          },
+          client_capture_second: quantizedSecond,
+          suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
+        }),
+        postProctoringSignal('gaze', {
+          session_id: sessionId,
+          off_screen_ratio: offScreenRatio,
+          away_duration_seconds: awayDurationSeconds,
+          rapid_shift_count: rapidShiftCount,
+          frame_b64: frameB64,
+          screen_frame_b64: screenFrameB64,
+          client_capture_second: quantizedSecond,
+          suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
+        }),
+        postProctoringSignal('emotion', {
+          session_id: sessionId,
+          dominant_emotion: offScreenRatio > 0.55 ? 'fear' : 'neutral',
+          stress_score: Math.max(0, Math.min(1, (offScreenRatio * 0.7) + (rapidShiftCount * 0.04))),
+          negative_ratio: Math.max(0, Math.min(1, (offScreenRatio * 0.6) + (silenceRatio * 0.2))),
+          frame_b64: frameB64,
+          screen_frame_b64: screenFrameB64,
+          client_capture_second: quantizedSecond,
+          suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
+        }),
+      ]);
+
+      const results = [faceResult, voiceResult, gazeResult, emotionResult].filter(Boolean) as ProctoringSignalResult[];
+      for (const result of results) {
+        if (result.risk_score < BIOMETRIC_RISK_THRESHOLD) continue;
+        const suspectBucket = quantizeTimestampBucket(elapsedAssessmentSeconds, 5);
+        if (!suspiciousTimestampBucketsRef.current.includes(suspectBucket)) {
+          suspiciousTimestampBucketsRef.current = [
+            ...suspiciousTimestampBucketsRef.current,
+            suspectBucket,
+          ].sort((a, b) => a - b).slice(-120);
+        }
+        await emitIntegrityEvent(
+          result.event_type,
+          result.severity,
+          {
+            timestamp_bucket_seconds: 5,
+            suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
+            source_signal: result.signal_type,
+            proctoring_risk_score: result.risk_score,
+            proctoring_confidence: result.confidence,
+            proctoring_mode: result.adapter_mode,
+            proctoring_recommendation: result.recommendation,
+            proctoring_metadata: result.metadata,
+          },
+          12000,
+        );
+      }
+
+      // Reset rolling window after each analysis cycle.
+      sampleWindowStartRef.current = Date.now();
+      focusHiddenMsRef.current = 0;
+      rapidShiftCountRef.current = 0;
+      silentSamplesRef.current = 0;
+      totalAudioSamplesRef.current = 0;
+    }, BIOMETRIC_ANALYSIS_INTERVAL_MS);
+
+    void startCapture();
+
+    return () => {
+      stopped = true;
+      window.clearInterval(sampleInterval);
+      window.clearInterval(analysisInterval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('focus', handleFocus);
+      proctoringStreamRef.current?.getTracks().forEach(track => track.stop());
+      proctoringStreamRef.current = null;
+      proctoringVideoRef.current = null;
+      if (screenRecorderRef.current && screenRecorderRef.current.state !== 'inactive') {
+        screenRecorderRef.current.stop();
+      }
+      screenRecorderRef.current = null;
+      screenCaptureStreamRef.current?.getTracks().forEach(track => track.stop());
+      screenCaptureStreamRef.current = null;
+      screenCaptureVideoRef.current = null;
+      setScreenRecordingActive(false);
+      audioAnalyserRef.current = null;
+      audioBufferRef.current = null;
+      if (audioContextRef.current) {
+        void audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
+    };
+  }, [sessionId, assessmentComplete, emitIntegrityEvent, postProctoringSignal, measureFaceMotion, sampleAudioSilence]);
 
   // Heartbeat sync - keeps timer accurate and survives tab freezes
   useEffect(() => {
@@ -181,6 +742,19 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
           setAssessmentTimer(0);
           setAssessmentComplete(true);
           return;
+        }
+
+        if (status.status === 'blocked_integrity') {
+          setIntegrityBlocked(true);
+          setIntegrityReason(status.enforcement_reason || 'integrity_policy_blocked');
+          if (status.enforcement_action === 'terminate') {
+            try {
+              await api.candidate.submitAssessment({ session_id: sessionId });
+            } catch (submitErr) {
+              console.error('Failed to auto-submit blocked assessment:', submitErr);
+            }
+            setAssessmentComplete(true);
+          }
         }
         
         // Update timer from backend (authoritative source)
@@ -255,11 +829,14 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       if (inactiveSeconds >= 30 && !showInactivityAlert) {
         setShowInactivityAlert(true);
         setInactivityCountdown(5);
+        void emitIntegrityEvent('inactivity_detected', 'medium', {
+          inactive_seconds: inactiveSeconds,
+        }, 15000);
       }
     }, 1000);
 
     return () => clearInterval(checkInactivity);
-  }, [lastActivity, showInactivityAlert]);
+  }, [lastActivity, showInactivityAlert, emitIntegrityEvent]);
 
   // Inactivity countdown
   useEffect(() => {
@@ -269,6 +846,9 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
           if (prev <= 1) {
             clearInterval(countdown);
             setShowRedBorder(true);
+            void emitIntegrityEvent('inactivity_timeout', 'high', {
+              inactivity_countdown_seconds: 5,
+            }, 15000);
             return 0;
           }
           return prev - 1;
@@ -277,7 +857,58 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
 
       return () => clearInterval(countdown);
     }
-  }, [showInactivityAlert, inactivityCountdown]);
+  }, [showInactivityAlert, inactivityCountdown, emitIntegrityEvent]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        void emitIntegrityEvent('tab_hidden', 'medium', {
+          hidden: true,
+        }, 5000);
+      }
+    };
+
+    const handleWindowBlur = () => {
+      void emitIntegrityEvent('window_blur', 'medium', {}, 5000);
+    };
+
+    const handleCopy = () => {
+      void emitIntegrityEvent('copy_attempt', 'medium');
+    };
+
+    const handlePaste = () => {
+      void emitIntegrityEvent('paste_attempt', 'high');
+    };
+
+    const handleContextMenu = () => {
+      void emitIntegrityEvent('context_menu_open', 'low');
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        void emitIntegrityEvent('copy_shortcut', 'medium');
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+        void emitIntegrityEvent('paste_shortcut', 'high');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+    document.addEventListener('copy', handleCopy);
+    document.addEventListener('paste', handlePaste);
+    document.addEventListener('contextmenu', handleContextMenu);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+      document.removeEventListener('copy', handleCopy);
+      document.removeEventListener('paste', handlePaste);
+      document.removeEventListener('contextmenu', handleContextMenu);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [emitIntegrityEvent]);
 
   // Track user activity
   const handleActivity = () => {
@@ -514,7 +1145,11 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         <Card className="max-w-md p-8 text-center">
           <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
           <h3 className="text-gray-900 font-medium mb-2">Failed to load assessment</h3>
-          <p className="text-gray-600 mb-6">Unable to load questions. Please try again later.</p>
+          <p className="text-gray-600 mb-2">Unable to load questions.</p>
+          {loadError && (
+            <p className="text-xs text-gray-500 mb-4 break-words">{loadError}</p>
+          )}
+          {!loadError && <div className="mb-2" />}
           <Button onClick={onSignOut} variant="outline">Back to Home</Button>
         </Card>
       </div>
@@ -590,6 +1225,22 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
               </Button>
             </div>
           </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (integrityBlocked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#EDF0F8' }}>
+        <Card className="max-w-md p-8 text-center space-y-4">
+          <AlertCircle className="w-12 h-12 text-red-500 mx-auto" />
+          <h3 className="text-gray-900 font-medium">Assessment Paused For Integrity Review</h3>
+          <p className="text-gray-600 text-sm">High-risk cheating behavior was detected and this session is currently blocked.</p>
+          {integrityReason && (
+            <p className="text-xs text-gray-500">Reason: {integrityReason}</p>
+          )}
+          <Button onClick={onSignOut} variant="outline">Return to Home</Button>
         </Card>
       </div>
     );

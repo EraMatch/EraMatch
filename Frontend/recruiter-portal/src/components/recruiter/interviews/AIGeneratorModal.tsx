@@ -163,6 +163,11 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
         topic: topic.trim(),
         difficulty,
         context,
+        use_case: effectiveType === 'interview' ? 'recorded_interview_suggest' : 'assessment_question_generation',
+        metadata: {
+          variant_count: variantCount,
+          source: 'ai_generator_modal',
+        },
       };
 
       const responses = await Promise.all(

@@ -9,11 +9,12 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 
 from app.api.deps import get_db, get_current_user
-from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob, GitHubAnalysisJob, CVIngestionJob
+from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob, GitHubAnalysisJob, QAGProcessingJob, CVIngestionJob, Position
 
 router = APIRouter(prefix="/background-tasks", tags=["Background Tasks"])
 
 DEBUG_LOG_PATH = Path("logs/video_processing_debug.json")
+GITHUB_DEBUG_LOG_PATH = Path("logs/github_analysis_debug.json")
 
 SLO_WINDOW_HOURS = 24
 
@@ -71,6 +72,29 @@ def _load_video_task_durations() -> dict[str, float]:
         elif step == "task_completed" and response_id in starts:
             durations[response_id] = max(0.0, (timestamp - starts[response_id]).total_seconds())
     return durations
+
+
+def _derive_cv_metrics(job: CVIngestionJob) -> tuple[int, int]:
+    """Derive processed/skipped counts from processing_log when available."""
+    log_entries = job.processing_log if isinstance(job.processing_log, list) else None
+    if not log_entries:
+        return int(job.processed_files or 0), int(job.skipped_files or 0)
+
+    processed = 0
+    skipped = 0
+    for entry in log_entries:
+        status = (entry.get("status") if isinstance(entry, dict) else None) or ""
+        normalized = str(status).strip().lower()
+        if normalized in {"processed", "staged"}:
+            processed += 1
+        elif normalized:
+            skipped += 1
+
+    # Fallback if logs are malformed or missing status values.
+    if processed == 0 and skipped == 0:
+        return int(job.processed_files or 0), int(job.skipped_files or 0)
+
+    return processed, skipped
 
 @router.get("/")
 async def get_background_tasks(
@@ -178,6 +202,56 @@ async def get_background_tasks(
     except Exception:
         pass
 
+    # ── HD Eval + QAG jobs ───────────────────────────────────────────────────
+    try:
+        qag_query = (
+            select(QAGProcessingJob, Position.job_title.label("position_title"), CandidateProfile.full_name.label("candidate_name"))
+            .join(Position, QAGProcessingJob.position_id == Position.id)
+            .outerjoin(CandidateProfile, QAGProcessingJob.candidate_id == CandidateProfile.id)
+            .where(QAGProcessingJob.organization_id == current_user.organization_id)
+            .order_by(desc(QAGProcessingJob.created_at))
+            .limit(limit)
+        )
+        qag_result = await db.execute(qag_query)
+        for job, position_title, candidate_name in qag_result.all():
+            if job.job_type == "qag_generation":
+                type_label = "HD Eval + QAG Generation"
+            elif job.job_type == "qag_resume_correction":
+                type_label = "HD Eval + QAG Resume Correction"
+            else:
+                type_label = "HD Eval + QAG Processing"
+
+            summary = job.summary if isinstance(job.summary, dict) else {}
+            total_generated = summary.get("question_count") if isinstance(summary.get("question_count"), int) else job.total_items
+            total_approved = summary.get("applications_scored") if isinstance(summary.get("applications_scored"), int) else job.processed_items
+            candidates_found = summary.get("candidates_found") if isinstance(summary.get("candidates_found"), int) else None
+            candidates_processed = summary.get("candidates_processed") if isinstance(summary.get("candidates_processed"), int) else None
+            candidates_skipped = summary.get("candidates_skipped") if isinstance(summary.get("candidates_skipped"), int) else None
+            zero_reason = summary.get("zero_reason") if isinstance(summary.get("zero_reason"), str) else None
+
+            tasks.append({
+                "id": str(job.id),
+                "status": job.status,
+                "type": type_label,
+                "task_category": "qag",
+                "candidate_name": candidate_name,
+                "source_filename": position_title,
+                "question": position_title or "Position",
+                "timestamp": job.created_at.isoformat() if job.created_at else None,
+                "total_generated": total_generated,
+                "total_flagged": None,
+                "total_approved": total_approved,
+                "qag_job_type": job.job_type,
+                "processed_items": job.processed_items,
+                "total_items": job.total_items,
+                "candidates_found": candidates_found,
+                "candidates_processed": candidates_processed,
+                "candidates_skipped": candidates_skipped,
+                "zero_reason": zero_reason,
+            })
+    except Exception:
+        pass
+
     # ── CV Ingestion jobs ──────────────────────────────────────────────────
     try:
         cv_query = (
@@ -188,6 +262,7 @@ async def get_background_tasks(
         )
         cv_result = await db.execute(cv_query)
         for job in cv_result.scalars().all():
+            processed, skipped = _derive_cv_metrics(job)
             tasks.append({
                 "id": str(job.id),
                 "status": job.status,
@@ -197,9 +272,11 @@ async def get_background_tasks(
                 "source_filename": job.source_filename,
                 "question": job.source_filename or "Uploaded file",
                 "timestamp": job.created_at.isoformat() if job.created_at else None,
-                "total_generated": job.processed_files,  # Total processed shown in generated
-                "total_flagged": job.skipped_files,      # Skipped shown in flagged
+                "total_generated": processed,
+                "total_flagged": skipped,
                 "total_approved": None,
+                "candidates_processed": processed,
+                "candidates_skipped": skipped,
             })
     except Exception:
         pass
@@ -342,20 +419,28 @@ async def get_task_logs(task_id: str, current_user = Depends(get_current_user)):
     """
     Get detailed logs for a specific background task.
     """
-    if not DEBUG_LOG_PATH.exists():
-        return {"logs": []}
-        
     try:
-        content = DEBUG_LOG_PATH.read_text()
-        if not content:
-            return {"logs": []}
-            
-        logs = json.loads(content)
-        # Filter logs by response_id
-        task_logs = [
-            log for log in logs 
-            if log.get("data", {}).get("response_id") == task_id
-        ]
+        task_logs = []
+
+        if DEBUG_LOG_PATH.exists():
+            content = DEBUG_LOG_PATH.read_text()
+            if content:
+                logs = json.loads(content)
+                task_logs.extend(
+                    log for log in logs
+                    if log.get("data", {}).get("response_id") == task_id
+                )
+
+        if GITHUB_DEBUG_LOG_PATH.exists():
+            content = GITHUB_DEBUG_LOG_PATH.read_text()
+            if content:
+                logs = json.loads(content)
+                task_logs.extend(
+                    log for log in logs
+                    if log.get("data", {}).get("job_id") == task_id
+                )
+
+        task_logs.sort(key=lambda entry: entry.get("timestamp") or "")
         return {"logs": task_logs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading logs: {str(e)}")
@@ -375,8 +460,8 @@ async def delete_background_task(
       - video: deletes InterviewResponse row (scoped to current organization)
       - question_import: deletes QuestionImportJob row (scoped to current organization)
     """
-    if task_category not in {"video", "question_import", "github_analysis", "cv_ingestion"}:
-        raise HTTPException(status_code=400, detail="task_category must be 'video', 'question_import', 'github_analysis', or 'cv_ingestion'")
+    if task_category not in {"video", "question_import", "github_analysis", "qag", "cv_ingestion"}:
+        raise HTTPException(status_code=400, detail="task_category must be 'video', 'question_import', 'github_analysis', 'qag', or 'cv_ingestion'")
 
     if task_category == "question_import":
         job = await db.get(QuestionImportJob, task_id)
@@ -395,6 +480,15 @@ async def delete_background_task(
         await db.delete(job)
         await db.commit()
         return {"message": "GitHub analysis task deleted"}
+
+    if task_category == "qag":
+        job = await db.get(QAGProcessingJob, task_id)
+        if not job or job.organization_id != current_user.organization_id:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        await db.delete(job)
+        await db.commit()
+        return {"message": "QAG processing task deleted"}
 
     if task_category == "cv_ingestion":
         job = await db.get(CVIngestionJob, task_id)
@@ -517,6 +611,34 @@ async def stop_all_github_analysis_tasks(
     }
 
 
+@router.post("/stop-qag")
+async def stop_all_qag_tasks(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Stop all pending/processing HD Eval + QAG tasks for the current organization."""
+    result = await db.execute(
+        select(QAGProcessingJob)
+        .where(
+            QAGProcessingJob.organization_id == current_user.organization_id,
+            QAGProcessingJob.status.in_(["pending", "processing"]),
+        )
+    )
+    tasks = result.scalars().all()
+
+    for task in tasks:
+        task.status = "cancelled"
+        task.completed_at = datetime.utcnow()
+        db.add(task)
+
+    await db.commit()
+
+    return {
+        "stopped_count": len(tasks),
+        "message": f"Stopped {len(tasks)} QAG processing task(s).",
+    }
+
+
 @router.post("/stop-cv-ingestion")
 async def stop_all_cv_ingestion_tasks(
     db: AsyncSession = Depends(get_db),
@@ -631,6 +753,33 @@ async def stop_github_analysis_task(
 
     return {
         "message": "GitHub analysis task stopped",
+        "task_id": str(task.id),
+        "status": task.status,
+    }
+
+
+@router.post("/stop-qag/{task_id}")
+async def stop_qag_task(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Stop a single pending/processing HD Eval + QAG task for the current organization."""
+    task = await db.get(QAGProcessingJob, task_id)
+
+    if not task or task.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="QAG processing task not found")
+
+    if task.status not in ["pending", "processing"]:
+        raise HTTPException(status_code=400, detail="Only pending or processing tasks can be stopped")
+
+    task.status = "cancelled"
+    task.completed_at = datetime.utcnow()
+    db.add(task)
+    await db.commit()
+
+    return {
+        "message": "QAG processing task stopped",
         "task_id": str(task.id),
         "status": task.status,
     }

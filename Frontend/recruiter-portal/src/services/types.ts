@@ -93,3 +93,30 @@ export interface Member {
     department: string;
     joinDate: string;
 }
+
+export interface ApplicationScoreBreakdown {
+    application_id: string;
+    candidate_id: string;
+    candidate_name: string;
+    position_id: string;
+    position_title: string;
+    match_score: number;
+    prescore_version?: string | null;
+    pre_score_final?: number | null;
+    semantic_fit_score?: number | null;
+    skills_experience_score?: number | null;
+    optional_profile_boost?: number | null;
+    jd_quality_score?: number | null;
+    jd_quality_status?: string | null;
+    jd_quality_cap?: number | null;
+    jd_quality_cap_applied?: boolean | null;
+    jd_quality_feedback?: string | null;
+    score_explanation: string[];
+    criteria_checks: Array<{
+        id?: number;
+        criterion?: string;
+        weight?: number;
+        passed?: boolean;
+        reason?: string;
+    }>;
+}

@@ -27,13 +27,14 @@ class Settings(BaseSettings):
     OLLAMA_API_KEY: str = ""
     OLLAMA_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_QUESTION_IMPORT_MODEL: str = "deepseek-v3.1:671b-cloud"
-    OLLAMA_CV_PARSING_MODEL: str = "gemma3:1b"
+    OLLAMA_CV_PARSING_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_GH_FILTER_MODEL: str = "kimi-k2.5:cloud"
     OLLAMA_GH_MAP_MODEL: str = "kimi-k2.5:cloud"
     OLLAMA_GH_AUDIT_MODEL: str = "deepseek-v3.1:671b-cloud"
     OLLAMA_GH_SYNTH_MODEL: str = "deepseek-v3.1:671b-cloud"
-    OLLAMA_GH_STAGE_TIMEOUT_SECONDS: int = 90
-    OLLAMA_MAX_CONCURRENT_CALLS: int = 1
+    OLLAMA_GH_STAGE_TIMEOUT_SECONDS: int = 180
+    OLLAMA_MAX_CONCURRENT_CALLS: int = 4
+    OLLAMA_CV_PARSE_TIMEOUT_SECONDS: int = 120
 
     # GitHub analysis runtime controls
     GH_ANALYSIS_HTTP_TIMEOUT_SECONDS: int = 30
@@ -51,9 +52,17 @@ class Settings(BaseSettings):
     # HuggingFace settings
     HUGGINGFACE_TOKEN: str = ""
     MODELS_DIR: str = "./models"
+    PROCTORING_DRAFTS_DIR: str = "ai-service/gp-assessment-env-drafts"
+    # Dev-safe default: allow fallback adapter output unless explicitly forced by env.
+    PROCTORING_REQUIRE_MODEL: bool = False
     
     # Mock mode is opt-in for local testing only.
     USE_MOCK: bool = False
+
+    # Async CV parsing dispatch mode:
+    # - inline: run in ai-service process via asyncio task (dev-friendly)
+    # - celery: dispatch to ai-service celery worker queue
+    CV_PARSE_ASYNC_MODE: str = "inline"
     
     class Config:
         env_file = ".env"

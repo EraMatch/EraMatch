@@ -1,62 +1,140 @@
-import { useState, useRef, useEffect } from 'react';
-import { ChevronLeft, Play, Pause, SkipForward, AlertTriangle, Flag, Mail, X, FileText, Clock, User, Video } from 'lucide-react';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { ChevronLeft, Play, Pause, SkipForward, AlertTriangle, Flag, Mail, X, FileText, Clock, User, Video, ChevronDown } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../../../services/api';
+import { API_URL } from '../../../services/client';
 
 interface FlagEvent {
-  id: number;
+  id: string;
   timestamp: number; // in seconds
   timeDisplay: string;
   event: string;
   severity: 'high' | 'medium' | 'low';
   module: 'Assessment' | 'AI Interview';
   evidence: string;
+  metadata?: Record<string, unknown> | null;
+  proof?: Record<string, unknown> | null;
   notes: string;
   status: 'pending' | 'cleared' | 'escalated';
 }
 
 interface SuspectReviewPageProps {
-  candidateId: number;
-  candidateName: string;
-  groupId: string;
-  groupName: string;
-  currentModule: string;
+  candidateId: string;
+  applicationId?: string;
   onBack: () => void;
-  onViewCandidate: (id: number) => void;
+  onViewCandidate: (id: string) => void;
+}
+
+interface SuspectReviewPayload {
+  candidate_id: string;
+  application_id?: string;
+  candidate_name: string;
+  group_name: string;
+  position_title: string;
+  current_module: string;
+  recording_url?: string | null;
+  duration: number;
+  suspicious_timestamps?: number[];
+  flags: FlagEvent[];
 }
 
 export function SuspectReviewPage({
   candidateId,
-  candidateName,
-  groupId,
-  groupName,
-  currentModule,
+  applicationId,
   onBack,
   onViewCandidate
 }: SuspectReviewPageProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [selectedFlag, setSelectedFlag] = useState<number | null>(null);
+  const safeDuration = Math.max(duration, 1);
+  const [selectedFlag, setSelectedFlag] = useState<string | null>(null);
   const [showEscalateModal, setShowEscalateModal] = useState(false);
   const [showJustificationModal, setShowJustificationModal] = useState(false);
   const [showMarkReviewedModal, setShowMarkReviewedModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const videoRef = useRef<HTMLDivElement>(null);
+  const [decompressionStatus, setDecompressionStatus] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [flags, setFlags] = useState<FlagEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [flagStatuses, setFlagStatuses] = useState<Record<number, 'pending' | 'cleared' | 'escalated'>>({});
+  const [suspectTimestamps, setSuspectTimestamps] = useState<number[]>([]);
+  const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [drawerExpanded, setDrawerExpanded] = useState(true);
+  const [flagStatuses, setFlagStatuses] = useState<Record<string, 'pending' | 'cleared' | 'escalated'>>({});
+  const [candidateName, setCandidateName] = useState('Unknown Candidate');
+  const [groupName, setGroupName] = useState('Unknown Group');
+  const [positionTitle, setPositionTitle] = useState('Unknown Position');
+  const [currentModule, setCurrentModule] = useState('Assessment');
+
+  const pendingCount = useMemo(
+    () => flags.filter((f) => (flagStatuses[f.id] || f.status) === 'pending').length,
+    [flags, flagStatuses],
+  );
+  const reviewedCount = useMemo(
+    () => flags.filter((f) => (flagStatuses[f.id] || f.status) !== 'pending').length,
+    [flags, flagStatuses],
+  );
+  const highSeverityCount = useMemo(
+    () => flags.filter((f) => f.severity === 'high').length,
+    [flags],
+  );
+
+  const moduleTimeline = useMemo(() => {
+    const modules = ['Assessment', 'AI Interview', 'Live Interview'];
+    const map = new Map<string, { flags: number; maxTs: number }>();
+    for (const moduleName of modules) {
+      map.set(moduleName, { flags: 0, maxTs: 0 });
+    }
+    for (const flag of flags) {
+      const current = map.get(flag.module) || { flags: 0, maxTs: 0 };
+      current.flags += 1;
+      current.maxTs = Math.max(current.maxTs, flag.timestamp || 0);
+      map.set(flag.module, current);
+    }
+
+    return modules.map((moduleName) => {
+      const stats = map.get(moduleName) || { flags: 0, maxTs: 0 };
+      const progress = stats.maxTs > 0 ? Math.min(100, Math.round((stats.maxTs / safeDuration) * 100)) : 0;
+      const status = progress >= 100 ? 'completed' : progress > 0 ? 'in_progress' : 'pending';
+      return {
+        module: moduleName,
+        progress,
+        status,
+        time: stats.maxTs > 0 ? `${Math.max(1, Math.ceil(stats.maxTs / 60))} mins` : '-',
+        flags: stats.flags,
+      };
+    });
+  }, [flags, safeDuration]);
+
+  const selectedFlagData = useMemo(
+    () => flags.find((f) => f.id === selectedFlag) || null,
+    [flags, selectedFlag],
+  );
 
   // Fetch suspect review data from API
   useEffect(() => {
     const fetchSuspectReview = async () => {
       try {
         setLoading(true);
-        const data: any = await api.recruiter.getSuspectReview(String(candidateId));
-        setFlags(data.flags as FlagEvent[]);
-        setDuration(data.duration);
+        const data = await api.recruiter.getSuspectReview(candidateId, applicationId) as SuspectReviewPayload;
+        setCandidateName(data.candidate_name || 'Unknown Candidate');
+        setGroupName(data.group_name || 'Unknown Group');
+        setPositionTitle(data.position_title || 'Unknown Position');
+        setCurrentModule(data.current_module || 'Assessment');
+        const backendBase = API_URL.replace('/api/v1', '');
+        if (data.recording_url && /^https?:\/\//i.test(data.recording_url)) {
+          setRecordingUrl(data.recording_url);
+        } else if (data.recording_url) {
+          setRecordingUrl(`${backendBase}${data.recording_url}`);
+        } else {
+          setRecordingUrl(null);
+        }
+        setFlags(data.flags || []);
+        setSuspectTimestamps((data.suspicious_timestamps || []).map((v) => Math.max(0, Math.floor(v))));
+        setDuration(Math.max(0, data.duration || 0));
         setFlagStatuses(
-          data.flags.reduce((acc: Record<number, 'pending' | 'cleared' | 'escalated'>, flag: FlagEvent) => ({ ...acc, [flag.id]: flag.status }), {})
+          (data.flags || []).reduce((acc: Record<string, 'pending' | 'cleared' | 'escalated'>, flag: FlagEvent) => ({ ...acc, [flag.id]: flag.status }), {})
         );
       } catch (error) {
         console.error('Failed to fetch suspect review:', error);
@@ -66,22 +144,45 @@ export function SuspectReviewPage({
     };
 
     fetchSuspectReview();
-  }, [candidateId]);
+  }, [candidateId, applicationId]);
 
   const handleSeekToFlag = (timestamp: number) => {
     setCurrentTime(timestamp);
     setIsPlaying(true);
+    if (videoRef.current) {
+      videoRef.current.currentTime = timestamp;
+      void videoRef.current.play().catch(() => undefined);
+    }
   };
 
-  const handleFlagAction = (flagId: number, action: 'cleared' | 'escalated') => {
+  const handleFlagAction = (flagId: string, action: 'cleared' | 'escalated') => {
     setFlagStatuses(prev => ({ ...prev, [flagId]: action }));
   };
 
   const handleDecompress = async () => {
     setIsProcessing(true);
-    // Simulate processing
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setIsProcessing(false);
+    setDecompressionStatus(null);
+    try {
+      const windows = (suspectTimestamps.length > 0 ? suspectTimestamps : flags.map((flag) => flag.timestamp))
+        .map((ts) => Math.max(0, Math.floor(ts / 5) * 5));
+      const unique = Array.from(new Set(windows)).sort((a, b) => a - b);
+      setSuspectTimestamps(unique);
+
+      const persisted = await api.recruiter.persistSuspectDecompressionArtifacts(candidateId, {
+        application_id: applicationId,
+        suspicious_timestamps: unique,
+        window_seconds: 5,
+      }) as { saved_segments?: number; updated_flags?: number };
+
+      setDecompressionStatus(
+        `Saved ${persisted?.saved_segments || 0} suspect segments across ${persisted?.updated_flags || 0} flags.`,
+      );
+    } catch (error) {
+      console.error('Failed to persist decompression artifacts:', error);
+      setDecompressionStatus('Failed to persist decompression artifacts.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -131,7 +232,13 @@ export function SuspectReviewPage({
             <div className="flex items-center gap-3 mb-2">
               <h1 className="text-[#111827]">Suspect Review</h1>
               <span className="px-[12px] py-[4px] bg-[#fef2f2] text-[#ef4444] rounded-[6px] font-['Arimo',sans-serif] text-[13px]">
-                {flags.filter(f => flagStatuses[f.id] === 'pending').length} Flags Pending
+                {pendingCount} Flags Pending
+              </span>
+              <span className="px-[12px] py-[4px] bg-[#f0fdf4] text-[#16a34a] rounded-[6px] font-['Arimo',sans-serif] text-[13px]">
+                {reviewedCount} Reviewed
+              </span>
+              <span className="px-[12px] py-[4px] bg-[#fff7ed] text-[#c2410c] rounded-[6px] font-['Arimo',sans-serif] text-[13px]">
+                {highSeverityCount} High Severity
               </span>
             </div>
             <div className="flex items-center gap-4">
@@ -148,6 +255,14 @@ export function SuspectReviewPage({
               <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
                 Module: {currentModule}
               </span>
+              <span className="text-[#e5e7eb]">|</span>
+              <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                Position: {positionTitle}
+              </span>
+              <span className="text-[#e5e7eb]">|</span>
+              <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
+                Total Signals: {flags.length}
+              </span>
             </div>
           </div>
 
@@ -157,7 +272,7 @@ export function SuspectReviewPage({
               disabled={isProcessing}
               className="h-[40px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] disabled:opacity-50 font-['Arimo',sans-serif] text-[14px] text-[#111827] transition-colors"
             >
-              {isProcessing ? 'Processing...' : 'Decompress Recording'}
+              {isProcessing ? 'Processing...' : 'Decompress Suspect Timestamps'}
             </button>
             <button
               onClick={() => setShowMarkReviewedModal(true)}
@@ -170,23 +285,53 @@ export function SuspectReviewPage({
       </div>
 
       <div className="p-8">
+        {decompressionStatus && (
+          <div className="mb-4 px-4 py-3 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] font-['Arimo',sans-serif] text-[13px] text-[#166534]">
+            {decompressionStatus}
+          </div>
+        )}
         <div className="grid grid-cols-12 gap-6">
           {/* Left Column - Video Player */}
           <div className="col-span-8 space-y-6">
             {/* Video Player */}
             <div className="bg-white rounded-[12px] border border-[#e5e7eb] overflow-hidden">
-              <div
-                ref={videoRef}
-                className="relative w-full bg-[#1f2937] aspect-video flex items-center justify-center"
-              >
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <Video size={64} className="text-white/20" />
-                </div>
+              <div className="relative w-full bg-[#1f2937] aspect-video flex items-center justify-center">
+                {recordingUrl ? (
+                  <video
+                    ref={videoRef}
+                    src={recordingUrl}
+                    className="w-full h-full object-contain"
+                    onLoadedMetadata={() => {
+                      if (videoRef.current?.duration) {
+                        setDuration((prev) => Math.max(prev, Math.ceil(videoRef.current!.duration)));
+                      }
+                    }}
+                    onTimeUpdate={() => {
+                      if (videoRef.current) {
+                        setCurrentTime(Math.floor(videoRef.current.currentTime));
+                        setIsPlaying(!videoRef.current.paused);
+                      }
+                    }}
+                    onEnded={() => setIsPlaying(false)}
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-6">
+                    <Video size={64} className="text-white/20" />
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-white/60">
+                      No system recording available for this assessment yet.
+                    </span>
+                  </div>
+                )}
                 <div className="absolute bottom-4 right-4 px-[10px] py-[6px] bg-black/70 rounded-[6px]">
                   <span className="font-['Arimo',sans-serif] text-[14px] text-white">
                     {formatTime(currentTime)} / {formatTime(duration)}
                   </span>
                 </div>
+                {loading && (
+                  <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-white">Loading evidence...</span>
+                  </div>
+                )}
                 {selectedFlag && (
                   <div className="absolute top-4 left-4 px-[12px] py-[8px] bg-[#ef4444] rounded-[8px]">
                     <span className="font-['Arimo',sans-serif] text-[13px] text-white">
@@ -214,7 +359,7 @@ export function SuspectReviewPage({
                             ? 'bg-[#f59e0b]'
                             : 'bg-[#3b82f6]'
                           } ${selectedFlag === flag.id ? 'ring-2 ring-white w-[6px]' : ''}`}
-                        style={{ left: `${(flag.timestamp / duration) * 100}%` }}
+                        style={{ left: `${(flag.timestamp / safeDuration) * 100}%` }}
                         title={`${flag.timeDisplay} - ${flag.event}`}
                       />
                     ))}
@@ -224,7 +369,7 @@ export function SuspectReviewPage({
                   <div className="relative h-[8px] bg-[#e5e7eb] rounded-full overflow-hidden cursor-pointer">
                     <div
                       className="h-full bg-[#6366f1] transition-all"
-                      style={{ width: `${(currentTime / duration) * 100}%` }}
+                      style={{ width: `${(currentTime / safeDuration) * 100}%` }}
                     />
                   </div>
                 </div>
@@ -233,7 +378,20 @@ export function SuspectReviewPage({
                 <div className="flex items-center justify-between mt-4">
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setIsPlaying(!isPlaying)}
+                      onClick={() => {
+                        const video = videoRef.current;
+                        if (!video) {
+                          setIsPlaying((prev) => !prev);
+                          return;
+                        }
+                        if (video.paused) {
+                          void video.play().catch(() => undefined);
+                          setIsPlaying(true);
+                        } else {
+                          video.pause();
+                          setIsPlaying(false);
+                        }
+                      }}
                       className="w-[36px] h-[36px] rounded-full bg-[#6366f1] hover:bg-[#5558e3] flex items-center justify-center transition-colors"
                     >
                       {isPlaying ? (
@@ -242,7 +400,15 @@ export function SuspectReviewPage({
                         <Play size={16} className="text-white ml-0.5" />
                       )}
                     </button>
-                    <button className="w-[36px] h-[36px] rounded-full border border-[#e5e7eb] hover:bg-[#f9fafb] flex items-center justify-center transition-colors">
+                    <button
+                      onClick={() => {
+                        const video = videoRef.current;
+                        if (!video) return;
+                        video.currentTime = Math.min(video.duration || safeDuration, video.currentTime + 5);
+                        setCurrentTime(Math.floor(video.currentTime));
+                      }}
+                      className="w-[36px] h-[36px] rounded-full border border-[#e5e7eb] hover:bg-[#f9fafb] flex items-center justify-center transition-colors"
+                    >
                       <SkipForward size={16} className="text-[#6b7280]" />
                     </button>
                   </div>
@@ -253,7 +419,14 @@ export function SuspectReviewPage({
                     {['0.5x', '1x', '1.5x', '2x'].map((speed) => (
                       <button
                         key={speed}
-                        className={`h-[28px] px-[10px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] transition-colors ${speed === '1x'
+                        onClick={() => {
+                          const rate = Number(speed.replace('x', ''));
+                          setPlaybackRate(rate);
+                          if (videoRef.current) {
+                            videoRef.current.playbackRate = rate;
+                          }
+                        }}
+                        className={`h-[28px] px-[10px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] transition-colors ${Number(speed.replace('x', '')) === playbackRate
                           ? 'bg-[#6366f1] text-white'
                           : 'border border-[#e5e7eb] text-[#6b7280] hover:bg-[#f9fafb]'
                           }`}
@@ -269,20 +442,29 @@ export function SuspectReviewPage({
             {/* Module Progress Timeline */}
             <div className="bg-white rounded-[12px] border border-[#e5e7eb] p-6">
               <h3 className="text-[#111827] text-[16px] mb-4">Module Progress Timeline</h3>
+              {suspectTimestamps.length > 0 && (
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {suspectTimestamps.map((ts) => (
+                    <button
+                      key={ts}
+                      onClick={() => handleSeekToFlag(ts)}
+                      className="px-[8px] py-[4px] rounded-[6px] bg-[#fef2f2] text-[#ef4444] font-['Arimo',sans-serif] text-[11px]"
+                    >
+                      Sus: {formatTime(ts)} to {formatTime(Math.min(ts + 5, safeDuration))}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="space-y-4">
-                {[
-                  { module: 'Assessment', progress: 100, status: 'completed', time: '18 mins', flags: 2 },
-                  { module: 'AI Interview', progress: 100, status: 'completed', time: '12 mins', flags: 2 },
-                  { module: 'Live Interview', progress: 0, status: 'pending', time: '-', flags: 0 }
-                ].map((item, index) => (
-                  <div key={index} className="flex items-center gap-4">
+                {moduleTimeline.map((item) => (
+                  <div key={item.module} className="flex items-center gap-4">
                     <div className="w-[140px] font-['Arimo',sans-serif] text-[13px] text-[#111827]">
                       {item.module}
                     </div>
                     <div className="flex-1">
                       <div className="w-full h-[8px] bg-[#e5e7eb] rounded-full overflow-hidden">
                         <div
-                          className={`h-full transition-all ${item.status === 'completed' ? 'bg-[#10b981]' : 'bg-[#6366f1]'
+                          className={`h-full transition-all ${item.status === 'completed' ? 'bg-[#10b981]' : item.status === 'in_progress' ? 'bg-[#6366f1]' : 'bg-[#d1d5db]'
                             }`}
                           style={{ width: `${item.progress}%` }}
                         />
@@ -402,6 +584,54 @@ export function SuspectReviewPage({
                   <AlertTriangle size={14} />
                   Escalate to HR
                 </button>
+              </div>
+
+              {/* Evidence Drawer */}
+              <div className="border-t border-[#e5e7eb]">
+                <button
+                  onClick={() => setDrawerExpanded((prev) => !prev)}
+                  className="w-full px-4 py-3 bg-[#fcfcff] flex items-center justify-between hover:bg-[#f7f7fd] transition-colors"
+                >
+                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151] font-medium">
+                    Evidence Drawer
+                  </span>
+                  <ChevronDown
+                    size={16}
+                    className={`text-[#6b7280] transition-transform ${drawerExpanded ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                {drawerExpanded && (
+                  <div className="p-4 bg-white space-y-3">
+                    {!selectedFlagData ? (
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af]">
+                        Select a flag to inspect proof and metadata.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="rounded-[8px] border border-[#e5e7eb] p-3 bg-[#fafafa]">
+                          <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mb-1">Selected Flag</p>
+                          <p className="font-['Arimo',sans-serif] text-[12px] text-[#111827]">
+                            {selectedFlagData.timeDisplay} - {selectedFlagData.event}
+                          </p>
+                        </div>
+
+                        <div className="rounded-[8px] border border-[#e5e7eb] p-3">
+                          <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mb-2">Proof JSON</p>
+                          <pre className="max-h-[160px] overflow-auto font-mono text-[11px] leading-5 text-[#1f2937] whitespace-pre-wrap break-words">
+                            {JSON.stringify(selectedFlagData.proof || {}, null, 2)}
+                          </pre>
+                        </div>
+
+                        <div className="rounded-[8px] border border-[#e5e7eb] p-3">
+                          <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mb-2">Metadata JSON</p>
+                          <pre className="max-h-[180px] overflow-auto font-mono text-[11px] leading-5 text-[#1f2937] whitespace-pre-wrap break-words">
+                            {JSON.stringify(selectedFlagData.metadata || {}, null, 2)}
+                          </pre>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

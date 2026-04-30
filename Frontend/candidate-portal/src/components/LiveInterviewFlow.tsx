@@ -1,9 +1,28 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Sparkles, Video, Clock, User, Camera, Mic, Play, Info, Scan, CheckCircle2, Copy, X, AlertTriangle, Users, Volume2, Loader2 } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { api } from '../services/api';
+import { captureVideoFrameBase64, toWaveformPayload } from '../utils/proctoringPayload';
+
+const AI_SERVICE_BASE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
+const ENABLE_BIOMETRIC_BETA = ((import.meta as any).env?.VITE_ENABLE_BIOMETRIC_BETA ?? 'true') !== 'false';
+const BIOMETRIC_SAMPLE_INTERVAL_MS = Number((import.meta as any).env?.VITE_BIOMETRIC_SAMPLE_INTERVAL_MS || 2000);
+const BIOMETRIC_ANALYSIS_INTERVAL_MS = Number((import.meta as any).env?.VITE_BIOMETRIC_ANALYSIS_INTERVAL_MS || 20000);
+const BIOMETRIC_RISK_THRESHOLD = Number((import.meta as any).env?.VITE_BIOMETRIC_RISK_THRESHOLD || 0.45);
+const SPEAKER_PROFILE_ID = (import.meta as any).env?.VITE_SPEAKER_PROFILE_ID || 'yousef_said_wavlm';
+
+type ProctoringSignalResult = {
+  signal_type: 'face' | 'voice' | 'gaze' | 'emotion';
+  event_type: string;
+  severity: 'low' | 'medium' | 'high';
+  risk_score: number;
+  confidence: number;
+  adapter_mode: string;
+  recommendation: string;
+  metadata: Record<string, unknown>;
+};
 
 interface LiveInterviewFlowProps {
   onSignOut: () => void;
@@ -48,31 +67,58 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
   const [isLoading, setIsLoading] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<string[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [questionsData, setQuestionsData] = useState<Array<{ id: string; text: string }>>([]);
+  const eventThrottleRef = useRef<Record<string, number>>({});
+  const proctoringCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastFrameRef = useRef<Uint8ClampedArray | null>(null);
+  const lastFrameDimensionsRef = useRef<{ width: number; height: number } | null>(null);
+  const analysisAudioContextRef = useRef<AudioContext | null>(null);
+  const analysisAudioAnalyserRef = useRef<AnalyserNode | null>(null);
+  const analysisAudioBufferRef = useRef<Float32Array | null>(null);
+  const latestAudioFrameRef = useRef<Float32Array | null>(null);
+  const silentSamplesRef = useRef(0);
+  const totalAudioSamplesRef = useRef(0);
+  const sampleWindowStartRef = useRef(Date.now());
 
   useEffect(() => {
     const fetchQuestions = async () => {
       try {
         setIsLoading(true);
-        // Get actual interview config for this candidate/group
         const configData = await api.candidate.getInterviewConfig() as any;
         
-        if (configData && configData.config_id) {
-          // If questions are present in config, use them
-          if (configData.questions && Array.isArray(configData.questions.items)) {
-            setQuestions(configData.questions.items.map((q: any) => q.text || q.question));
-          } else {
-            // Default questions if none in config
-            setQuestions([
-              "Describe your most challenging project and how you overcame the obstacles you faced.",
-              "Tell us about a time when you had to work with a difficult team member. How did you handle the situation?",
-              "What motivates you in your professional career, and how do you stay productive during challenging times?",
-              "Describe a situation where you had to learn a new technology or skill quickly. How did you approach it?",
-              "Where do you see yourself in 5 years, and how does this position align with your career goals?"
-            ]);
+        let questionsList = [];
+        if (configData?.questions) {
+          if (Array.isArray(configData.questions)) {
+            questionsList = configData.questions;
+          } else if (Array.isArray(configData.questions.items)) {
+            questionsList = configData.questions.items;
           }
+        }
+        
+        const normalizedQuestions = questionsList.map((q: any, idx: number) => ({
+          id: q.id || `q${idx + 1}`,
+          text: q.text || q.question || '',
+        }));
 
-          // Start the interview session in backend
-          const sessionData = await api.candidate.startInterview({ config_id: configData.config_id });
+        if (normalizedQuestions.length > 0) {
+          setQuestionsData(normalizedQuestions);
+          setQuestions(normalizedQuestions.map((q: any) => q.text));
+        } else {
+          // Default questions if none in config
+          const defaultQs = [
+            "Describe your most challenging project and how you overcame the obstacles you faced.",
+            "Tell us about a time when you had to work with a difficult team member. How did you handle the situation?",
+            "What motivates you in your professional career, and how do you stay productive during challenging times?",
+            "Describe a situation where you had to learn a new technology or skill quickly. How did you approach it?",
+            "Where do you see yourself in 5 years, and how does this position align with your career goals?"
+          ];
+          setQuestionsData(defaultQs.map((text, idx) => ({ id: `default_q${idx + 1}`, text })));
+          setQuestions(defaultQs);
+        }
+
+        if (configData?.config_id) {
+          const sessionData = await api.candidate.startInterview({ config_id: configData.config_id }) as any;
           if (sessionData && sessionData.session_id) {
             setSessionId(sessionData.session_id);
             console.log('Started interview session:', sessionData.session_id);
@@ -109,6 +155,316 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
     { number: 7, label: 'One Person' },
     { number: 8, label: 'Ready' }
   ];
+
+  const emitInterviewIntegrityEvent = useCallback(async (
+    eventType: string,
+    severity: 'low' | 'medium' | 'high',
+    metadata: Record<string, unknown> = {},
+    throttleMs = 8000,
+  ) => {
+    if (!sessionId) return;
+
+    const now = Date.now();
+    const key = `${eventType}:${severity}`;
+    const lastSent = eventThrottleRef.current[key] || 0;
+    if (now - lastSent < throttleMs) return;
+    eventThrottleRef.current[key] = now;
+
+    try {
+      const response = await api.candidate.reportInterviewIntegrityEvent({
+        session_id: sessionId,
+        event_type: eventType,
+        severity,
+        source: 'candidate_portal',
+        metadata: {
+          interview_mode: 'live',
+          conversation_turn: conversationTurns,
+          question_id: questionsData[Math.floor(conversationTurns / 2)]?.id,
+          ...metadata,
+        },
+      });
+
+      const action = response?.enforcement_action;
+      if (action === 'terminate') {
+        setInInterviewSession(false);
+        setAiSpeaking(false);
+        setCandidateSpeaking(false);
+        setInterviewComplete(true);
+        onCompletion();
+      } else if (action === 'pause') {
+        setInInterviewSession(false);
+        setAiSpeaking(false);
+        setCandidateSpeaking(false);
+      }
+    } catch (error) {
+      console.error('Failed to report live interview integrity event:', error);
+    }
+  }, [sessionId, conversationTurns, questionsData, onCompletion]);
+
+  const postProctoringSignal = useCallback(async (
+    signal: 'face' | 'voice' | 'gaze' | 'emotion',
+    payload: Record<string, unknown>,
+  ): Promise<ProctoringSignalResult | null> => {
+    try {
+      const response = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/${signal}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        if (response.status === 422 && errorPayload?.detail?.proof) {
+          return {
+            signal_type: signal,
+            event_type: 'model_required_violation',
+            severity: 'high',
+            risk_score: 1,
+            confidence: 1,
+            adapter_mode: 'model_required_block',
+            recommendation: 'Model-required mode blocked fallback inference for this signal.',
+            metadata: {
+              proof: errorPayload.detail.proof,
+            },
+          } as ProctoringSignalResult;
+        }
+        return null;
+      }
+      return await response.json() as ProctoringSignalResult;
+    } catch (error) {
+      console.error(`Failed proctoring ${signal} request:`, error);
+      return null;
+    }
+  }, []);
+
+  const measureFaceMotion = useCallback((): number => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      return 0;
+    }
+
+    if (!proctoringCanvasRef.current) {
+      proctoringCanvasRef.current = document.createElement('canvas');
+    }
+    const canvas = proctoringCanvasRef.current;
+    const width = 96;
+    const height = 72;
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return 0;
+
+    ctx.drawImage(video, 0, 0, width, height);
+    const frame = ctx.getImageData(0, 0, width, height).data;
+
+    if (!lastFrameRef.current || !lastFrameDimensionsRef.current) {
+      lastFrameRef.current = new Uint8ClampedArray(frame);
+      lastFrameDimensionsRef.current = { width, height };
+      return 0;
+    }
+
+    if (lastFrameDimensionsRef.current.width !== width || lastFrameDimensionsRef.current.height !== height) {
+      lastFrameRef.current = new Uint8ClampedArray(frame);
+      lastFrameDimensionsRef.current = { width, height };
+      return 0;
+    }
+
+    let diffSum = 0;
+    const prev = lastFrameRef.current;
+    for (let i = 0; i < frame.length; i += 4) {
+      const currGray = (frame[i] + frame[i + 1] + frame[i + 2]) / 3;
+      const prevGray = (prev[i] + prev[i + 1] + prev[i + 2]) / 3;
+      diffSum += Math.abs(currGray - prevGray);
+    }
+
+    lastFrameRef.current = new Uint8ClampedArray(frame);
+    const pixelCount = width * height;
+    return Math.min(1, diffSum / (pixelCount * 255));
+  }, []);
+
+  const measureVoiceRms = useCallback((): number => {
+    if (!stream) {
+      return 0;
+    }
+    if (!analysisAudioContextRef.current) {
+      const AC = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AC) return 0;
+      const ctx = new AC();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      const source = ctx.createMediaStreamSource(stream);
+      source.connect(analyser);
+      analysisAudioContextRef.current = ctx;
+      analysisAudioAnalyserRef.current = analyser;
+      analysisAudioBufferRef.current = new Float32Array(analyser.fftSize);
+    }
+
+    const analyser = analysisAudioAnalyserRef.current;
+    const buffer = analysisAudioBufferRef.current;
+    if (!analyser || !buffer) return 0;
+
+    analyser.getFloatTimeDomainData(buffer as unknown as Float32Array<ArrayBufferLike>);
+    latestAudioFrameRef.current = new Float32Array(buffer);
+
+    let sum = 0;
+    for (let i = 0; i < buffer.length; i += 1) {
+      sum += buffer[i] * buffer[i];
+    }
+    return Math.sqrt(sum / buffer.length);
+  }, [stream]);
+
+  useEffect(() => {
+    if (!ENABLE_BIOMETRIC_BETA || !inInterviewSession) return;
+
+    if (!sessionId || !stream) {
+      void emitInterviewIntegrityEvent('biometric_capture_unavailable', 'medium', {
+        reason: 'missing_session_or_media_stream',
+      });
+      return;
+    }
+
+    const sampleMetrics = {
+      face_motion_avg: 0,
+      gaze_off_ratio: 0,
+      gaze_samples: 0,
+      voice_silent_ratio: 0,
+      sample_count: 0,
+    };
+
+    sampleWindowStartRef.current = Date.now();
+    silentSamplesRef.current = 0;
+    totalAudioSamplesRef.current = 0;
+
+    const sampleInterval = window.setInterval(() => {
+      const faceMotion = measureFaceMotion();
+      const gazeAway = faceMotion < 0.008 ? 1 : 0;
+      const rms = measureVoiceRms();
+
+      sampleMetrics.sample_count += 1;
+      sampleMetrics.face_motion_avg += (faceMotion - sampleMetrics.face_motion_avg) / sampleMetrics.sample_count;
+      sampleMetrics.gaze_samples += 1;
+      sampleMetrics.gaze_off_ratio += (gazeAway - sampleMetrics.gaze_off_ratio) / sampleMetrics.gaze_samples;
+
+      totalAudioSamplesRef.current += 1;
+      if (rms < 0.01) {
+        silentSamplesRef.current += 1;
+      }
+
+      sampleMetrics.voice_silent_ratio = totalAudioSamplesRef.current
+        ? silentSamplesRef.current / totalAudioSamplesRef.current
+        : 0;
+    }, BIOMETRIC_SAMPLE_INTERVAL_MS);
+
+    const analysisInterval = window.setInterval(async () => {
+      const elapsedMs = Date.now() - sampleWindowStartRef.current;
+      const frameB64 = captureVideoFrameBase64(videoRef.current, 224, 224);
+      const audioWaveform = toWaveformPayload(latestAudioFrameRef.current, 24000);
+      const audioSampleRate = analysisAudioContextRef.current?.sampleRate ?? 16000;
+      const payloadBase = {
+        session_id: sessionId,
+        sample_window_ms: elapsedMs,
+        interview_mode: 'live',
+      };
+
+      const signalPayloads: Array<{
+        signal: 'face' | 'voice' | 'gaze' | 'emotion';
+        payload: Record<string, unknown>;
+      }> = [
+        {
+          signal: 'face',
+          payload: {
+            ...payloadBase,
+            faces_detected: sampleMetrics.sample_count > 0 ? 1 : 0,
+            multiple_faces: false,
+            liveness_score: Number(sampleMetrics.face_motion_avg.toFixed(4)),
+            frame_b64: frameB64,
+          },
+        },
+        {
+          signal: 'voice',
+          payload: {
+            ...payloadBase,
+            silence_ratio: Number(sampleMetrics.voice_silent_ratio.toFixed(4)),
+            background_speaker_count: 0,
+            speaker_profile_id: SPEAKER_PROFILE_ID,
+            audio_waveform: audioWaveform,
+            audio_sample_rate: audioSampleRate,
+          },
+        },
+        {
+          signal: 'gaze',
+          payload: {
+            ...payloadBase,
+            off_screen_ratio: Number(sampleMetrics.gaze_off_ratio.toFixed(4)),
+            away_duration_seconds: Number(((elapsedMs / 1000) * sampleMetrics.gaze_off_ratio).toFixed(3)),
+            rapid_shift_count: 0,
+            frame_b64: frameB64,
+          },
+        },
+        {
+          signal: 'emotion',
+          payload: {
+            ...payloadBase,
+            stress_score: Number((0.6 * sampleMetrics.gaze_off_ratio + 0.4 * (1 - sampleMetrics.voice_silent_ratio)).toFixed(4)),
+            negative_ratio: Number(sampleMetrics.gaze_off_ratio.toFixed(4)),
+            dominant_emotion: sampleMetrics.gaze_off_ratio > 0.55 ? 'fear' : 'neutral',
+            frame_b64: frameB64,
+          },
+        },
+      ];
+
+      for (const { signal, payload } of signalPayloads) {
+        const result = await postProctoringSignal(signal, payload);
+        if (!result || result.risk_score < BIOMETRIC_RISK_THRESHOLD) continue;
+
+        void emitInterviewIntegrityEvent(
+          result.event_type,
+          result.severity,
+          {
+            signal_type: result.signal_type,
+            risk_score: result.risk_score,
+            confidence: result.confidence,
+            recommendation: result.recommendation,
+            adapter_mode: result.adapter_mode,
+            adapter_metadata: result.metadata,
+            sampled_window_ms: elapsedMs,
+            sampled_face_motion_avg: Number(sampleMetrics.face_motion_avg.toFixed(4)),
+            sampled_gaze_off_ratio: Number(sampleMetrics.gaze_off_ratio.toFixed(4)),
+            sampled_voice_silent_ratio: Number(sampleMetrics.voice_silent_ratio.toFixed(4)),
+          },
+          6000,
+        );
+      }
+
+      sampleWindowStartRef.current = Date.now();
+      sampleMetrics.face_motion_avg = 0;
+      sampleMetrics.gaze_off_ratio = 0;
+      sampleMetrics.gaze_samples = 0;
+      sampleMetrics.voice_silent_ratio = 0;
+      sampleMetrics.sample_count = 0;
+      silentSamplesRef.current = 0;
+      totalAudioSamplesRef.current = 0;
+    }, BIOMETRIC_ANALYSIS_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(sampleInterval);
+      window.clearInterval(analysisInterval);
+      analysisAudioAnalyserRef.current = null;
+      analysisAudioBufferRef.current = null;
+      if (analysisAudioContextRef.current) {
+        analysisAudioContextRef.current.close().catch(() => {});
+      }
+      analysisAudioContextRef.current = null;
+    };
+  }, [
+    emitInterviewIntegrityEvent,
+    inInterviewSession,
+    measureFaceMotion,
+    measureVoiceRms,
+    postProctoringSignal,
+    sessionId,
+    stream,
+  ]);
 
   // Simulate AI speaking when a new question starts
   useEffect(() => {

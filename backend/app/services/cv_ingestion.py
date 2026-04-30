@@ -22,8 +22,10 @@ from app.models import (
     CVIngestionJob,
     DriveIngestionSchedule,
     CandidateProfile,
-    CandidateApplication
+    CandidateApplication,
+    Position,
 )
+from app.services.prescore import PreScoreService
 from worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -163,35 +165,77 @@ class CVIngestionService:
 
     async def handle_async_parse_result(self, tenant_id: str, job_id: str, file_path: str, status: str, parsed_data: dict | None, error: str | None, source: str = "upload"):
         """Called by webhook when parsing finishes"""
-        if status == "success" and parsed_data:
-            email = parsed_data.get("email") or f"{str(uuid.uuid4())}@example.com"
-            name = parsed_data.get("full_name") or os.path.basename(file_path).split("_", 1)[-1]
-            
-            logger.info(f"Webhook creating candidate {email} for {file_path}")
-            
-            # Create/Find Candidate
-            candidate_id = await self.get_or_create_candidate(UUID(str(tenant_id)), email, name)
-            
-            # Create Application
-            app_id = await self.apply_for_position(UUID(str(tenant_id)), UUID(str(job_id)), candidate_id, source)
-            
-            if app_id:
-                # Move staged file to actual location
+        parsed_ok = status == "success" and isinstance(parsed_data, dict)
+        if not parsed_ok:
+            logger.error(f"CV parsing failed per webhook for {file_path}: {error}")
+
+        fallback_name = os.path.basename(file_path).split("_", 1)[-1]
+        email = (parsed_data or {}).get("email") if parsed_ok else None
+        name = (parsed_data or {}).get("full_name") if parsed_ok else None
+        email = email or f"{str(uuid.uuid4())}@example.com"
+        name = name or fallback_name
+
+        logger.info(f"Webhook creating candidate {email} for {file_path}")
+
+        candidate_id = await self.get_or_create_candidate(UUID(str(tenant_id)), email, name)
+        app_source = source if parsed_ok else f"{source}_parse_failed"
+        app_id = await self.apply_for_position(UUID(str(tenant_id)), UUID(str(job_id)), candidate_id, app_source)
+
+        if app_id:
+            try:
+                with open(file_path, "rb") as f:
+                    file_content = f.read()
+                self.save_cv_file(app_id, os.path.basename(file_path), file_content)
+            except Exception as e:
+                logger.error(f"Failed to move staged file {file_path}: {e}")
+
+            if parsed_ok and parsed_data:
+                # Trigger prescore computation at ingestion time when possible.
+                # If approved QAG questions are unavailable, scorer falls back to heuristic mode.
                 try:
-                    with open(file_path, "rb") as f:
-                        file_content = f.read()
-                    self.save_cv_file(app_id, os.path.basename(file_path), file_content)
-                except Exception as e:
-                    logger.error(f"Failed to move staged file {file_path}: {e}")
-                
-                # We need to dispatch a quick task to save the CVAnalysis data and backfill candidate profile
-                # This way we reuse the database persistence logic for the parsed JSON
+                    position_stmt = select(Position).where(
+                        Position.id == UUID(str(job_id)),
+                        Position.organization_id == UUID(str(tenant_id)),
+                        Position.is_deleted == False,
+                    )
+                    position = (await self.session.execute(position_stmt)).scalars().first()
+                    if position:
+                        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+                        has_approved_qag = isinstance(artifact.get("approved_questions"), list) and len(artifact.get("approved_questions")) > 0
+                        jd_critic_result = artifact if has_approved_qag else {}
+
+                        skills_items = parsed_data.get("skills", []) if isinstance(parsed_data, dict) else []
+                        candidate_skills = [
+                            str(s.get("skill_name") or s.get("name") or "").strip()
+                            for s in skills_items
+                            if isinstance(s, dict) and str(s.get("skill_name") or s.get("name") or "").strip()
+                        ]
+
+                        exp_val = parsed_data.get("years_of_experience") if isinstance(parsed_data, dict) else None
+                        try:
+                            candidate_experience_years = float(exp_val) if exp_val is not None else 0.0
+                        except (TypeError, ValueError):
+                            candidate_experience_years = 0.0
+
+                        scorer = PreScoreService()
+                        parsed_data["prescore_v2"] = await scorer.score_candidate_prescore(
+                            job_title=position.job_title,
+                            job_description=position.job_description,
+                            required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
+                            years_of_experience=position.years_of_experience,
+                            candidate_skills=candidate_skills,
+                            candidate_experience_years=candidate_experience_years,
+                            candidate_parsed_data=parsed_data,
+                            github_analysis_data={},
+                            jd_critic_result=jd_critic_result,
+                        )
+                except Exception as score_exc:
+                    logger.warning(f"Prescore computation skipped for app {app_id}: {score_exc}")
+
                 celery_app.send_task(
                     "cv_parsing.persist_parsed_data",
                     args=[str(app_id), str(tenant_id), file_path, parsed_data],
                 )
-        else:
-            logger.error(f"CV parsing failed per webhook for {file_path}: {error}")
             
     async def process_cv_file(self, organization_id: UUID, position_id: UUID, file_name: str, file_content: bytes, source: str) -> Dict[str, Any]:
         """Stages a CV file and dispatches async parsing."""
@@ -238,7 +282,7 @@ class CVIngestionService:
                     res = await self.process_cv_file(organization_id, position_id, basename, file_content, source="zip_upload")
                     
                     processing_log.append(res)
-                    if res["status"] == "staged":
+                    if res["status"] in {"processed", "staged"}:
                         processed += 1
                     else:
                         skipped += 1
@@ -321,7 +365,7 @@ class CVIngestionService:
                 if len(file_content) > 0:
                     res = await self.process_cv_file(schedule.organization_id, schedule.position_id, item['name'], file_content, source="google_drive")
                     processing_log.append(res)
-                    if res["status"] == "staged":
+                    if res["status"] in {"processed", "staged"}:
                         processed += 1
                     else:
                         skipped += 1
@@ -464,34 +508,40 @@ class CVIngestionWorkerService:
 
     def handle_async_parse_result(self, tenant_id: str, job_id: str, file_path: str, status: str, parsed_data: dict | None, error: str | None, source: str = "upload"):
         """Called by webhook when parsing finishes (Synchronous)"""
-        if status == "success" and parsed_data:
-            email = parsed_data.get("email") or f"{str(uuid.uuid4())}@example.com"
-            name = parsed_data.get("full_name") or os.path.basename(file_path).split("_", 1)[-1]
-            
-            logger.info(f"Webhook creating candidate {email} for {file_path} (Sync)")
-            
-            candidate_id = self.get_or_create_candidate(UUID(str(tenant_id)), email, name)
-            app_id = self.apply_for_position(UUID(str(tenant_id)), UUID(str(job_id)), candidate_id, source)
-            
-            if app_id:
-                try:
-                    with open(file_path, "rb") as f:
-                        file_content = f.read()
-                        
-                    base_dir = os.path.join(os.getcwd(), "static", "cvs", str(app_id))
-                    os.makedirs(base_dir, exist_ok=True)
-                    new_file_path = os.path.join(base_dir, os.path.basename(file_path))
-                    with open(new_file_path, "wb") as new_f:
-                        new_f.write(file_content)
-                except Exception as e:
-                    logger.error(f"Failed to move staged file {file_path}: {e}")
-                
+        parsed_ok = status == "success" and isinstance(parsed_data, dict)
+        if not parsed_ok:
+            logger.error(f"CV parsing failed per webhook for {file_path}: {error}")
+
+        fallback_name = os.path.basename(file_path).split("_", 1)[-1]
+        email = (parsed_data or {}).get("email") if parsed_ok else None
+        name = (parsed_data or {}).get("full_name") if parsed_ok else None
+        email = email or f"{str(uuid.uuid4())}@example.com"
+        name = name or fallback_name
+
+        logger.info(f"Webhook creating candidate {email} for {file_path} (Sync)")
+
+        candidate_id = self.get_or_create_candidate(UUID(str(tenant_id)), email, name)
+        app_source = source if parsed_ok else f"{source}_parse_failed"
+        app_id = self.apply_for_position(UUID(str(tenant_id)), UUID(str(job_id)), candidate_id, app_source)
+
+        if app_id:
+            try:
+                with open(file_path, "rb") as f:
+                    file_content = f.read()
+
+                base_dir = os.path.join(os.getcwd(), "static", "cvs", str(app_id))
+                os.makedirs(base_dir, exist_ok=True)
+                new_file_path = os.path.join(base_dir, os.path.basename(file_path))
+                with open(new_file_path, "wb") as new_f:
+                    new_f.write(file_content)
+            except Exception as e:
+                logger.error(f"Failed to move staged file {file_path}: {e}")
+
+            if parsed_ok and parsed_data:
                 celery_app.send_task(
                     "cv_parsing.persist_parsed_data",
                     args=[str(app_id), str(tenant_id), file_path, parsed_data],
                 )
-        else:
-            logger.error(f"CV parsing failed per webhook for {file_path}: {error}")
 
     def process_cv_file(self, organization_id: UUID, position_id: UUID, file_name: str, file_content: bytes, source: str) -> Dict[str, Any]:
         """Stages a CV file and dispatches async parsing (Synchronous)."""
@@ -536,7 +586,7 @@ class CVIngestionWorkerService:
                     res = self.process_cv_file(organization_id, position_id, basename, file_content, source="zip_upload")
                     
                     processing_log.append(res)
-                    if res["status"] == "staged":
+                    if res["status"] in {"processed", "staged"}:
                         processed += 1
                     else:
                         skipped += 1
@@ -624,7 +674,7 @@ class CVIngestionWorkerService:
                         res = self.process_cv_file(schedule.organization_id, schedule.position_id, item['name'], file_content, source="google_drive")
                         logger.info(f"Process CV File result for {item['name']}: {res['status']}")
                         processing_log.append(res)
-                        if res["status"] == "staged":
+                        if res["status"] in {"processed", "staged"}:
                             processed += 1
                         else:
                             skipped += 1

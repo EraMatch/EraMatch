@@ -8,16 +8,32 @@ Handles the AI video interview flow:
 - Check processing status
 """
 import json
-from uuid import UUID
+import logging
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlalchemy import text, bindparam, String
 from sqlalchemy.dialects.postgresql import UUID as pgUUID, JSONB
 
 from app.api.deps import CurrentCandidate, DbSession
+from app.core.integrity_metrics import integrity_metrics
 
 
 router = APIRouter(prefix="/interview", tags=["Candidate Interview"])
+logger = logging.getLogger(__name__)
+
+INTERVIEW_INTEGRITY_EVENT_MAX_PER_MINUTE = 45
+INTERVIEW_INTEGRITY_DUP_WINDOW_SECONDS = 8
+INTERVIEW_ENFORCEMENT_WINDOW_SECONDS = 120
+INTERVIEW_ENFORCEMENT_CRITICAL_EVENTS = {
+    "paste_attempt",
+    "paste_shortcut",
+    "multi_face_detected",
+    "voice_mismatch",
+    "speaker_mismatch",
+    "fusion_high_confidence_risk",
+}
 
 
 def _normalize_questions(questions_data) -> list[dict]:
@@ -135,6 +151,165 @@ class ProcessingStatusResponse(BaseModel):
     session_id: str
     status: str
     responses: list[dict]
+
+
+class InterviewIntegrityEventRequest(BaseModel):
+    session_id: str
+    event_type: str
+    severity: str | None = "low"
+    source: str | None = "candidate_portal"
+    confidence: float | None = None
+    timestamp_seconds: int | None = None
+    evidence: str | None = None
+    metadata: dict | None = None
+
+
+class InterviewIntegrityEventResponse(BaseModel):
+    flag_id: str
+    status: str
+    message: str
+    enforcement_action: str = "none"
+    enforcement_reason: str | None = None
+
+
+class InterviewIntegrityDecisionResponse(BaseModel):
+    candidate_id: str
+    application_id: str
+    session_id: str
+    session_type: str = "ai_interview"
+    decision: str
+    cheating_detected: bool
+    total_flags: int
+    high_flags: int
+    medium_flags: int
+    low_flags: int
+    critical_flags: int
+    latest_event_type: str | None = None
+    recent_events: list[dict]
+    enforcement_action: str = "none"
+    enforcement_reason: str | None = None
+    updated_at: str
+
+
+def _normalize_severity(severity: str | None) -> str:
+    normalized = (severity or "low").strip().lower()
+    if normalized not in {"low", "medium", "high"}:
+        return "low"
+    return normalized
+
+
+def _log_interview_integrity_metric(metric_name: str, **fields) -> None:
+    payload = {
+        "metric": "interview_integrity_event",
+        "metric_name": metric_name,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        **fields,
+    }
+    logger.info("interview_integrity_metric %s", json.dumps(payload, default=str, sort_keys=True))
+
+
+async def _interview_enforcement_action(
+    session,
+    session_id: UUID,
+    latest_event_type: str | None = None,
+    latest_severity: str | None = None,
+) -> tuple[str, str | None]:
+    counters = await session.execute(
+        text("""
+            SELECT
+              COUNT(*) FILTER (WHERE severity = 'high') AS high_cnt,
+                            COUNT(*) FILTER (WHERE severity = 'medium') AS medium_cnt
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND session_type = 'ai_interview'
+              AND created_at >= NOW() - (:window_s || ' seconds')::INTERVAL
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_id,
+            "window_s": str(INTERVIEW_ENFORCEMENT_WINDOW_SECONDS),
+        },
+    )
+    row = counters.mappings().first() or {}
+    high_cnt = int(row.get("high_cnt") or 0)
+    medium_cnt = int(row.get("medium_cnt") or 0)
+
+    event_type = (latest_event_type or "").strip().lower()
+    severity = _normalize_severity(latest_severity)
+
+    if event_type in INTERVIEW_ENFORCEMENT_CRITICAL_EVENTS:
+        return "terminate", "critical_event_detected"
+    if high_cnt >= 2 or medium_cnt >= 4:
+        return "pause", "repeated_high_risk_pattern"
+    if medium_cnt >= 2:
+        return "warn", "elevated_risk_pattern"
+    return "none", None
+
+
+def _interview_decision_from_counts(
+    total_flags: int,
+    high_cnt: int,
+    medium_cnt: int,
+    critical_cnt: int,
+    fusion_cnt: int,
+) -> tuple[str, bool]:
+    if critical_cnt > 0 or fusion_cnt > 0 or high_cnt >= 2 or medium_cnt >= 4:
+        return "confirmed_cheating", True
+    if high_cnt >= 1 or medium_cnt >= 2 or total_flags >= 3:
+        return "suspicious_review", False
+    if total_flags == 0:
+        return "clean", False
+    return "monitoring", False
+
+
+async def _is_interview_integrity_rate_limited(session, session_id: UUID, detected_by: str) -> bool:
+    res = await session.execute(
+        text("""
+            SELECT COUNT(*) AS cnt
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND session_type = 'ai_interview'
+              AND detected_by = :detected_by
+              AND created_at >= NOW() - INTERVAL '1 minute'
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_id,
+            "detected_by": detected_by,
+        },
+    )
+    return int(res.scalar() or 0) >= INTERVIEW_INTEGRITY_EVENT_MAX_PER_MINUTE
+
+
+async def _is_duplicate_interview_integrity_event(
+    session,
+    session_id: UUID,
+    event_type: str,
+    detected_by: str,
+) -> bool:
+    res = await session.execute(
+        text("""
+            SELECT flag_id
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND session_type = 'ai_interview'
+              AND event_type = :event_type
+              AND detected_by = :detected_by
+              AND created_at >= NOW() - (:dup_window || ' seconds')::INTERVAL
+            LIMIT 1
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_id,
+            "event_type": event_type,
+            "detected_by": detected_by,
+            "dup_window": str(INTERVIEW_INTEGRITY_DUP_WINDOW_SECONDS),
+        },
+    )
+    return res.mappings().first() is not None
 
 
 # =============================================================================
@@ -717,6 +892,316 @@ async def get_processing_status(
         session_id=session_id,
         status=overall_status,
         responses=responses,
+    )
+
+
+@router.post("/integrity-event", response_model=InterviewIntegrityEventResponse)
+async def report_interview_integrity_event(
+    request: InterviewIntegrityEventRequest,
+    candidate: CurrentCandidate,
+    session: DbSession,
+):
+    try:
+        session_uuid = UUID(request.session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id format") from exc
+
+    verify = await session.execute(
+        text("""
+            SELECT oi.session_id,
+                   oi.application_id,
+                   oi.organization_id,
+                   oi.status,
+                   oi.started_at
+            FROM ongoing_interviews oi
+            JOIN candidate_applications ca ON oi.application_id = ca.application_id
+            WHERE oi.session_id = :session_id
+              AND ca.candidate_id = :candidate_id
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            bindparam("candidate_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_uuid,
+            "candidate_id": candidate.candidate_id,
+        },
+    )
+    interview_session = verify.mappings().first()
+    if not interview_session:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
+    if interview_session["status"] == "completed":
+        raise HTTPException(status_code=400, detail="Interview already completed")
+
+    normalized_event_type = (request.event_type or "").strip().lower()
+    if not normalized_event_type:
+        raise HTTPException(status_code=400, detail="event_type is required")
+
+    detected_by = (request.source or "candidate_portal")[:50]
+
+    if await _is_interview_integrity_rate_limited(session, session_uuid, detected_by):
+        integrity_metrics.inc(stage="ai_interview", outcome="dropped", reason="rate_limited")
+        _log_interview_integrity_metric(
+            "interview_integrity_dropped_rate_limited",
+            session_id=str(session_uuid),
+            candidate_id=str(candidate.candidate_id),
+            event_type=normalized_event_type,
+            detected_by=detected_by,
+            reason="rate_limited",
+        )
+        return InterviewIntegrityEventResponse(
+            flag_id="rate_limited",
+            status="dropped",
+            message="Integrity event dropped due to rate limiting.",
+            enforcement_action="none",
+        )
+
+    if await _is_duplicate_interview_integrity_event(session, session_uuid, normalized_event_type, detected_by):
+        integrity_metrics.inc(stage="ai_interview", outcome="dropped", reason="duplicate_recent_window")
+        _log_interview_integrity_metric(
+            "interview_integrity_dropped_duplicate",
+            session_id=str(session_uuid),
+            candidate_id=str(candidate.candidate_id),
+            event_type=normalized_event_type,
+            detected_by=detected_by,
+            reason="duplicate_recent_window",
+            duplicate_window_seconds=INTERVIEW_INTEGRITY_DUP_WINDOW_SECONDS,
+        )
+        return InterviewIntegrityEventResponse(
+            flag_id="duplicate",
+            status="dropped",
+            message="Integrity event dropped as duplicate in recent window.",
+            enforcement_action="none",
+        )
+
+    event_ts = request.timestamp_seconds
+    if event_ts is None:
+        started_at = interview_session["started_at"]
+        if started_at:
+            event_ts = max(
+                0,
+                int((datetime.now(timezone.utc) - started_at.replace(tzinfo=timezone.utc)).total_seconds()),
+            )
+        else:
+            event_ts = 0
+
+    evidence_payload = {
+        "source": request.source or "candidate_portal",
+        "confidence": request.confidence,
+        "evidence": request.evidence,
+        "metadata": request.metadata or {},
+    }
+
+    flag_id = uuid4()
+    await session.execute(
+        text("""
+            INSERT INTO proctoring_flags (
+                flag_id,
+                application_id,
+                session_id,
+                session_type,
+                organization_id,
+                timestamp_seconds,
+                event_type,
+                severity,
+                evidence,
+                detected_by,
+                status,
+                created_at
+            )
+            VALUES (
+                :flag_id,
+                :application_id,
+                :session_id,
+                'ai_interview',
+                :organization_id,
+                :timestamp_seconds,
+                :event_type,
+                :severity,
+                :evidence,
+                :detected_by,
+                'pending',
+                NOW()
+            )
+        """).bindparams(
+            bindparam("flag_id", type_=pgUUID(as_uuid=True)),
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            bindparam("organization_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "flag_id": flag_id,
+            "application_id": interview_session["application_id"],
+            "session_id": interview_session["session_id"],
+            "organization_id": interview_session["organization_id"],
+            "timestamp_seconds": event_ts,
+            "event_type": normalized_event_type,
+            "severity": _normalize_severity(request.severity),
+            "evidence": json.dumps(evidence_payload),
+            "detected_by": detected_by,
+        },
+    )
+
+    integrity_metrics.inc(stage="ai_interview", outcome="accepted", reason="none")
+
+    _log_interview_integrity_metric(
+        "interview_integrity_accepted",
+        session_id=str(interview_session["session_id"]),
+        candidate_id=str(candidate.candidate_id),
+        application_id=str(interview_session["application_id"]),
+        event_type=normalized_event_type,
+        severity=_normalize_severity(request.severity),
+        detected_by=detected_by,
+    )
+
+    enforcement_action, enforcement_reason = await _interview_enforcement_action(
+        session=session,
+        session_id=interview_session["session_id"],
+        latest_event_type=normalized_event_type,
+        latest_severity=request.severity,
+    )
+
+    await session.commit()
+
+    return InterviewIntegrityEventResponse(
+        flag_id=str(flag_id),
+        status="pending",
+        message="Integrity event recorded.",
+        enforcement_action=enforcement_action,
+        enforcement_reason=enforcement_reason,
+    )
+
+
+@router.get("/integrity-decision/{session_id}", response_model=InterviewIntegrityDecisionResponse)
+async def get_interview_integrity_decision(
+    session_id: str,
+    candidate: CurrentCandidate,
+    session: DbSession,
+):
+    """Return explicit cheating decision and evidence summary for an interview session."""
+    try:
+        session_uuid = UUID(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id format") from exc
+
+    verify = await session.execute(
+        text("""
+            SELECT oi.session_id, oi.application_id
+            FROM ongoing_interviews oi
+            JOIN candidate_applications ca ON oi.application_id = ca.application_id
+            WHERE oi.session_id = :session_id
+              AND ca.candidate_id = :candidate_id
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            bindparam("candidate_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_uuid,
+            "candidate_id": candidate.candidate_id,
+        },
+    )
+    row = verify.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
+    counts_res = await session.execute(
+        text("""
+            SELECT
+                COUNT(*) AS total_flags,
+                COUNT(*) FILTER (WHERE severity = 'high') AS high_cnt,
+                COUNT(*) FILTER (WHERE severity = 'medium') AS medium_cnt,
+                COUNT(*) FILTER (WHERE severity = 'low') AS low_cnt,
+                COUNT(*) FILTER (
+                    WHERE event_type IN (
+                        'paste_attempt',
+                        'paste_shortcut',
+                        'multi_face_detected',
+                        'voice_mismatch',
+                        'speaker_mismatch',
+                        'fusion_high_confidence_risk'
+                    )
+                ) AS critical_cnt,
+                COUNT(*) FILTER (WHERE event_type = 'fusion_high_confidence_risk') AS fusion_cnt
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND session_type = 'ai_interview'
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"session_id": session_uuid},
+    )
+    counts = counts_res.mappings().first() or {}
+
+    latest_event_res = await session.execute(
+        text("""
+            SELECT event_type
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND session_type = 'ai_interview'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """).bindparams(bindparam("session_id", type_=pgUUID(as_uuid=True))),
+        {"session_id": session_uuid},
+    )
+    latest_event_row = latest_event_res.mappings().first() or {}
+
+    recent_res = await session.execute(
+        text("""
+            SELECT event_type, severity, detected_by, created_at
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND session_type = 'ai_interview'
+            ORDER BY created_at DESC
+            LIMIT 10
+        """).bindparams(bindparam("session_id", type_=pgUUID(as_uuid=True))),
+        {"session_id": session_uuid},
+    )
+    recent_events = [
+        {
+            "event_type": r["event_type"],
+            "severity": r["severity"],
+            "detected_by": r["detected_by"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        }
+        for r in recent_res.mappings().all()
+    ]
+
+    total_flags = int(counts.get("total_flags") or 0)
+    high_cnt = int(counts.get("high_cnt") or 0)
+    medium_cnt = int(counts.get("medium_cnt") or 0)
+    low_cnt = int(counts.get("low_cnt") or 0)
+    critical_cnt = int(counts.get("critical_cnt") or 0)
+    fusion_cnt = int(counts.get("fusion_cnt") or 0)
+
+    decision, cheating_detected = _interview_decision_from_counts(
+        total_flags=total_flags,
+        high_cnt=high_cnt,
+        medium_cnt=medium_cnt,
+        critical_cnt=critical_cnt,
+        fusion_cnt=fusion_cnt,
+    )
+
+    enforcement_action, enforcement_reason = await _interview_enforcement_action(
+        session=session,
+        session_id=session_uuid,
+    )
+
+    return InterviewIntegrityDecisionResponse(
+        candidate_id=str(candidate.candidate_id),
+        application_id=str(row["application_id"]),
+        session_id=str(row["session_id"]),
+        decision=decision,
+        cheating_detected=cheating_detected,
+        total_flags=total_flags,
+        high_flags=high_cnt,
+        medium_flags=medium_cnt,
+        low_flags=low_cnt,
+        critical_flags=critical_cnt,
+        latest_event_type=latest_event_row.get("event_type"),
+        recent_events=recent_events,
+        enforcement_action=enforcement_action,
+        enforcement_reason=enforcement_reason,
+        updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
 

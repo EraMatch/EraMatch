@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, AlertCircle, Clock, Eye, Trash2, UserPlus, UserMinus, MoreVertical, Flag, Filter, X, ChevronDown, Plus, UserCog, Shield, Lock, MessageSquare, FileText, CheckSquare, Ban, Archive, AlertTriangle, BarChart3, Target, Video, Loader2 } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, AlertCircle, Clock, Eye, Trash2, UserPlus, UserMinus, Activity, MoreVertical, Flag, Filter, X, ChevronDown, Plus, UserCog, Shield, Lock, MessageSquare, FileText, CheckSquare, Ban, Archive, AlertTriangle, BarChart3, Target, Video, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SuspectReviewPage } from '../candidates/SuspectReviewPage';
 import { CreateAdvancedAssessment } from '../assessments/CreateAdvancedAssessment';
@@ -17,6 +17,7 @@ import { FinalDecisionPage } from './FinalDecisionPage';
 import { ActivityLogPanel } from './ActivityLogPanel';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
+import { API_URL } from '../../../services/client';
 import { useEffect } from 'react';
 import LoadingSpinner from '../../common/LoadingSpinner';
 
@@ -232,6 +233,12 @@ export function EnhancedGroupOverviewV2({
   const [activeFlow, setActiveFlow] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [positionId, setPositionId] = useState<string>('');
+  const [interviewConfigId, setInterviewConfigId] = useState<string | null>(null);
+  const [liveAlertsConnected, setLiveAlertsConnected] = useState(false);
+  const [integrityMetrics, setIntegrityMetrics] = useState<any>(null);
+  const [integrityDecisions, setIntegrityDecisions] = useState<any>(null);
+  const liveAlertCursorRef = useRef<string | null>(null);
+  const lastLiveAlertToastRef = useRef<number>(0);
 
   // Reset any editing interview payload when switching flows or stages
   // This prevents stale `editingInterviewData` causing "Edit" UI to appear
@@ -403,6 +410,147 @@ export function EnhancedGroupOverviewV2({
 
     fetchData();
   }, [groupId, refreshKey]);
+
+  useEffect(() => {
+    if (!showModuleMonitoring) return;
+
+    let isCancelled = false;
+    let pollInterval: number | null = null;
+
+    const refreshMetrics = async () => {
+      try {
+        const [metrics, decisions] = await Promise.all([
+          api.recruiter.getGroupIntegrityMetrics(groupId, 60),
+          api.recruiter.getGroupIntegrityDecisions(groupId),
+        ]);
+        setIntegrityMetrics(metrics);
+        setIntegrityDecisions(decisions);
+      } catch (error) {
+        console.error('Failed to load integrity monitoring payload:', error);
+      }
+    };
+
+    void refreshMetrics();
+
+    const applyAlerts = (alerts: any[]) => {
+      if (!alerts || alerts.length === 0) return;
+
+      const latest = alerts[alerts.length - 1];
+      if (latest?.created_at) {
+        liveAlertCursorRef.current = latest.created_at;
+      }
+
+      setRefreshKey(prev => prev + 1);
+
+      const now = Date.now();
+      if (now - lastLiveAlertToastRef.current > 5000) {
+        const highCount = alerts.filter(a => String(a.severity).toLowerCase() === 'high').length;
+        showToast(
+          highCount > 0
+            ? `Live Alert: ${highCount} high-risk integrity event(s)`
+            : `Live Alert: ${alerts.length} new integrity event(s)`
+        );
+        lastLiveAlertToastRef.current = now;
+      }
+    };
+
+    const startPollingFallback = () => {
+      if (isCancelled) return;
+      setLiveAlertsConnected(false);
+
+      const pollOnce = async () => {
+        try {
+          const payload = await api.recruiter.pollGroupAlerts(groupId, liveAlertCursorRef.current || undefined) as any;
+          if (payload?.cursor) {
+            liveAlertCursorRef.current = payload.cursor;
+          }
+          applyAlerts(payload?.alerts || []);
+          await refreshMetrics();
+        } catch (error) {
+          console.error('Polling live alerts failed:', error);
+        }
+      };
+
+      void pollOnce();
+      pollInterval = window.setInterval(pollOnce, 8000);
+    };
+
+    const connectStream = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        startPollingFallback();
+        return;
+      }
+
+      const since = liveAlertCursorRef.current ? `?since=${encodeURIComponent(liveAlertCursorRef.current)}` : '';
+      const streamUrl = `${API_URL}/recruiter/groups/${groupId}/alerts/stream${since}`;
+
+      const response = await fetch(streamUrl, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'text/event-stream',
+        },
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Stream connection failed with status ${response.status}`);
+      }
+
+      setLiveAlertsConnected(true);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (!isCancelled) {
+        const { value, done } = await reader.read();
+        if (done) {
+          throw new Error('Stream closed');
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary !== -1) {
+          const chunk = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+
+          const lines = chunk.split('\n');
+          const eventLine = lines.find(line => line.startsWith('event: '));
+          const dataLine = lines.find(line => line.startsWith('data: '));
+
+          if (eventLine?.includes('alerts') && dataLine) {
+            try {
+              const payload = JSON.parse(dataLine.slice(6));
+              if (payload?.cursor) {
+                liveAlertCursorRef.current = payload.cursor;
+              }
+              applyAlerts(payload?.alerts || []);
+              await refreshMetrics();
+            } catch (parseError) {
+              console.error('Failed to parse live alert payload:', parseError);
+            }
+          }
+
+          boundary = buffer.indexOf('\n\n');
+        }
+      }
+    };
+
+    connectStream().catch((error) => {
+      console.error('Live alert stream unavailable, switching to polling:', error);
+      startPollingFallback();
+    });
+
+    return () => {
+      isCancelled = true;
+      setLiveAlertsConnected(false);
+      if (pollInterval) {
+        window.clearInterval(pollInterval);
+      }
+    };
+  }, [groupId, showModuleMonitoring]);
 
   const handleSaveFlow = async (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[], configuredGithubQuestionsCount: number) => {
     try {
@@ -2271,7 +2419,20 @@ export function EnhancedGroupOverviewV2({
             candidates={candidateStatuses}
             activeFlow={activeFlow}
             pipelineSteps={pipelineSteps}
+            liveAlertsConnected={liveAlertsConnected}
+            integrityMetrics={integrityMetrics}
+            integrityDecisions={integrityDecisions}
             onClose={() => setShowModuleMonitoring(null)}
+            onManualRefresh={() => {
+              setRefreshKey(prev => prev + 1);
+              void Promise.all([
+                api.recruiter.getGroupIntegrityMetrics(groupId, 60),
+                api.recruiter.getGroupIntegrityDecisions(groupId),
+              ]).then(([metrics, decisions]) => {
+                setIntegrityMetrics(metrics);
+                setIntegrityDecisions(decisions);
+              }).catch(() => {});
+            }}
             onViewCandidate={(candidateId) => {
               setShowModuleMonitoring(null);
               onViewCandidate(candidateId);

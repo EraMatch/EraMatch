@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -72,6 +73,9 @@ from app.schemas.group import (
     IntegrityFlag,
     IntegrityFlagDetail,
     IntegrityFlagsResponse,
+    GroupIntegrityDecisionsResponse,
+    GroupIntegrityDecisionCandidate,
+    GroupIntegrityStageAggregate,
     MonitoringFlag,
     StageStatsResponse,
     ScheduleInterviewRequest,
@@ -1980,6 +1984,434 @@ class GroupService:
             ]
         )
 
+
+    async def get_group_integrity_alerts(
+        self,
+        group_id: UUID,
+        since: datetime | None = None,
+        limit: int = 25,
+    ) -> list[dict]:
+        await self._get_group(group_id)
+
+        where_since = ""
+        params: dict[str, object] = {
+            "group_id": group_id,
+            "org_id": self.org_id,
+            "limit": limit,
+        }
+        if since is not None:
+            where_since = " AND pf.created_at > :since "
+            params["since"] = since
+
+        query = text(
+            f"""
+            SELECT
+                pf.flag_id,
+                pf.application_id,
+                ca.candidate_id,
+                cp.full_name AS candidate_name,
+                pf.session_id,
+                pf.session_type,
+                pf.event_type,
+                pf.severity,
+                pf.status,
+                pf.evidence,
+                pf.created_at
+            FROM proctoring_flags pf
+            JOIN candidate_applications ca
+              ON ca.application_id = pf.application_id
+            JOIN candidate_profiles cp
+              ON cp.candidate_id = ca.candidate_id
+            WHERE ca.group_id = :group_id
+              AND ca.organization_id = :org_id
+              AND pf.severity IN ('high', 'medium')
+              {where_since}
+            ORDER BY pf.created_at ASC
+            LIMIT :limit
+            """
+        )
+
+        res = await self.session.execute(query, params)
+        rows = res.mappings().all()
+        return [
+            {
+                "flag_id": str(r["flag_id"]),
+                "application_id": str(r["application_id"]),
+                "candidate_id": str(r["candidate_id"]),
+                "candidate_name": r["candidate_name"],
+                "session_id": str(r["session_id"]),
+                "session_type": r["session_type"],
+                "event_type": r["event_type"],
+                "severity": r["severity"],
+                "status": r["status"],
+                "evidence": r["evidence"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    async def get_group_integrity_metrics(
+        self,
+        group_id: UUID,
+        window_minutes: int = 60,
+    ) -> dict:
+        await self._get_group(group_id)
+
+        summary_res = await self.session.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) AS total_flags,
+                    COUNT(*) FILTER (WHERE pf.severity = 'high') AS high_flags,
+                    COUNT(*) FILTER (WHERE pf.severity = 'medium') AS medium_flags,
+                    COUNT(*) FILTER (WHERE pf.severity = 'low') AS low_flags,
+                    COUNT(*) FILTER (WHERE pf.session_type = 'assessment') AS assessment_flags,
+                    COUNT(*) FILTER (WHERE pf.session_type = 'ai_interview') AS interview_flags
+                FROM proctoring_flags pf
+                JOIN candidate_applications ca
+                  ON ca.application_id = pf.application_id
+                WHERE ca.group_id = :group_id
+                  AND ca.organization_id = :org_id
+                  AND pf.created_at >= NOW() - (:window_minutes || ' minutes')::INTERVAL
+                """
+            ),
+            {
+                "group_id": group_id,
+                "org_id": self.org_id,
+                "window_minutes": str(window_minutes),
+            },
+        )
+        summary = summary_res.mappings().first() or {}
+
+        top_events_res = await self.session.execute(
+            text(
+                """
+                SELECT pf.event_type, COUNT(*) AS count
+                FROM proctoring_flags pf
+                JOIN candidate_applications ca
+                  ON ca.application_id = pf.application_id
+                WHERE ca.group_id = :group_id
+                  AND ca.organization_id = :org_id
+                  AND pf.created_at >= NOW() - (:window_minutes || ' minutes')::INTERVAL
+                GROUP BY pf.event_type
+                ORDER BY count DESC
+                LIMIT 5
+                """
+            ),
+            {
+                "group_id": group_id,
+                "org_id": self.org_id,
+                "window_minutes": str(window_minutes),
+            },
+        )
+        top_events = [
+            {
+                "event_type": row["event_type"],
+                "count": int(row["count"]),
+            }
+            for row in top_events_res.mappings().all()
+        ]
+
+        return {
+            "window_minutes": window_minutes,
+            "summary": {
+                "total_flags": int(summary.get("total_flags") or 0),
+                "high_flags": int(summary.get("high_flags") or 0),
+                "medium_flags": int(summary.get("medium_flags") or 0),
+                "low_flags": int(summary.get("low_flags") or 0),
+                "assessment_flags": int(summary.get("assessment_flags") or 0),
+                "interview_flags": int(summary.get("interview_flags") or 0),
+            },
+            "top_events": top_events,
+        }
+
+    def _normalize_stage_type(self, stage: str | None) -> str | None:
+        if stage is None:
+            return None
+        normalized = stage.strip().lower().replace("-", "_")
+        stage_aliases = {
+            "assessment": "assessment",
+            "ai_interview": "ai_interview",
+            "interview": "ai_interview",
+            "live_interview": "live_interview",
+        }
+        return stage_aliases.get(normalized)
+
+    def _decision_from_counts(
+        self,
+        total_flags: int,
+        high_cnt: int,
+        medium_cnt: int,
+        critical_cnt: int,
+        fusion_cnt: int,
+    ) -> tuple[str, bool]:
+        if critical_cnt > 0 or fusion_cnt > 0 or high_cnt >= 2 or medium_cnt >= 4:
+            return "confirmed_cheating", True
+        if high_cnt >= 1 or medium_cnt >= 2 or total_flags >= 3:
+            return "suspicious_review", False
+        if total_flags == 0:
+            return "clean", False
+        return "monitoring", False
+
+    def _session_types_for_stage(self, stage: str) -> list[str]:
+        # Keep live interview compatible with either explicit live_interview or ai_interview session labels.
+        if stage == "assessment":
+            return ["assessment"]
+        if stage == "live_interview":
+            return ["live_interview", "ai_interview"]
+        return ["ai_interview"]
+
+    async def get_group_integrity_decisions(
+        self,
+        group_id: UUID,
+        stage: str | None = None,
+    ) -> GroupIntegrityDecisionsResponse:
+        await self._get_group(group_id)
+
+        normalized_stage = self._normalize_stage_type(stage)
+        if stage and normalized_stage is None:
+            raise BadRequestException("Invalid stage. Use assessment, ai_interview, or live_interview")
+
+        stages_to_query = [normalized_stage] if normalized_stage else ["assessment", "ai_interview", "live_interview"]
+        candidates_payload: list[GroupIntegrityDecisionCandidate] = []
+        stage_aggregates: list[GroupIntegrityStageAggregate] = []
+
+        for stage_key in stages_to_query:
+            session_types = self._session_types_for_stage(stage_key)
+            if session_types == ["assessment"]:
+                session_type_filter_sql = "pf.session_type = 'assessment'"
+            elif session_types == ["ai_interview"]:
+                session_type_filter_sql = "pf.session_type = 'ai_interview'"
+            else:
+                session_type_filter_sql = "pf.session_type IN ('ai_interview', 'live_interview')"
+
+            rows = await self.session.execute(
+                text(
+                    f"""
+                    SELECT
+                        ca.application_id,
+                        ca.candidate_id,
+                        cp.full_name AS candidate_name,
+                        csp.status AS stage_status,
+                        csp.score AS stage_score,
+                        COUNT(pf.flag_id) AS total_flags,
+                        COUNT(*) FILTER (WHERE pf.severity = 'high') AS high_cnt,
+                        COUNT(*) FILTER (WHERE pf.severity = 'medium') AS medium_cnt,
+                        COUNT(*) FILTER (WHERE pf.severity = 'low') AS low_cnt,
+                        COUNT(*) FILTER (
+                            WHERE pf.event_type IN (
+                                'paste_attempt',
+                                'paste_shortcut',
+                                'multi_face_detected',
+                                'voice_mismatch',
+                                'speaker_mismatch',
+                                'fusion_high_confidence_risk'
+                            )
+                        ) AS critical_cnt,
+                        COUNT(*) FILTER (WHERE pf.event_type = 'fusion_high_confidence_risk') AS fusion_cnt,
+                        (ARRAY_AGG(pf.event_type ORDER BY pf.created_at DESC) FILTER (WHERE pf.flag_id IS NOT NULL))[1] AS latest_event_type,
+                        MAX(pf.created_at) AS latest_flag_at
+                    FROM candidate_applications ca
+                    JOIN candidate_profiles cp
+                      ON cp.candidate_id = ca.candidate_id
+                    JOIN group_pipeline_stages gps
+                      ON gps.group_id = ca.group_id
+                     AND gps.organization_id = ca.organization_id
+                     AND gps.stage_type = :stage_type
+                    JOIN candidate_pipeline_progress csp
+                      ON csp.application_id = ca.application_id
+                     AND csp.stage_id = gps.stage_id
+                    LEFT JOIN proctoring_flags pf
+                      ON pf.application_id = ca.application_id
+                     AND pf.organization_id = ca.organization_id
+                                         AND {session_type_filter_sql}
+                    WHERE ca.group_id = :group_id
+                      AND ca.organization_id = :org_id
+                    GROUP BY
+                        ca.application_id,
+                        ca.candidate_id,
+                        cp.full_name,
+                        csp.status,
+                        csp.score
+                    ORDER BY cp.full_name ASC
+                    """
+                ),
+                {
+                    "group_id": group_id,
+                    "org_id": self.org_id,
+                    "stage_type": stage_key,
+                },
+            )
+
+            stage_rows = rows.mappings().all()
+            stage_decisions: list[GroupIntegrityDecisionCandidate] = []
+
+            for row in stage_rows:
+                total_flags = int(row.get("total_flags") or 0)
+                high_cnt = int(row.get("high_cnt") or 0)
+                medium_cnt = int(row.get("medium_cnt") or 0)
+                low_cnt = int(row.get("low_cnt") or 0)
+                critical_cnt = int(row.get("critical_cnt") or 0)
+                fusion_cnt = int(row.get("fusion_cnt") or 0)
+
+                decision, cheating_detected = self._decision_from_counts(
+                    total_flags=total_flags,
+                    high_cnt=high_cnt,
+                    medium_cnt=medium_cnt,
+                    critical_cnt=critical_cnt,
+                    fusion_cnt=fusion_cnt,
+                )
+
+                stage_score = row.get("stage_score")
+                if isinstance(stage_score, Decimal):
+                    stage_score = float(stage_score)
+
+                stage_decisions.append(
+                    GroupIntegrityDecisionCandidate(
+                        application_id=str(row["application_id"]),
+                        candidate_id=str(row["candidate_id"]),
+                        candidate_name=row["candidate_name"],
+                        stage=stage_key,
+                        stage_status=row.get("stage_status") or "unknown",
+                        stage_score=stage_score,
+                        decision=decision,
+                        cheating_detected=cheating_detected,
+                        total_flags=total_flags,
+                        high_flags=high_cnt,
+                        medium_flags=medium_cnt,
+                        low_flags=low_cnt,
+                        critical_flags=critical_cnt,
+                        latest_event_type=row.get("latest_event_type"),
+                        latest_flag_at=(row.get("latest_flag_at").isoformat() if row.get("latest_flag_at") else None),
+                    )
+                )
+
+            confirmed_count = len([d for d in stage_decisions if d.decision == "confirmed_cheating"])
+            suspicious_count = len([d for d in stage_decisions if d.decision == "suspicious_review"])
+            monitoring_count = len([d for d in stage_decisions if d.decision == "monitoring"])
+            clean_count = len([d for d in stage_decisions if d.decision == "clean"])
+
+            stage_aggregates.append(
+                GroupIntegrityStageAggregate(
+                    stage=stage_key,
+                    total_candidates=len(stage_decisions),
+                    confirmed_cheating=confirmed_count,
+                    suspicious_review=suspicious_count,
+                    monitoring=monitoring_count,
+                    clean=clean_count,
+                )
+            )
+
+            candidates_payload.extend(stage_decisions)
+
+        if normalized_stage:
+            summary = next((s for s in stage_aggregates if s.stage == normalized_stage), None)
+            if summary is None:
+                summary = GroupIntegrityStageAggregate(
+                    stage=normalized_stage,
+                    total_candidates=0,
+                    confirmed_cheating=0,
+                    suspicious_review=0,
+                    monitoring=0,
+                    clean=0,
+                )
+        else:
+            summary = GroupIntegrityStageAggregate(
+                stage="all",
+                total_candidates=sum(s.total_candidates for s in stage_aggregates),
+                confirmed_cheating=sum(s.confirmed_cheating for s in stage_aggregates),
+                suspicious_review=sum(s.suspicious_review for s in stage_aggregates),
+                monitoring=sum(s.monitoring for s in stage_aggregates),
+                clean=sum(s.clean for s in stage_aggregates),
+            )
+
+        return GroupIntegrityDecisionsResponse(
+            group_id=str(group_id),
+            stage=normalized_stage,
+            candidates=candidates_payload,
+            summary=summary,
+            stage_aggregates=stage_aggregates,
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    async def get_org_suspicious_activity(
+        self,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        where_since = ""
+        params: dict[str, object] = {
+            "org_id": self.org_id,
+            "limit": limit,
+        }
+        if since is not None:
+            where_since = " AND pf.created_at > :since "
+            params["since"] = since
+
+        query = text(
+            f"""
+            SELECT
+                pf.flag_id,
+                pf.application_id,
+                ca.candidate_id,
+                ca.group_id,
+                cp.full_name AS candidate_name,
+                COALESCE(pr.name, 'Unknown Project') AS project_title,
+                COALESCE(p.job_title, 'Unknown Position') AS position_title,
+                COALESCE(cg.group_name, 'Unknown Group') AS group_name,
+                pf.event_type,
+                pf.severity,
+                pf.status,
+                pf.evidence,
+                pf.created_at
+            FROM proctoring_flags pf
+            JOIN candidate_applications ca
+              ON ca.application_id = pf.application_id
+            JOIN candidate_profiles cp
+              ON cp.candidate_id = ca.candidate_id
+            LEFT JOIN candidate_groups cg
+              ON cg.group_id = ca.group_id
+            LEFT JOIN positions p
+              ON p.position_id = ca.position_id
+                        LEFT JOIN projects pr
+                            ON pr.project_id = p.project_id
+            WHERE ca.organization_id = :org_id
+              AND pf.severity IN ('high', 'medium', 'low')
+              {where_since}
+            ORDER BY pf.created_at DESC
+            LIMIT :limit
+            """
+        )
+
+        res = await self.session.execute(query, params)
+        rows = res.mappings().all()
+        feed: list[dict] = []
+        for r in rows:
+            evidence = r["evidence"]
+            if isinstance(evidence, str):
+                try:
+                    evidence = json.loads(evidence)
+                except json.JSONDecodeError:
+                    evidence = {"raw": evidence}
+
+            feed.append(
+                {
+                    "flag_id": str(r["flag_id"]),
+                    "application_id": str(r["application_id"]),
+                    "candidate_id": str(r["candidate_id"]),
+                    "group_id": str(r["group_id"]) if r["group_id"] else None,
+                    "candidate_name": r["candidate_name"],
+                    "project_title": r["project_title"],
+                    "position_title": r["position_title"],
+                    "group_name": r["group_name"],
+                    "event_type": r["event_type"],
+                    "severity": r["severity"],
+                    "status": r["status"],
+                    "evidence": evidence,
+                    "created_at": r["created_at"],
+                }
+            )
+        return feed
     async def _generate_and_send_group_credentials(
         self,
         candidate_ids: list[UUID],

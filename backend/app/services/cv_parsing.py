@@ -26,6 +26,14 @@ class CVParsingWorkerService:
         experience_years: float | None,
     ):
         """Create or update CVAnalysis with parsed data using SQLAlchemy."""
+        prescore = parsed_data.get("prescore_v2") if isinstance(parsed_data, dict) else {}
+        match_score = None
+        if isinstance(prescore, dict) and prescore.get("pre_score_final") is not None:
+            try:
+                match_score = float(prescore.get("pre_score_final"))
+            except (TypeError, ValueError):
+                match_score = None
+
         stmt = select(CVAnalysis).where(CVAnalysis.application_id == application_id)
         analysis = self.session.execute(stmt).scalars().first()
 
@@ -35,6 +43,8 @@ class CVParsingWorkerService:
                 analysis.skills = skills_list
             if experience_years is not None:
                 analysis.experience_years = experience_years
+            if match_score is not None:
+                analysis.match_score = match_score
             analysis.cv_file_url = file_path
             analysis.analyzed_at = datetime.utcnow()
             logger.info(f"[CVParsing] Updated existing CVAnalysis for application {application_id}")
@@ -46,6 +56,7 @@ class CVParsingWorkerService:
                 parsed_data=parsed_data,
                 skills=skills_list if skills_list else None,
                 experience_years=experience_years if experience_years is not None else None,
+                match_score=match_score if match_score is not None else 0.0,
                 analyzed_at=datetime.utcnow()
             )
             self.session.add(analysis)

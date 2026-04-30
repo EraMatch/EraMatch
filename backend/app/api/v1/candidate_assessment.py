@@ -23,23 +23,36 @@ import json
 import logging
 import random
 from datetime import datetime, timezone
+import os
 from uuid import UUID, uuid4
 import asyncio
 import subprocess
 import tempfile
-import os
 import time as time_module
 import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from fastapi import UploadFile, File, Form
 from sqlalchemy import text, bindparam
 from sqlalchemy.dialects.postgresql import UUID as pgUUID, JSONB
 from app.api.deps import CurrentCandidate, DbSession
+from app.core.integrity_metrics import integrity_metrics
 
 
 logger = logging.getLogger(__name__)
 
 AI_SERVICE_URL = "http://localhost:8001"
+INTEGRITY_EVENT_MAX_PER_MINUTE = 45
+INTEGRITY_DUP_WINDOW_SECONDS = 8
+INTEGRITY_ENFORCEMENT_WINDOW_SECONDS = 120
+INTEGRITY_ENFORCEMENT_CRITICAL_EVENTS = {
+    "paste_attempt",
+    "paste_shortcut",
+    "multi_face_detected",
+    "voice_mismatch",
+    "speaker_mismatch",
+    "fusion_high_confidence_risk",
+}
 
 router = APIRouter(prefix="/assessment", tags=["Candidate Assessment"])
 
@@ -140,6 +153,46 @@ class RunTestsResponse(BaseModel):
     hidden_passed: int
     hidden_total: int
     message: str
+
+
+class IntegrityEventRequest(BaseModel):
+    """Request to log a proctoring/integrity event during an assessment session."""
+    session_id: str
+    event_type: str = Field(min_length=1, max_length=50)
+    severity: str = Field(default="low", max_length=10)
+    source: str | None = Field(default=None, max_length=50)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    timestamp_seconds: int | None = Field(default=None, ge=0)
+    evidence: str | None = None
+    metadata: dict | None = None
+
+
+class IntegrityEventResponse(BaseModel):
+    """Response after storing an integrity event."""
+    flag_id: str
+    status: str
+    message: str
+    enforcement_action: str = "none"
+    enforcement_reason: str | None = None
+
+
+class AssessmentIntegrityDecisionResponse(BaseModel):
+    candidate_id: str
+    application_id: str
+    session_id: str
+    session_type: str = "assessment"
+    decision: str
+    cheating_detected: bool
+    total_flags: int
+    high_flags: int
+    medium_flags: int
+    low_flags: int
+    critical_flags: int
+    latest_event_type: str | None = None
+    recent_events: list[dict] = Field(default_factory=list)
+    enforcement_action: str = "none"
+    enforcement_reason: str | None = None
+    updated_at: str
 
 
 # =============================================================================
@@ -323,7 +376,7 @@ async def get_assessment_config(
                 ON gps.config_id = a.assessment_id
             WHERE ca.candidate_id = :candidate_id
               AND gps.stage_type  = 'assessment'
-              AND gps.state       = 'active'
+                            AND COALESCE(gps.state, 'not_started') != 'inactive'
               AND cpp.status IN ('unlocked', 'in_progress')
             ORDER BY gps.stage_order
             LIMIT 1
@@ -332,7 +385,131 @@ async def get_assessment_config(
     )
     row = result.mappings().first()
     if not row:
-        raise HTTPException(status_code=404, detail="No assessment available for this candidate")
+        # Fallback bootstrap: if the candidate has an active assessment stage but no
+        # unlocked/in_progress progress row yet, initialize it so the candidate can start.
+        fallback = await session.execute(
+            text("""
+                SELECT
+                    ca.application_id,
+                    ca.organization_id,
+                    gps.stage_id,
+                    gps.config_id     AS assessment_id,
+                    a.title,
+                    a.instructions,
+                    a.duration_minutes,
+                    a.passing_score,
+                    cpp.progress_id,
+                    cpp.status        AS progress_status
+                FROM candidate_applications ca
+                JOIN group_pipeline_stages gps
+                    ON ca.group_id = gps.group_id
+                JOIN assessments a
+                    ON gps.config_id = a.assessment_id
+                LEFT JOIN candidate_pipeline_progress cpp
+                    ON cpp.application_id = ca.application_id
+                   AND cpp.stage_id = gps.stage_id
+                WHERE ca.candidate_id = :candidate_id
+                  AND gps.stage_type  = 'assessment'
+                  AND COALESCE(gps.state, 'not_started') != 'inactive'
+                  AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
+                ORDER BY gps.stage_order
+                LIMIT 1
+            """),
+            {"candidate_id": str(candidate.candidate_id)},
+        )
+        fallback_row = fallback.mappings().first()
+        if not fallback_row:
+            diag = await session.execute(
+                text("""
+                    SELECT
+                      COUNT(*) AS app_count,
+                      COUNT(*) FILTER (WHERE ca.group_id IS NOT NULL) AS grouped_app_count,
+                      COUNT(*) FILTER (WHERE gps.stage_type = 'assessment') AS assessment_stage_count,
+                      COUNT(*) FILTER (WHERE gps.stage_type = 'assessment' AND COALESCE(gps.state, 'not_started') != 'inactive') AS non_inactive_assessment_stage_count
+                    FROM candidate_applications ca
+                    LEFT JOIN group_pipeline_stages gps
+                      ON gps.group_id = ca.group_id
+                    WHERE ca.candidate_id = :candidate_id
+                      AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
+                """),
+                {"candidate_id": str(candidate.candidate_id)},
+            )
+            drow = diag.mappings().first() or {}
+            if int(drow.get("app_count") or 0) == 0:
+                raise HTTPException(status_code=404, detail="No application found for this candidate")
+            if int(drow.get("grouped_app_count") or 0) == 0:
+                raise HTTPException(status_code=404, detail="Candidate application is not assigned to any group")
+            if int(drow.get("assessment_stage_count") or 0) == 0:
+                raise HTTPException(status_code=404, detail="Candidate group has no assessment stage configured")
+            if int(drow.get("non_inactive_assessment_stage_count") or 0) == 0:
+                raise HTTPException(status_code=404, detail="Candidate assessment stage is inactive")
+            raise HTTPException(status_code=404, detail="No assessment available for this candidate")
+
+        existing_status = (fallback_row.get("progress_status") or "").strip().lower()
+        now = datetime.now(timezone.utc)
+        if existing_status in {"completed", "passed"}:
+            raise HTTPException(status_code=400, detail="Assessment already completed")
+
+        if fallback_row.get("progress_id") is None:
+            await session.execute(
+                text("""
+                    INSERT INTO candidate_pipeline_progress (
+                        progress_id,
+                        application_id,
+                        stage_id,
+                        status,
+                        session_type,
+                        unlocked_at,
+                        started_at
+                    ) VALUES (
+                        :progress_id,
+                        :application_id,
+                        :stage_id,
+                        'in_progress',
+                        'assessment',
+                        :now_ts,
+                        :now_ts
+                    )
+                """).bindparams(
+                    bindparam("progress_id", type_=pgUUID(as_uuid=True)),
+                    bindparam("application_id", type_=pgUUID(as_uuid=True)),
+                    bindparam("stage_id", type_=pgUUID(as_uuid=True)),
+                ),
+                {
+                    "progress_id": uuid4(),
+                    "application_id": fallback_row["application_id"],
+                    "stage_id": fallback_row["stage_id"],
+                    "now_ts": now,
+                },
+            )
+            await session.commit()
+        elif existing_status in {"locked", "not_started", "unlocked", ""}:
+            await session.execute(
+                text("""
+                    UPDATE candidate_pipeline_progress
+                    SET status = 'in_progress',
+                        session_type = 'assessment',
+                        unlocked_at = COALESCE(unlocked_at, :now_ts),
+                        started_at = COALESCE(started_at, :now_ts)
+                    WHERE progress_id = :progress_id
+                """).bindparams(
+                    bindparam("progress_id", type_=pgUUID(as_uuid=True)),
+                ),
+                {
+                    "progress_id": fallback_row["progress_id"],
+                    "now_ts": now,
+                },
+            )
+            await session.commit()
+
+        row = {
+            "assessment_id": fallback_row["assessment_id"],
+            "stage_id": fallback_row["stage_id"],
+            "title": fallback_row["title"],
+            "instructions": fallback_row["instructions"],
+            "duration_minutes": fallback_row["duration_minutes"],
+            "passing_score": fallback_row["passing_score"],
+        }
 
     assessment_id = str(row["assessment_id"])
     stage_id = str(row["stage_id"])
@@ -409,6 +586,81 @@ async def start_assessment_session(
     Creates candidate_assigned_questions snapshots and ongoing_assessments record.
     """
     return await _start_assessment_session_impl(request, candidate, session)
+
+
+@router.post("/recording", response_model=dict)
+async def upload_assessment_recording(
+    session_id: str = Form(...),
+    recording: UploadFile = File(...),
+    candidate: CurrentCandidate = None,
+    session: DbSession = None,
+):
+    """Persist system-captured assessment screen recording for recruiter review."""
+    try:
+        session_uuid = UUID(session_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id format") from exc
+
+    ownership = await session.execute(
+        text("""
+            SELECT oa.session_id
+            FROM ongoing_assessments oa
+            JOIN candidate_applications ca ON oa.application_id = ca.application_id
+            WHERE oa.session_id = :session_id
+              AND ca.candidate_id = :candidate_id
+            LIMIT 1
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            bindparam("candidate_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_uuid,
+            "candidate_id": candidate.candidate_id,
+        },
+    )
+    row = ownership.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Assessment session not found")
+
+    if not recording.filename:
+        raise HTTPException(status_code=400, detail="Recording file is required")
+
+    ext = os.path.splitext(recording.filename)[1].lower() or ".webm"
+    if ext not in {".webm", ".mp4", ".mkv"}:
+        ext = ".webm"
+
+    recordings_dir = os.path.join(os.getcwd(), "static", "proctoring", "assessments")
+    os.makedirs(recordings_dir, exist_ok=True)
+    file_name = f"{session_uuid}_{int(time_module.time())}{ext}"
+    full_path = os.path.join(recordings_dir, file_name)
+
+    data = await recording.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Recording file is empty")
+
+    with open(full_path, "wb") as f:
+        f.write(data)
+
+    public_url = f"/static/proctoring/assessments/{file_name}"
+    await session.execute(
+        text("""
+            UPDATE ongoing_assessments
+            SET recording_url = :recording_url
+            WHERE session_id = :session_id
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_uuid,
+            "recording_url": public_url,
+        },
+    )
+    await session.commit()
+
+    return {
+        "recording_url": public_url,
+        "message": "Assessment screen recording stored",
+    }
 
 
 async def _start_assessment_session_impl(
@@ -1035,6 +1287,598 @@ class HeartbeatResponse(BaseModel):
     remaining_seconds: int
     status: str
     answered_count: int
+    enforcement_action: str = "none"
+    enforcement_reason: str | None = None
+
+
+def _normalize_severity(raw: str | None) -> str:
+    value = (raw or "low").strip().lower()
+    if value not in {"low", "medium", "high"}:
+        return "low"
+    return value
+
+
+def _score_event_type(event_type: str) -> float:
+    weighted = {
+        "paste_attempt": 3.0,
+        "paste_shortcut": 3.0,
+        "copy_attempt": 2.0,
+        "copy_shortcut": 2.0,
+        "tab_hidden": 2.0,
+        "window_blur": 2.0,
+        "inactivity_detected": 2.0,
+        "inactivity_timeout": 3.0,
+        "multi_face_detected": 3.0,
+        "face_absent": 3.0,
+        "voice_mismatch": 3.0,
+        "gaze_off_screen": 2.0,
+        "emotion_spike": 1.0,
+    }
+    return weighted.get(event_type, 1.0)
+
+
+def _source_bucket(event_type: str) -> str:
+    if event_type.startswith(("copy", "paste", "tab_", "window_", "inactivity", "context_menu")):
+        return "browser"
+    if "face" in event_type:
+        return "face"
+    if "voice" in event_type or "speaker" in event_type:
+        return "voice"
+    if "gaze" in event_type or "eye" in event_type:
+        return "gaze"
+    if "emotion" in event_type:
+        return "emotion"
+    return "other"
+
+
+def _log_integrity_metric(metric_name: str, **fields) -> None:
+    payload = {
+        "metric": "integrity_event",
+        "metric_name": metric_name,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        **fields,
+    }
+    logger.info("integrity_metric %s", json.dumps(payload, default=str, sort_keys=True))
+
+
+async def _assessment_enforcement_action(
+    session,
+    session_id: UUID,
+    latest_event_type: str | None = None,
+    latest_severity: str | None = None,
+) -> tuple[str, str | None]:
+    counters = await session.execute(
+        text("""
+            SELECT
+              COUNT(*) FILTER (WHERE severity = 'high') AS high_cnt,
+                            COUNT(*) FILTER (WHERE severity = 'medium') AS medium_cnt
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND session_type = 'assessment'
+              AND created_at >= NOW() - (:window_s || ' seconds')::INTERVAL
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_id,
+            "window_s": str(INTEGRITY_ENFORCEMENT_WINDOW_SECONDS),
+        },
+    )
+    row = counters.mappings().first() or {}
+    high_cnt = int(row.get("high_cnt") or 0)
+    medium_cnt = int(row.get("medium_cnt") or 0)
+
+    event_type = (latest_event_type or "").strip().lower()
+    severity = _normalize_severity(latest_severity)
+
+    if event_type in INTEGRITY_ENFORCEMENT_CRITICAL_EVENTS:
+        return "terminate", "critical_event_detected"
+    if high_cnt >= 2 or medium_cnt >= 4:
+        return "pause", "repeated_high_risk_pattern"
+    if medium_cnt >= 2:
+        return "warn", "elevated_risk_pattern"
+    return "none", None
+
+
+def _assessment_decision_from_counts(
+    total_flags: int,
+    high_cnt: int,
+    medium_cnt: int,
+    critical_cnt: int,
+    fusion_cnt: int,
+) -> tuple[str, bool]:
+    if critical_cnt > 0 or fusion_cnt > 0 or high_cnt >= 2 or medium_cnt >= 4:
+        return "confirmed_cheating", True
+    if high_cnt >= 1 or medium_cnt >= 2 or total_flags >= 3:
+        return "suspicious_review", False
+    if total_flags == 0:
+        return "clean", False
+    return "monitoring", False
+
+
+async def _synthesize_fusion_flag(
+    session,
+    application_id: UUID,
+    session_id: UUID,
+    organization_id: UUID,
+) -> None:
+    recent = await session.execute(
+        text("""
+            SELECT flag_id, event_type, severity, created_at
+            FROM proctoring_flags
+            WHERE application_id = :application_id
+              AND session_id = :session_id
+              AND session_type = 'assessment'
+              AND created_at >= NOW() - INTERVAL '120 seconds'
+              AND event_type <> 'fusion_high_confidence_risk'
+            ORDER BY created_at DESC
+            LIMIT 20
+        """).bindparams(
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "application_id": application_id,
+            "session_id": session_id,
+        },
+    )
+    rows = recent.mappings().all()
+    if not rows:
+        return
+
+    sev_weight = {"low": 1.0, "medium": 1.5, "high": 2.0}
+    seen_types: set[str] = set()
+    buckets: set[str] = set()
+    fusion_score = 0.0
+
+    for row in rows:
+        event_type = (row["event_type"] or "").strip().lower()
+        if not event_type or event_type in seen_types:
+            continue
+        seen_types.add(event_type)
+        buckets.add(_source_bucket(event_type))
+        fusion_score += _score_event_type(event_type) * sev_weight.get((row["severity"] or "low").lower(), 1.0)
+
+    non_other_sources = {b for b in buckets if b != "other"}
+    if fusion_score < 7.5 or len(non_other_sources) < 2:
+        return
+
+    recent_fusion = await session.execute(
+        text("""
+            SELECT flag_id
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND event_type = 'fusion_high_confidence_risk'
+              AND created_at >= NOW() - INTERVAL '30 seconds'
+            LIMIT 1
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"session_id": session_id},
+    )
+    if recent_fusion.mappings().first():
+        return
+
+    fusion_severity = "high" if fusion_score >= 11 else "medium"
+    evidence = {
+        "fusion_score": round(fusion_score, 2),
+        "signal_sources": sorted(non_other_sources),
+        "contributing_event_types": sorted(seen_types),
+        "window_seconds": 120,
+    }
+
+    await session.execute(
+        text("""
+            INSERT INTO proctoring_flags (
+                flag_id,
+                application_id,
+                session_id,
+                session_type,
+                organization_id,
+                timestamp_seconds,
+                event_type,
+                severity,
+                evidence,
+                detected_by,
+                status,
+                created_at
+            )
+            VALUES (
+                :flag_id,
+                :application_id,
+                :session_id,
+                'assessment',
+                :organization_id,
+                0,
+                'fusion_high_confidence_risk',
+                :severity,
+                :evidence,
+                'fusion_engine_v1',
+                'pending',
+                NOW()
+            )
+        """).bindparams(
+            bindparam("flag_id", type_=pgUUID(as_uuid=True)),
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            bindparam("organization_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "flag_id": uuid4(),
+            "application_id": application_id,
+            "session_id": session_id,
+            "organization_id": organization_id,
+            "severity": fusion_severity,
+            "evidence": json.dumps(evidence),
+        },
+    )
+
+
+async def _is_integrity_rate_limited(
+    session,
+    session_id: UUID,
+    detected_by: str,
+) -> bool:
+    res = await session.execute(
+        text("""
+            SELECT COUNT(*) AS cnt
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND detected_by = :detected_by
+              AND created_at >= NOW() - INTERVAL '1 minute'
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_id,
+            "detected_by": detected_by,
+        },
+    )
+    current_count = int(res.scalar() or 0)
+    return current_count >= INTEGRITY_EVENT_MAX_PER_MINUTE
+
+
+async def _is_duplicate_integrity_event(
+    session,
+    session_id: UUID,
+    event_type: str,
+    detected_by: str,
+) -> bool:
+    res = await session.execute(
+        text("""
+            SELECT flag_id
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND event_type = :event_type
+              AND detected_by = :detected_by
+              AND created_at >= NOW() - (:dup_window || ' seconds')::INTERVAL
+            LIMIT 1
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_id,
+            "event_type": event_type,
+            "detected_by": detected_by,
+            "dup_window": str(INTEGRITY_DUP_WINDOW_SECONDS),
+        },
+    )
+    return res.mappings().first() is not None
+
+
+@router.post("/integrity-event", response_model=IntegrityEventResponse)
+async def report_integrity_event(
+    request: IntegrityEventRequest,
+    candidate: CurrentCandidate,
+    session: DbSession,
+):
+    """
+    Store a candidate integrity/proctoring event as a pending proctoring flag.
+    """
+    try:
+        session_uuid = UUID(request.session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id format") from exc
+
+    verify = await session.execute(
+        text("""
+            SELECT oa.session_id,
+                   oa.application_id,
+                   oa.organization_id,
+                   oa.status,
+                   oa.started_at
+            FROM ongoing_assessments oa
+            JOIN candidate_applications ca ON oa.application_id = ca.application_id
+            WHERE oa.session_id = :session_id
+              AND ca.candidate_id = :candidate_id
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            bindparam("candidate_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_uuid,
+            "candidate_id": candidate.candidate_id,
+        },
+    )
+    oa = verify.mappings().first()
+    if not oa:
+        raise HTTPException(status_code=404, detail="Assessment session not found")
+
+    if oa["status"] == "completed":
+        raise HTTPException(status_code=400, detail="Assessment already submitted")
+
+    normalized_event_type = request.event_type.strip().lower()
+    detected_by = (request.source or "candidate_portal")[:50]
+
+    if await _is_integrity_rate_limited(session, session_uuid, detected_by):
+        integrity_metrics.inc(stage="assessment", outcome="dropped", reason="rate_limited")
+        _log_integrity_metric(
+            "assessment_integrity_dropped_rate_limited",
+            session_id=str(session_uuid),
+            candidate_id=str(candidate.candidate_id),
+            event_type=normalized_event_type,
+            detected_by=detected_by,
+            reason="rate_limited",
+        )
+        return IntegrityEventResponse(
+            flag_id="rate_limited",
+            status="dropped",
+            message="Integrity event dropped due to rate limiting.",
+            enforcement_action="none",
+        )
+
+    if await _is_duplicate_integrity_event(session, session_uuid, normalized_event_type, detected_by):
+        integrity_metrics.inc(stage="assessment", outcome="dropped", reason="duplicate_recent_window")
+        _log_integrity_metric(
+            "assessment_integrity_dropped_duplicate",
+            session_id=str(session_uuid),
+            candidate_id=str(candidate.candidate_id),
+            event_type=normalized_event_type,
+            detected_by=detected_by,
+            reason="duplicate_recent_window",
+            duplicate_window_seconds=INTEGRITY_DUP_WINDOW_SECONDS,
+        )
+        return IntegrityEventResponse(
+            flag_id="duplicate",
+            status="dropped",
+            message="Integrity event dropped as duplicate in recent window.",
+            enforcement_action="none",
+        )
+
+    event_ts = request.timestamp_seconds
+    if event_ts is None:
+        if oa["started_at"]:
+            elapsed = (datetime.now(timezone.utc) - oa["started_at"].replace(tzinfo=timezone.utc)).total_seconds()
+            event_ts = max(0, int(elapsed))
+        else:
+            event_ts = 0
+
+    evidence_payload = {
+        "source": request.source or "candidate_portal",
+        "confidence": request.confidence,
+        "evidence": request.evidence,
+        "metadata": request.metadata or {},
+    }
+
+    flag_id = uuid4()
+    await session.execute(
+        text("""
+            INSERT INTO proctoring_flags (
+                flag_id,
+                application_id,
+                session_id,
+                session_type,
+                organization_id,
+                timestamp_seconds,
+                event_type,
+                severity,
+                evidence,
+                detected_by,
+                status,
+                created_at
+            )
+            VALUES (
+                :flag_id,
+                :application_id,
+                :session_id,
+                'assessment',
+                :organization_id,
+                :timestamp_seconds,
+                :event_type,
+                :severity,
+                :evidence,
+                :detected_by,
+                'pending',
+                NOW()
+            )
+        """).bindparams(
+            bindparam("flag_id", type_=pgUUID(as_uuid=True)),
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            bindparam("organization_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "flag_id": flag_id,
+            "application_id": oa["application_id"],
+            "session_id": oa["session_id"],
+            "organization_id": oa["organization_id"],
+            "timestamp_seconds": event_ts,
+            "event_type": normalized_event_type,
+            "severity": _normalize_severity(request.severity),
+            "evidence": json.dumps(evidence_payload),
+            "detected_by": detected_by,
+        },
+    )
+
+    await _synthesize_fusion_flag(
+        session=session,
+        application_id=oa["application_id"],
+        session_id=oa["session_id"],
+        organization_id=oa["organization_id"],
+    )
+
+    integrity_metrics.inc(stage="assessment", outcome="accepted", reason="none")
+
+    _log_integrity_metric(
+        "assessment_integrity_accepted",
+        session_id=str(oa["session_id"]),
+        candidate_id=str(candidate.candidate_id),
+        application_id=str(oa["application_id"]),
+        event_type=normalized_event_type,
+        severity=_normalize_severity(request.severity),
+        detected_by=detected_by,
+    )
+
+    enforcement_action, enforcement_reason = await _assessment_enforcement_action(
+        session=session,
+        session_id=oa["session_id"],
+        latest_event_type=normalized_event_type,
+        latest_severity=request.severity,
+    )
+
+    await session.commit()
+
+    return IntegrityEventResponse(
+        flag_id=str(flag_id),
+        status="pending",
+        message="Integrity event recorded.",
+        enforcement_action=enforcement_action,
+        enforcement_reason=enforcement_reason,
+    )
+
+
+@router.get("/integrity-decision/{session_id}", response_model=AssessmentIntegrityDecisionResponse)
+async def get_assessment_integrity_decision(
+    session_id: str,
+    candidate: CurrentCandidate,
+    session: DbSession,
+):
+    """Return explicit cheating decision and evidence summary for an assessment session."""
+    try:
+        session_uuid = UUID(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid session_id format") from exc
+
+    verify = await session.execute(
+        text("""
+            SELECT oa.session_id, oa.application_id
+            FROM ongoing_assessments oa
+            JOIN candidate_applications ca ON oa.application_id = ca.application_id
+            WHERE oa.session_id = :session_id
+              AND ca.candidate_id = :candidate_id
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+            bindparam("candidate_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "session_id": session_uuid,
+            "candidate_id": candidate.candidate_id,
+        },
+    )
+    row = verify.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Assessment session not found")
+
+    counts_res = await session.execute(
+        text("""
+            SELECT
+                COUNT(*) AS total_flags,
+                COUNT(*) FILTER (WHERE severity = 'high') AS high_cnt,
+                COUNT(*) FILTER (WHERE severity = 'medium') AS medium_cnt,
+                COUNT(*) FILTER (WHERE severity = 'low') AS low_cnt,
+                COUNT(*) FILTER (
+                    WHERE event_type IN (
+                        'paste_attempt',
+                        'paste_shortcut',
+                        'multi_face_detected',
+                        'voice_mismatch',
+                        'speaker_mismatch',
+                        'fusion_high_confidence_risk'
+                    )
+                ) AS critical_cnt,
+                COUNT(*) FILTER (WHERE event_type = 'fusion_high_confidence_risk') AS fusion_cnt,
+                MAX(created_at) AS last_flag_at
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND session_type = 'assessment'
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"session_id": session_uuid},
+    )
+    counts = counts_res.mappings().first() or {}
+
+    latest_event_res = await session.execute(
+        text("""
+            SELECT event_type
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND session_type = 'assessment'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """).bindparams(bindparam("session_id", type_=pgUUID(as_uuid=True))),
+        {"session_id": session_uuid},
+    )
+    latest_event_row = latest_event_res.mappings().first() or {}
+
+    recent_res = await session.execute(
+        text("""
+            SELECT event_type, severity, detected_by, created_at
+            FROM proctoring_flags
+            WHERE session_id = :session_id
+              AND session_type = 'assessment'
+            ORDER BY created_at DESC
+            LIMIT 10
+        """).bindparams(bindparam("session_id", type_=pgUUID(as_uuid=True))),
+        {"session_id": session_uuid},
+    )
+    recent_events = [
+        {
+            "event_type": r["event_type"],
+            "severity": r["severity"],
+            "detected_by": r["detected_by"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        }
+        for r in recent_res.mappings().all()
+    ]
+
+    total_flags = int(counts.get("total_flags") or 0)
+    high_cnt = int(counts.get("high_cnt") or 0)
+    medium_cnt = int(counts.get("medium_cnt") or 0)
+    low_cnt = int(counts.get("low_cnt") or 0)
+    critical_cnt = int(counts.get("critical_cnt") or 0)
+    fusion_cnt = int(counts.get("fusion_cnt") or 0)
+
+    decision, cheating_detected = _assessment_decision_from_counts(
+        total_flags=total_flags,
+        high_cnt=high_cnt,
+        medium_cnt=medium_cnt,
+        critical_cnt=critical_cnt,
+        fusion_cnt=fusion_cnt,
+    )
+
+    enforcement_action, enforcement_reason = await _assessment_enforcement_action(
+        session=session,
+        session_id=session_uuid,
+    )
+
+    return AssessmentIntegrityDecisionResponse(
+        candidate_id=str(candidate.candidate_id),
+        application_id=str(row["application_id"]),
+        session_id=str(row["session_id"]),
+        decision=decision,
+        cheating_detected=cheating_detected,
+        total_flags=total_flags,
+        high_flags=high_cnt,
+        medium_flags=medium_cnt,
+        low_flags=low_cnt,
+        critical_flags=critical_cnt,
+        latest_event_type=latest_event_row.get("event_type"),
+        recent_events=recent_events,
+        enforcement_action=enforcement_action,
+        enforcement_reason=enforcement_reason,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 @router.get("/heartbeat/{session_id}", response_model=HeartbeatResponse)
@@ -1075,6 +1919,7 @@ async def assessment_heartbeat(
             remaining_seconds=0,
             status="completed",
             answered_count=0,
+            enforcement_action="none",
         )
     
     # Get duration and calculate remaining time
@@ -1107,12 +1952,27 @@ async def assessment_heartbeat(
     # Check if time expired
     if remaining_seconds <= 0:
         # Auto-finalize the session
-        await finalize_expired_assessment_sessions(session, session_id=UUID(session_id))
+        await finalize_expired_assessment_session(session, session_id=UUID(session_id))
         return HeartbeatResponse(
             session_id=session_id,
             remaining_seconds=0,
             status="expired",
             answered_count=answered_count,
+            enforcement_action="none",
+        )
+
+    enforcement_action, enforcement_reason = await _assessment_enforcement_action(
+        session=session,
+        session_id=UUID(session_id),
+    )
+    if enforcement_action in {"pause", "terminate"}:
+        return HeartbeatResponse(
+            session_id=session_id,
+            remaining_seconds=remaining_seconds,
+            status="blocked_integrity",
+            answered_count=answered_count,
+            enforcement_action=enforcement_action,
+            enforcement_reason=enforcement_reason,
         )
     
     return HeartbeatResponse(
@@ -1120,6 +1980,8 @@ async def assessment_heartbeat(
         remaining_seconds=remaining_seconds,
         status=oa["status"],
         answered_count=answered_count,
+        enforcement_action=enforcement_action,
+        enforcement_reason=enforcement_reason,
     )
 
 
@@ -2060,6 +2922,126 @@ try {{
             )
 
     logger.info(f"[auto_grade] Finished grading session {session_id}")
+
+
+async def finalize_expired_assessment_session(session, session_id: UUID) -> None:
+    """Auto-finalize an expired session using the same scoring flow as normal submit."""
+    verify = await session.execute(
+        text("""
+            SELECT oa.session_id, oa.status, oa.started_at, oa.max_points,
+                   oa.assessment_id, ca.application_id
+            FROM ongoing_assessments oa
+            JOIN candidate_applications ca ON oa.application_id = ca.application_id
+            WHERE oa.session_id = :session_id
+            LIMIT 1
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"session_id": session_id},
+    )
+    oa = verify.mappings().first()
+    if not oa or oa["status"] == "completed":
+        return
+
+    try:
+        await auto_grade_answers(session_id, session)
+    except Exception as exc:
+        logger.error("Auto-grading during expiration finalize failed (non-fatal): %s", exc)
+
+    score_result = await session.execute(
+        text("""
+            SELECT
+                COALESCE(SUM(CASE WHEN points_earned IS NOT NULL THEN points_earned ELSE 0 END), 0) as total_earned,
+                COALESCE(SUM(points_max), 0) as total_max
+            FROM candidate_answers
+            WHERE session_id = :session_id
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"session_id": session_id},
+    )
+    scores = score_result.mappings().first()
+    total_earned = float(scores["total_earned"])
+    total_max = int(oa["max_points"] or scores["total_max"] or 0)
+
+    assess = await session.execute(
+        text("SELECT passing_score FROM assessments WHERE assessment_id = :id").bindparams(
+            bindparam("id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"id": oa["assessment_id"]},
+    )
+    assess_row = assess.mappings().first()
+    passing_score = float(assess_row["passing_score"]) if assess_row else 60.0
+
+    percentage = (total_earned / total_max * 100) if total_max > 0 else 0
+    passed = percentage >= passing_score
+
+    started_at = oa["started_at"]
+    if started_at and started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    submit_time = datetime.now(timezone.utc)
+    time_spent = int((submit_time - started_at).total_seconds()) if started_at else 0
+
+    await session.execute(
+        text("""
+            UPDATE ongoing_assessments
+            SET status = 'completed',
+                submitted_at = NOW(),
+                time_spent_seconds = :time_spent,
+                total_score = :total_score,
+                total_points = :total_earned,
+                max_points = :max_points
+            WHERE session_id = :session_id
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "time_spent": time_spent,
+            "total_score": percentage,
+            "total_earned": int(total_earned),
+            "max_points": total_max,
+            "session_id": session_id,
+        },
+    )
+
+    await session.execute(
+        text("""
+            UPDATE candidate_pipeline_progress
+            SET status = 'completed',
+                score = :score,
+                max_score = :max_score,
+                passed = :passed,
+                completed_at = NOW()
+            WHERE application_id = :application_id
+              AND stage_id IN (
+                  SELECT gps.stage_id
+                  FROM group_pipeline_stages gps
+                  WHERE gps.config_id = :assessment_id
+                    AND gps.stage_type = 'assessment'
+              )
+        """).bindparams(
+            bindparam("application_id", type_=pgUUID(as_uuid=True)),
+            bindparam("assessment_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {
+            "score": percentage,
+            "max_score": total_max,
+            "passed": passed,
+            "application_id": oa["application_id"],
+            "assessment_id": oa["assessment_id"],
+        },
+    )
+
+    _log_integrity_metric(
+        "assessment_auto_expired_finalized",
+        session_id=str(session_id),
+        application_id=str(oa["application_id"]),
+        percentage=round(percentage, 2),
+        passed=passed,
+        time_spent_seconds=time_spent,
+    )
+
+    await session.commit()
 
 
 @router.post("/submit", response_model=SubmitAssessmentResponse)

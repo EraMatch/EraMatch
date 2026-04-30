@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { ChevronLeft, GripVertical, Plus, Trash2, Calendar, Loader2 } from 'lucide-react';
+import { ChevronLeft, GripVertical, Plus, Trash2, Calendar, Loader2, Sparkles } from 'lucide-react';
 import { api } from '../../../services/api';
+import { recruiterService } from '../../../services/recruiter.service';
 
 interface AIInterviewSetupLiveProps {
   groupName: string;
@@ -21,6 +22,8 @@ export function AIInterviewSetupLive({ groupName, onBack }: AIInterviewSetupLive
   const [sections, setSections] = useState<InterviewSection[]>([]);
   const [toneOptions, setToneOptions] = useState<Array<{ value: string; label: string; description: string }>>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isGeneratingSetup, setIsGeneratingSetup] = useState(false);
+  const [isRefiningPrompt, setIsRefiningPrompt] = useState(false);
 
   // Fetch AI interview configuration from API
   useEffect(() => {
@@ -97,6 +100,53 @@ export function AIInterviewSetupLive({ groupName, onBack }: AIInterviewSetupLive
           <p className="font-['Arimo',sans-serif] text-[16px] text-[#6b7280]">
             Configure real-time AI interview settings for this group
           </p>
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={async () => {
+                setIsGeneratingSetup(true);
+                try {
+                  const response = await recruiterService.generateAIQuestion({
+                    question_type: 'interview',
+                    topic: groupName,
+                    difficulty: 'Medium',
+                    context: 'Generate live interview system prompt and interview sections.',
+                    use_case: 'live_interview_setup',
+                    metadata: {
+                      tone,
+                      duration_minutes: duration,
+                      include_candidate_history: includeCandidateHistory,
+                    },
+                  });
+
+                  const generatedPrompt = typeof response?.systemPrompt === 'string' ? response.systemPrompt.trim() : '';
+                  const generatedSections = Array.isArray(response?.sections) ? response.sections : [];
+
+                  if (generatedPrompt) {
+                    setSystemPrompt(generatedPrompt);
+                  }
+                  if (generatedSections.length > 0) {
+                    setSections(
+                      generatedSections.map((s: any, idx: number) => ({
+                        id: String(s?.id || idx + 1),
+                        title: String(s?.title || `Section ${idx + 1}`),
+                        duration: Number(s?.duration || 5),
+                      }))
+                    );
+                  }
+                } catch (error) {
+                  console.error('Failed to generate live interview setup with AI:', error);
+                } finally {
+                  setIsGeneratingSetup(false);
+                }
+              }}
+              disabled={isGeneratingSetup}
+              className="inline-flex items-center gap-2 h-[34px] px-[14px] rounded-[8px] border border-[#8b5cf6] text-[#8b5cf6] hover:bg-[#faf5ff] transition-colors disabled:opacity-60"
+            >
+              {isGeneratingSetup ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              <span className="font-['Arimo',sans-serif] text-[13px]">Generate Setup with AI</span>
+            </button>
+          </div>
         </div>
 
         {/* Content */}
@@ -138,6 +188,33 @@ export function AIInterviewSetupLive({ groupName, onBack }: AIInterviewSetupLive
               className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
               placeholder="Enter system prompt..."
             />
+            <button
+              type="button"
+              onClick={async () => {
+                if (!systemPrompt.trim()) return;
+                setIsRefiningPrompt(true);
+                try {
+                  const response = await recruiterService.refineAIQuestion(systemPrompt, {
+                    useCase: 'live_interview_system_prompt',
+                    metadata: {
+                      group_name: groupName,
+                      tone,
+                      duration_minutes: duration,
+                    },
+                  });
+                  setSystemPrompt((response?.refinedText || systemPrompt).trim() || systemPrompt);
+                } catch (error) {
+                  console.error('Failed to refine live interview system prompt:', error);
+                } finally {
+                  setIsRefiningPrompt(false);
+                }
+              }}
+              disabled={isRefiningPrompt || !systemPrompt.trim()}
+              className="mt-2 flex items-center gap-2 h-[30px] px-[16px] rounded-[8px] border border-dashed border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-colors disabled:opacity-50"
+            >
+              {isRefiningPrompt ? <Loader2 size={14} className="animate-spin text-[#6366f1]" /> : <Sparkles size={14} className="text-[#6366f1]" />}
+              <span className="font-['Arimo',sans-serif] text-[13px] text-[#6366f1]">Refine Prompt with AI</span>
+            </button>
           </div>
 
           {/* Include Candidate History Data */}

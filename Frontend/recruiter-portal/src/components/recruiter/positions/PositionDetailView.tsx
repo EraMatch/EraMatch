@@ -1,6 +1,6 @@
 import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../../services/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../ui/dialog';
@@ -16,6 +16,7 @@ import { GroupDeleteModal } from '../groups/GroupDeleteModal';
 
 interface Candidate {
   id: string;
+  applicationId?: string;
   name: string;
   email: string;
   score: number;
@@ -36,6 +37,7 @@ interface Candidate {
   github_contribution_source?: string | null;
   github_freshness_hours?: number | null;
   github_has_fallback?: boolean;
+  pre_score_final?: number | null;
 }
 
 interface Assessment {
@@ -43,6 +45,14 @@ interface Assessment {
   title: string;
   questions: Question[];
   createdAt: Date;
+}
+
+interface QAGQuestion {
+  id: number;
+  question: string;
+  category?: string;
+  weight?: number;
+  approved?: boolean;
 }
 
 interface PositionDetailViewProps {
@@ -61,6 +71,108 @@ interface PositionDetailViewProps {
   onViewGroup?: (groupId: string) => void;
   initialActiveTab?: 'candidates' | 'groups' | 'insights';
 }
+
+const PREVIEW_SECTION_LABELS = [
+  'Job Title:',
+  'Location:',
+  'Department:',
+  'Reports to:',
+  'Role Summary:',
+  'Key Responsibilities:',
+  'Technical Requirements:',
+  'Frameworks:',
+  'Infrastructure:',
+  'Cloud:',
+  'Qualifications:',
+  'Education:',
+  'Experience:',
+  'Contributions:',
+  'Soft Skills:',
+  'Ethical Mindset:',
+  'Agility:',
+  'Communication:'
+];
+
+const DESCRIPTION_COLLAPSE_CHAR_LIMIT = 520;
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const normalizePreviewText = (value?: string, splitBySections = false) => {
+  if (!value || !value.trim()) {
+    return '';
+  }
+
+  let normalized = value
+    .replace(/\r\n/g, '\n')
+    .replace(/:\s*(?=[A-Za-z])/g, ': ')
+    .replace(/([a-z])([A-Z][a-z])/g, '$1 $2')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+
+  if (splitBySections) {
+    const labelsPattern = new RegExp(`\\s*(${PREVIEW_SECTION_LABELS.map(escapeRegExp).join('|')})\\s*`, 'gi');
+    normalized = normalized.replace(labelsPattern, '\n$1 ');
+  }
+
+  return normalized.replace(/\n{3,}/g, '\n\n').trim();
+};
+
+const getCollapsedPreview = (value: string, limit = DESCRIPTION_COLLAPSE_CHAR_LIMIT) => {
+  if (!value || value.length <= limit) {
+    return { text: value, truncated: false };
+  }
+
+  const truncated = value.slice(0, limit);
+  const lastSpace = truncated.lastIndexOf(' ');
+  const safeCut = lastSpace > Math.floor(limit * 0.7) ? truncated.slice(0, lastSpace) : truncated;
+
+  return {
+    text: `${safeCut.trimEnd()}...`,
+    truncated: true
+  };
+};
+
+const normalizePercentValue = (value?: number | null) => {
+  if (value == null || Number.isNaN(value)) {
+    return null;
+  }
+  return value <= 1 ? value * 100 : value;
+};
+
+const hasAnyKeywords = (keywords?: Record<string, string[]> | null) => {
+  if (!keywords || typeof keywords !== 'object') {
+    return false;
+  }
+  return Object.values(keywords).some((items) => Array.isArray(items) && items.length > 0);
+};
+
+const KEYWORD_SECTIONS: Array<{ key: string; label: string; color: string }> = [
+  { key: 'technical_skills', label: 'Technical Skills', color: 'bg-[#ede9fe] text-[#5b21b6] border-[#c4b5fd]' },
+  { key: 'domain_keywords', label: 'Domain', color: 'bg-[#dbeafe] text-[#1e40af] border-[#93c5fd]' },
+  { key: 'soft_skills', label: 'Soft Skills', color: 'bg-[#fef3c7] text-[#92400e] border-[#fcd34d]' },
+  { key: 'experience_keywords', label: 'Experience', color: 'bg-[#fce7f3] text-[#9d174d] border-[#f9a8d4]' },
+  { key: 'education_keywords', label: 'Education', color: 'bg-[#ecfdf5] text-[#166534] border-[#86efac]' },
+  { key: 'seniority_signals', label: 'Seniority', color: 'bg-[#fef2f2] text-[#991b1b] border-[#fca5a5]' },
+];
+
+const getCandidateDisplayScore = (candidate: Candidate) => {
+  if (candidate.score > 0) {
+    return Math.round(candidate.score);
+  }
+  const preScore = normalizePercentValue(candidate.pre_score_final);
+  if (preScore != null) {
+    return Math.round(preScore);
+  }
+  return candidate.match > 0 ? Math.round(candidate.match) : null;
+};
+
+const getCandidateDisplayMatch = (candidate: Candidate) => {
+  if (candidate.match > 0) {
+    return Math.round(candidate.match);
+  }
+  const preScore = normalizePercentValue(candidate.pre_score_final);
+  return preScore != null ? Math.round(preScore) : null;
+};
 
 export function PositionDetailView({
   positionId,
@@ -105,6 +217,10 @@ export function PositionDetailView({
   const [showFlowConfigModal, setShowFlowConfigModal] = useState(false);
   const [pendingGroupData, setPendingGroupData] = useState<any>(null);
   const [viewingCandidateId, setViewingCandidateId] = useState<string | null>(null);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
+  const [assessmentResetLoadingApplicationId, setAssessmentResetLoadingApplicationId] = useState<string | null>(null);
+  const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
+  const [assessmentResetError, setAssessmentResetError] = useState<string | null>(null);
 
   // Filtering State
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -127,6 +243,16 @@ export function PositionDetailView({
   // Rename Group State
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editGroupName, setEditGroupName] = useState('');
+  const descriptionPreview = normalizePreviewText(description, true);
+  const collapsedDescription = getCollapsedPreview(descriptionPreview);
+  const visibleDescription = isDescriptionExpanded || !collapsedDescription.truncated
+    ? descriptionPreview
+    : collapsedDescription.text;
+  const screeningPreview = normalizePreviewText(screeningConditions);
+
+  useEffect(() => {
+    setIsDescriptionExpanded(false);
+  }, [positionId, description]);
 
   // Derived Filter Options
   const filterOptions = {
@@ -231,6 +357,11 @@ export function PositionDetailView({
 
         setCandidates(details.candidates);
         setGroups(details.groups);
+        const initialKeywords = details?.jd_keywords && typeof details.jd_keywords === 'object'
+          ? details.jd_keywords as Record<string, string[]>
+          : null;
+        setJdKeywords(initialKeywords);
+        setKeywordsVisible(hasAnyKeywords(initialKeywords));
 
         // Set metrics individually as setMetrics state object does not exist
         // Assuming these states exist based on previous code reading, or if not, I should check defaults.
@@ -268,6 +399,31 @@ export function PositionDetailView({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [isRecomputingScores, setIsRecomputingScores] = useState(false);
+  const [recomputeMessage, setRecomputeMessage] = useState<string | null>(null);
+  const [recomputeError, setRecomputeError] = useState<string | null>(null);
+  const [isQagDialogOpen, setIsQagDialogOpen] = useState(false);
+  const [qagLoading, setQagLoading] = useState(false);
+  const [qagSaving, setQagSaving] = useState(false);
+  const [qagApproving, setQagApproving] = useState(false);
+  const [qagQuestions, setQagQuestions] = useState<QAGQuestion[]>([]);
+  const [qagStatus, setQagStatus] = useState<string | null>(null);
+  const [qagMessage, setQagMessage] = useState<string | null>(null);
+  const [qagError, setQagError] = useState<string | null>(null);
+
+  // JD Keywords state
+  const [jdKeywords, setJdKeywords] = useState<Record<string, string[]> | null>(null);
+  const [isGeneratingKeywords, setIsGeneratingKeywords] = useState(false);
+  const [isSavingKeywords, setIsSavingKeywords] = useState(false);
+  const [keywordsMessage, setKeywordsMessage] = useState<string | null>(null);
+  const [keywordsError, setKeywordsError] = useState<string | null>(null);
+  const [keywordsVisible, setKeywordsVisible] = useState(false);
+  const [newKeywordInputs, setNewKeywordInputs] = useState<Record<string, string>>({});
+  const [expandedKeywordSections, setExpandedKeywordSections] = useState<Record<string, boolean>>({ technical_skills: true });
+
+  useEffect(() => {
+    setExpandedKeywordSections({ technical_skills: true });
+  }, [positionId]);
 
   // Google Drive Scheduler State
   const [driveFolderUrl, setDriveFolderUrl] = useState<string>('');
@@ -373,16 +529,191 @@ export function PositionDetailView({
       setGroups(updatedGroups);
       setEditingGroupId(null);
     } catch (err) {
-      console.error("Failed to rename group", err);
+      console.error('Failed to rename group', err);
     }
   };
 
-  const handleDeleteAssessment = (id: string) => {
-    // This will be handled by parent component through onSaveAssessment
-    // For now, we'll keep the assessment in place
+  const fetchPositionData = useCallback(async (showPageLoader: boolean = true) => {
+    try {
+      if (showPageLoader) {
+        setIsLoading(true);
+      }
+      const [detailsRes, insightsRes] = await Promise.all([
+        api.recruiter.getPositionDetails(positionId),
+        api.recruiter.getPositionInsights(positionId)
+      ]);
+      const details = detailsRes as any;
+      const insights = insightsRes as any;
+
+      setCandidates(details.candidates || []);
+      setGroups(details.groups || []);
+
+      setFittingData(insights.fittingData || []);
+      setScoreData(insights.scoreData || []);
+      setSkillDistribution(insights.skillDistribution || []);
+      setSeniorityDistribution(insights.seniorityDistribution || []);
+      setUniversityDistribution(insights.universityDistribution || []);
+      setAvailabilityDistribution(insights.availabilityDistribution || []);
+      setConversion(insights.conversion || 0);
+      setQualityScore(insights.qualityScore || 0);
+      setIntegrityIssues(insights.integrityIssues || 0);
+      setSourceQuality(insights.sourceQuality || []);
+      setTopCompanies(insights.topCompanies || []);
+    } catch (error) {
+      console.error('Failed to fetch position details:', error);
+    } finally {
+      if (showPageLoader) {
+        setIsLoading(false);
+      }
+    }
+  }, [positionId]);
+
+  useEffect(() => {
+    if (positionId) {
+      fetchPositionData(true);
+    }
+  }, [positionId, fetchPositionData]);
+
+  const handleRecomputeScores = async () => {
+    try {
+      setIsRecomputingScores(true);
+      setRecomputeError(null);
+      setRecomputeMessage(null);
+
+      const result = await api.recruiter.recomputePositionPrescores(positionId) as any;
+      await fetchPositionData(false);
+
+      const scored = Number(result?.applications_scored ?? 0);
+      setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+    } catch (error) {
+      console.error('Failed to recompute prescores:', error);
+      setRecomputeError(error instanceof Error ? error.message : 'Failed to recompute scores');
+    } finally {
+      setIsRecomputingScores(false);
+    }
   };
 
-  const customLegend = (props: any) => {
+  const handleShowKeywords = async () => {
+    try {
+      setKeywordsVisible(true);
+      setKeywordsError(null);
+
+      if (hasAnyKeywords(jdKeywords)) {
+        return;
+      }
+
+      const existing = await api.recruiter.getPositionKeywords(positionId) as Record<string, string[]>;
+      if (hasAnyKeywords(existing)) {
+        setJdKeywords(existing);
+        setKeywordsMessage('Loaded saved JD keywords.');
+      } else {
+        setKeywordsMessage('No saved keywords yet. Approve QAG and extract keywords first.');
+      }
+    } catch (error) {
+      setKeywordsError(error instanceof Error ? error.message : 'Failed to load keywords');
+    }
+  };
+
+  const openQagManager = async () => {
+    try {
+      setIsQagDialogOpen(true);
+      setQagLoading(true);
+      setQagError(null);
+      setQagMessage(null);
+
+      const artifact = await api.recruiter.getPositionHDEvalQAG(positionId) as any;
+      const questions = Array.isArray(artifact?.questions) ? artifact.questions : [];
+      setQagQuestions(questions);
+      setQagStatus(typeof artifact?.status === 'string' ? artifact.status : null);
+    } catch (error) {
+      console.error('Failed to load QAG questions:', error);
+      setQagError(error instanceof Error ? error.message : 'Failed to load QAG questions');
+    } finally {
+      setQagLoading(false);
+    }
+  };
+
+  const updateQagQuestion = (id: number, patch: Partial<QAGQuestion>) => {
+    setQagQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, ...patch } : q)));
+  };
+
+  const handleSaveQagDraft = async () => {
+    try {
+      setQagSaving(true);
+      setQagError(null);
+      setQagMessage(null);
+      await api.recruiter.updatePositionHDEvalQAG(positionId, qagQuestions);
+      setQagStatus('pending_tech_review');
+      setQagMessage('QAG questions saved successfully.');
+    } catch (error) {
+      console.error('Failed to save QAG draft:', error);
+      setQagError(error instanceof Error ? error.message : 'Failed to save QAG questions');
+    } finally {
+      setQagSaving(false);
+    }
+  };
+
+  const handleApproveQagAndRecompute = async () => {
+    try {
+      setQagApproving(true);
+      setQagError(null);
+      setQagMessage(null);
+
+      await api.recruiter.updatePositionHDEvalQAG(positionId, qagQuestions);
+      await api.recruiter.approvePositionHDEvalQAG(positionId);
+      const recomputeResult = await api.recruiter.recomputePositionPrescores(positionId) as any;
+      await fetchPositionData(false);
+
+      setQagStatus('approved');
+      const scored = Number(recomputeResult?.applications_scored ?? 0);
+      setQagMessage(`QAG approved and recomputed for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+      setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+
+      // Auto-trigger keyword extraction after QAG approval
+      setKeywordsVisible(true);   // show panel immediately
+      setIsGeneratingKeywords(true);
+      setKeywordsMessage(null);
+      setKeywordsError(null);
+      try {
+        const kwRes = await api.recruiter.generatePositionKeywords(positionId) as any;
+        setJdKeywords(kwRes?.keywords ?? null);
+        setKeywordsMessage(`Keywords extracted via ${kwRes?.model ?? 'LLM'}.`);
+      } catch (kwErr) {
+        console.error('Keyword extraction error:', kwErr);
+        setKeywordsError(
+          kwErr instanceof Error ? kwErr.message : 'Keyword extraction failed — click Re-extract to retry.'
+        );
+      } finally {
+        setIsGeneratingKeywords(false);
+      }
+    } catch (error) {
+      console.error('Failed to approve QAG and recompute:', error);
+      setQagError(error instanceof Error ? error.message : 'Failed to approve QAG and recompute');
+    } finally {
+      setQagApproving(false);
+    }
+  };
+
+  const handleResetAssessmentTrial = async (candidate: Candidate) => {
+    if (!candidate.applicationId) return;
+    
+    setAssessmentResetLoadingApplicationId(String(candidate.applicationId));
+    setAssessmentResetMessage(null);
+    setAssessmentResetError(null);
+    
+    try {
+      await api.recruiter.resetApplicationAssessmentTrial(String(candidate.applicationId));
+      setAssessmentResetMessage(`Successfully reset trial for ${candidate.name}.`);
+      await fetchPositionData(false);
+    } catch (err: any) {
+      console.error('Failed to reset assessment trial:', err);
+      setAssessmentResetError(err.message || 'Failed to reset assessment trial.');
+    } finally {
+      setAssessmentResetLoadingApplicationId(null);
+    }
+  };
+
+  const renderCustomLegend = (props: any) => {
     const { payload } = props;
     return (
       <div className="flex flex-col gap-2 mt-4">
@@ -436,9 +767,20 @@ export function PositionDetailView({
           <h2 className="font-['Arimo',sans-serif] text-[16px] text-black mb-2">
             Description
           </h2>
-          <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af]">
-            {description || 'No description provided'}
-          </p>
+          <div className="rounded-[12px] border border-[#e5e7eb] bg-white/70 p-4">
+            <p className="font-['Arimo',sans-serif] text-[14px] leading-7 text-[#4b5563] whitespace-pre-line break-words">
+              {visibleDescription || 'No description provided'}
+            </p>
+            {collapsedDescription.truncated && (
+              <button
+                type="button"
+                onClick={() => setIsDescriptionExpanded((prev) => !prev)}
+                className="mt-3 font-['Arimo',sans-serif] text-[13px] font-semibold text-[#4f46e5] hover:text-[#4338ca] transition-colors"
+              >
+                {isDescriptionExpanded ? 'Show less' : 'Expand full description'}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Screening Conditions */}
@@ -446,9 +788,11 @@ export function PositionDetailView({
           <h2 className="font-['Arimo',sans-serif] text-[16px] text-black mb-2">
             Screening Conditions
           </h2>
-          <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af]">
-            {screeningConditions || 'No screening conditions provided'}
-          </p>
+          <div className="rounded-[12px] border border-[#e5e7eb] bg-white/70 p-4">
+            <p className="font-['Arimo',sans-serif] text-[14px] leading-7 text-[#4b5563] whitespace-pre-line break-words">
+              {screeningPreview || 'No screening conditions provided'}
+            </p>
+          </div>
         </div>
 
         {/* Tab Navigation */}
@@ -486,19 +830,143 @@ export function PositionDetailView({
 
         {/* Candidates Tab Content */}
         {activeTab === 'candidates' && (
-          <div className="w-full">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
-                Candidates
-              </h2>
+          <div className="w-full space-y-5">
+            <div className="rounded-[14px] border border-[#dbe3ff] bg-gradient-to-br from-white via-[#f8faff] to-[#f3f6ff] p-5 shadow-sm">
+              <div className="mb-2 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
+                <h2 className="font-['Arimo',sans-serif] text-[22px] leading-[28px] text-[#0f172a]">
+                  Candidates Workspace
+                </h2>
+                <p className="font-['Arimo',sans-serif] text-[13px] text-[#64748b]">
+                  Manage criteria, keywords, and candidate scoring in one place
+                </p>
+              </div>
+
+              <div className="mt-4 flex w-full flex-wrap items-center gap-2.5 lg:w-auto lg:justify-start">
+                <button
+                  onClick={handleShowKeywords}
+                  className="inline-flex h-[40px] items-center justify-center px-[14px] rounded-[10px] border border-[#bbf7d0] bg-[#f0fdf4] hover:bg-[#dcfce7] transition-colors"
+                >
+                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#166534]">
+                    {keywordsVisible ? 'JD Keywords Visible' : 'Show JD Keywords'}
+                  </span>
+                </button>
+                <button
+                  onClick={openQagManager}
+                  className="inline-flex h-[40px] items-center justify-center px-[14px] rounded-[10px] border border-[#ddd6fe] bg-[#f5f3ff] hover:bg-[#ede9fe] transition-colors"
+                >
+                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#5b21b6]">
+                    Manage QAG Questions
+                  </span>
+                </button>
+                <button
+                  onClick={handleRecomputeScores}
+                  disabled={isRecomputingScores}
+                  className="inline-flex h-[40px] items-center justify-center gap-2 px-[14px] rounded-[10px] border border-[#c7d2fe] bg-[#eef2ff] hover:bg-[#e0e7ff] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isRecomputingScores && <Loader2 size={14} className="animate-spin text-[#4338ca]" />}
+                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#4338ca]">
+                    {isRecomputingScores ? 'Recomputing...' : 'Recompute Scores'}
+                  </span>
+                </button>
+              </div>
             </div>
 
+            {recomputeMessage && (
+              <div className="mb-4 rounded-[10px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{recomputeMessage}</p>
+              </div>
+            )}
+            {recomputeError && (
+              <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{recomputeError}</p>
+              </div>
+            )}
+
+            {keywordsVisible && (
+              <div className="rounded-[14px] border border-[#dbe4ff] bg-white p-5 shadow-sm">
+                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-['Arimo',sans-serif] text-[16px] font-semibold text-[#1e3a8a]">Extracted JD Keywords</span>
+                    {isGeneratingKeywords && <Loader2 size={14} className="animate-spin text-[#1e3a8a]" />}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isGeneratingKeywords}
+                    onClick={async () => {
+                      setIsGeneratingKeywords(true);
+                      setKeywordsMessage(null);
+                      setKeywordsError(null);
+                      try {
+                        const r = await api.recruiter.generatePositionKeywords(positionId) as any;
+                        const extracted = r?.keywords ?? null;
+                        setJdKeywords(extracted);
+                        setKeywordsMessage(`Keywords extracted via ${r?.model ?? 'LLM'}.`);
+                      } catch (e) {
+                        setKeywordsError(e instanceof Error ? e.message : 'Extraction failed — please retry.');
+                      } finally {
+                        setIsGeneratingKeywords(false);
+                      }
+                    }}
+                    className="h-[30px] px-[12px] rounded-[7px] border border-[#bfdbfe] bg-white text-[12px] text-[#1d4ed8] hover:bg-[#dbeafe] transition-colors disabled:opacity-50"
+                  >
+                    {isGeneratingKeywords ? 'Extracting...' : 'Re-extract'}
+                  </button>
+                </div>
+
+                {keywordsMessage && (
+                  <p className="mb-2 font-['Arimo',sans-serif] text-[12px] text-[#166534]">{keywordsMessage}</p>
+                )}
+                {keywordsError && (
+                  <p className="mb-2 font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{keywordsError}</p>
+                )}
+
+                {!hasAnyKeywords(jdKeywords) ? (
+                  <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                    No keywords are saved for this position yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2 rounded-[12px] border border-[#dbeafe] bg-[#f8fbff] p-3.5">
+                    {KEYWORD_SECTIONS.map(({ key, label, color }) => {
+                      const kws: string[] = Array.isArray((jdKeywords as any)?.[key]) ? (jdKeywords as any)[key] : [];
+                      if (kws.length === 0) return null;
+                      const isExpanded = Boolean(expandedKeywordSections[key]);
+                      return (
+                        <div key={key} className="rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedKeywordSections((prev) => ({ ...prev, [key]: !prev[key] }))}
+                            className="flex w-full items-center justify-between gap-2 text-[12px] text-[#334155] hover:text-[#111827]"
+                          >
+                            <span className="font-['Arimo',sans-serif] font-semibold uppercase tracking-wide">{label}</span>
+                            <span className="flex items-center gap-2">
+                              <span className="rounded-full bg-white border border-[#d1d5db] px-2 py-0 text-[11px] text-[#64748b]">{kws.length}</span>
+                              <span className="text-[11px] text-[#64748b]">{isExpanded ? 'Hide' : 'Show'}</span>
+                            </span>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {kws.map((kw, i) => (
+                                <span key={`${key}-${i}`} className={`inline-flex items-center px-[8px] py-[2px] rounded-[999px] border text-[11px] font-medium ${color}`}>
+                                  {kw}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Import Candidates Section */}
-            <div className="bg-white rounded-[12px] p-6 shadow-sm mb-6">
-              <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
+            <div className="bg-white rounded-[14px] p-6 shadow-sm mb-6 border border-[#eef2ff]">
+              <h3 className="font-['Arimo',sans-serif] text-[19px] text-black mb-4">
                 Import Candidates
               </h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button
                   onClick={() => setShowZipUploadModal(true)}
                   className="flex items-center gap-3 p-4 rounded-[8px] border-2 border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-all"
@@ -531,9 +999,9 @@ export function PositionDetailView({
             </div>
 
             {/* Quick Data Board */}
-            <div className="grid grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
               {/* Total Candidates */}
-              <div className="bg-white rounded-[12px] p-5 shadow-sm">
+              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                     Total Candidates
@@ -546,7 +1014,7 @@ export function PositionDetailView({
               </div>
 
               {/* Groups Created */}
-              <div className="bg-white rounded-[12px] p-5 shadow-sm">
+              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                     Groups Created
@@ -559,7 +1027,7 @@ export function PositionDetailView({
               </div>
 
               {/* Assigned Candidates */}
-              <div className="bg-white rounded-[12px] p-5 shadow-sm">
+              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                     Assigned
@@ -578,7 +1046,7 @@ export function PositionDetailView({
               </div>
 
               {/* Unassigned Candidates */}
-              <div className="bg-white rounded-[12px] p-5 shadow-sm">
+              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
                     Unassigned
@@ -598,8 +1066,8 @@ export function PositionDetailView({
             </div>
 
             {/* Group Distribution */}
-            <div className="bg-white rounded-[12px] p-6 shadow-sm mb-6">
-              <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-4">
+            <div className="bg-white rounded-[14px] p-6 shadow-sm mb-6 border border-[#eef2ff]">
+              <h3 className="font-['Arimo',sans-serif] text-[19px] text-black mb-4">
                 Candidates by Group
               </h3>
               {groups.length > 0 ? (
@@ -649,9 +1117,9 @@ export function PositionDetailView({
             </div>
 
             {/* All Candidates List */}
-            <div className="bg-white rounded-[12px] p-6 shadow-sm">
+            <div className="bg-white rounded-[14px] p-6 shadow-sm border border-[#eef2ff]">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="font-['Arimo',sans-serif] text-[18px] text-black">
+                <h3 className="font-['Arimo',sans-serif] text-[19px] text-black">
                   All Candidates ({filteredCandidates.length})
                 </h3>
                 <div className="flex items-center gap-2">
@@ -671,33 +1139,65 @@ export function PositionDetailView({
                 </div>
               </div>
 
+              {assessmentResetMessage && (
+                <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{assessmentResetMessage}</p>
+                </div>
+              )}
+              {assessmentResetError && (
+                <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{assessmentResetError}</p>
+                </div>
+              )}
+
               <div className="max-h-[500px] overflow-y-auto pr-2">
                 <div className="flex flex-col gap-3">
                   {filteredCandidates.map((candidate) => (
+                    
                     <div
                       key={candidate.id}
-                      className="flex items-center gap-4 p-4 rounded-[10px] bg-[#f9fafb] hover:bg-[#f3f4f6] transition-colors"
+                      className="grid grid-cols-1 lg:grid-cols-[auto_1fr_auto_auto_auto] items-center gap-3 p-4 rounded-[12px] border border-[#e2e8f0] bg-[#f8fafc] hover:bg-[#f1f5f9] transition-colors"
                     >
                       <div className={`w-[4px] h-[44px] rounded-full`} style={{ backgroundColor: candidate.color }}></div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-['Arimo',sans-serif] text-[15px] text-black">
+                        <p className="font-['Arimo',sans-serif] text-[16px] text-[#0f172a]">
                           {candidate.name}
                         </p>
-                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#9ca3af]">
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#64748b]">
                           {candidate.email}
                         </p>
                       </div>
-                      <div className="text-right mr-4">
-                        <p className="font-['Arimo',sans-serif] text-[15px] text-black">
-                          Score: {candidate.score}
-                        </p>
-                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#9ca3af]">
-                          Match: {candidate.match}%
-                        </p>
+                      <div className="text-left lg:text-right lg:mr-2">
+                        {(() => {
+                          const displayScore = getCandidateDisplayScore(candidate);
+                          const displayMatch = getCandidateDisplayMatch(candidate);
+                          return (
+                            <>
+                              <p className="font-['Arimo',sans-serif] text-[15px] text-black">
+                                Score: {displayScore != null ? displayScore : 'N/A'}
+                              </p>
+                              <p className="font-['Arimo',sans-serif] text-[13px] text-[#64748b]">
+                                Match: {displayMatch != null ? `${displayMatch}%` : 'N/A'}
+                              </p>
+                            </>
+                          );
+                        })()}
                       </div>
                       <button
-                        onClick={() => navigate(`/recruiter/candidates/${candidate.id}`)}
-                        className="h-[40px] px-[20px] rounded-[8px] bg-[#5b21b6] hover:bg-[#6d28d9] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
+                        onClick={() => handleResetAssessmentTrial(candidate)}
+                        disabled={!candidate.applicationId || assessmentResetLoadingApplicationId === String(candidate.applicationId)}
+                        className="h-[38px] px-[12px] rounded-[8px] border border-[#fecaca] bg-[#fff1f2] hover:bg-[#ffe4e6] disabled:opacity-50 disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[12px] text-[#b91c1c] transition-colors"
+                      >
+                        {assessmentResetLoadingApplicationId === String(candidate.applicationId) ? 'Resetting...' : 'Reset Trial'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          const query = candidate.applicationId
+                            ? `?applicationId=${encodeURIComponent(String(candidate.applicationId))}`
+                            : '';
+                          navigate(`/recruiter/candidates/${candidate.id}${query}`);
+                        }}
+                        className="h-[38px] px-[16px] rounded-[8px] bg-[#5b21b6] hover:bg-[#6d28d9] font-['Arimo',sans-serif] text-[13px] text-white transition-colors"
                       >
                         View Report
                       </button>
@@ -1344,6 +1844,229 @@ export function PositionDetailView({
           </div>
         )}
       </div>
+
+      {/* QAG Manager Dialog */}
+      <Dialog open={isQagDialogOpen} onOpenChange={setIsQagDialogOpen}>
+        <DialogContent className="sm:max-w-[980px] bg-white p-0">
+          <div className="p-6 pb-4">
+            <DialogHeader className="mb-4">
+              <DialogTitle className="text-[18px] font-['Arimo',sans-serif] text-black">Position QAG Questions</DialogTitle>
+              <DialogDescription className="text-[13px] text-[#6b7280] font-['Arimo',sans-serif] mt-1">
+                Review and edit QAG questions for this position, then approve and recompute candidate scores.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="mb-3 text-[12px] text-[#6b7280]">
+              Current status: <span className="font-semibold text-[#111827]">{qagStatus || 'unknown'}</span>
+            </div>
+
+            {qagMessage && (
+              <div className="mb-3 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{qagMessage}</p>
+              </div>
+            )}
+            {qagError && (
+              <div className="mb-3 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{qagError}</p>
+              </div>
+            )}
+
+            <div className="max-h-[480px] overflow-y-auto rounded-[10px] border border-[#e5e7eb] bg-[#f8fafc] p-3">
+              {qagLoading ? (
+                <div className="h-[180px] flex items-center justify-center text-[#6b7280]">
+                  <Loader2 size={16} className="animate-spin mr-2" />
+                  Loading QAG questions...
+                </div>
+              ) : qagQuestions.length === 0 ? (
+                <div className="h-[180px] flex items-center justify-center text-[#9ca3af]">
+                  No QAG questions found for this position.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {qagQuestions.map((q) => (
+                    <div key={q.id} className="rounded-[10px] border border-[#e5e7eb] bg-white p-3">
+                      <div className="grid grid-cols-[1fr_110px_110px] gap-2 items-start mb-2">
+                        <textarea
+                          value={q.question || ''}
+                          onChange={(e) => updateQagQuestion(q.id, { question: e.target.value })}
+                          rows={2}
+                          className="w-full rounded-[6px] border border-[#e5e7eb] px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]"
+                        />
+                        <input
+                          value={q.category || ''}
+                          onChange={(e) => updateQagQuestion(q.id, { category: e.target.value })}
+                          placeholder="Category"
+                          className="h-[36px] rounded-[6px] border border-[#e5e7eb] px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]"
+                        />
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={q.weight ?? ''}
+                          onChange={(e) => updateQagQuestion(q.id, { weight: Number(e.target.value) })}
+                          placeholder="Weight"
+                          className="h-[36px] rounded-[6px] border border-[#e5e7eb] px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]"
+                        />
+                      </div>
+                      <label className="inline-flex items-center gap-2 text-[12px] text-[#374151]">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(q.approved ?? true)}
+                          onChange={(e) => updateQagQuestion(q.id, { approved: e.target.checked })}
+                        />
+                        Approved
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── JD Keywords Panel ─────────────────────────────────────── */}
+          {keywordsVisible && (
+            <div className="mx-6 mb-4 rounded-[10px] border border-[#d1fae5] bg-[#f0fdf4] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[16px]">🏷️</span>
+                  <span className="font-['Arimo',sans-serif] text-[14px] font-semibold text-[#166534]">JD Keywords</span>
+                  {isGeneratingKeywords && <div className="w-4 h-4 border-2 border-[#16a34a] border-t-transparent rounded-full animate-spin" />}
+                  {keywordsMessage && !isGeneratingKeywords && (
+                    <span className="font-['Arimo',sans-serif] text-[11px] text-[#16a34a]">✓ {keywordsMessage}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button type="button" disabled={isGeneratingKeywords}
+                    onClick={async () => {
+                      setIsGeneratingKeywords(true);
+                      setKeywordsMessage(null);
+                      setKeywordsError(null);
+                      try {
+                        const r = await api.recruiter.generatePositionKeywords(positionId) as any;
+                        setJdKeywords(r?.keywords ?? null);
+                        setKeywordsMessage(`Keywords extracted via ${r?.model ?? 'LLM'}.`);
+                      } catch (e) {
+                        setKeywordsError(e instanceof Error ? e.message : 'Extraction failed — please retry.');
+                      } finally {
+                        setIsGeneratingKeywords(false);
+                      }
+                    }}
+                    className="h-[28px] px-[10px] rounded-[6px] border border-[#bbf7d0] bg-white text-[11px] text-[#16a34a] hover:bg-[#dcfce7] transition-colors disabled:opacity-50"
+                  >
+                    {isGeneratingKeywords ? 'Extracting…' : 'Re-extract'}
+                  </button>
+                  <button type="button" disabled={isSavingKeywords || !jdKeywords}
+                    onClick={async () => {
+                      if (!jdKeywords) return;
+                      setIsSavingKeywords(true);
+                      setKeywordsMessage(null);
+                      try {
+                        await api.recruiter.savePositionKeywords(positionId, jdKeywords);
+                        setKeywordsMessage('Saved — candidate scores updated.');
+                      } catch {
+                        setKeywordsError('Failed to save keywords.');
+                      } finally {
+                        setIsSavingKeywords(false);
+                      }
+                    }}
+                    className="h-[28px] px-[12px] rounded-[6px] bg-[#16a34a] text-white text-[11px] hover:bg-[#15803d] transition-colors disabled:opacity-50"
+                  >
+                    {isSavingKeywords ? 'Saving…' : 'Save Keywords'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Loading state */}
+              {isGeneratingKeywords && !jdKeywords && (
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Extracting keywords from job description…</p>
+              )}
+
+              {/* Error state */}
+              {!isGeneratingKeywords && keywordsError && !jdKeywords && (
+                <div className="flex items-start gap-2 p-3 rounded-[8px] bg-[#fef2f2] border border-[#fecaca]">
+                  <span className="text-[14px]">⚠️</span>
+                  <div>
+                    <p className="font-['Arimo',sans-serif] text-[12px] text-[#991b1b] font-medium">Keyword extraction failed</p>
+                    <p className="font-['Arimo',sans-serif] text-[11px] text-[#b91c1c] mt-0.5">{keywordsError}</p>
+                    <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mt-1">Click <strong>Re-extract</strong> above to retry, or add keywords manually below.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Keywords grid */}
+              {jdKeywords && (
+                <div className="space-y-3">
+                  {KEYWORD_SECTIONS.map(({ key, label, color }) => {
+                    const kws: string[] = Array.isArray((jdKeywords as any)[key]) ? (jdKeywords as any)[key] : [];
+                    const isExpanded = Boolean(expandedKeywordSections[key]);
+                    return (
+                      <div key={key}>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedKeywordSections((prev) => ({ ...prev, [key]: !prev[key] }))}
+                          className="flex items-center gap-2 text-[11px] text-[#374151] hover:text-[#111827]"
+                        >
+                          <span className="font-['Arimo',sans-serif] font-semibold text-[#9ca3af] uppercase tracking-wide">{label}</span>
+                          <span className="rounded-full bg-white border border-[#d1d5db] px-2 py-0 text-[10px] text-[#6b7280]">{kws.length}</span>
+                          <span className="text-[11px] text-[#6b7280]">{isExpanded ? 'Hide' : 'Show'}</span>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="flex flex-wrap gap-1 mt-1 items-center">
+                            {kws.map((kw, i) => (
+                              <span key={i} className={`inline-flex items-center gap-1 px-[6px] py-[1px] rounded-[8px] border text-[10px] font-medium ${color}`}>
+                                {kw}
+                                <button type="button" onClick={() => setJdKeywords(prev => prev ? { ...prev, [key]: kws.filter((_, j) => j !== i) } : prev)} className="hover:opacity-60 leading-none">×</button>
+                              </span>
+                            ))}
+                            <input
+                              type="text" placeholder="+ add" value={(newKeywordInputs as any)[key] || ''}
+                              onChange={e => setNewKeywordInputs(p => ({ ...p, [key]: e.target.value }))}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') {
+                                  const val = ((newKeywordInputs as any)[key] || '').trim().toLowerCase();
+                                  if (val && !kws.includes(val)) setJdKeywords(p => p ? { ...p, [key]: [...kws, val] } : p);
+                                  setNewKeywordInputs(p => ({ ...p, [key]: '' }));
+                                }
+                              }}
+                              className="h-[22px] px-[8px] rounded-[10px] border border-dashed border-[#d1d5db] text-[11px] text-[#6b7280] w-[70px] focus:outline-none focus:border-[#6366f1] bg-white"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+
+          <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-[#f3f4f6]">
+            <button
+              onClick={() => setIsQagDialogOpen(false)}
+              className="h-[38px] px-[20px] rounded-[6px] font-['Arimo',sans-serif] text-[14px] text-[#6b7280] hover:bg-[#f9fafb] transition-colors"
+            >
+              Close
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSaveQagDraft}
+                disabled={qagSaving || qagLoading || qagQuestions.length === 0}
+                className="h-[38px] px-[14px] rounded-[6px] border border-[#c7d2fe] bg-[#eef2ff] hover:bg-[#e0e7ff] disabled:opacity-60"
+              >
+                <span className="font-['Arimo',sans-serif] text-[13px] text-[#4338ca]">{qagSaving ? 'Saving...' : 'Save QAG Changes'}</span>
+              </button>
+              <button
+                onClick={handleApproveQagAndRecompute}
+                disabled={qagApproving || qagLoading || qagQuestions.length === 0}
+                className="h-[38px] px-[14px] rounded-[6px] bg-[#5b21b6] hover:bg-[#6d28d9] disabled:opacity-60"
+              >
+                <span className="font-['Arimo',sans-serif] text-[13px] text-white">{qagApproving ? 'Approving...' : 'Approve + Recompute'}</span>
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Position Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>

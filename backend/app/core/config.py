@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     # Default LLM provider: "ollama", "gemini", "groq", "openai"
     DEFAULT_LLM_PROVIDER: str = "gemini"
     DEFAULT_EMBEDDING_PROVIDER: str = "gemini"
+
+    # PreScore HD Eval + QAG runtime controls
+    PRESCORE_USE_AI_SERVICE: bool = True
+    PRESCORE_LLM_PROVIDER: str = "ollama"
+    PRESCORE_LLM_MODEL: str | None = None
+    PRESCORE_AI_SERVICE_TIMEOUT_SECONDS: float = 90.0
+    PRESCORE_ALLOW_FALLBACK: bool = False
     
     # Internal Services
     AI_SERVICE_URL: str = "http://127.0.0.1:8001"

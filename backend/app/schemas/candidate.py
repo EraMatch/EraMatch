@@ -41,6 +41,15 @@ class Education(BaseModel):
     school: str
     year: str
 
+
+class CandidateProject(BaseModel):
+    """Project entry parsed from CV."""
+    name: str
+    description: str
+    technologies: list[str] = []
+    duration: str = "N/A"
+    url: str | None = None
+
 class CandidateScores(BaseModel):
     """Candidate scores for different stages."""
     overall: float = 0.0
@@ -69,7 +78,15 @@ class CandidateResponse(BaseModel):
     # Enriched Report Data
     skills: list[str] = []
     experience: float = 0.0
+    resumeSummary: str = ""
+    techSkills: dict = {
+        "frontend": [],
+        "backend": [],
+        "devops": [],
+    }
+    certifications: list[str] = []
     workHistory: list[JobExperience] = []
+    projects: list[CandidateProject] = []
     education: list[Education] = []
     pipelineStatus: dict | None = None
     assessmentData: dict | None = None
@@ -84,6 +101,9 @@ class CandidateResponse(BaseModel):
     offerAcceptedDate: str | None = None
     filtrationFlow: list[str] | None = None
     groupAssigned: bool = False
+    groupId: UUID | None = None
+    groupName: str | None = None
+    applicationId: UUID | None = None
     
     class Config:
         from_attributes = True
@@ -99,6 +119,8 @@ class CandidateResponse(BaseModel):
             setattr(obj, "workHistory", [])
         if not hasattr(obj, "education"):
             setattr(obj, "education", [])
+        if not hasattr(obj, "projects"):
+            setattr(obj, "projects", [])
         return super().from_orm(obj)
 
 

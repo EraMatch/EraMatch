@@ -19,6 +19,8 @@ import { ProjectsPage } from './components/recruiter/projects/ProjectsPage';
 import { CandidatesPage } from './components/recruiter/candidates/CandidatesPage';
 import { QuestionBankPage } from './components/recruiter/assessments/QuestionBankPage';
 import { CandidateProfile } from './components/recruiter/candidates/CandidateProfile';
+import { CandidateGitHubAnalysisReviewPage } from './components/recruiter/candidates/CandidateGitHubAnalysisReviewPage';
+import { CandidateQAGAuditPage } from './components/recruiter/candidates/CandidateQAGAuditPage';
 import { AlertsNotifications } from './components/common/AlertsNotifications';
 import { EnhancedGroupOverviewV2 } from './components/recruiter/groups/EnhancedGroupOverviewV2';
 import { LandingPage } from './components/common/LandingPage';
@@ -27,6 +29,7 @@ import { RecruiterSettings } from './components/recruiter/settings/RecruiterSett
 import { SuspiciousActivityLog } from './components/recruiter/dashboard/SuspiciousActivityLog';
 import { BackgroundTasks } from './components/recruiter/dashboard/BackgroundTasks';
 import { ReviewRequests } from './components/recruiter/reviews/ReviewRequests';
+import { PositionPreMatchingReviewPage } from './components/recruiter/reviews/PositionPreMatchingReviewPage';
 import { api, PositionGroup } from './services/api';
 import { NavigationStackProvider, useNavigationStack } from './components/common/NavigationStack';
 import { ProjectDetailView } from './components/recruiter/projects/ProjectDetailView';
@@ -127,6 +130,7 @@ const ProjectsPageWrapper = () => {
     return (
         <ProjectsPage
             onViewProject={(projectId) => navigateWithStack(`/recruiter/project/${projectId}`)}
+            onViewPosition={(positionId) => navigateWithStack(`/recruiter/position/${positionId}`)}
             onCreateAssessment={() => console.log('Create Assessment')}
         />
     );
@@ -162,8 +166,8 @@ const PositionDetailWrapper = () => {
         const loadPosition = async () => {
             if (!positionId) return;
             try {
-                const details = await api.recruiter.getPositionDetails(positionId) as any;
-                setPositionData(details);
+                const position = await api.recruiter.getPosition(positionId) as any;
+                setPositionData(position);
             } catch (err) {
                 console.error('Failed to load position:', err);
             } finally {
@@ -182,11 +186,11 @@ const PositionDetailWrapper = () => {
     return (
         <PositionDetailView
             positionId={positionId || ''}
-            positionTitle={positionData?.title || positionData?.jobTitle || 'Position'}
+            positionTitle={positionData?.jobTitle || positionData?.job_title || positionData?.title || 'Position'}
             projectTitle={positionData?.projectName || positionData?.project_name || 'Project'}
-            description={positionData?.description}
-            screeningConditions={positionData?.screeningConditions}
-            isOpen={positionData?.status === 'Open' || positionData?.status === 'Active'}
+            description={positionData?.jobDescription || positionData?.job_description || positionData?.description}
+            screeningConditions={positionData?.screeningConditions || positionData?.screening_conditions}
+            isOpen={String(positionData?.status || '').toLowerCase() === 'open' || String(positionData?.status || '').toLowerCase() === 'active'}
             onBack={() => goBack()}
             onSave={() => {}}
             onCreateAssessment={() => console.log('Create Assessment')}
@@ -289,17 +293,39 @@ const GroupOverviewWrapper = () => {
 const CandidateProfileWrapper = () => {
     const { candidateId } = useParams();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
 
     // Pass candidateId as a string (UUID) directly
     const id = candidateId ?? '';
+    const applicationId = searchParams.get('applicationId') ?? undefined;
 
     return (
         <CandidateProfile
             candidateId={id}
+            applicationId={applicationId}
             onBack={() => navigate(-1)}
-            onViewKnowledgeGraph={() => console.log('View Knowledge Graph')}
         />
     );
+};
+
+const CandidateQAGAuditWrapper = () => {
+    const { candidateId } = useParams();
+    const [searchParams] = useSearchParams();
+
+    const id = candidateId ?? '';
+    const applicationId = searchParams.get('applicationId') ?? undefined;
+
+    return <CandidateQAGAuditPage candidateId={id} applicationId={applicationId} />;
+};
+
+const CandidateGitHubAnalysisReviewWrapper = () => {
+    const { candidateId } = useParams();
+    const [searchParams] = useSearchParams();
+
+    const id = candidateId ?? '';
+    const applicationId = searchParams.get('applicationId') ?? undefined;
+
+    return <CandidateGitHubAnalysisReviewPage candidateId={id} applicationId={applicationId} />;
 };
 
 export const router = createBrowserRouter([
@@ -509,6 +535,16 @@ export const router = createBrowserRouter([
         )
     },
     {
+        path: "/recruiter/reviews/:requestId/pre-matching",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <PositionPreMatchingReviewPage />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        )
+    },
+    {
         path: "/recruiter/candidates",
         element: (
             <RecruiterProtectedRoute>
@@ -562,6 +598,26 @@ export const router = createBrowserRouter([
                 </RecruiterLayout>
             </RecruiterProtectedRoute>
         ),
+    },
+    {
+        path: "/recruiter/candidates/:candidateId/qag-audit",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <CandidateQAGAuditWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        ),
+    },
+    {
+        path: "/recruiter/candidates/:candidateId/github-analysis-review",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <CandidateGitHubAnalysisReviewWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        )
     },
     {
         path: "/recruiter/background-tasks",

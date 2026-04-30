@@ -267,6 +267,8 @@ class Position(SQLModel, table=True):
     years_of_experience: int = Field(default=0)
     education_level: str | None = Field(default=None, max_length=100)
     benefits: list = Field(default_factory=list, sa_column=Column(JSONB))
+    jd_hdeval_qag: dict | None = Field(default=None, sa_column=Column(JSONB))
+    jd_keywords: dict | None = Field(default=None, sa_column=Column(JSONB))  # LLM-extracted keyword groups
     status: str = Field(default="open", max_length=20)
     assigned_hr_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     assigned_tech_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
@@ -484,6 +486,38 @@ class GitHubAnalysisJob(SQLModel, table=True):
 
     error_message: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = Field(default=None)
+
+
+class QAGProcessingJob(SQLModel, table=True):
+    """
+    Tracks HD Eval + QAG processing jobs.
+    Lifecycle: pending -> processing -> completed|failed|cancelled
+    """
+    __tablename__ = "qag_processing_jobs"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="job_id",
+        sa_column=Column("job_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    position_id: UUID = Field(foreign_key="positions.position_id")
+    application_id: UUID | None = Field(default=None, foreign_key="candidate_applications.application_id")
+    candidate_id: UUID | None = Field(default=None, foreign_key="candidate_profiles.candidate_id")
+    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+
+    job_type: str = Field(max_length=40)  # qag_generation|qag_resume_correction
+    status: str = Field(default="pending", max_length=20)  # pending|processing|completed|failed|cancelled
+
+    source_provider: str | None = Field(default=None, max_length=80)
+    total_items: int = Field(default=0)
+    processed_items: int = Field(default=0)
+    summary: dict | None = Field(default=None, sa_column=Column(JSONB))
+
+    error_message: str | None = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime | None = Field(default=None)
     completed_at: datetime | None = Field(default=None)
 
 
@@ -742,6 +776,7 @@ class CVAnalysis(BaseModel, table=True):
     skills: list | None = Field(default=None, sa_column=Column(ARRAY(String)))
     experience_years: Decimal | None = Field(default=None)
     match_score: Decimal | None = Field(default=None)
+    keyword_match_score: Decimal | None = Field(default=None)  # 0-100, computed from jd_keywords vs parsed_data
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)
 
 

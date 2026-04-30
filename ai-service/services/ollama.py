@@ -1,14 +1,12 @@
-import os
 import asyncio
 import logging
-import threading
 from ollama import Client, ResponseError
 from config import settings
 
 logger = logging.getLogger(__name__)
 
-# Global threading semaphore to limit concurrent requests to Ollama across threads/event loops
-_ollama_semaphore = threading.Semaphore(settings.OLLAMA_MAX_CONCURRENT_CALLS)
+# Asyncio semaphore to limit concurrent Ollama calls cooperatively (avoids thread-blocking timeout issues)
+_ollama_semaphore = asyncio.Semaphore(settings.OLLAMA_MAX_CONCURRENT_CALLS)
 
 
 
@@ -57,28 +55,29 @@ async def chat_completion(
     async def _run_chat() -> dict:
         max_retries = 5
         base_delay = 1.0
-        
+
         for attempt in range(max_retries):
             try:
-                if stream:
-                    def _stream_call() -> dict:
-                        with _ollama_semaphore:
+                # Acquire the asyncio semaphore BEFORE spawning a thread so that
+                # waiting for a slot is cooperative and doesn't burn timeout budget.
+                async with _ollama_semaphore:
+                    if stream:
+                        def _stream_call() -> dict:
                             full_content = ""
                             for part in client.chat(**chat_kwargs):
                                 full_content += part["message"]["content"]
                             return {"content": full_content, "model": model_name}
 
-                    return await asyncio.to_thread(_stream_call)
+                        return await asyncio.to_thread(_stream_call)
 
-                def _sync_call() -> dict:
-                    with _ollama_semaphore:
+                    def _sync_call() -> dict:
                         return client.chat(**chat_kwargs)
 
-                response = await asyncio.to_thread(_sync_call)
-                return {
-                    "content": response["message"]["content"],
-                    "model": model_name,
-                }
+                    response = await asyncio.to_thread(_sync_call)
+                    return {
+                        "content": response["message"]["content"],
+                        "model": model_name,
+                    }
             except ResponseError as e:
                 if e.status_code == 429 and attempt < max_retries - 1:
                     delay = base_delay * (2 ** attempt)

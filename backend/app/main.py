@@ -2,12 +2,18 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
+from app.core.integrity_metrics import integrity_metrics
 from app.db.session import init_db
 
 # Configure logging
@@ -52,6 +58,29 @@ async def log_requests(request, call_next):
     logger.info(f"Outbound: {request.method} {request.url.path} - Status: {response.status_code}")
     return response
 
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    logger.warning(
+        "HTTPException: %s %s -> %s | detail=%s",
+        request.method,
+        request.url.path,
+        exc.status_code,
+        exc.detail,
+    )
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.warning(
+        "ValidationError: %s %s -> 422 | errors=%s",
+        request.method,
+        request.url.path,
+        exc.errors(),
+    )
+    return await request_validation_exception_handler(request, exc)
+
 # cors
 app.add_middleware(
     CORSMiddleware,
@@ -80,6 +109,12 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": settings.PROJECT_NAME}
+
+
+@app.get("/metrics", tags=["Observability"], response_class=PlainTextResponse)
+async def prometheus_metrics():
+    """Prometheus scrape endpoint for in-process integrity counters."""
+    return integrity_metrics.as_prometheus_text()
 
 
 @app.get("/", tags=["Root"])

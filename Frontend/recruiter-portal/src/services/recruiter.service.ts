@@ -1,5 +1,5 @@
 import { API_URL, fetchAPI } from './client';
-import type { Project, JobPosition, PositionGroup, ClosedProject } from './types';
+import type { Project, JobPosition, PositionGroup, ClosedProject, ApplicationScoreBreakdown } from './types';
 
 export const recruiterService = {
     // Dashboard
@@ -68,6 +68,8 @@ export const recruiterService = {
     // Position Management
     getPositions: async () => fetchAPI<JobPosition[]>('/recruiter/positions'),
 
+    getPosition: async (positionId: string) => fetchAPI<any>(`/recruiter/positions/${positionId}`),
+
     createPosition: async (data: Partial<JobPosition>) => {
         return fetchAPI<JobPosition>('/recruiter/positions', {
             method: 'POST',
@@ -106,14 +108,106 @@ export const recruiterService = {
     getGroupCandidates: async () => fetchAPI('/groups/candidates/all'),
 
     getCandidate: async (candidateId: string) => fetchAPI<any>(`/candidates/${candidateId}`),
+    getApplicationScoreBreakdown: async (applicationId: string) =>
+        fetchAPI<ApplicationScoreBreakdown>(`/recruiter/applications/${applicationId}/score-breakdown`),
+    saveGithubAnalysisReview: async (
+        candidateId: string,
+        payload: {
+            review_notes?: string | null;
+            questions: Array<{
+                questionText: string;
+                type: string;
+                difficulty: string;
+                sourceFile?: string | null;
+                referenceAnswer?: string | null;
+                rubric?: string | null;
+                rubricYesNoChecks?: Array<{ id?: number; check?: string; weight?: number }>;
+                selectionReason?: string | null;
+                jdRelation?: string | null;
+                evidence?: string | null;
+                selected?: boolean;
+            }>;
+        }
+    ) => {
+        return fetchAPI(`/candidates/${candidateId}/github-analysis/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    },
+    resetApplicationAssessmentTrial: async (applicationId: string) =>
+        fetchAPI<{
+            application_id: string;
+            sessions_deleted: number;
+            answers_deleted: number;
+            assigned_questions_deleted: number;
+            proctoring_flags_deleted: number;
+            progress_reset: number;
+            message: string;
+        }>(`/recruiter/applications/${applicationId}/assessment/reset`, {
+            method: 'POST',
+        }),
+    archiveApplication: async (applicationId: string) =>
+        fetchAPI(`/recruiter/applications/${applicationId}/archive`, {
+            method: 'POST'
+        }),
+    deleteApplication: async (applicationId: string) =>
+        fetchAPI(`/recruiter/applications/${applicationId}`, {
+            method: 'DELETE'
+        }),
+    bulkArchiveApplications: async (applicationIds: string[]) =>
+        fetchAPI<{ archived_count: number }>('/recruiter/applications/bulk-archive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ application_ids: applicationIds })
+        }),
+    bulkDeleteApplications: async (applicationIds: string[]) =>
+        fetchAPI<{ deleted_count: number }>('/recruiter/applications/bulk-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ application_ids: applicationIds })
+        }),
     startCandidateGithubAnalysis: async (candidateId: string) =>
         fetchAPI<{ job_id: string; status: string; message: string }>(`/candidates/${candidateId}/github-analysis/start`, {
             method: 'POST'
         }),
 
-    getSuspectReview: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/suspect-review`),
+    getSuspectReview: async (candidateId: string, applicationId?: string) => {
+        const query = applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : '';
+        return fetchAPI(`/candidates/${candidateId}/suspect-review${query}`);
+    },
 
-    getKnowledgeGraphData: async (candidateId: string) => fetchAPI(`/candidates/${candidateId}/knowledge-graph`),
+    persistSuspectDecompressionArtifacts: async (
+        candidateId: string,
+        payload: {
+            application_id?: string;
+            suspicious_timestamps: number[];
+            window_seconds?: number;
+        },
+    ) => {
+        return fetchAPI(`/candidates/${candidateId}/suspect-review/decompression-artifacts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    },
+
+    getSuspiciousActivity: async (since?: string, limit = 100) => {
+        const query = new URLSearchParams();
+        if (since) query.set('since', since);
+        query.set('limit', String(limit));
+        const suffix = query.toString() ? `?${query.toString()}` : '';
+        return fetchAPI<{ records: any[]; cursor: string | null; server_time: string }>(`/recruiter/suspicious-activity/poll${suffix}`);
+    },
+
+    getSuspiciousActivityStreamUrl: (since?: string) => {
+        const token = localStorage.getItem('token');
+        const query = since ? `?since=${encodeURIComponent(since)}` : '';
+        return {
+            url: `${API_URL}/recruiter/suspicious-activity/stream${query}`,
+            token,
+        };
+    },
 
     getCandidateSkills: async (candidateIds: number[]) => {
         const res = await fetch(`${API_URL}/candidates/skills`, {
@@ -225,6 +319,49 @@ export const recruiterService = {
         });
     },
 
+    getPositionHDEvalQAG: async (positionId: string) => {
+        return fetchAPI<any>(`/recruiter/positions/${positionId}/hdeval-qag`);
+    },
+
+    updatePositionHDEvalQAG: async (positionId: string, questions: any[]) => {
+        return fetchAPI<any>(`/recruiter/positions/${positionId}/hdeval-qag`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ questions })
+        });
+    },
+
+    approvePositionHDEvalQAG: async (positionId: string) => {
+        return fetchAPI<any>(`/recruiter/positions/${positionId}/hdeval-qag/approve`, {
+            method: 'POST'
+        });
+    },
+
+    recomputePositionPrescores: async (positionId: string) => {
+        return fetchAPI<any>(`/recruiter/positions/${positionId}/prescore/recompute`, {
+            method: 'POST'
+        });
+    },
+
+    // JD Keywords
+    generatePositionKeywords: async (positionId: string) => {
+        return fetchAPI<{ keywords: Record<string, string[]>; model: string }>(
+            `/recruiter/positions/${positionId}/keywords/generate`,
+            { method: 'POST' }
+        );
+    },
+
+    getPositionKeywords: async (positionId: string) => {
+        return fetchAPI<Record<string, string[]>>(`/recruiter/positions/${positionId}/keywords`);
+    },
+
+    savePositionKeywords: async (positionId: string, keywords: Record<string, string[]>) => {
+        return fetchAPI<Record<string, string[]>>(`/recruiter/positions/${positionId}/keywords`, {
+            method: 'PUT',
+            body: JSON.stringify({ keywords }),
+        });
+    },
+
     // Candidate Import & Group Creation
     uploadZipCandidates: async (positionId: string, file: File) => {
         const formData = new FormData();
@@ -330,6 +467,23 @@ export const recruiterService = {
     // Activity Log
     getGroupActivityLog: async (groupId: string) => {
         return fetchAPI(`/recruiter/groups/${groupId}/activity`);
+    },
+
+    // Live Integrity Alerts (polling fallback)
+    pollGroupAlerts: async (groupId: string, since?: string) => {
+        const query = since ? `?since=${encodeURIComponent(since)}` : '';
+        return fetchAPI<{ alerts: any[]; cursor: string | null; server_time: string }>(
+            `/recruiter/groups/${groupId}/alerts/poll${query}`
+        );
+    },
+
+    getGroupIntegrityMetrics: async (groupId: string, windowMinutes = 60) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/integrity/metrics?window_minutes=${windowMinutes}`);
+    },
+
+    getGroupIntegrityDecisions: async (groupId: string, stage?: string) => {
+        const query = stage ? `?stage=${encodeURIComponent(stage)}` : '';
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/integrity/decisions${query}`);
     },
 
     // Interview Assignment
@@ -449,7 +603,14 @@ export const recruiterService = {
 
     // AI Features
     generateAIQuestion: async (
-        data: { question_type: string, topic: string, difficulty: string, context?: string },
+        data: {
+            question_type: string;
+            topic: string;
+            difficulty: string;
+            context?: string;
+            use_case?: string;
+            metadata?: Record<string, any>;
+        },
         signal?: AbortSignal
     ) => {
         return fetchAPI<any>('/recruiter/ai/generate-question', {
@@ -460,11 +621,18 @@ export const recruiterService = {
         });
     },
 
-    refineAIQuestion: async (questionText: string) => {
+    refineAIQuestion: async (
+        questionText: string,
+        options?: { useCase?: string; metadata?: Record<string, any> }
+    ) => {
         return fetchAPI<{ refinedText: string }>('/recruiter/ai/refine-question', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question_text: questionText })
+            body: JSON.stringify({
+                question_text: questionText,
+                use_case: options?.useCase || '',
+                metadata: options?.metadata || undefined,
+            })
         });
     },
 
@@ -494,6 +662,7 @@ export const recruiterService = {
     stopAllVideoTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-video', { method: 'POST' }),
     stopAllQuestionImportTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-question-import', { method: 'POST' }),
     stopAllGithubAnalysisTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-github-analysis', { method: 'POST' }),
+    stopAllQagTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-qag', { method: 'POST' }),
     stopAllCvIngestionTasks: async () => fetchAPI<{ stopped_count: number; message: string }>('/background-tasks/stop-cv-ingestion', { method: 'POST' }),
     stopVideoTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-video/${taskId}`, { method: 'POST' }),
@@ -501,9 +670,11 @@ export const recruiterService = {
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-question-import/${taskId}`, { method: 'POST' }),
     stopGithubAnalysisTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-github-analysis/${taskId}`, { method: 'POST' }),
+    stopQagTask: async (taskId: string) =>
+        fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-qag/${taskId}`, { method: 'POST' }),
     stopCvIngestionTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-cv-ingestion/${taskId}`, { method: 'POST' }),
-    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import' | 'github_analysis' | 'cv_ingestion') =>
+    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import' | 'github_analysis' | 'qag' | 'cv_ingestion') =>
         fetchAPI<{ message: string }>(
             `/background-tasks/${taskId}?task_category=${encodeURIComponent(taskCategory)}`,
             { method: 'DELETE' }

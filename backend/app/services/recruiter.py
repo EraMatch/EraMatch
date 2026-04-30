@@ -3,15 +3,17 @@ import os
 from uuid import UUID
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, func, col, desc, or_, exists
+from sqlalchemy.orm.attributes import flag_modified
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from app.core.exceptions import NotFoundException, UnauthorizedException
+from pathlib import Path
 
 from app.models import (
     User, Project, Position, CandidateApplication, CandidateGroup, 
     CandidateStageProgress, OrganizationUser, Hire, Offer, ProctoringFlag,
     ProjectAccess, GroupStageConfig, CandidateProfile, CVAnalysis, GitHubAnalysis, Organization,
-    OrganizationUserSettings, FilterTemplate
+    OrganizationUserSettings, FilterTemplate, QAGProcessingJob
 )
 from app.integrations.llm import get_llm
 import json
@@ -21,15 +23,17 @@ from app.schemas.project import (
     GroupAnalysisResponse, TechnicalAIResponse, RiskBreakdownResponse, TechStats, AIStats,
     PositionResponse, PositionDetailsResponse, PositionCandidateResponse, DistributionItem,
     ScoreBucket, SkillDistributionItem, SeniorityDistributionItem, UniversityDistributionItem,
-    AvailabilityDistributionItem, SourceQualityItem, CompanyPipelineItem
+    AvailabilityDistributionItem, SourceQualityItem, CompanyPipelineItem,
+    ApplicationScoreBreakdownResponse,
 )
 from app.schemas.analytics import (
     RecruiterAnalyticsResponse, OverviewStats, GroupStatusCount, StageCount,
     ProjectPerformance, RecentActivity, WeeklyTrend
 )
 from app.schemas.candidate import ApplicationUpdate
+from app.services.prescore import PreScoreService
 import asyncio
-from typing import List
+from typing import List, Any
 
 
 class RecruiterService:
@@ -37,6 +41,48 @@ class RecruiterService:
         self.session = session
         self.current_user = current_user
         self.organization_id = current_user.organization_id
+
+    async def _start_qag_job(
+        self,
+        *,
+        position: Position,
+        job_type: str,
+        total_items: int = 0,
+        source_provider: str | None = None,
+    ) -> QAGProcessingJob:
+        job = QAGProcessingJob(
+            organization_id=self.organization_id,
+            position_id=position.id,
+            created_by_user_id=(self.current_user.id if self.current_user.role in {"hr", "technical"} else None),
+            job_type=job_type,
+            status="processing",
+            total_items=max(0, int(total_items or 0)),
+            processed_items=0,
+            source_provider=source_provider,
+            started_at=datetime.utcnow(),
+        )
+        self.session.add(job)
+        await self.session.flush()
+        return job
+
+    def _finish_qag_job(
+        self,
+        *,
+        job: QAGProcessingJob,
+        status: str,
+        processed_items: int | None = None,
+        error_message: str | None = None,
+        summary: dict[str, Any] | None = None,
+    ) -> None:
+        job.status = status
+        if processed_items is not None:
+            job.processed_items = max(0, int(processed_items))
+        if error_message:
+            job.error_message = str(error_message)
+        if summary is not None:
+            job.summary = summary
+        job.completed_at = datetime.utcnow()
+        self.session.add(job)
 
     # Project operations
     async def create_project(self, data: ProjectCreate) -> Project:
@@ -566,16 +612,23 @@ class RecruiterService:
         self.session.add(position)
         await self.session.flush()
 
+        # Persist position-level HD Eval + QAG critic artifact.
+        await self._evaluate_position_hdeval_qag(position, force=True)
+
         # Create Approval Request if not open immediately
         if initial_status != "open":
             from app.models import ApprovalRequest
+
+            requester_id = self.current_user.id
+            if self.current_user.role == "admin":
+                requester_id = data.assigned_hr_id or data.assigned_tech_id or requester_id
             
             # Serialize data correctly
             request_data = data.model_dump(mode='json', exclude={"id"})
             
             approval_req = ApprovalRequest(
                 organization_id=self.organization_id,
-                requester_id=self.current_user.id,
+                requester_id=requester_id,
                 request_type="position",
                 data=request_data,
                 status=approval_status,
@@ -594,7 +647,7 @@ class RecruiterService:
         # Join Profile -> Application -> CVAnalysis -> GitHubAnalysis
         # Start from CandidateProfile to get all profiles, then left join apps and cvs
         stmt = (
-            select(CandidateProfile, CVAnalysis, GitHubAnalysis)
+            select(CandidateProfile, CandidateApplication, CVAnalysis, GitHubAnalysis)
             .outerjoin(CandidateApplication, CandidateProfile.id == CandidateApplication.candidate_id)
             .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
             .outerjoin(GitHubAnalysis, CandidateProfile.id == GitHubAnalysis.candidate_id)
@@ -617,7 +670,7 @@ class RecruiterService:
             except (TypeError, ValueError):
                 return default
 
-        for p, cv, gh in rows:
+        for p, app, cv, gh in rows:
             if p.id in candidates_map:
                 # Logic: If current CV has higher match score than stored one, replace
                 current_best_cv = candidates_map[p.id]['cv']
@@ -627,18 +680,22 @@ class RecruiterService:
                 if new_score > old_score:
                     candidates_map[p.id] = {
                         'profile': p,
+                        'app': app,
                         'cv': cv,
                         'gh': gh if gh is not None else candidates_map[p.id].get('gh')
                     }
                 if candidates_map[p.id].get('gh') is None and gh is not None:
                     candidates_map[p.id]['gh'] = gh
+                if candidates_map[p.id].get('app') is None and app is not None:
+                    candidates_map[p.id]['app'] = app
                 # Else keep existing
             else:
-                candidates_map[p.id] = {'profile': p, 'cv': cv, 'gh': gh}
+                candidates_map[p.id] = {'profile': p, 'app': app, 'cv': cv, 'gh': gh}
         
         candidates = []
         for item in candidates_map.values():
             p = item['profile']
+            app = item.get('app')
             cv = item['cv']
             gh = item.get('gh')
             
@@ -649,7 +706,8 @@ class RecruiterService:
             match_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
 
             # Extract detailed fields from parsed_data
-            parsed = cv.parsed_data if cv and cv.parsed_data else {}
+            parsed = cv.parsed_data if cv and isinstance(cv.parsed_data, dict) else {}
+            prescore = parsed.get("prescore_v2") if isinstance(parsed.get("prescore_v2"), dict) else {}
             
             companies = []
             job_titles = []
@@ -702,6 +760,8 @@ class RecruiterService:
 
             candidates.append(PositionCandidateResponse(
                 id=p.id, # Profile ID
+                applicationId=(app.id if app else None),
+                groupId=(app.group_id if app else None),
                 name=p.full_name,
                 email=p.email,
                 score=match_score, 
@@ -722,6 +782,15 @@ class RecruiterService:
                 github_freshness_hours=github_freshness_hours,
                 github_has_fallback=github_has_fallback,
                 github_fallback_reason=github_fallback_reason,
+                prescore_version=prescore.get("version"),
+                pre_score_final=_to_float(prescore.get("pre_score_final")),
+                semantic_fit_score=_to_float(prescore.get("semantic_fit_score")),
+                skills_experience_score=_to_float(prescore.get("skills_experience_score")),
+                optional_profile_boost=_to_float(prescore.get("optional_profile_boost")),
+                jd_quality_score=_to_float(prescore.get("jd_quality_score")),
+                jd_quality_status=prescore.get("jd_quality_status"),
+                jd_quality_cap_applied=bool(prescore.get("jd_quality_cap_applied")) if "jd_quality_cap_applied" in prescore else None,
+                score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
             ))
             
         return candidates
@@ -738,6 +807,130 @@ class RecruiterService:
         if not pos:
             raise NotFoundException("Position not found")
         return pos
+
+    async def get_position_hdeval_qag(self, position_id: UUID) -> dict:
+        """Get generated 50 yes/no HD Eval + QAG questions for recruiter preview."""
+        position = await self.get_position(position_id)
+        if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("You are not assigned to this position")
+
+        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else None
+        if not artifact:
+            artifact = await self._evaluate_position_hdeval_qag(position, force=True)
+            await self.session.commit()
+            await self.session.refresh(position)
+        return artifact
+
+    async def update_position_hdeval_qag(self, position_id: UUID, questions: list[dict]) -> dict:
+        """Edit generated 50 yes/no questions before approval."""
+        position = await self.get_position(position_id)
+        if self.current_user.role != "technical" or position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("Only assigned technical recruiter can edit QAG questions")
+
+        scorer = PreScoreService()
+        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+        normalized = scorer._normalize_qag_questions(
+            [q for q in questions if isinstance(q, dict) and str(q.get("question") or "").strip()],
+            default_generation_source=str(artifact.get("generation_source") or "ai").lower(),
+            generation_provider=str(artifact.get("provider") or ""),
+            generation_model=str(artifact.get("model") or ""),
+        )
+
+        artifact["questions"] = normalized
+        artifact["approved_questions"] = [q for q in normalized if bool(q.get("approved", True))]
+        artifact["question_count"] = len(normalized)
+        artifact["status"] = "pending_tech_review"
+        artifact["updated_at"] = datetime.utcnow().isoformat()
+        artifact["reviewed_by"] = str(self.current_user.id)
+        position.jd_hdeval_qag = artifact
+        self.session.add(position)
+        await self.session.commit()
+        await self.session.refresh(position)
+        return artifact
+
+    async def approve_position_hdeval_qag(self, position_id: UUID) -> dict:
+        """Approve question set and recompute candidates against approved yes/no questions."""
+        position = await self.get_position(position_id)
+        if self.current_user.role != "technical" or position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("Only assigned technical recruiter can approve QAG questions")
+
+        with self.session.no_autoflush:
+            artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+            questions = artifact.get("questions") if isinstance(artifact.get("questions"), list) else []
+            approved = [q for q in questions if isinstance(q, dict) and bool(q.get("approved", True))]
+            if not approved:
+                raise NotFoundException("No approved yes/no questions found")
+
+            artifact["approved_questions"] = approved
+            artifact["status"] = "approved"
+            artifact["approved_at"] = datetime.utcnow().isoformat()
+            artifact["approved_by"] = str(self.current_user.id)
+            position.jd_hdeval_qag = artifact
+            flag_modified(position, "jd_hdeval_qag")
+            self.session.add(position)
+
+            # Start tracking job for background task
+            job = await self._start_qag_job(
+                position=position,
+                job_type="qag_resume_correction",
+                total_items=0,
+                source_provider="ai-service:ollama",
+            )
+            
+            # Commit once for everything
+            await self.session.commit()
+            await self.session.refresh(position)
+
+        # Dispatch background task AFTER commit to avoid statement timeouts 
+        # caused by long transactions during task dispatch.
+        from worker.tasks.qag import recompute_position_prescores as celery_recompute_task
+        celery_recompute_task.delay(
+            position_id=str(position.id),
+            organization_id=str(self.organization_id),
+            user_id=str(self.current_user.id),
+            job_id=str(job.id),
+        )
+
+        return artifact
+
+    async def recompute_position_prescores(self, position_id: UUID) -> dict:
+        """On-demand recompute for candidate prescores in a position."""
+        position = await self.get_position(position_id)
+
+        # Technical recruiters can recompute only their assigned positions.
+        if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("You are not assigned to this position")
+
+        # Start tracking job for background task
+        job = await self._start_qag_job(
+            position=position,
+            job_type="qag_resume_correction",
+            total_items=0,
+            source_provider="ai-service:ollama",
+        )
+        await self.session.commit()
+
+        # Dispatch background task to avoid statement timeouts
+        from worker.tasks.qag import recompute_position_prescores as celery_recompute_task
+        celery_recompute_task.delay(
+            position_id=str(position.id),
+            organization_id=str(self.organization_id),
+            user_id=str(self.current_user.id),
+            job_id=str(job.id),
+        )
+        
+        await self.session.refresh(position)
+
+        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+        approved_questions = artifact.get("approved_questions") if isinstance(artifact.get("approved_questions"), list) else []
+
+        return {
+            "position_id": str(position.id),
+            "applications_scored": 0,
+            "qag_status": artifact.get("status"),
+            "approved_question_count": len(approved_questions),
+            "message": "Recompute started successfully in the background",
+        }
 
     async def get_position_details(self, position_id: UUID) -> PositionDetailsResponse:
         """Aggregate candidates and groups for a position."""
@@ -782,7 +975,8 @@ class RecruiterService:
             match_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
 
             # Extract detailed fields from parsed_data
-            parsed = cv.parsed_data if cv and cv.parsed_data else {}
+            parsed = cv.parsed_data if cv and isinstance(cv.parsed_data, dict) else {}
+            prescore = parsed.get("prescore_v2") if isinstance(parsed.get("prescore_v2"), dict) else {}
             
             companies = []
             job_titles = []
@@ -826,16 +1020,77 @@ class RecruiterService:
                 universities=universities,
                 degrees=degrees,
                 groupId=app.group_id,
-                groupName=group_map.get(app.group_id) if app.group_id else None
+                groupName=group_map.get(app.group_id) if app.group_id else None,
+                prescore_version=prescore.get("version"),
+                pre_score_final=float(prescore.get("pre_score_final")) if prescore.get("pre_score_final") is not None else None,
+                semantic_fit_score=float(prescore.get("semantic_fit_score")) if prescore.get("semantic_fit_score") is not None else None,
+                skills_experience_score=float(prescore.get("skills_experience_score")) if prescore.get("skills_experience_score") is not None else None,
+                optional_profile_boost=float(prescore.get("optional_profile_boost")) if prescore.get("optional_profile_boost") is not None else None,
+                jd_quality_score=float(prescore.get("jd_quality_score")) if prescore.get("jd_quality_score") is not None else None,
+                jd_quality_status=prescore.get("jd_quality_status"),
+                jd_quality_cap_applied=bool(prescore.get("jd_quality_cap_applied")) if "jd_quality_cap_applied" in prescore else None,
+                score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
+                keyword_match_score=float(cv.keyword_match_score) if cv and cv.keyword_match_score is not None else None,
             ))
 
         # 3. Fetch groups
         groups = await self.get_position_groups(position_id)
 
+        # 4. Fetch position for JD context
+        position = await self.get_position(position_id)
+
         return PositionDetailsResponse(
             candidates=candidates,
-            groups=groups
+            groups=groups,
+            job_title=position.job_title or "",
+            job_description=position.job_description,
+            required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
+            experience_level=position.experience_level,
+            years_of_experience=position.years_of_experience or 0,
+            jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,
         )
+
+    async def get_position_keywords(self, position_id: UUID) -> dict:
+        """Return jd_keywords for a position (empty dict if none set)."""
+        position = await self.get_position(position_id)
+        return position.jd_keywords if isinstance(position.jd_keywords, dict) else {}
+
+    async def save_position_keywords(self, position_id: UUID, keywords: dict) -> dict:
+        """Save recruiter-reviewed jd_keywords to the position and recompute keyword scores."""
+        position = await self.get_position(position_id)
+        position.jd_keywords = keywords
+        flag_modified(position, "jd_keywords")
+        self.session.add(position)
+        await self.session.commit()
+        await self.session.refresh(position)
+
+        # Recompute keyword_match_score for all candidates in this position
+        from app.models import CVAnalysis
+        from app.services.prescore import PreScoreService
+        scorer = PreScoreService()
+        q = (
+            select(CandidateApplication, CVAnalysis)
+            .join(CandidateApplication, CandidateApplication.id == CVAnalysis.application_id)
+            .where(
+                CandidateApplication.position_id == position_id,
+                CandidateApplication.organization_id == self.organization_id,
+                CandidateApplication.is_deleted == False,
+            )
+        )
+        result = await self.session.execute(q)
+        for app, cv in result.all():
+            if not cv:
+                continue
+            parsed_data = cv.parsed_data if isinstance(cv.parsed_data, dict) else {}
+            kw_score = scorer.compute_keyword_match_score(
+                jd_keywords=keywords,
+                candidate_parsed_data=parsed_data,
+                candidate_skills=cv.skills or [],
+            )
+            cv.keyword_match_score = kw_score
+            self.session.add(cv)
+        await self.session.commit()
+        return keywords
 
     async def update_position(self, position_id: UUID, data: PositionUpdate) -> Position:
         """Update a position."""
@@ -866,6 +1121,10 @@ class RecruiterService:
 
         for key, value in update_data.items():
             setattr(pos, key, value)
+
+        jd_fields = {"job_title", "job_description", "required_skills", "years_of_experience"}
+        if any(field in update_data for field in jd_fields):
+            await self._evaluate_position_hdeval_qag(pos, force=True)
             
         if trigger_review:
             # Determine bypass
@@ -896,10 +1155,14 @@ class RecruiterService:
                 "education_level": pos.education_level,
                 "benefits": pos.benefits
             }
+
+            requester_id = self.current_user.id
+            if self.current_user.role == "admin":
+                requester_id = pos.assigned_hr_id or pos.created_by_user_id or pos.assigned_tech_id or requester_id
             
             approval_req = ApprovalRequest(
                 organization_id=self.organization_id,
-                requester_id=self.current_user.id,
+                requester_id=requester_id,
                 request_type="position",
                 data=request_data,
                 status=approval_status,
@@ -1010,6 +1273,63 @@ class RecruiterService:
             import traceback
             traceback.print_exc()
             return []
+
+    async def get_application_score_breakdown(self, application_id: UUID) -> ApplicationScoreBreakdownResponse:
+        """Return a dedicated pre-score breakdown for one application."""
+        query = (
+            select(CandidateApplication, CandidateProfile, Position, CVAnalysis)
+            .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .join(Position, CandidateApplication.position_id == Position.id)
+            .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
+            .where(
+                CandidateApplication.id == application_id,
+                CandidateApplication.organization_id == self.organization_id,
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+            )
+        )
+        result = await self.session.execute(query)
+        row = result.first()
+
+        if not row:
+            raise NotFoundException("Application not found")
+
+        app, candidate, position, cv = row
+
+        if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("You are not assigned to this position")
+        if self.current_user.role == "hr" and position.assigned_hr_id != self.current_user.id:
+            raise UnauthorizedException("You are not assigned to this position")
+
+        parsed_data = cv.parsed_data if cv and isinstance(cv.parsed_data, dict) else {}
+        prescore = parsed_data.get("prescore_v2") if isinstance(parsed_data.get("prescore_v2"), dict) else {}
+        position_critic = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+        jd_quality_score = position_critic.get("score", prescore.get("jd_quality_score"))
+        jd_quality_status = position_critic.get("status", prescore.get("jd_quality_status"))
+        jd_quality_cap = position_critic.get("cap", prescore.get("jd_quality_cap"))
+        criteria_checks = prescore.get("criteria_checks", position_critic.get("criteria_checks"))
+        jd_quality_feedback = position_critic.get("feedback", prescore.get("jd_quality_feedback"))
+
+        return ApplicationScoreBreakdownResponse(
+            application_id=app.id,
+            candidate_id=candidate.id,
+            candidate_name=candidate.full_name,
+            position_id=position.id,
+            position_title=position.job_title,
+            match_score=float(cv.match_score) if cv and cv.match_score is not None else 0.0,
+            prescore_version=prescore.get("version"),
+            pre_score_final=float(prescore.get("pre_score_final")) if prescore.get("pre_score_final") is not None else None,
+            semantic_fit_score=float(prescore.get("semantic_fit_score")) if prescore.get("semantic_fit_score") is not None else None,
+            skills_experience_score=float(prescore.get("skills_experience_score")) if prescore.get("skills_experience_score") is not None else None,
+            optional_profile_boost=float(prescore.get("optional_profile_boost")) if prescore.get("optional_profile_boost") is not None else None,
+            jd_quality_score=float(jd_quality_score) if jd_quality_score is not None else None,
+            jd_quality_status=jd_quality_status,
+            jd_quality_cap=float(jd_quality_cap) if jd_quality_cap is not None else None,
+            jd_quality_cap_applied=bool(prescore.get("jd_quality_cap_applied")) if "jd_quality_cap_applied" in prescore else None,
+            score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
+            criteria_checks=criteria_checks if isinstance(criteria_checks, list) else [],
+            jd_quality_feedback=jd_quality_feedback,
+        )
 
     # Application management
     async def update_application_status(self, application_id: UUID, data: ApplicationUpdate) -> CandidateApplication:
@@ -1922,6 +2242,162 @@ class RecruiterService:
             
         return data
 
+    async def _evaluate_position_hdeval_qag(self, position: Position, force: bool = False) -> dict:
+        """Run and persist position-level HD Eval + QAG artifact."""
+        existing = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else None
+        if (
+            existing
+            and not force
+            and isinstance(existing.get("questions"), list)
+            and len(existing.get("questions")) >= 50
+        ):
+            return existing
+
+        job = await self._start_qag_job(
+            position=position,
+            job_type="qag_generation",
+            total_items=50,
+            source_provider="ai-service:ollama",
+        )
+        
+        # Commit the transaction so the background task can see the latest position and job
+        await self.session.commit()
+        await self.session.refresh(position)
+
+        from worker.tasks.qag import generate_position_qag as celery_generate_task
+        celery_generate_task.delay(
+            position_id=str(position.id),
+            job_id=str(job.id),
+        )
+
+        return {
+            "status": "pending",
+            "message": "QAG generation started in the background",
+            "job_id": str(job.id)
+        }
+
+    async def _recompute_position_prescores(self, position: Position) -> int:
+        """Recompute ingestion pre-scores for all applications in a position."""
+        query = (
+            select(CandidateApplication, CandidateProfile, CVAnalysis, GitHubAnalysis)
+            .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
+            .outerjoin(
+                GitHubAnalysis,
+                (GitHubAnalysis.candidate_id == CandidateProfile.id)
+                & (GitHubAnalysis.organization_id == self.organization_id),
+            )
+            .where(
+                CandidateApplication.position_id == position.id,
+                CandidateApplication.organization_id == self.organization_id,
+                CandidateApplication.is_deleted == False,
+            )
+        )
+        result = await self.session.execute(query)
+        rows = result.all()
+        candidates_found = len(rows)
+
+        correction_job = await self._start_qag_job(
+            position=position,
+            job_type="qag_resume_correction",
+            total_items=len(rows),
+            source_provider="ai-service:ollama",
+        )
+
+        scorer = PreScoreService()
+        updates = 0
+
+        try:
+            jd_critic_result = await self._evaluate_position_hdeval_qag(position, force=False)
+
+            for app, profile, cv, gh in rows:
+                if not cv:
+                    cv = CVAnalysis(
+                        application_id=app.id,
+                        organization_id=self.organization_id,
+                        cv_file_url=app.resume_url,
+                        parsed_data={},
+                        skills=[],
+                        experience_years=0,
+                        match_score=0,
+                    )
+
+                parsed_data = cv.parsed_data if isinstance(cv.parsed_data, dict) else {}
+                prescore = await scorer.score_candidate_prescore(
+                    job_title=position.job_title,
+                    job_description=position.job_description,
+                    required_skills=position.required_skills,
+                    years_of_experience=position.years_of_experience,
+                    candidate_skills=cv.skills or [],
+                    candidate_experience_years=float(cv.experience_years or 0.0),
+                    candidate_parsed_data=parsed_data,
+                    github_analysis_data={
+                        "contribution_score": gh.contribution_score if gh else None,
+                        "code_quality_score": gh.code_quality_score if gh else None,
+                        "repo_count": gh.repo_count if gh else None,
+                    },
+                    jd_critic_result=jd_critic_result,
+                )
+
+                parsed_data["prescore_v2"] = prescore
+                cv.parsed_data = parsed_data
+                cv.match_score = prescore["pre_score_final"]
+
+                # Keyword match score — computed if position has jd_keywords
+                if isinstance(position.jd_keywords, dict):
+                    kw_score = scorer.compute_keyword_match_score(
+                        jd_keywords=position.jd_keywords,
+                        candidate_parsed_data=parsed_data,
+                        candidate_skills=cv.skills or [],
+                    )
+                    cv.keyword_match_score = kw_score
+
+                cv.analyzed_at = datetime.utcnow()
+                self.session.add(cv)
+                updates += 1
+
+                correction_job.processed_items = updates
+                self.session.add(correction_job)
+
+            self._finish_qag_job(
+                job=correction_job,
+                status="completed",
+                processed_items=updates,
+                summary={
+                    "position_id": str(position.id),
+                    "applications_scored": updates,
+                    "candidates_found": candidates_found,
+                    "candidates_processed": updates,
+                    "candidates_skipped": max(0, candidates_found - updates),
+                    "zero_reason": (
+                        "No applications found for this position at run time."
+                        if candidates_found == 0
+                        else None
+                    ),
+                },
+            )
+            return updates
+        except Exception as exc:
+            self._finish_qag_job(
+                job=correction_job,
+                status="failed",
+                processed_items=updates,
+                error_message=str(exc),
+                summary={
+                    "position_id": str(position.id),
+                    "applications_scored": updates,
+                    "candidates_found": candidates_found,
+                    "candidates_processed": updates,
+                    "candidates_skipped": max(0, candidates_found - updates),
+                    "zero_reason": (
+                        "No applications found for this position at run time."
+                        if candidates_found == 0
+                        else None
+                    ),
+                },
+            )
+            raise
+
     async def review_approval_request(self, request_id: UUID, status: str, review_notes: str | None = None) -> bool:
         """Process a technical review (approve/reject)."""
         from app.models import ApprovalRequest, Notification
@@ -1941,40 +2417,52 @@ class RecruiterService:
              from fastapi import HTTPException
              raise HTTPException(status_code=400, detail="Request is not in technical review stage")
 
-        # Update Request
-        req.status = "approved" if status == "approved" else "rejected"
-        req.review_notes = review_notes
-        req.updated_at = datetime.utcnow()
-        self.session.add(req)
-        
-        # Update Position
-        if req.request_type == "position":
-            p_res = await self.session.execute(select(Position).where(Position.id == req.entity_id))
-            position = p_res.scalar_one_or_none()
-            if position:
-                if status == "approved":
-                    position.status = "open"
-                    msg = f"Position '{position.job_title}' reviewed and approved by Technical Recruiter."
-                else:
-                    position.status = "rejected"
-                    position.is_deleted = True
-                    msg = f"Position '{position.job_title}' rejected by Technical Recruiter."
-                
-                self.session.add(position)
-                
-                # Notify HR (Requester)
-                notif = Notification(
-                    organization_id=self.organization_id,
-                    recipient_user_id=req.requester_id,
-                    type="alert",
-                    title=f"Position {status.capitalize()}",
-                    message=msg,
-                    is_read=False,
-                    created_at=datetime.utcnow()
-                )
-                self.session.add(notif)
-                
-        await self.session.commit()
+        with self.session.no_autoflush:
+            # Update Request
+            req.status = "approved" if status == "approved" else "rejected"
+            req.review_notes = review_notes
+            req.updated_at = datetime.utcnow()
+            self.session.add(req)
+            
+            # Update Position
+            if req.request_type == "position":
+                p_res = await self.session.execute(select(Position).where(Position.id == req.entity_id))
+                position = p_res.scalar_one_or_none()
+                if position:
+                    if status == "approved":
+                        position.status = "open"
+                        msg = f"Position '{position.job_title}' reviewed and approved by Technical Recruiter."
+                        # Generate 50 yes/no HD Eval + QAG questions for explicit technical edit/approval (only if they don't exist)
+                        await self._evaluate_position_hdeval_qag(position, force=False)
+                    else:
+                        position.status = "rejected"
+                        position.is_deleted = True
+                        msg = f"Position '{position.job_title}' rejected by Technical Recruiter."
+                    
+                    self.session.add(position)
+
+                    # Notify requester only when requester_id maps to an org user.
+                    recipient_query = select(OrganizationUser.id).where(
+                        OrganizationUser.id == req.requester_id,
+                        OrganizationUser.organization_id == self.organization_id,
+                        OrganizationUser.is_deleted == False,
+                    )
+                    recipient_res = await self.session.execute(recipient_query)
+                    recipient_user_id = recipient_res.scalar_one_or_none()
+
+                    if recipient_user_id:
+                        notif = Notification(
+                            organization_id=self.organization_id,
+                            recipient_user_id=recipient_user_id,
+                            type="alert",
+                            title=f"Position {status.capitalize()}",
+                            message=msg,
+                            is_read=False,
+                            created_at=datetime.utcnow()
+                        )
+                        self.session.add(notif)
+                    
+            await self.session.commit()
         return True
 
     # =========================================================================
@@ -2119,9 +2607,68 @@ class RecruiterService:
     # AI FEATURES (OLLAMA)
     # =========================================================================
 
-    async def generate_ai_question(self, question_type: str, topic: str, difficulty: str, context: str = "") -> dict:
+    @staticmethod
+    def _recruiter_prompt_dir() -> Path:
+        return Path(__file__).resolve().parents[3] / "ai-service" / "prompts" / "llm"
+
+    def _render_recruiter_prompt(self, template_name: str, fallback: str, values: dict[str, Any]) -> str:
+        template = fallback
+        path = self._recruiter_prompt_dir() / template_name
+        try:
+            if path.exists():
+                template = path.read_text(encoding="utf-8")
+        except Exception:
+            template = fallback
+
+        for key, value in values.items():
+            token = f"{{{{{key}}}}}"
+            if isinstance(value, (dict, list)):
+                rendered = json.dumps(value, ensure_ascii=False)
+            else:
+                rendered = str(value)
+            template = template.replace(token, rendered)
+        return template
+
+    @staticmethod
+    def _extract_json_payload(raw_content: str) -> dict[str, Any]:
+        content = (raw_content or "").strip()
+        if "```json" in content:
+            content = content.split("```json", 1)[1].split("```", 1)[0].strip()
+        elif content.startswith("```") and "```" in content[3:]:
+            content = content.split("```", 2)[1].strip()
+
+        try:
+            payload = json.loads(content)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            pass
+
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                payload = json.loads(content[start:end + 1])
+                if isinstance(payload, dict):
+                    return payload
+            except Exception:
+                pass
+
+        return {}
+
+    async def generate_ai_question(
+        self,
+        question_type: str,
+        topic: str,
+        difficulty: str,
+        context: str = "",
+        use_case: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict:
         """Generate a technical or interview question using Ollama."""
         llm = get_llm("ollama")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        use_case = (use_case or "").strip().lower()
 
         def _derive_yes_no_checks(payload: dict) -> list[dict]:
             rubric = str(payload.get("rubric") or "").strip()
@@ -2147,29 +2694,130 @@ class RecruiterService:
                 {"id": idx + 1, "check": check, "weight": 0.10}
                 for idx, check in enumerate(candidates[:10])
             ]
-        
-        prompts = {
-            "mcq": f"Generate a multiple-choice question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, options (array of 4), correctAnswer (index 0-3), explanation, evidence, referenceAnswer, difficulty.",
-            "essay": f"Generate an essay or theoretical question about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText, maxWords, rubric, expectedKeywords (array), evidence, referenceAnswer, rubricYesNoChecks (array of 10 items with id/check/weight), difficulty.",
-            "code": f"Generate a coding problem about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with keys: questionText (requirements), language, codeTemplate (with a TODO), testCases (array of {{input, expectedOutput, isHidden, points}}), difficulty.",
-            "interview": f"Generate 2 interview questions about {topic} with {difficulty} difficulty. Context: {context}. Return ONLY a JSON object with a 'questions' key containing an array of {{question, criteria (array), keyPoints (array), difficulty}}."
+
+        fallback_prompts = {
+            "mcq": (
+                "Generate one multiple-choice assessment question. "
+                "Topic: {{TOPIC}}. Difficulty: {{DIFFICULTY}}. Context: {{CONTEXT}}. "
+                "Return ONLY JSON with keys questionText, options (4), correctAnswer (0-3), explanation, evidence, referenceAnswer, difficulty."
+            ),
+            "essay": (
+                "Generate one essay assessment question. "
+                "Topic: {{TOPIC}}. Difficulty: {{DIFFICULTY}}. Context: {{CONTEXT}}. "
+                "Return ONLY JSON with keys questionText, maxWords, rubric, expectedKeywords, evidence, referenceAnswer, rubricYesNoChecks (10 items id/check/weight), difficulty."
+            ),
+            "code": (
+                "Generate one coding assessment question. "
+                "Topic: {{TOPIC}}. Difficulty: {{DIFFICULTY}}. Context: {{CONTEXT}}. "
+                "Return ONLY JSON with keys questionText, language, codeTemplate, testCases (input, expectedOutput, isHidden, points), difficulty."
+            ),
+            "interview": (
+                "Generate interview questions for Topic: {{TOPIC}}. Difficulty: {{DIFFICULTY}}. Context: {{CONTEXT}}. "
+                "Return ONLY JSON with key questions as array of objects {question, criteria, keyPoints, difficulty}."
+            ),
+            "recorded_interview_suggest": (
+                "Generate recorded interview screening questions for group/role {{TOPIC}}. "
+                "Context: {{CONTEXT}}. Return ONLY JSON with key questions as array of {question, duration_seconds}."
+            ),
+            "live_interview_setup": (
+                "Generate live interview setup content. Topic: {{TOPIC}}. Difficulty: {{DIFFICULTY}}. "
+                "Context: {{CONTEXT}}. Metadata: {{METADATA_JSON}}. "
+                "Return ONLY JSON with keys systemPrompt and sections (array of {title, duration_minutes})."
+            ),
         }
-        
-        prompt = prompts.get(question_type, prompts["mcq"])
+
+        if use_case == "recorded_interview_suggest":
+            template_name = "recorded_interview_suggest.md"
+            fallback = fallback_prompts["recorded_interview_suggest"]
+        elif use_case == "live_interview_setup":
+            template_name = "live_interview_setup.md"
+            fallback = fallback_prompts["live_interview_setup"]
+        elif question_type == "mcq":
+            template_name = "assessment_generate_mcq.md"
+            fallback = fallback_prompts["mcq"]
+        elif question_type == "essay":
+            template_name = "assessment_generate_essay.md"
+            fallback = fallback_prompts["essay"]
+        elif question_type == "code":
+            template_name = "assessment_generate_code.md"
+            fallback = fallback_prompts["code"]
+        else:
+            template_name = "interview_generate_questions.md"
+            fallback = fallback_prompts["interview"]
+
+        prompt = self._render_recruiter_prompt(
+            template_name,
+            fallback,
+            {
+                "QUESTION_TYPE": question_type,
+                "TOPIC": topic,
+                "DIFFICULTY": difficulty,
+                "CONTEXT": context,
+                "USE_CASE": use_case,
+                "METADATA_JSON": metadata,
+            },
+        )
+
         try:
             response = await llm.ainvoke(prompt)
-            # Try to extract JSON from response content
-            content = response.content
-            # Basic cleanup if LLM returns markdown blocks
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
-                
-            payload = json.loads(content)
+            payload = self._extract_json_payload(getattr(response, "content", ""))
 
             if not isinstance(payload, dict):
                 return {"questionText": f"Stub: {topic} ({difficulty})", "type": question_type, "difficulty": difficulty}
+
+            if use_case == "recorded_interview_suggest":
+                items = payload.get("questions") if isinstance(payload.get("questions"), list) else []
+                normalized_questions: list[dict[str, Any]] = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    text_val = str(item.get("question") or "").strip()
+                    if not text_val:
+                        continue
+                    duration_val = int(item.get("duration_seconds") or 120)
+                    normalized_questions.append(
+                        {
+                            "question": text_val,
+                            "duration_seconds": max(60, min(300, duration_val)),
+                        }
+                    )
+                if not normalized_questions:
+                    normalized_questions = [
+                        {"question": f"Tell us about your background in {topic}.", "duration_seconds": 120},
+                        {"question": f"Describe a challenge you solved related to {topic}.", "duration_seconds": 180},
+                    ]
+                return {"questions": normalized_questions}
+
+            if use_case == "live_interview_setup":
+                system_prompt = str(payload.get("systemPrompt") or "").strip()
+                if not system_prompt:
+                    system_prompt = (
+                        "You are a structured live interviewer. Ask concise, role-relevant questions, "
+                        "probe with follow-ups, and stay objective in scoring."
+                    )
+
+                sections_raw = payload.get("sections") if isinstance(payload.get("sections"), list) else []
+                sections: list[dict[str, Any]] = []
+                for idx, section in enumerate(sections_raw[:6]):
+                    if not isinstance(section, dict):
+                        continue
+                    title = str(section.get("title") or "").strip() or f"Section {idx + 1}"
+                    duration = int(section.get("duration_minutes") or 5)
+                    sections.append(
+                        {
+                            "id": str(idx + 1),
+                            "title": title,
+                            "duration": max(2, min(30, duration)),
+                        }
+                    )
+
+                if not sections:
+                    sections = [
+                        {"id": "1", "title": "Introduction & Context", "duration": 5},
+                        {"id": "2", "title": "Core Evaluation", "duration": 15},
+                        {"id": "3", "title": "Wrap-up", "duration": 5},
+                    ]
+                return {"systemPrompt": system_prompt, "sections": sections}
 
             if question_type in {"mcq", "essay", "code"}:
                 payload.setdefault("type", question_type)
@@ -2225,6 +2873,27 @@ class RecruiterService:
             return payload
         except Exception as e:
             print(f"Ollama generation failed: {e}")
+            if use_case == "recorded_interview_suggest":
+                return {
+                    "questions": [
+                        {"question": f"Tell me about your experience with {topic}.", "duration_seconds": 120},
+                        {"question": f"Describe a difficult scenario you handled in {topic}.", "duration_seconds": 180},
+                    ],
+                    "error": str(e),
+                }
+            if use_case == "live_interview_setup":
+                return {
+                    "systemPrompt": (
+                        "You are a professional live interviewer. Keep questions role-focused, ask follow-ups, "
+                        "and evaluate consistently."
+                    ),
+                    "sections": [
+                        {"id": "1", "title": "Introduction", "duration": 5},
+                        {"id": "2", "title": "Main Evaluation", "duration": 15},
+                        {"id": "3", "title": "Closing", "duration": 5},
+                    ],
+                    "error": str(e),
+                }
             # Fallback mock for safety
             fallback: dict = {
                 "questionText": f"Stub: {topic} ({difficulty})",
@@ -2259,14 +2928,50 @@ class RecruiterService:
                 )
             return fallback
 
-    async def refine_question_with_ai(self, question_text: str) -> str:
+    async def refine_question_with_ai(
+        self,
+        question_text: str,
+        use_case: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
         """Refine or polish a question text using Ollama."""
         llm = get_llm("ollama")
-        prompt = f"Refine and professionalize the following interview question, making it clear and concise: '{question_text}'. Return ONLY the refined question text."
-        
+        metadata = metadata if isinstance(metadata, dict) else {}
+        use_case = (use_case or "").strip().lower()
+
+        template_name = {
+            "assessment_question": "assessment_refine_question.md",
+            "assessment_rubric": "assessment_refine_rubric.md",
+            "recorded_interview_question": "recorded_interview_refine_question.md",
+            "recorded_interview_instructions": "recorded_interview_refine_instructions.md",
+            "live_interview_system_prompt": "live_interview_refine_system_prompt.md",
+            "live_interview_flow_instructions": "live_interview_refine_flow_instructions.md",
+        }.get(use_case, "assessment_refine_question.md")
+
+        fallback_prompt = (
+            "Refine the following text for recruiter workflows. Keep intent unchanged, improve clarity and professionalism, "
+            "and return ONLY the refined text.\n"
+            "Use case: {{USE_CASE}}\n"
+            "Metadata: {{METADATA_JSON}}\n"
+            "Text: {{QUESTION_TEXT}}"
+        )
+
+        prompt = self._render_recruiter_prompt(
+            template_name,
+            fallback_prompt,
+            {
+                "QUESTION_TEXT": question_text,
+                "USE_CASE": use_case,
+                "METADATA_JSON": metadata,
+            },
+        )
+
         try:
             response = await llm.ainvoke(prompt)
-            return response.content.strip()
+            refined = str(getattr(response, "content", "")).strip()
+            if refined.startswith("```") and refined.endswith("```"):
+                refined = refined.strip("`").strip()
+            return refined or question_text
         except Exception as e:
             print(f"Ollama refinement failed: {e}")
-            return f"Refined: {question_text}"
+            return question_text

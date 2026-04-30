@@ -13,6 +13,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 import psycopg2
 import requests
@@ -24,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 DATABASE_URL = settings.DATABASE_URL or os.environ.get("DATABASE_URL", "")
 AI_SERVICE_URL = settings.AI_SERVICE_URL or os.environ.get("AI_SERVICE_URL", "http://localhost:8001")
+DEBUG_LOG_PATH = Path("logs/github_analysis_debug.json")
+DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_db_conn():
@@ -31,6 +34,78 @@ def get_db_conn():
         raise RuntimeError("DATABASE_URL is not configured for Celery worker")
     sync_url = DATABASE_URL.replace("+asyncpg", "")
     return psycopg2.connect(sync_url)
+
+
+def log_debug(step: str, data: dict):
+    """Log GitHub analysis steps to a debug file for the background task UI."""
+    entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "step": step,
+        "data": data,
+    }
+
+    logs = []
+    if DEBUG_LOG_PATH.exists():
+        try:
+            logs = json.loads(DEBUG_LOG_PATH.read_text())
+        except Exception:
+            logs = []
+
+    logs.append(entry)
+    logs = logs[-200:]
+    DEBUG_LOG_PATH.write_text(json.dumps(logs, indent=2, default=str))
+
+    logger.info("[GitHubAnalysis] %s %s", step, data)
+
+
+def _derive_yes_no_checks(payload: dict) -> list[dict]:
+    rubric = str(payload.get("rubric") or "").strip()
+    reference = str(payload.get("reference_answer") or payload.get("referenceAnswer") or payload.get("ideal_answer") or "").strip()
+    evidence = str(payload.get("evidence") or "").strip()
+    seed_text = "\n".join([part for part in [rubric, reference, evidence] if part]).strip()
+    if not seed_text:
+        seed_text = "correctly answer the question with clear supporting rationale"
+
+    candidates: list[str] = []
+    for piece in [p.strip(" -:;,.") for p in seed_text.replace("\r", "\n").split("\n") if p.strip()]:
+        if len(piece) < 8:
+            continue
+        if len(candidates) >= 10:
+            break
+        normalized = piece[0].lower() + piece[1:] if len(piece) > 1 else piece.lower()
+        candidates.append(f"Does the answer {normalized}?")
+
+    while len(candidates) < 10:
+        candidates.append(f"Does the answer satisfy rubric criterion {len(candidates) + 1}?")
+
+    return [
+        {"id": idx + 1, "check": check, "weight": 0.10}
+        for idx, check in enumerate(candidates[:10])
+    ]
+
+
+def _derive_rubric_text(payload: dict) -> str:
+    rubric = str(payload.get("rubric") or "").strip()
+    if rubric:
+        return rubric
+
+    reference = str(
+        payload.get("reference_answer")
+        or payload.get("referenceAnswer")
+        or payload.get("ideal_answer")
+        or payload.get("expected_answer")
+        or ""
+    ).strip()
+    evidence = str(payload.get("evidence") or "").strip()
+
+    if reference and evidence:
+        return "Evaluate technical correctness against the reference answer and require evidence-grounded reasoning tied to the repository context."
+    if reference:
+        return "Evaluate technical correctness, clarity of reasoning, and practical trade-off awareness against the reference answer."
+    if evidence:
+        return "Evaluate whether the response is technically sound and supported by concrete evidence from the repository context."
+
+    return "Evaluate technical correctness, reasoning quality, trade-off awareness, and maintainability/security considerations."
 
 
 def update_job_status(conn, job_id: str, status: str, **extra_fields):
@@ -151,6 +226,12 @@ def run_github_analysis(
     cv_projects: list[dict] | None = None,
 ):
     logger.info("[GitHubAnalysis] Starting job %s candidate=%s", job_id, candidate_id)
+    log_debug("task_started", {
+        "job_id": job_id,
+        "candidate_id": candidate_id,
+        "github_url": github_url,
+        "questions_to_generate": questions_to_generate,
+    })
     conn = None
     try:
         effective_github_token = (
@@ -161,7 +242,9 @@ def run_github_analysis(
 
         conn = get_db_conn()
         update_job_status(conn, job_id, "processing")
+        log_debug("job_status_updated", {"job_id": job_id, "status": "processing"})
 
+        log_debug("github_analysis_request_started", {"job_id": job_id, "candidate_id": candidate_id, "github_url": github_url})
         resp = requests.post(
             f"{AI_SERVICE_URL}/github-analysis/analyze",
             json={
@@ -174,6 +257,13 @@ def run_github_analysis(
         )
         resp.raise_for_status()
         payload = resp.json()
+        log_debug("github_analysis_request_completed", {
+            "job_id": job_id,
+            "candidate_id": candidate_id,
+            "status_code": resp.status_code,
+            "repo_count": len(payload.get("top_repos") or []),
+            "generated_question_count": len(((payload.get("analysis_data") or {}).get("synthesis") or {}).get("questions") or []),
+        })
 
         all_generated_questions = ((payload.get("analysis_data") or {}).get("synthesis") or {}).get("questions") or []
         target_count = max(1, min(int(questions_to_generate or 10), 30))
@@ -189,6 +279,7 @@ def run_github_analysis(
 
         _upsert_github_analysis(conn, candidate_id, org_id, github_url, payload)
         _update_cv_analysis_profile(conn, candidate_id, org_id, payload)
+        log_debug("database_upsert_completed", {"job_id": job_id, "candidate_id": candidate_id})
 
         normalized_questions = []
         for idx, q in enumerate(generated_questions):
@@ -209,8 +300,12 @@ def run_github_analysis(
                     "points": int(q.get("points") or 10),
                     "options": q.get("options") if isinstance(q.get("options"), list) else [],
                     "ideal_answer": q.get("ideal_answer") or q.get("expected_answer") or "",
+                    "reference_answer": q.get("reference_answer") or q.get("referenceAnswer") or q.get("ideal_answer") or q.get("expected_answer") or "",
+                    "rubric": _derive_rubric_text(q),
+                    "rubric_yes_no_checks": q.get("rubric_yes_no_checks") if isinstance(q.get("rubric_yes_no_checks"), list) and len(q.get("rubric_yes_no_checks")) > 0 else _derive_yes_no_checks(q),
                     "selection_reason": q.get("selection_reason") or "Generated from GitHub profile analysis",
-                    "rubric_yes_no_checks": q.get("rubric_yes_no_checks") if isinstance(q.get("rubric_yes_no_checks"), list) else [],
+                    "jd_relation": q.get("jd_relation") or "",
+                    "evidence": q.get("evidence") or "",
                     "source": "github_analysis",
                     "source_file": q.get("source_file") or "",
                 }
@@ -233,6 +328,12 @@ def run_github_analysis(
             total_generated=len(generated_questions),
             completed_at=datetime.now(timezone.utc),
         )
+        log_debug("task_completed", {
+            "job_id": job_id,
+            "candidate_id": candidate_id,
+            "status": "completed",
+            "total_generated": len(generated_questions),
+        })
 
         return {
             "job_id": job_id,
@@ -243,6 +344,11 @@ def run_github_analysis(
 
     except Exception as exc:
         logger.error("[GitHubAnalysis] job=%s failed: %s", job_id, exc)
+        log_debug("task_error", {
+            "job_id": job_id,
+            "candidate_id": candidate_id,
+            "error": str(exc),
+        })
         if conn:
             try:
                 update_job_status(

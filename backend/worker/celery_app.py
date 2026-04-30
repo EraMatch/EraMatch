@@ -15,6 +15,7 @@ celery_app = Celery(
         "worker.tasks.github_analysis",
         "worker.tasks.cv_ingestion",
         "worker.tasks.cv_parsing",
+        "worker.tasks.qag",
     ],
 )
 

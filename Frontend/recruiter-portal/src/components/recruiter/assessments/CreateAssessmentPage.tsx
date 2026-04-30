@@ -79,7 +79,10 @@ export function CreateAssessmentPage({
 
     setEnhancingQuestionId(id);
     try {
-      const response = await recruiterService.refineAIQuestion(sourceText);
+      const response = await recruiterService.refineAIQuestion(sourceText, {
+        useCase: 'assessment_question',
+        metadata: { target },
+      });
       const refined = (response?.refinedText || sourceText).trim() || sourceText;
 
       if (target === 'draft' && editingQuestion === id) {

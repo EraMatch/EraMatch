@@ -38,6 +38,7 @@ from app.schemas.project import (
     PositionResponse,
     PositionCandidateResponse,
     PositionDetailsResponse,
+    ApplicationScoreBreakdownResponse,
     ProjectSummaryResponse,
     PositionInsightsResponse,
     PositionGroupResponse,
@@ -129,6 +130,7 @@ __all__ = [
     "PositionResponse",
     "PositionCandidateResponse",
     "PositionDetailsResponse",
+    "ApplicationScoreBreakdownResponse",
     # Admin
     "GlobalStatsResponse",
     "PipelineStatsResponse",

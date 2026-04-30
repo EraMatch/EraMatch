@@ -21,7 +21,13 @@ class WebhookCVParsePayload(BaseModel):
 async def verify_webhook_secret(x_webhook_secret: str = Header(None)):
     if not settings.WEBHOOK_SECRET:
         logger.warning("WEBHOOK_SECRET is not configured in backend!")
-        return True
+        allow_insecure = getattr(settings, "ALLOW_INSECURE_WEBHOOKS", False)
+        env = getattr(settings, "ENV", "").lower()
+        debug = getattr(settings, "DEBUG", False)
+        
+        if allow_insecure or env == "development" or debug:
+            return True
+        raise HTTPException(status_code=401, detail="Webhook secret not configured")
     
     if x_webhook_secret != settings.WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
