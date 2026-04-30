@@ -46,16 +46,40 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
   const [uploadProgress, setUploadProgress] = useState(0);
   const [conversationTurns, setConversationTurns] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<string[]>([]);
 
   useEffect(() => {
     const fetchQuestions = async () => {
       try {
         setIsLoading(true);
-        const data = await api.recruiter.getLiveInterviewQuestions('demo-interview-id') as any[];
-        setQuestions(data.map((q: any) => q.question));
+        // Get actual interview config for this candidate/group
+        const configData = await api.candidate.getInterviewConfig() as any;
+        
+        if (configData && configData.config_id) {
+          // If questions are present in config, use them
+          if (configData.questions && Array.isArray(configData.questions.items)) {
+            setQuestions(configData.questions.items.map((q: any) => q.text || q.question));
+          } else {
+            // Default questions if none in config
+            setQuestions([
+              "Describe your most challenging project and how you overcame the obstacles you faced.",
+              "Tell us about a time when you had to work with a difficult team member. How did you handle the situation?",
+              "What motivates you in your professional career, and how do you stay productive during challenging times?",
+              "Describe a situation where you had to learn a new technology or skill quickly. How did you approach it?",
+              "Where do you see yourself in 5 years, and how does this position align with your career goals?"
+            ]);
+          }
+
+          // Start the interview session in backend
+          const sessionData = await api.candidate.startInterview({ config_id: configData.config_id });
+          if (sessionData && sessionData.session_id) {
+            setSessionId(sessionData.session_id);
+            console.log('Started interview session:', sessionData.session_id);
+          }
+        }
       } catch (error) {
-        console.error('Failed to fetch live interview questions:', error);
+        console.error('Failed to fetch live interview configuration:', error);
         // Fallback to default questions if API fails
         setQuestions([
           "Describe your most challenging project and how you overcame the obstacles you faced.",
@@ -108,6 +132,13 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
           if (conversationTurns >= maxTurns - 1) {
             setShowUploadProgress(true);
             setUploadProgress(0);
+
+            // Sync with backend that interview is complete
+            if (sessionId) {
+              api.candidate.completeInterview({ session_id: sessionId })
+                .then(() => console.log('Interview completion synced with backend'))
+                .catch(err => console.error('Failed to sync interview completion:', err));
+            }
 
             const uploadInterval = setInterval(() => {
               setUploadProgress(prev => {
@@ -359,6 +390,13 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
       // Interview complete - show upload progress
       setShowUploadProgress(true);
       setUploadProgress(0);
+
+      // Sync completion with backend (if sessionId present)
+      if (sessionId) {
+        api.candidate.completeInterview({ session_id: sessionId })
+          .then(() => console.log('Interview completion synced with backend'))
+          .catch(err => console.error('Failed to sync interview completion:', err));
+      }
 
       const uploadInterval = setInterval(() => {
         setUploadProgress(prev => {
