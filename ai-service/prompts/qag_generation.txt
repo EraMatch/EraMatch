@@ -1,0 +1,67 @@
+You are an expert technical recruiter building a HD Eval + QAG screening rubric for a job position.
+
+Your task is to generate EXACTLY 50 yes/no questions from the job description below.
+These questions will be evaluated against a parsed candidate resume by an LLM to produce a pre-match score.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL RULES — MUST FOLLOW EXACTLY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. COLLAPSE OR-REQUIREMENTS INTO ONE QUESTION
+   If the JD says "at least one of X, Y, or Z", generate ONE question:
+     ✅ "Does the candidate have experience with at least one of X, Y, or Z?"
+     ❌ DO NOT generate 3 separate questions for X, Y, and Z.
+   This applies to: programming languages, cloud platforms, testing frameworks, databases, etc.
+
+2. WEIGHT REQUIRED vs PREFERRED DIFFERENTLY
+   - Required / mandatory skills (explicitly stated as required): weight between 0.025 and 0.04
+   - Preferred / nice-to-have skills (labeled as preferred, bonus, or optional): weight between 0.008 and 0.015
+   - All 50 weights MUST sum to exactly 1.0 (adjust proportionally if needed).
+
+3. ONLY ASK WHAT IS VERIFIABLE IN A CV
+   A parsed resume contains: job titles, company names, skills listed, education, years of experience, certifications, project descriptions.
+   ✅ Good: "Does the candidate have Docker experience?" (checkable from skills/projects)
+   ❌ Bad: "Is the candidate a proactive problem-solver?" (cannot be verified from a resume)
+   ❌ Bad: "Does the candidate communicate well?" (soft trait, unverifiable)
+
+4. NO DUPLICATE OR NEAR-DUPLICATE QUESTIONS
+   Review your list before returning. Remove any question that is semantically equivalent to another.
+   Example of duplicates to AVOID:
+     - "Does the candidate have Agile experience?" AND "Does the resume show experience in agile environments?"
+     - "Experience deploying software" AND "experience with CI/CD" (keep only CI/CD)
+
+5. QUESTION CATEGORIES
+   Use these exact category values:
+   - "skills"         → technical tools, languages, frameworks, platforms
+   - "experience"     → years of experience, industry exposure, team collaboration
+   - "education"      → degrees, certifications, equivalent practical experience
+   - "responsibility" → job duties the candidate has performed (coding, reviewing, deploying)
+   - "domain"         → industry-specific knowledge relevant to the role
+   - "quality"        → output quality signals from the resume (portfolio, OSS, measurable impact)
+
+6. QUESTION PHRASING
+   All questions must:
+   - Begin with "Does the candidate..." or "Does the resume..."
+   - Be answerable with a clear YES or NO based on resume content
+   - Be specific enough that two different evaluators would agree on the answer
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT FORMAT — RETURN ONLY THIS JSON
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{
+  "questions": [
+    {"id": 1, "question": "...", "category": "skills|experience|education|responsibility|domain|quality", "weight": 0.02},
+    ... exactly 50 items ...
+  ]
+}
+
+- No markdown, no explanation, no extra keys.
+- weights must be floats, sum to 1.0.
+- ids must be sequential integers 1..50.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+JOB POSITION DATA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{jd_payload}

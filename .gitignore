@@ -49,12 +49,11 @@ __pycache__/
 .venv/
 venv/
 ENV/
-
+requirements.txt
 # Misc
 *.local
 .claude/
 txt code/
-*.txt
 Eramatchcombineduicopycopy/
 transform_ts_to_txt.js
 .github/rulesets/development-branch-ruleset.json
@@ -68,8 +67,6 @@ version_docs/
 
 
  
-
-
 
 backend/inspect_db.py
 
