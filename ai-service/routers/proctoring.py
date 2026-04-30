@@ -64,6 +64,7 @@ class FaceSignalRequest(BaseModel):
     liveness_score: float | None = Field(default=None, ge=0.0, le=1.0)
     face_model_score: float | None = Field(default=None, ge=0.0, le=1.0)
     frame_b64: str | None = None
+    reference_embedding: list[float] | None = None
 
 
 class VoiceSignalRequest(BaseModel):
@@ -118,6 +119,7 @@ async def face_signal(request: FaceSignalRequest):
         liveness_score=request.liveness_score,
         face_model_score=request.face_model_score,
         frame_b64=request.frame_b64,
+        reference_embedding=request.reference_embedding,
     )
     proof = _enforce_model_and_proof("face", result, request.frame_b64 is not None)
     return ProctoringSignalResponse(

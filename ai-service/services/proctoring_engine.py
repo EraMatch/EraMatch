@@ -68,7 +68,6 @@ class _ModelRegistry:
         self._face_tflite_interpreter: Any | None = None
         self._face_tflite_input_details: list[dict[str, Any]] | None = None
         self._face_tflite_output_details: list[dict[str, Any]] | None = None
-        self._face_reference_embedding: np.ndarray | None = None
         self._voice_feature_extractor: Any | None = None
         self._voice_model: Any | None = None
         self._gaze_model: Any | None = None
@@ -362,25 +361,28 @@ def _emotion_from_frame(frame_bgr: np.ndarray | None) -> tuple[float | None, str
     return _clamp(stress), dominant, distribution
 
 
-def _face_embedding_from_frame(frame_bgr: np.ndarray | None) -> tuple[np.ndarray | None, float | None]:
+def _face_embedding_from_frame(
+    frame_bgr: np.ndarray | None,
+    reference_embedding: np.ndarray | None = None,
+) -> tuple[np.ndarray | None, float | None, np.ndarray | None]:
     cv2 = _get_cv2()
     if cv2 is None or frame_bgr is None:
-        return None, None
+        return None, None, reference_embedding
 
     face_embedder = REGISTRY.get_face_embedder()
     cascade = REGISTRY.get_face_cascade()
     if face_embedder is None or cascade is None:
-        return None, None
+        return None, None, reference_embedding
 
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     faces = cascade.detectMultiScale(gray, 1.2, 5)
     if len(faces) == 0:
-        return None, None
+        return None, None, reference_embedding
 
     x, y, w, h = max(faces, key=lambda item: item[2] * item[3])
     face = frame_bgr[y : y + h, x : x + w]
     if face.size == 0:
-        return None, None
+        return None, None, reference_embedding
 
     interpreter, input_details, output_details = face_embedder
     input_shape = input_details[0].get("shape", [1, 112, 112, 3])
@@ -398,21 +400,23 @@ def _face_embedding_from_frame(frame_bgr: np.ndarray | None) -> tuple[np.ndarray
 
     norm = float(np.linalg.norm(embedding))
     if norm <= 0:
-        return None, None
+        return None, None, reference_embedding
 
     embedding = embedding / norm
 
-    if REGISTRY._face_reference_embedding is None:
-        REGISTRY._face_reference_embedding = embedding
+    if reference_embedding is None:
+        new_reference = embedding
         similarity = 1.0
     else:
-        similarity = _clamp((_cosine_similarity(embedding, REGISTRY._face_reference_embedding) + 1) / 2)
-        ref = (REGISTRY._face_reference_embedding * 0.92) + (embedding * 0.08)
+        similarity = _clamp((_cosine_similarity(embedding, reference_embedding) + 1) / 2)
+        ref = (reference_embedding * 0.92) + (embedding * 0.08)
         ref_norm = float(np.linalg.norm(ref))
         if ref_norm > 0:
-            REGISTRY._face_reference_embedding = ref / ref_norm
+            new_reference = ref / ref_norm
+        else:
+            new_reference = reference_embedding
 
-    return embedding, similarity
+    return embedding, similarity, new_reference
 
 
 def _gaze_offscreen_score_from_frame(frame_bgr: np.ndarray | None) -> float | None:
@@ -535,14 +539,17 @@ def _voice_embedding_from_waveform(
     return emb.astype(np.float32)
 
 
-def _frame_face_observations(frame_b64: str | None) -> dict[str, float | int | bool | None] | None:
+def _frame_face_observations(
+    frame_b64: str | None,
+    reference_embedding: np.ndarray | None = None,
+) -> tuple[dict[str, float | int | bool | None] | None, np.ndarray | None]:
     cv2 = _get_cv2()
     if cv2 is None:
-        return None
+        return None, reference_embedding
     frame = _decode_image(frame_b64)
     cascade = REGISTRY.get_face_cascade()
     if frame is None or cascade is None:
-        return None
+        return None, reference_embedding
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = cascade.detectMultiScale(gray, 1.2, 5)
@@ -561,7 +568,7 @@ def _frame_face_observations(frame_b64: str | None) -> dict[str, float | int | b
             variance = float(cv2.Laplacian(roi, cv2.CV_64F).var())
             liveness_score = _clamp(variance / 220.0)
 
-    _, face_model_score = _face_embedding_from_frame(frame)
+    _, face_model_score, new_ref = _face_embedding_from_frame(frame, reference_embedding)
     blink_score, blink_detected, eyes_detected = _blink_from_frame(frame)
 
     return {
@@ -572,7 +579,7 @@ def _frame_face_observations(frame_b64: str | None) -> dict[str, float | int | b
         "blink_score": blink_score,
         "blink_detected": blink_detected,
         "eyes_detected": eyes_detected,
-    }
+    }, new_ref
 
 
 def inference_readiness() -> dict[str, Any]:
@@ -660,6 +667,7 @@ def evaluate_face_signal(
     liveness_score: float | None,
     face_model_score: float | None = None,
     frame_b64: str | None = None,
+    reference_embedding: list[float] | np.ndarray | None = None,
 ) -> dict:
     risk = 0.0
     event_type = "face_ok"
@@ -673,7 +681,11 @@ def evaluate_face_signal(
     resolved_blink_detected: bool | None = None
     resolved_eyes_detected: int | None = None
 
-    inferred = _frame_face_observations(frame_b64)
+    if reference_embedding is not None and not isinstance(reference_embedding, np.ndarray):
+        reference_embedding = np.asarray(reference_embedding, dtype=np.float32)
+
+    new_ref = reference_embedding
+    inferred, new_ref = _frame_face_observations(frame_b64, reference_embedding)
     if inferred is not None:
         resolved_faces_detected = int(inferred["faces_detected"])
         resolved_multiple_faces = bool(inferred["multiple_faces"])
@@ -742,6 +754,7 @@ def evaluate_face_signal(
             "blink_detected": resolved_blink_detected,
             "eyes_detected": resolved_eyes_detected,
             "used_frame_inference": inferred is not None,
+            "reference_embedding": new_ref.tolist() if new_ref is not None else None,
         },
     }
 

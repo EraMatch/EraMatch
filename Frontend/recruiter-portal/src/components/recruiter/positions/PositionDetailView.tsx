@@ -694,6 +694,25 @@ export function PositionDetailView({
     }
   };
 
+  const handleResetAssessmentTrial = async (candidate: Candidate) => {
+    if (!candidate.applicationId) return;
+    
+    setAssessmentResetLoadingApplicationId(String(candidate.applicationId));
+    setAssessmentResetMessage(null);
+    setAssessmentResetError(null);
+    
+    try {
+      await api.recruiter.resetApplicationAssessmentTrial(String(candidate.applicationId));
+      setAssessmentResetMessage(`Successfully reset trial for ${candidate.name}.`);
+      await fetchPositionData(false);
+    } catch (err: any) {
+      console.error('Failed to reset assessment trial:', err);
+      setAssessmentResetError(err.message || 'Failed to reset assessment trial.');
+    } finally {
+      setAssessmentResetLoadingApplicationId(null);
+    }
+  };
+
   const renderCustomLegend = (props: any) => {
     const { payload } = props;
     return (
