@@ -312,6 +312,7 @@ async def _mock_judge_pipeline(db, session_id: str):
         meets_criteria=meets_criteria,
         confidence=confidence,
         per_question_results=per_question_results_or_none,
+        transcript=transcript,
     )
 
     logger.info(
@@ -545,6 +546,7 @@ async def _execute_pipeline(db, session_id: str):
         meets_criteria=meets_criteria,
         confidence=confidence,
         per_question_results=per_question_results if per_question_results else None,
+        transcript=transcript,
     )
 
     logger.info(
@@ -687,7 +689,10 @@ def _extract_question_evidence(
 
         question_map[idx] = {
             "question_text": item.get("text", ""),
-            "dimension_id": item.get("primary_dimension_id", ""),
+            "dimension_id": item.get("primary_dimension_id")
+            or item.get("dimension_id")
+            or item.get("dimension_name")
+            or "",
             "sub_criteria": sub_criteria_names
             if sub_criteria_names
             else ["Demonstrate knowledge of the topic"],
@@ -1265,6 +1270,7 @@ async def _upsert_evaluation(
     meets_criteria: bool,
     confidence: str,
     per_question_results: Optional[list] = None,
+    transcript: Optional[list[dict]] = None,
 ) -> LiV2Evaluation:
     existing = await db.execute(
         select(LiV2Evaluation).where(LiV2Evaluation.session_id == session.id)
@@ -1282,7 +1288,10 @@ async def _upsert_evaluation(
     evaluation.auto_verdict = verdict
     evaluation.meets_criteria = meets_criteria
     evaluation.coverage_ratio = coverage_ratio
-    evaluation.dimension_scores = dimension_results
+    validation = _validate_evidence_quotes(
+        transcript or [], dimension_results, per_question_results or []
+    )
+    evaluation.dimension_scores = validation["dimension_results"]
     evaluation.evaluation_confidence = confidence
     evaluation.judged_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -1297,12 +1306,18 @@ async def _upsert_evaluation(
                 "reasoning": qr.get("reasoning"),
                 "anchor_matched": qr.get("anchor_matched"),
                 "cited_quote": qr.get("cited_quote"),
+                "quote_verified": qr.get("quote_verified", False),
                 "weight": qr.get("weight"),
             }
-            for idx, qr in enumerate(per_question_results)
+            for idx, qr in enumerate(validation["per_question_results"])
         }
     elif evaluation.per_question_results is None:
         evaluation.per_question_results = None
+
+    evaluation.integrity_flags = _build_integrity_flags(
+        transcript or [], validation["warnings"]
+    )
+    evaluation.auto_tags = _build_auto_tags(dimension_results)
 
     db.add(evaluation)
     await db.commit()
@@ -1323,3 +1338,107 @@ def _format_transcript(transcript: list[dict]) -> str:
         if text:
             lines.append(f"{role}: {text}")
     return "\n".join(lines) if lines else "No transcript available."
+
+
+def _normalize_quote(text: str) -> str:
+    return " ".join((text or "").lower().split())
+
+
+def _quote_exists(quote: str, transcript_text: str) -> bool:
+    normalized = _normalize_quote(quote)
+    if not normalized:
+        return False
+    return normalized in transcript_text
+
+
+def _validate_evidence_quotes(
+    transcript: list[dict],
+    dimension_results: dict,
+    per_question_results: list[dict],
+) -> dict:
+    transcript_text = _normalize_quote(
+        " ".join(
+            t.get("text", "")
+            for t in transcript
+            if t.get("role") in ("candidate", "agent", "ai")
+        )
+    )
+    warnings = []
+
+    validated_dimensions = {}
+    for dim_id, result in (dimension_results or {}).items():
+        result_copy = dict(result)
+        quote = result_copy.get("cited_quote") or ""
+        verified = _quote_exists(quote, transcript_text)
+        result_copy["quote_verified"] = verified
+        if quote and not verified:
+            warnings.append(
+                {
+                    "type": "unverified_dimension_quote",
+                    "dimension_id": dim_id,
+                    "quote": quote,
+                }
+            )
+        validated_dimensions[dim_id] = result_copy
+
+    validated_questions = []
+    for idx, result in enumerate(per_question_results or []):
+        result_copy = dict(result)
+        quote = result_copy.get("cited_quote") or ""
+        verified = _quote_exists(quote, transcript_text)
+        result_copy["quote_verified"] = verified
+        if quote and not verified:
+            warnings.append(
+                {
+                    "type": "unverified_question_quote",
+                    "pillar_idx": result_copy.get("pillar_idx", idx),
+                    "quote": quote,
+                }
+            )
+        for sub in result_copy.get("sub_criteria", []) or []:
+            if isinstance(sub, dict):
+                sub_quote = sub.get("cited_quote") or ""
+                sub["quote_verified"] = _quote_exists(sub_quote, transcript_text)
+        validated_questions.append(result_copy)
+
+    return {
+        "dimension_results": validated_dimensions,
+        "per_question_results": validated_questions,
+        "warnings": warnings,
+    }
+
+
+def _build_integrity_flags(transcript: list[dict], warnings: list[dict]) -> dict:
+    flagged_turns = [
+        {
+            "elapsed_seconds": t.get("elapsed_seconds"),
+            "flags": t.get("flags", []),
+            "phase": t.get("phase"),
+            "pillar_idx": t.get("pillar_idx"),
+        }
+        for t in transcript
+        if t.get("flagged")
+    ]
+    control_events = sum(len(t.get("control_trace", [])) for t in transcript)
+    candidate_turns = sum(1 for t in transcript if t.get("role") == "candidate")
+    return {
+        "flagged_turns": flagged_turns,
+        "validation_warnings": warnings,
+        "control_events": control_events,
+        "short_transcript": candidate_turns < 2,
+        "empty_transcript": not transcript,
+    }
+
+
+def _build_auto_tags(dimension_results: dict) -> dict:
+    strong_on = []
+    weak_on = []
+    for result in (dimension_results or {}).values():
+        name = result.get("dimension_name")
+        if not name:
+            continue
+        if result.get("anchor_matched") == "excellent":
+            strong_on.append(name)
+        elif result.get("anchor_matched") == "substandard":
+            weak_on.append(name)
+    return {"strong_on": strong_on, "weak_on": weak_on}

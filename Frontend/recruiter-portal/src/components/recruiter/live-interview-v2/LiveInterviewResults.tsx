@@ -61,12 +61,19 @@ interface Evaluation {
     dimension_scores: Record<string, DimensionScore>;
     per_question_results?: Record<string, PerQuestionResult>;
     auto_tags: Record<string, string[]>;
+    integrity_flags?: {
+        validation_warnings?: Array<{ type: string; dimension_id?: string; pillar_idx?: number }>;
+        flagged_turns?: Array<{ flags?: string[]; phase?: string; pillar_idx?: number }>;
+        short_transcript?: boolean;
+        empty_transcript?: boolean;
+        control_events?: number;
+    };
     evaluation_confidence: 'high' | 'medium' | 'low';
     judged_at: string;
 }
 
 interface TranscriptTurn {
-    role: 'ai' | 'candidate';
+    role: 'ai' | 'agent' | 'candidate';
     text: string;
     pillar_idx?: number;
 }
@@ -318,9 +325,9 @@ function TranscriptAccordion({ turns }: { turns: TranscriptTurn[] }) {
             {open && (
                 <div className="border-t border-gray-100 max-h-96 overflow-y-auto divide-y divide-gray-50">
                     {turns.map((t, i) => (
-                        <div key={i} className={`px-5 py-3 ${t.role === 'ai' ? 'bg-indigo-50' : 'bg-white'}`}>
-                            <span className={`text-xs font-bold uppercase tracking-wide ${t.role === 'ai' ? 'text-indigo-500' : 'text-gray-500'} mr-2`}>
-                                {t.role === 'ai' ? 'Interviewer' : 'Candidate'}
+                        <div key={i} className={`px-5 py-3 ${t.role === 'ai' || t.role === 'agent' ? 'bg-indigo-50' : 'bg-white'}`}>
+                            <span className={`text-xs font-bold uppercase tracking-wide ${t.role === 'ai' || t.role === 'agent' ? 'text-indigo-500' : 'text-gray-500'} mr-2`}>
+                                {t.role === 'ai' || t.role === 'agent' ? 'Interviewer' : 'Candidate'}
                             </span>
                             <span className="text-sm md:text-base text-gray-700">{t.text}</span>
                         </div>
@@ -336,6 +343,7 @@ function TranscriptAccordion({ turns }: { turns: TranscriptTurn[] }) {
 // ---------------------------------------------------------------------------
 export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResultsProps) {
     const [data, setData] = useState<SessionData | null>(null);
+    const [activeTab, setActiveTab] = useState<'evaluation' | 'transcript' | 'context'>('evaluation');
 
     useEffect(() => {
         const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -395,8 +403,6 @@ export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResult
     const ev = data.evaluation;
     const verdictCfg = ev ? VERDICT_CONFIG[ev.auto_verdict] : null;
     const VerdictIcon = verdictCfg?.icon;
-
-    const [activeTab, setActiveTab] = useState<'evaluation' | 'transcript' | 'context'>('evaluation');
 
     return (
         <div className="max-w-4xl mx-auto space-y-6 py-6 px-4">
@@ -512,6 +518,22 @@ export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResult
                                     </div>
                                 </div>
 
+                                {ev.integrity_flags && (
+                                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+                                        <p className="font-semibold mb-2">Validation & Control Trace</p>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                                            <span>Control events: {ev.integrity_flags.control_events ?? 0}</span>
+                                            <span>Flagged turns: {ev.integrity_flags.flagged_turns?.length ?? 0}</span>
+                                            <span>Warnings: {ev.integrity_flags.validation_warnings?.length ?? 0}</span>
+                                        </div>
+                                        {(ev.integrity_flags.validation_warnings?.length || 0) > 0 && (
+                                            <p className="mt-2 text-xs">
+                                                Some cited quotes could not be verified exactly against the transcript. Review transcript before final decision.
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+
                                 {/* Dimension breakdown */}
                                 <div>
                                     <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3 flex items-center gap-2">
@@ -586,9 +608,9 @@ export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResult
                         {data.transcript && data.transcript.length > 0 ? (
                             <div className="bg-white border border-gray-200 rounded-xl max-h-[600px] overflow-y-auto divide-y divide-gray-50 shadow-sm">
                                 {data.transcript.map((t, i) => (
-                                    <div key={i} className={`px-5 py-4 ${t.role === 'ai' ? 'bg-indigo-50/50' : 'bg-white'}`}>
-                                        <span className={`text-xs font-bold uppercase tracking-wide ${t.role === 'ai' ? 'text-indigo-600' : 'text-gray-500'} mr-2 block mb-1`}>
-                                            {t.role === 'ai' ? 'Interviewer' : 'Candidate'}
+                                    <div key={i} className={`px-5 py-4 ${t.role === 'ai' || t.role === 'agent' ? 'bg-indigo-50/50' : 'bg-white'}`}>
+                                        <span className={`text-xs font-bold uppercase tracking-wide ${t.role === 'ai' || t.role === 'agent' ? 'text-indigo-600' : 'text-gray-500'} mr-2 block mb-1`}>
+                                            {t.role === 'ai' || t.role === 'agent' ? 'Interviewer' : 'Candidate'}
                                         </span>
                                         <span className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{t.text}</span>
                                     </div>

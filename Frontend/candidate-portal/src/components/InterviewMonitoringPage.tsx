@@ -160,7 +160,7 @@ export function InterviewMonitoringPage() {
     const fetchLiveInterview = async () => {
         try {
             setLiveLoading(true);
-            const response = await fetch('http://localhost:8000/api/v1/live-interview-v2/session', { headers });
+            const response = await fetch('http://localhost:8000/api/v1/candidate/live-interview-v2/session', { headers });
             if (response.ok) {
                 const data = await response.json();
                 setLiveSession(data);
@@ -416,13 +416,13 @@ export function InterviewMonitoringPage() {
                                                 </summary>
                                                 <div className="p-4 pt-0 border-t border-gray-100 max-h-96 overflow-y-auto space-y-4">
                                                     {liveSession.transcript.map((msg, i) => (
-                                                        <div key={i} className={`flex ${msg.role === 'ai' ? 'justify-start' : 'justify-end'}`}>
+                                                        <div key={i} className={`flex ${msg.role === 'ai' || msg.role === 'agent' ? 'justify-start' : 'justify-end'}`}>
                                                             <div className={`max-w-[80%] rounded-2xl px-4 py-2 ${
-                                                                msg.role === 'ai' 
+                                                                msg.role === 'ai' || msg.role === 'agent'
                                                                     ? 'bg-indigo-50 text-indigo-900 rounded-tl-sm' 
                                                                     : 'bg-gray-100 text-gray-800 rounded-tr-sm'
                                                             }`}>
-                                                                <p className="text-xs font-bold mb-1 opacity-70 uppercase tracking-wider">{msg.role === 'ai' ? 'Interviewer' : 'You'}</p>
+                                                                <p className="text-xs font-bold mb-1 opacity-70 uppercase tracking-wider">{msg.role === 'ai' || msg.role === 'agent' ? 'Interviewer' : 'You'}</p>
                                                                 <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
                                                             </div>
                                                         </div>
