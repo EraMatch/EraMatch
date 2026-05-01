@@ -930,6 +930,7 @@ class LiV2Rubric(BaseModel, table=True):
     include_weak_topics: bool = Field(default=False)    # inject candidate's weak assessment topics into agent context
     created_at: datetime = Field(default_factory=datetime.utcnow)
     frozen_at: datetime | None = Field(default=None)
+    updated_at: datetime | None = Field(default=None)
     created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
 
 
@@ -948,6 +949,7 @@ class LiV2Bank(BaseModel, table=True):
     state: str = Field(default="draft", max_length=20)  # draft | frozen
     created_at: datetime = Field(default_factory=datetime.utcnow)
     frozen_at: datetime | None = Field(default=None)
+    updated_at: datetime | None = Field(default=None)
     created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
 
 

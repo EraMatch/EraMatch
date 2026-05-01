@@ -53,6 +53,7 @@ class RubricResponse(BaseModel):
     language: str = "en"
     include_weak_topics: bool = False
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -107,6 +108,7 @@ class BankResponse(BaseModel):
     items: List[BankItem]
     state: LiV2State
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
