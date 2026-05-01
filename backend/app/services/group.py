@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import csv
 import io
+import secrets
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -23,9 +24,10 @@ from app.models import (
     CandidateProfile,
     CandidateStageProgress,
     GroupStageConfig,
-    LiV2Evaluation,
     LiV2Bank,
+    LiV2Evaluation,
     LiV2Rubric,
+    LiV2Session,
     OngoingAssessment,
     OngoingInterview,
     OrganizationUser,
@@ -41,7 +43,6 @@ from app.models import (
     Assessment,
     User,
     EmailLog,
-    LiveInterviewConfig,
     LiveInterviewSession,
     CVAnalysis,
     GitHubAnalysisJob,
@@ -2628,10 +2629,58 @@ class GroupService:
     async def schedule_live_interview(
         self, group_id: UUID, data: ScheduleInterviewRequest
     ) -> dict:
-        """Schedules a live interview session for a candidate."""
+        """Schedules a LiV2 live interview session for a candidate."""
         group = await self._get_group(group_id)
 
-        # Get live interview config for this group
+        rubric_res = await self.session.execute(
+            select(LiV2Rubric).where(
+                LiV2Rubric.group_id == group_id,
+                LiV2Rubric.organization_id == self.org_id,
+                LiV2Rubric.state == "frozen",
+            )
+        )
+        rubric = rubric_res.scalars().first()
+
+        bank_res = await self.session.execute(
+            select(LiV2Bank).where(
+                LiV2Bank.group_id == group_id,
+                LiV2Bank.organization_id == self.org_id,
+                LiV2Bank.state == "frozen",
+            )
+        )
+        bank = bank_res.scalars().first()
+
+        if not rubric or not bank:
+            raise BadRequestException(
+                "No frozen rubric and bank configured for this group's live interview stage. "
+                "Please configure and freeze LiV2 settings first."
+            )
+
+        app_res = await self.session.execute(
+            select(CandidateApplication).where(
+                CandidateApplication.id == data.application_id,
+                CandidateApplication.organization_id == self.org_id,
+            )
+        )
+        application = app_res.scalars().first()
+        if not application:
+            raise NotFoundException("Candidate application not found")
+
+        room_name = f"li-v2-{secrets.token_hex(6)}"
+
+        new_session = LiV2Session(
+            candidate_id=application.candidate_id,
+            application_id=data.application_id,
+            group_id=group_id,
+            organization_id=self.org_id,
+            rubric_id=rubric.id,
+            bank_id=bank.id,
+            room_name=room_name,
+            state="pending",
+        )
+        self.session.add(new_session)
+
+        # Update stage progress status
         sc_res = await self.session.execute(
             select(GroupStageConfig).where(
                 GroupStageConfig.group_id == group_id,
@@ -2639,42 +2688,6 @@ class GroupService:
             )
         )
         sc = sc_res.scalars().first()
-        if not sc or not sc.config_id:
-            # Fallback to finding ANY live interview config for the position if none assigned to group
-            lic_res = await self.session.execute(
-                select(LiveInterviewConfig).where(
-                    LiveInterviewConfig.position_id == group.position_id,
-                    LiveInterviewConfig.organization_id == self.org_id,
-                )
-            )
-            lic = lic_res.scalars().first()
-            if not lic:
-                # Create a default one if none exists
-                lic = LiveInterviewConfig(
-                    organization_id=self.org_id,
-                    position_id=group.position_id,
-                    title=f"Live Interview for {group.group_name}",
-                    duration_minutes=data.duration_minutes,
-                )
-                self.session.add(lic)
-                await self.session.flush()
-            config_id = lic.id
-        else:
-            config_id = sc.config_id
-
-        # Create session
-        new_session = LiveInterviewSession(
-            config_id=config_id,
-            application_id=data.application_id,
-            organization_id=self.org_id,
-            interviewer_id=data.interviewer_id or self.user.id,
-            scheduled_at=data.scheduled_at,
-            meeting_link=data.meeting_link,
-            status="scheduled",
-        )
-        self.session.add(new_session)
-
-        # Update stage progress status
         if sc:
             prog_res = await self.session.execute(
                 select(CandidateStageProgress).where(
@@ -2684,7 +2697,10 @@ class GroupService:
             )
             prog = prog_res.scalars().first()
             if prog:
-                prog.status = "scheduled"
+                prog.status = "unlocked"
+                prog.unlocked_at = datetime.now(timezone.utc)
+                prog.session_id = new_session.id
+                prog.session_type = "live_interview"
                 self.session.add(prog)
 
         # Log activity
@@ -2695,8 +2711,9 @@ class GroupService:
             entity_type="candidate_application",
             entity_id=data.application_id,
             details={
-                "scheduled_at": data.scheduled_at.isoformat(),
-                "interviewer_id": str(data.interviewer_id),
+                "rubric_id": str(rubric.id),
+                "bank_id": str(bank.id),
+                "room_name": room_name,
             },
         )
         self.session.add(log)
