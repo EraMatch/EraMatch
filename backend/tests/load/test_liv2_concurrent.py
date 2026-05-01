@@ -13,6 +13,8 @@ Run with: pytest tests/load/test_liv2_concurrent.py -v
 NOTE: These tests create real sessions. Run against test/staging data only.
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import sys
@@ -157,6 +159,19 @@ async def _complete_session(
     )
 
 
+def _is_ok_response(result: object, allow: tuple[int, ...] = (200,)) -> bool:
+    """Type-narrowing helper: return True if *result* is an httpx.Response
+    with a status code in *allow*.  Silences Pyright on gather(return_exceptions=True)."""
+    return isinstance(result, httpx.Response) and result.status_code in allow
+
+
+def _code(result: object) -> int | str:
+    """Return status_code for Response or string for Exception — safe in f-strings."""
+    if isinstance(result, httpx.Response):
+        return result.status_code
+    return str(result)
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -232,20 +247,17 @@ async def test_concurrent_token_dispatch():
         tasks = [_dispatch_session(client) for _ in range(5)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    successes = []
-    for r in results:
-        if isinstance(r, Exception):
-            continue
-        if r.status_code == 200:
-            successes.append(r)
+    successes = [r for r in results if _is_ok_response(r)]
 
     assert len(successes) >= 3, (
         f"Too many failures: {len(successes)}/5 succeeded. "
-        f"Errors: {[str(r) if isinstance(r, Exception) else r.status_code for r in results]}"
+        f"Errors: {[_code(r) for r in results]}"
     )
 
     # Validate response structure of successful requests
     for resp in successes:
+        if not isinstance(resp, httpx.Response):
+            continue
         data = resp.json()
         assert "token" in data, f"Missing 'token' in response: {data}"
         assert "room_name" in data, f"Missing 'room_name' in response: {data}"
@@ -359,20 +371,17 @@ async def test_concurrent_session_completion():
         tasks = [_complete_session(raw_client, sid) for sid in session_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    successes = []
-    for r in results:
-        if isinstance(r, Exception):
-            continue
-        if r.status_code == 200:
-            successes.append(r)
+    successes = [r for r in results if _is_ok_response(r)]
 
     assert len(successes) >= 3, (
         f"Too many completion failures: {len(successes)}/{len(session_ids)} succeeded. "
-        f"Errors: {[str(r) if isinstance(r, Exception) else r.status_code for r in results]}"
+        f"Errors: {[_code(r) for r in results]}"
     )
 
     # Verify each successful response has the expected shape
     for resp in successes:
+        if not isinstance(resp, httpx.Response):
+            continue
         data = resp.json()
         assert data.get("status") in ("completed", "already_completed"), (
             f"Unexpected completion status: {data}"
@@ -445,11 +454,9 @@ async def test_no_cross_session_contamination():
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    successful = sum(
-        1 for r in results if not isinstance(r, Exception) and r.status_code == 200
-    )
+    successful = sum(1 for r in results if _is_ok_response(r))
     assert successful >= 1, (
-        f"No sessions completed successfully: {[str(r) if isinstance(r, Exception) else r.status_code for r in results]}"
+        f"No sessions completed successfully: {[_code(r) for r in results]}"
     )
 
     # Session IDs must be different (no cross-contamination)
@@ -526,25 +533,15 @@ async def test_rubric_read_under_load():
 
     # Rubric reads should succeed
     rubric_successes = sum(
-        1
-        for r in rubric_results
-        if not isinstance(r, Exception) and r.status_code in (200, 404)
+        1 for r in rubric_results if _is_ok_response(r, allow=(200, 404))
     )
-    # 404 is acceptable if the rubric doesn't exist in test data
     assert rubric_successes >= 2, (
-        f"Rubric reads failed under load: "
-        f"{[str(r) if isinstance(r, Exception) else r.status_code for r in rubric_results]}"
+        f"Rubric reads failed under load: {[_code(r) for r in rubric_results]}"
     )
 
-    # Session creates should also succeed (at least some)
-    session_successes = sum(
-        1
-        for r in session_results
-        if not isinstance(r, Exception) and r.status_code == 200
-    )
+    session_successes = sum(1 for r in session_results if _is_ok_response(r))
     assert session_successes >= 2, (
-        f"Session creates failed under load: "
-        f"{[str(r) if isinstance(r, Exception) else r.status_code for r in session_results]}"
+        f"Session creates failed under load: {[_code(r) for r in session_results]}"
     )
 
 
@@ -614,24 +611,15 @@ async def test_bank_read_under_load():
 
     # Bank reads should succeed (200 or 404 if not seeded)
     bank_successes = sum(
-        1
-        for r in bank_results
-        if not isinstance(r, Exception) and r.status_code in (200, 404)
+        1 for r in bank_results if _is_ok_response(r, allow=(200, 404))
     )
     assert bank_successes >= 2, (
-        f"Bank reads failed under load: "
-        f"{[str(r) if isinstance(r, Exception) else r.status_code for r in bank_results]}"
+        f"Bank reads failed under load: {[_code(r) for r in bank_results]}"
     )
 
-    # Session creates should also succeed
-    session_successes = sum(
-        1
-        for r in session_results
-        if not isinstance(r, Exception) and r.status_code == 200
-    )
+    session_successes = sum(1 for r in session_results if _is_ok_response(r))
     assert session_successes >= 2, (
-        f"Session creates failed under load: "
-        f"{[str(r) if isinstance(r, Exception) else r.status_code for r in session_results]}"
+        f"Session creates failed under load: {[_code(r) for r in session_results]}"
     )
 
 
@@ -701,31 +689,21 @@ async def test_sessions_monitor_under_load():
 
     # Monitor reads should succeed (200 or 404/403 if group doesn't exist)
     monitor_successes = sum(
-        1
-        for r in monitor_results
-        if not isinstance(r, Exception) and r.status_code in (200, 403, 404)
+        1 for r in monitor_results if _is_ok_response(r, allow=(200, 403, 404))
     )
     assert monitor_successes >= 4, (
-        f"Monitor reads failed under load: "
-        f"{[str(r) if isinstance(r, Exception) else r.status_code for r in monitor_results]}"
+        f"Monitor reads failed under load: {[_code(r) for r in monitor_results]}"
     )
 
-    # For successful monitor responses, validate structure
     for r in monitor_results:
-        if not isinstance(r, Exception) and r.status_code == 200:
-            data = r.json()
-            # Monitor should return group_id and session data
-            assert "group_id" in data or "sessions" in data or "summary" in data, (
-                f"Monitor response missing expected keys: {data.keys()}"
-            )
+        if not isinstance(r, httpx.Response) or r.status_code != 200:
+            continue
+        data = r.json()
+        assert "group_id" in data or "sessions" in data or "summary" in data, (
+            f"Monitor response missing expected keys: {data.keys()}"
+        )
 
-    # Session creates should also succeed (at least some)
-    session_successes = sum(
-        1
-        for r in session_results
-        if not isinstance(r, Exception) and r.status_code == 200
-    )
+    session_successes = sum(1 for r in session_results if _is_ok_response(r))
     assert session_successes >= 2, (
-        f"Session creates failed under load: "
-        f"{[str(r) if isinstance(r, Exception) else r.status_code for r in session_results]}"
+        f"Session creates failed under load: {[_code(r) for r in session_results]}"
     )
