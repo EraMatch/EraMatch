@@ -88,4 +88,6 @@ backend/uv.lock
 # testing reports
 tests/recruiter-view/unit_testing/logs/reports
 
-backend/static/cvs
+# Ignore log and static files
+backend/static
+backend/logs

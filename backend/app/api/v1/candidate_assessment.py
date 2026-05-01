@@ -34,6 +34,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from fastapi import UploadFile, File, Form
 from sqlalchemy import text, bindparam
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import UUID as pgUUID, JSONB
 from app.api.deps import CurrentCandidate, DbSession
 from app.core.integrity_metrics import integrity_metrics
@@ -366,7 +367,9 @@ async def get_assessment_config(
                 a.title,
                 a.instructions,
                 a.duration_minutes,
-                a.passing_score
+                a.passing_score,
+                oa.session_id,
+                oa.status         AS session_status
             FROM candidate_pipeline_progress cpp
             JOIN candidate_applications ca
                 ON cpp.application_id = ca.application_id
@@ -374,16 +377,24 @@ async def get_assessment_config(
                 ON cpp.stage_id = gps.stage_id
             JOIN assessments a
                 ON gps.config_id = a.assessment_id
+            LEFT JOIN ongoing_assessments oa
+                ON oa.session_id = cpp.session_id
             WHERE ca.candidate_id = :candidate_id
               AND gps.stage_type  = 'assessment'
-                            AND COALESCE(gps.state, 'not_started') != 'inactive'
-              AND cpp.status IN ('unlocked', 'in_progress')
+              AND COALESCE(gps.state, 'not_started') != 'inactive'
+              AND cpp.status IN ('unlocked', 'in_progress', 'completed', 'passed')
             ORDER BY gps.stage_order
             LIMIT 1
         """),
         {"candidate_id": str(candidate.candidate_id)}
     )
     row = result.mappings().first()
+    if row:
+        existing_status = (row.get("progress_status") or "").strip().lower()
+        session_status = (row.get("session_status") or "").strip().lower()
+        if existing_status in {"completed", "passed"} or session_status == "completed":
+            raise HTTPException(status_code=400, detail="Assessment already completed")
+
     if not row:
         # Fallback bootstrap: if the candidate has an active assessment stage but no
         # unlocked/in_progress progress row yet, initialize it so the candidate can start.
@@ -527,39 +538,76 @@ async def get_assessment_config(
     )
     sections = sections_result.mappings().all()
 
-    # 3. For each section, load questions from the pool → question_bank
+    # 3. For each section, load questions
     enriched_sections = []
+    session_id = row.get("session_id")
     for sec in sections:
-        pool_result = await session.execute(
-            text("""
-                SELECT sqp.pool_entry_id, sqp.question_id,
-                       qb.question_type, qb.question_text, qb.question_config, qb.points
-                FROM section_question_pool sqp
-                JOIN question_bank qb ON qb.question_id = sqp.question_id AND qb.is_deleted = false
-                WHERE sqp.section_id = :section_id
-                  AND sqp.is_active = true
-                ORDER BY sqp.variant_order
-            """),
-            {"section_id": str(sec["section_id"])}
-        )
-        pool_questions = pool_result.mappings().all()
-
         enriched_questions = []
-        for q in pool_questions:
-            enriched_questions.append({
-                "question_id": str(q["question_id"]),
-                "question_type": q["question_type"],
-                "question_text": q["question_text"],
-                "question_config": q["question_config"] or {},
-                "points": q["points"] or 10,
-            })
+        if session_id:
+            # A. If session exists, load the specific questions assigned to this candidate
+            pool_result = await session.execute(
+                text("""
+                    SELECT assignment_id, question_snapshot, display_order
+                    FROM candidate_assigned_questions
+                    WHERE session_id = :session_id
+                      AND section_id = :section_id
+                    ORDER BY display_order
+                """),
+                {"session_id": session_id, "section_id": sec["section_id"]}
+            )
+            rows = pool_result.mappings().all()
+            for q_row in rows:
+                snap = q_row["question_snapshot"]
+                enriched_questions.append({
+                    "question_id": str(snap["question_id"]),
+                    "assignment_id": str(q_row["assignment_id"]),
+                    "question_type": snap["question_type"],
+                    "question_text": snap["question_text"],
+                    "question_config": snap["question_config"] or {},
+                    "points": snap["points"] or 10,
+                    "order": q_row["display_order"]
+                })
+        else:
+            # B. No session yet. Return the pool but ENFORCE variants_to_select if random.
+            # NOTE: To prevent leaking the full pool, if strategy is random, we return NO questions
+            # until the session is started. The candidate sees instructions first anyway.
+            strategy = (sec["selection_strategy"] or "").lower()
+            variants = sec["variants_to_select"]
+
+            if strategy == "random":
+                # Don't leak the pool before start
+                enriched_questions = []
+            else:
+                # For non-random sections, show the first N variants
+                pool_result = await session.execute(
+                    text("""
+                        SELECT sqp.pool_entry_id, sqp.question_id,
+                               qb.question_type, qb.question_text, qb.question_config, qb.points
+                        FROM section_question_pool sqp
+                        JOIN question_bank qb ON qb.question_id = sqp.question_id AND qb.is_deleted = false
+                        WHERE sqp.section_id = :section_id
+                          AND sqp.is_active = true
+                        ORDER BY sqp.variant_order
+                        LIMIT :limit
+                    """),
+                    {"section_id": str(sec["section_id"]), "limit": variants if variants and variants > 0 else 1}
+                )
+                pool_questions = pool_result.mappings().all()
+                for q in pool_questions:
+                    enriched_questions.append({
+                        "question_id": str(q["question_id"]),
+                        "question_type": q["question_type"],
+                        "question_text": q["question_text"],
+                        "question_config": q["question_config"] or {},
+                        "points": q["points"] or 10,
+                    })
 
         enriched_sections.append({
             "section_id": str(sec["section_id"]),
             "section_title": sec["section_title"] or f"Section {sec['section_order']}",
             "question_type": sec["question_type"],
             "variants_to_select": sec["variants_to_select"],
-            "total_in_pool": len(enriched_questions),
+            "total_in_pool": len(enriched_questions) if session_id else (variants or 0), # Simplified for UI
             "questions": enriched_questions,
         })
 
@@ -671,7 +719,7 @@ async def _start_assessment_session_impl(
     # 1. Verify candidate owns this stage
     verify = await session.execute(
         text("""
-            SELECT cpp.progress_id, cpp.status, ca.application_id, ca.organization_id
+            SELECT cpp.progress_id, cpp.status, cpp.session_id, ca.application_id, ca.organization_id
             FROM candidate_pipeline_progress cpp
             JOIN candidate_applications ca
                 ON cpp.application_id = ca.application_id
@@ -777,22 +825,31 @@ async def _start_assessment_session_impl(
 
     # 2. Resume existing session?
     if progress["status"] == "in_progress":
-        existing = await session.execute(
-            text("""
+        query_params = {}
+        if progress.get("session_id"):
+            resume_query = """
+                SELECT session_id, started_at, assigned_questions
+                FROM ongoing_assessments
+                WHERE session_id = :session_id
+                  AND status = 'in_progress'
+                LIMIT 1
+            """
+            query_params["session_id"] = progress["session_id"]
+        else:
+            resume_query = """
                 SELECT session_id, started_at, assigned_questions
                 FROM ongoing_assessments
                 WHERE assessment_id = :assessment_id
                   AND application_id = :application_id
                   AND status = 'in_progress'
                 LIMIT 1
-            """).bindparams(
-                bindparam("assessment_id", type_=pgUUID(as_uuid=True)),
-                bindparam("application_id", type_=pgUUID(as_uuid=True)),
-            ),
-            {
-                "assessment_id": UUID(request.assessment_id),
-                "application_id": application_id,
-            }
+            """
+            query_params["assessment_id"] = UUID(request.assessment_id)
+            query_params["application_id"] = application_id
+
+        existing = await session.execute(
+            text(resume_query),
+            query_params
         )
         existing_session = existing.mappings().first()
         if existing_session:
@@ -894,10 +951,15 @@ async def _start_assessment_session_impl(
         pool = pool_result.mappings().all()
 
         # Select questions based on strategy
-        variants_to_select = sec["variants_to_select"] or len(pool)
+        variants_to_select = sec["variants_to_select"]
+        if variants_to_select is None or variants_to_select <= 0:
+            variants_to_select = 1  # Default to 1 if not specified
+        
+        # Cap variants_to_select by pool size
+        variants_to_select = min(variants_to_select, len(pool))
         selection_strategy = (sec["selection_strategy"] or "").lower()
 
-        if selection_strategy == "random" and len(pool) > variants_to_select:
+        if selection_strategy == "random" and len(pool) > 0:
             if candidate_keywords:
                 scored_pool = []
                 for q in list(pool):
@@ -936,31 +998,62 @@ async def _start_assessment_session_impl(
             }
 
             assignment_id = uuid4()
-            await session.execute(
-                text("""
-                    INSERT INTO candidate_assigned_questions
-                    (assignment_id, session_id, section_id, pool_entry_id,
-                     question_snapshot, display_order, assigned_at)
-                    VALUES (
-                        :assignment_id, :session_id, :section_id, :pool_entry_id,
-                        :question_snapshot, :display_order, NOW()
-                    )
-                """).bindparams(
-                    bindparam("assignment_id", type_=pgUUID(as_uuid=True)),
-                    bindparam("session_id", type_=pgUUID(as_uuid=True)),
-                    bindparam("section_id", type_=pgUUID(as_uuid=True)),
-                    bindparam("pool_entry_id", type_=pgUUID(as_uuid=True)),
-                    bindparam("question_snapshot", type_=JSONB),
-                ),
-                {
-                    "assignment_id": assignment_id,
-                    "session_id": session_id,
-                    "section_id": sec["section_id"],
-                    "pool_entry_id": q["pool_entry_id"],
-                    "question_snapshot": snapshot,
-                    "display_order": display_order,
-                }
-            )
+            try:
+                await session.execute(
+                    text("""
+                        INSERT INTO candidate_assigned_questions
+                        (assignment_id, session_id, section_id, pool_entry_id,
+                         question_snapshot, display_order, assigned_at)
+                        VALUES (
+                            :assignment_id, :session_id, :section_id, :pool_entry_id,
+                            :question_snapshot, :display_order, NOW()
+                        )
+                    """).bindparams(
+                        bindparam("assignment_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("session_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("section_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("pool_entry_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("question_snapshot", type_=JSONB),
+                    ),
+                    {
+                        "assignment_id": assignment_id,
+                        "session_id": session_id,
+                        "section_id": sec["section_id"],
+                        "pool_entry_id": q["pool_entry_id"],
+                        "question_snapshot": snapshot,
+                        "display_order": display_order,
+                    }
+                )
+            except IntegrityError as ie:
+                # If the referenced pool_entry_id does not exist in
+                # section_question_pool (foreign-key), fall back to NULL
+                # so the assignment can still be created.
+                logger.warning("pool_entry_id FK missing; inserting assignment with NULL pool_entry_id (%s)", ie)
+                await session.execute(
+                    text("""
+                        INSERT INTO candidate_assigned_questions
+                        (assignment_id, session_id, section_id, pool_entry_id,
+                         question_snapshot, display_order, assigned_at)
+                        VALUES (
+                            :assignment_id, :session_id, :section_id, :pool_entry_id,
+                            :question_snapshot, :display_order, NOW()
+                        )
+                    """).bindparams(
+                        bindparam("assignment_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("session_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("section_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("pool_entry_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("question_snapshot", type_=JSONB),
+                    ),
+                    {
+                        "assignment_id": assignment_id,
+                        "session_id": session_id,
+                        "section_id": sec["section_id"],
+                        "pool_entry_id": None,
+                        "question_snapshot": snapshot,
+                        "display_order": display_order,
+                    }
+                )
 
             # Build the question data for the response (WITHOUT correct_answer)
             q_data = {
@@ -1034,7 +1127,9 @@ async def _start_assessment_session_impl(
                         "assignment_id": assignment_id,
                         "session_id": session_id,
                         "section_id": target_section_id,
-                        "pool_entry_id": uuid4(),
+                        # GitHub-derived questions are not from the section pool;
+                        # avoid inserting a random UUID that violates the FK.
+                        "pool_entry_id": None,
                         "question_snapshot": snapshot,
                         "display_order": display_order,
                     },
@@ -3013,6 +3108,7 @@ async def finalize_expired_assessment_session(session, session_id: UUID) -> None
                 passed = :passed,
                 completed_at = NOW()
             WHERE application_id = :application_id
+              AND (session_id = :session_id OR session_id IS NULL)
               AND stage_id IN (
                   SELECT gps.stage_id
                   FROM group_pipeline_stages gps
@@ -3022,6 +3118,7 @@ async def finalize_expired_assessment_session(session, session_id: UUID) -> None
         """).bindparams(
             bindparam("application_id", type_=pgUUID(as_uuid=True)),
             bindparam("assessment_id", type_=pgUUID(as_uuid=True)),
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
         ),
         {
             "score": percentage,
@@ -3029,6 +3126,7 @@ async def finalize_expired_assessment_session(session, session_id: UUID) -> None
             "passed": passed,
             "application_id": oa["application_id"],
             "assessment_id": oa["assessment_id"],
+            "session_id": session_id,
         },
     )
 
@@ -3155,6 +3253,7 @@ async def submit_assessment(
                 passed = :passed,
                 completed_at = NOW()
             WHERE application_id = :application_id
+              AND (session_id = :session_id OR session_id IS NULL)
               AND stage_id IN (
                   SELECT gps.stage_id 
                   FROM group_pipeline_stages gps
@@ -3164,6 +3263,7 @@ async def submit_assessment(
         """).bindparams(
             bindparam("application_id", type_=pgUUID(as_uuid=True)),
             bindparam("assessment_id", type_=pgUUID(as_uuid=True)),
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
         ),
         {
             "score": percentage,
@@ -3171,6 +3271,7 @@ async def submit_assessment(
             "passed": passed,
             "application_id": oa["application_id"],
             "assessment_id": oa["assessment_id"],
+            "session_id": UUID(request.session_id),
         }
     )
 

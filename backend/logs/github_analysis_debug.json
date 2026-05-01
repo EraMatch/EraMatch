@@ -133,5 +133,61 @@
       "candidate_id": "5a365d8b-1d52-46c9-bfb3-4122862b33b3",
       "github_url": "github.com/AhmedSolay"
     }
+  },
+  {
+    "timestamp": "2026-04-30T22:09:01.011013",
+    "step": "task_started",
+    "data": {
+      "job_id": "d77a82f2-7b11-4fb3-b4d5-3e57c4cfb2ba",
+      "candidate_id": "c3626e52-6e89-47e6-93ee-d078f6a5ca18",
+      "github_url": "github.com/youssef-saaed",
+      "questions_to_generate": 10
+    }
+  },
+  {
+    "timestamp": "2026-04-30T22:09:01.946090",
+    "step": "job_status_updated",
+    "data": {
+      "job_id": "d77a82f2-7b11-4fb3-b4d5-3e57c4cfb2ba",
+      "status": "processing"
+    }
+  },
+  {
+    "timestamp": "2026-04-30T22:09:01.955769",
+    "step": "github_analysis_request_started",
+    "data": {
+      "job_id": "d77a82f2-7b11-4fb3-b4d5-3e57c4cfb2ba",
+      "candidate_id": "c3626e52-6e89-47e6-93ee-d078f6a5ca18",
+      "github_url": "github.com/youssef-saaed"
+    }
+  },
+  {
+    "timestamp": "2026-04-30T22:10:31.843680",
+    "step": "github_analysis_request_completed",
+    "data": {
+      "job_id": "d77a82f2-7b11-4fb3-b4d5-3e57c4cfb2ba",
+      "candidate_id": "c3626e52-6e89-47e6-93ee-d078f6a5ca18",
+      "status_code": 200,
+      "repo_count": 12,
+      "generated_question_count": 10
+    }
+  },
+  {
+    "timestamp": "2026-04-30T22:10:32.485176",
+    "step": "database_upsert_completed",
+    "data": {
+      "job_id": "d77a82f2-7b11-4fb3-b4d5-3e57c4cfb2ba",
+      "candidate_id": "c3626e52-6e89-47e6-93ee-d078f6a5ca18"
+    }
+  },
+  {
+    "timestamp": "2026-04-30T22:10:32.759514",
+    "step": "task_completed",
+    "data": {
+      "job_id": "d77a82f2-7b11-4fb3-b4d5-3e57c4cfb2ba",
+      "candidate_id": "c3626e52-6e89-47e6-93ee-d078f6a5ca18",
+      "status": "completed",
+      "total_generated": 10
+    }
   }
 ]

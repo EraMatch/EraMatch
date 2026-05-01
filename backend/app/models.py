@@ -599,7 +599,7 @@ class CandidateAssignedQuestion(BaseModel, table=True):
     id: UUID = Field(default_factory=uuid4, alias="assignment_id", sa_column=Column("assignment_id", PG_UUID(as_uuid=True), primary_key=True))
     session_id: UUID = Field(foreign_key="ongoing_assessments.session_id")
     section_id: UUID
-    pool_entry_id: UUID
+    pool_entry_id: UUID | None = Field(default=None)
     question_snapshot: dict = Field(sa_column=Column(JSONB))
     display_order: int
     assigned_at: datetime = Field(default_factory=datetime.utcnow)

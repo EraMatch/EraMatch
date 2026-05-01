@@ -873,6 +873,10 @@ class GroupService:
                 if prog.status in ("locked", "not_started", "unlocked"):
                     prog.status = "in_progress" # Actually move to in_progress when stage starts
                     prog.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    # Ensure session_type is recorded for assessments so progress records
+                    # consistently indicate the type of session they relate to.
+                    if stage == "assessment":
+                        prog.session_type = "assessment"
                     self.session.add(prog)
                     invitations_sent += 1
             else:
@@ -886,6 +890,7 @@ class GroupService:
                     stage_id=stage_config.stage_id,
                     status="in_progress",
                     started_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    session_type=("assessment" if stage == "assessment" else None),
                 )
                 self.session.add(new_prog)
                 invitations_sent += 1
@@ -2807,7 +2812,8 @@ class GroupService:
                             application_id=app.id,
                             stage_id=source_stage.stage_id,
                             status="completed",
-                            passed=True
+                            passed=True,
+                            session_type=(source_stage.stage_type if getattr(source_stage, 'stage_type', None) else None),
                         )
                         self.session.add(prog)
 

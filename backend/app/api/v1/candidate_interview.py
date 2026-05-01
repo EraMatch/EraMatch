@@ -753,6 +753,19 @@ async def submit_video_response(
     # Absolute URL for worker
     video_url_full = f"http://localhost:8000/static/uploads/{filename}"
 
+    # Determine question_order safely — count existing responses for this session
+    order_result = await session.execute(
+        text("""
+            SELECT COUNT(*) AS cnt FROM interview_responses
+            WHERE session_id = :session_id
+        """).bindparams(
+            bindparam("session_id", type_=pgUUID(as_uuid=True)),
+        ),
+        {"session_id": session_id}
+    )
+    order_row = order_result.mappings().first()
+    next_order = (order_row["cnt"] if order_row else 0) + 1
+
     await session.execute(
         text("""
             INSERT INTO interview_responses (
@@ -770,7 +783,7 @@ async def submit_video_response(
             "response_id": UUID(response_id),
             "session_id": session_id,
             "question_id": question_id,
-            "question_order": int(question_id.replace("q", "")) if question_id.startswith("q") else (int(question_id) if question_id.isdigit() else 1),
+            "question_order": next_order,
             "question_text": question_text,
             "video_url": video_url_db,
         }
