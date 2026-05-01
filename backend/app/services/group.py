@@ -209,7 +209,9 @@ class GroupService:
                     LiV2Bank.state == "frozen",
                     LiV2Rubric.state == "frozen",
                 )
-                .order_by(LiV2Bank.frozen_at.desc().nullslast(), LiV2Bank.created_at.desc())
+                .order_by(
+                    LiV2Bank.frozen_at.desc().nullslast(), LiV2Bank.created_at.desc()
+                )
                 .limit(1)
             )
             bank = bank_res.scalars().first()
@@ -2209,8 +2211,8 @@ class GroupService:
                         progress = CandidateStageProgress(
                             application_id=app.id,
                             stage_id=first_stage.stage_id,
-                            status="in_progress",
-                            started_at=datetime.utcnow(),
+                            status="unlocked",
+                            unlocked_at=datetime.utcnow(),
                         )
                         self.session.add(progress)
 
