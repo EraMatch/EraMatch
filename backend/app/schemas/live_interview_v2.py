@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime
@@ -44,7 +44,7 @@ class RubricUpdate(BaseModel):
 
 
 class RubricResponse(BaseModel):
-    rubric_id: UUID
+    rubric_id: UUID = Field(validation_alias="id")
     group_id: UUID
     organization_id: UUID
     dimensions: List[RubricDimension]
@@ -55,8 +55,7 @@ class RubricResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 # --- Question Bank Schemas ---
@@ -102,7 +101,7 @@ class BankUpdate(BaseModel):
 
 
 class BankResponse(BaseModel):
-    bank_id: UUID
+    bank_id: UUID = Field(validation_alias="id")
     group_id: UUID
     organization_id: UUID
     items: List[BankItem]
@@ -110,8 +109,7 @@ class BankResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 # --- AI Suggestion Schemas ---
@@ -209,9 +207,8 @@ class CandidateLiV2Evaluation(BaseModel):
 class CandidateLiveInterviewResponse(BaseModel):
     """Response for the candidate's own LiV2 session + evaluation."""
 
-    session_id: Optional[UUID] = None
+    session_id: Optional[UUID] = Field(default=None, validation_alias="id")
     state: Optional[str] = None
-    # pending | in_progress | completed | failed | cancelled
     transcript: Optional[List[Dict[str, Any]]] = None
     duration_seconds: Optional[int] = None
     started_at: Optional[datetime] = None
@@ -219,8 +216,7 @@ class CandidateLiveInterviewResponse(BaseModel):
     evaluation: Optional[CandidateLiV2Evaluation] = None
     position_name: str = ""
     group_name: str = ""
-    # Extra status hint when evaluation is still running
     status: Optional[str] = None
-    # e.g. "grading"
     estimated_time: Optional[str] = None
-    # e.g. "~30 seconds remaining"
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
