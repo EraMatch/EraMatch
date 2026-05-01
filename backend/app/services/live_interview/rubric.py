@@ -56,14 +56,14 @@ async def suggest_dimensions_service(
     Return ONLY the JSON.
     """
     
-    response_text = await call_with_fallback(
+    response = await call_with_fallback(
         role="interviewer", 
         messages=[{"role": "user", "content": prompt}]
     )
     
     try:
         # Clean potential markdown from response
-        cleaned = response_text.strip()
+        cleaned = response.content.strip()
         if cleaned.startswith("```json"):
             cleaned = cleaned[7:].strip()
             if cleaned.endswith("```"):
@@ -109,13 +109,13 @@ async def generate_anchors_service(
     Return ONLY the JSON.
     """
     
-    response_text = await call_with_fallback(
+    response = await call_with_fallback(
         role="rubric_builder", 
         messages=[{"role": "user", "content": prompt}]
     )
     
     try:
-        cleaned = response_text.strip()
+        cleaned = response.content.strip()
         if cleaned.startswith("```json"):
             cleaned = cleaned[7:].strip()
             if cleaned.endswith("```"):
@@ -135,7 +135,10 @@ async def create_rubric_service(
 ) -> LiV2Rubric:
     """Create or overwrite a draft rubric."""
     # Check if a rubric already exists for this group
-    query = select(LiV2Rubric).where(LiV2Rubric.group_id == rubric_in.group_id)
+    query = select(LiV2Rubric).where(
+        LiV2Rubric.group_id == rubric_in.group_id,
+        LiV2Rubric.organization_id == rubric_in.organization_id,
+    )
     result = await db.execute(query)
     existing = result.scalar_one_or_none()
     
@@ -151,7 +154,6 @@ async def create_rubric_service(
             existing.language = rubric_in.language
         if rubric_in.include_weak_topics is not None:
             existing.include_weak_topics = rubric_in.include_weak_topics
-        existing.updated_at = datetime.utcnow()
         await db.commit()
         await db.refresh(existing)
         return existing
@@ -171,16 +173,26 @@ async def create_rubric_service(
     await db.refresh(new_rubric)
     return new_rubric
 
-async def get_rubric_service(db: DbSession, group_id: UUID) -> LiV2Rubric:
-    query = select(LiV2Rubric).where(LiV2Rubric.group_id == group_id)
+async def get_rubric_service(
+    db: DbSession, group_id: UUID, organization_id: UUID | None = None
+) -> LiV2Rubric:
+    filters = [LiV2Rubric.group_id == group_id]
+    if organization_id:
+        filters.append(LiV2Rubric.organization_id == organization_id)
+    query = select(LiV2Rubric).where(*filters)
     result = await db.execute(query)
     rubric = result.scalar_one_or_none()
     if not rubric:
         raise HTTPException(status_code=404, detail="Rubric not found for this group")
     return rubric
 
-async def freeze_rubric_service(db: DbSession, rubric_id: UUID) -> LiV2Rubric:
-    query = select(LiV2Rubric).where(LiV2Rubric.rubric_id == rubric_id)
+async def freeze_rubric_service(
+    db: DbSession, rubric_id: UUID, organization_id: UUID | None = None
+) -> LiV2Rubric:
+    filters = [LiV2Rubric.id == rubric_id]
+    if organization_id:
+        filters.append(LiV2Rubric.organization_id == organization_id)
+    query = select(LiV2Rubric).where(*filters)
     result = await db.execute(query)
     rubric = result.scalar_one_or_none()
     
@@ -206,7 +218,7 @@ async def freeze_rubric_service(db: DbSession, rubric_id: UUID) -> LiV2Rubric:
         )
         
     rubric.state = LiV2State.FROZEN
-    rubric.updated_at = datetime.utcnow()
+    rubric.frozen_at = datetime.utcnow()
     await db.commit()
     await db.refresh(rubric)
     return rubric

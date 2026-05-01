@@ -54,6 +54,9 @@ async def create_rubric(
     current_user: CurrentUser
 ):
     """Save a draft rubric for a group."""
+    rubric_in = rubric_in.model_copy(
+        update={"organization_id": current_user.organization_id}
+    )
     return await create_rubric_service(db, rubric_in)
 
 @router.get("/rubric/group/{group_id}", response_model=RubricResponse)
@@ -63,7 +66,7 @@ async def get_rubric_by_group(
     current_user: CurrentUser
 ):
     """Retrieve the rubric (draft or frozen) for a group."""
-    return await get_rubric_service(db, group_id)
+    return await get_rubric_service(db, group_id, current_user.organization_id)
 
 @router.put("/rubric/{rubric_id}", response_model=RubricResponse)
 async def update_rubric(
@@ -75,7 +78,12 @@ async def update_rubric(
     """Update a draft rubric (dimensions only)."""
     from sqlmodel import select
     from app.models import LiV2Rubric
-    res = await db.execute(select(LiV2Rubric).where(LiV2Rubric.rubric_id == rubric_id))
+    res = await db.execute(
+        select(LiV2Rubric).where(
+            LiV2Rubric.id == rubric_id,
+            LiV2Rubric.organization_id == current_user.organization_id,
+        )
+    )
     rubric = res.scalar_one_or_none()
     if not rubric:
         raise HTTPException(status_code=404, detail="Rubric not found")
@@ -84,10 +92,14 @@ async def update_rubric(
     updated_in = RubricCreate(
         group_id=rubric.group_id,
         organization_id=rubric.organization_id,
-        dimensions=rubric_in.dimensions or [],
-        time_budget_minutes=rubric.time_budget_minutes,
-        language=rubric.language,
-        include_weak_topics=rubric.include_weak_topics,
+        dimensions=rubric_in.dimensions or rubric.dimensions or [],
+        time_budget_minutes=rubric_in.time_budget_minutes or rubric.time_budget_minutes,
+        language=rubric_in.language or rubric.language,
+        include_weak_topics=(
+            rubric.include_weak_topics
+            if rubric_in.include_weak_topics is None
+            else rubric_in.include_weak_topics
+        ),
     )
     return await create_rubric_service(db, updated_in)
 
@@ -112,7 +124,12 @@ async def update_rubric_settings(
     """
     from sqlmodel import select
     from app.models import LiV2Rubric
-    res = await db.execute(select(LiV2Rubric).where(LiV2Rubric.rubric_id == rubric_id))
+    res = await db.execute(
+        select(LiV2Rubric).where(
+            LiV2Rubric.id == rubric_id,
+            LiV2Rubric.organization_id == current_user.organization_id,
+        )
+    )
     rubric = res.scalar_one_or_none()
     if not rubric:
         raise HTTPException(status_code=404, detail="Rubric not found")
@@ -138,7 +155,7 @@ async def freeze_rubric(
     current_user: CurrentUser
 ):
     """Validate and freeze a rubric (locking it from further edits)."""
-    return await freeze_rubric_service(db, rubric_id)
+    return await freeze_rubric_service(db, rubric_id, current_user.organization_id)
 
 # --- Question Bank Endpoints ---
 
@@ -158,6 +175,9 @@ async def create_bank(
     current_user: CurrentUser
 ):
     """Save a draft question bank for a group."""
+    bank_in = bank_in.model_copy(
+        update={"organization_id": current_user.organization_id}
+    )
     return await create_bank_service(db, bank_in)
 
 @router.get("/bank/group/{group_id}", response_model=BankResponse)
@@ -167,7 +187,7 @@ async def get_bank_by_group(
     current_user: CurrentUser
 ):
     """Retrieve the question bank (draft or frozen) for a group."""
-    return await get_bank_service(db, group_id)
+    return await get_bank_service(db, group_id, current_user.organization_id)
 
 @router.put("/bank/{bank_id}", response_model=BankResponse)
 async def update_bank(
@@ -179,7 +199,12 @@ async def update_bank(
     """Update a draft question bank."""
     from sqlmodel import select
     from app.models import LiV2Bank
-    res = await db.execute(select(LiV2Bank).where(LiV2Bank.bank_id == bank_id))
+    res = await db.execute(
+        select(LiV2Bank).where(
+            LiV2Bank.id == bank_id,
+            LiV2Bank.organization_id == current_user.organization_id,
+        )
+    )
     bank = res.scalar_one_or_none()
     if not bank:
         raise HTTPException(status_code=404, detail="Bank not found")
@@ -198,7 +223,7 @@ async def freeze_bank(
     current_user: CurrentUser
 ):
     """Validate and freeze a question bank."""
-    return await freeze_bank_service(db, bank_id)
+    return await freeze_bank_service(db, bank_id, current_user.organization_id)
 
 
 # --- Candidate Session Endpoints ---
@@ -234,19 +259,35 @@ async def get_session_token(
     4. Dispatch the EraMatch Interviewer agent to the room.
     """
     from sqlmodel import select
-    from app.models import CandidateApplication
+    from app.models import CandidateApplication, CandidateStageProgress, GroupStageConfig
 
-    # CandidateProfile doesn't carry application_id — look it up from the application table
     app_result = await db.execute(
-        select(CandidateApplication).where(
-            CandidateApplication.candidate_id == current_candidate.candidate_id
+        select(CandidateApplication)
+        .join(
+            GroupStageConfig,
+            GroupStageConfig.group_id == CandidateApplication.group_id,
         )
+        .join(
+            CandidateStageProgress,
+            (CandidateStageProgress.application_id == CandidateApplication.id)
+            & (CandidateStageProgress.stage_id == GroupStageConfig.stage_id),
+        )
+        .where(
+            CandidateApplication.candidate_id == current_candidate.candidate_id,
+            CandidateApplication.organization_id == current_candidate.organization_id,
+            CandidateApplication.is_deleted == False,
+            GroupStageConfig.stage_type == "live_interview",
+            GroupStageConfig.state == "active",
+            CandidateStageProgress.status.in_(["unlocked", "in_progress"]),
+        )
+        .order_by(CandidateStageProgress.unlocked_at.desc().nullslast())
+        .limit(1)
     )
     application = app_result.scalars().first()
     if not application:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No application found for this candidate.",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No unlocked live interview stage found for this candidate.",
         )
 
     return await generate_session_token_service(
@@ -311,7 +352,11 @@ async def get_session(
     Recruiter endpoint: fetch session state, transcript, and Judge evaluation.
     Returns evaluation as soon as it is available (may be null if judge is still running).
     """
-    return await get_session_with_evaluation(db=db, session_id=session_id)
+    return await get_session_with_evaluation(
+        db=db,
+        session_id=session_id,
+        organization_id=current_user.organization_id,
+    )
 
 
 @router.get("/group/{group_id}/sessions")
@@ -328,7 +373,10 @@ async def list_group_sessions(
     from app.models import LiV2Session, LiV2Evaluation
 
     sessions_result = await db.execute(
-        select(LiV2Session).where(LiV2Session.group_id == group_id)
+        select(LiV2Session).where(
+            LiV2Session.group_id == group_id,
+            LiV2Session.organization_id == current_user.organization_id,
+        )
         .order_by(LiV2Session.created_at.desc())
     )
     sessions = sessions_result.scalars().all()
@@ -377,7 +425,10 @@ async def monitor_group_sessions(
 
     sessions_result = await db.execute(
         select(LiV2Session)
-        .where(LiV2Session.group_id == group_id)
+        .where(
+            LiV2Session.group_id == group_id,
+            LiV2Session.organization_id == current_user.organization_id,
+        )
         .order_by(LiV2Session.created_at.desc())
     )
     sessions = sessions_result.scalars().all()

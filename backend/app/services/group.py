@@ -24,6 +24,8 @@ from app.models import (
     CandidateStageProgress,
     GroupStageConfig,
     LiV2Evaluation,
+    LiV2Bank,
+    LiV2Rubric,
     OngoingAssessment,
     OngoingInterview,
     OrganizationUser,
@@ -198,28 +200,20 @@ class GroupService:
             return default_cfg.config_id
 
         if stage == "live_interview":
-            cfg_res = await self.session.execute(
-                select(LiveInterviewConfig.id)
+            bank_res = await self.session.execute(
+                select(LiV2Bank)
+                .join(LiV2Rubric, LiV2Bank.rubric_id == LiV2Rubric.id)
                 .where(
-                    LiveInterviewConfig.organization_id == self.org_id,
-                    LiveInterviewConfig.position_id == group.position_id,
+                    LiV2Bank.group_id == group.id,
+                    LiV2Bank.organization_id == self.org_id,
+                    LiV2Bank.state == "frozen",
+                    LiV2Rubric.state == "frozen",
                 )
-                .order_by(LiveInterviewConfig.created_at.desc())
+                .order_by(LiV2Bank.frozen_at.desc().nullslast(), LiV2Bank.created_at.desc())
                 .limit(1)
             )
-            existing_cfg_id = cfg_res.scalars().first()
-            if existing_cfg_id:
-                return existing_cfg_id
-
-            default_live_cfg = LiveInterviewConfig(
-                organization_id=self.org_id,
-                position_id=group.position_id,
-                title="Live Interview",
-                duration_minutes=60,
-            )
-            self.session.add(default_live_cfg)
-            await self.session.flush()
-            return default_live_cfg.id
+            bank = bank_res.scalars().first()
+            return bank.id if bank else None
 
         return None
 
@@ -920,6 +914,7 @@ class GroupService:
         sc_res = await self.session.execute(
             select(GroupStageConfig).where(
                 GroupStageConfig.group_id == group_id,
+                GroupStageConfig.organization_id == self.org_id,
                 GroupStageConfig.stage_type == stage,
             )
         )
@@ -1020,13 +1015,10 @@ class GroupService:
             )
             prog = prog_res.scalars().first()
             if prog:
-                # If it's locked, not started, or 'unlocked' (was pre-created by bulk_progress),
-                # we count it as a "new invitation sent" for this stage launch.
+                # HR starts/unlocks the stage; candidate start moves it to in_progress.
                 if prog.status in ("locked", "not_started", "unlocked"):
-                    prog.status = (
-                        "in_progress"  # Actually move to in_progress when stage starts
-                    )
-                    prog.started_at = datetime.now(timezone.utc)
+                    prog.status = "unlocked"
+                    prog.unlocked_at = datetime.now(timezone.utc)
                     self.session.add(prog)
                     invitations_sent += 1
             else:
@@ -1038,8 +1030,8 @@ class GroupService:
                 new_prog = CandidateStageProgress(
                     application_id=app.id,
                     stage_id=stage_config.stage_id,
-                    status="in_progress",
-                    started_at=datetime.utcnow(),
+                    status="unlocked",
+                    unlocked_at=datetime.utcnow(),
                 )
                 self.session.add(new_prog)
                 invitations_sent += 1

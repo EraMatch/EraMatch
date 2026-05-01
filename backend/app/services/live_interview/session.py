@@ -46,6 +46,18 @@ async def complete_session_service(
     if session.state not in ("pending", "in_progress"):
         raise BadRequestException(f"Cannot complete session in state '{session.state}'")
 
+    if not transcript:
+        logger.warning(
+            "[COMPLETE] session=%s ignored empty transcript completion request",
+            session_id,
+        )
+        return {
+            "status": "ignored_empty_transcript",
+            "session_id": str(session_id),
+            "duration_seconds": session.duration_seconds,
+            "transcript_turns": 0,
+        }
+
     # Compute duration — strip tzinfo to match asyncpg's TIMESTAMP WITHOUT TIME ZONE column
     # (asyncpg returns tz-aware from reads but refuses tz-aware on writes for TIMESTAMP columns)
     started_at = session.started_at or session.created_at
@@ -83,11 +95,16 @@ async def complete_session_service(
     }
 
 
-async def get_session_with_evaluation(db, session_id: UUID) -> dict:
+async def get_session_with_evaluation(
+    db, session_id: UUID, organization_id: UUID | None = None
+) -> dict:
     """
     For the recruiter dashboard: returns session details + evaluation if available.
     """
-    result = await db.execute(select(LiV2Session).where(LiV2Session.id == session_id))
+    filters = [LiV2Session.id == session_id]
+    if organization_id:
+        filters.append(LiV2Session.organization_id == organization_id)
+    result = await db.execute(select(LiV2Session).where(*filters))
     session = result.scalar_one_or_none()
     if not session:
         raise NotFoundException(f"Session {session_id} not found")

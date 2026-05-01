@@ -38,6 +38,9 @@ class RubricCreate(BaseModel):
 
 class RubricUpdate(BaseModel):
     dimensions: Optional[List[RubricDimension]] = None
+    time_budget_minutes: Optional[int] = Field(default=None, ge=5, le=60)
+    language: Optional[str] = None
+    include_weak_topics: Optional[bool] = None
 
 
 class RubricResponse(BaseModel):
@@ -50,7 +53,6 @@ class RubricResponse(BaseModel):
     language: str = "en"
     include_weak_topics: bool = False
     created_at: datetime
-    updated_at: datetime
 
     class Config:
         from_attributes = True
@@ -65,15 +67,27 @@ class SubCriterion(BaseModel):
 
 
 class BankItem(BaseModel):
-    question_id: str = Field(..., description="Unique ID for the question in the bank")
+    question_id: str = Field("", description="Unique ID for the question in the bank")
+    bank_item_id: Optional[str] = Field(
+        None, description="Canonical question ID used by the live agent"
+    )
     dimension_name: str = Field(
-        ..., description="The rubric dimension this question maps to"
+        "", description="The rubric dimension this question maps to"
     )
-    text: str = Field(..., description="The actual question text")
-    intent: str = Field(..., description="The rationale/logic for asking this question")
-    sub_criteria: List[SubCriterion] = Field(
-        ..., description="Per-question scoring rubrics"
+    primary_dimension_id: Optional[str] = Field(
+        None, description="Canonical rubric dimension ID used by the live agent"
     )
+    text: str = Field("", description="The actual question text")
+    intent: str = Field("", description="The rationale/logic for asking this question")
+    sub_criteria: List[Any] = Field(
+        default_factory=list, description="Per-question scoring rubrics"
+    )
+    question_rubric: Optional[Dict[str, Any]] = Field(
+        None, description="Canonical per-question judge rubric"
+    )
+    is_mandatory: bool = True
+    difficulty: Optional[str] = None
+    estimated_duration_seconds: Optional[int] = None
 
 
 class BankCreate(BaseModel):
@@ -93,7 +107,6 @@ class BankResponse(BaseModel):
     items: List[BankItem]
     state: LiV2State
     created_at: datetime
-    updated_at: datetime
 
     class Config:
         from_attributes = True
@@ -174,3 +187,38 @@ class FreezeResponse(BaseModel):
     success: bool
     message: str
     errors: Optional[List[str]] = None
+
+
+# --- Candidate-Scoped Monitoring Schemas ---
+
+
+class CandidateLiV2Evaluation(BaseModel):
+    """Evaluation details visible to the candidate."""
+
+    overall_score_pct: Optional[int] = None
+    auto_verdict: Optional[str] = None
+    meets_criteria: Optional[bool] = None
+    coverage_ratio: Optional[float] = None
+    dimension_scores: Optional[Dict[str, Any]] = None
+    evaluation_confidence: Optional[str] = None
+    judged_at: Optional[datetime] = None
+
+
+class CandidateLiveInterviewResponse(BaseModel):
+    """Response for the candidate's own LiV2 session + evaluation."""
+
+    session_id: Optional[UUID] = None
+    state: Optional[str] = None
+    # pending | in_progress | completed | failed | cancelled
+    transcript: Optional[List[Dict[str, Any]]] = None
+    duration_seconds: Optional[int] = None
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    evaluation: Optional[CandidateLiV2Evaluation] = None
+    position_name: str = ""
+    group_name: str = ""
+    # Extra status hint when evaluation is still running
+    status: Optional[str] = None
+    # e.g. "grading"
+    estimated_time: Optional[str] = None
+    # e.g. "~30 seconds remaining"

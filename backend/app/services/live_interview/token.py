@@ -64,13 +64,41 @@ async def generate_session_token_service(
     """
     # --- 1. Resolve application → group → frozen bank -------------
     app_res = await db.execute(
-        select(CandidateApplication).where(CandidateApplication.id == application_id)
+        select(CandidateApplication).where(
+            CandidateApplication.id == application_id,
+            CandidateApplication.candidate_id == candidate_id,
+            CandidateApplication.organization_id == organization_id,
+        )
     )
     application = app_res.scalar_one_or_none()
     if not application:
         raise NotFoundException("Application not found")
 
     group_id = application.group_id
+    if not group_id:
+        raise BadRequestException("Application is not assigned to a candidate group")
+
+    stage_res = await db.execute(
+        select(GroupStageConfig).where(
+            GroupStageConfig.group_id == group_id,
+            GroupStageConfig.organization_id == organization_id,
+            GroupStageConfig.stage_type == "live_interview",
+            GroupStageConfig.state == "active",
+        )
+    )
+    live_stage = stage_res.scalar_one_or_none()
+    if not live_stage:
+        raise BadRequestException("Live interview stage is not active yet.")
+
+    progress_res = await db.execute(
+        select(CandidateStageProgress).where(
+            CandidateStageProgress.application_id == application_id,
+            CandidateStageProgress.stage_id == live_stage.stage_id,
+        )
+    )
+    stage_progress = progress_res.scalar_one_or_none()
+    if not stage_progress or stage_progress.status not in ("unlocked", "in_progress"):
+        raise BadRequestException("Live interview stage is not unlocked for this candidate.")
 
     # Look up the frozen bank for this group
     bank_res = await db.execute(
@@ -142,52 +170,25 @@ async def generate_session_token_service(
         room_name = session.room_name
         logger.info(f"Reusing LiV2Session {session.id} → room {room_name}")
 
+    if session.state == "pending":
+        session.state = "in_progress"
+        session.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.add(session)
+
     # --- 4b. Update candidate_pipeline_progress → in_progress ----------
     try:
-        stage_res = await db.execute(
-            select(GroupStageConfig).where(
-                GroupStageConfig.group_id == group_id,
-                GroupStageConfig.organization_id == organization_id,
-                GroupStageConfig.stage_type == "live_interview",
-            )
+        stage_progress.status = "in_progress"
+        if not stage_progress.started_at:
+            stage_progress.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        stage_progress.session_id = session.id
+        stage_progress.session_type = "live_interview"
+        db.add(stage_progress)
+        await db.commit()
+        logger.info(
+            "[PROGRESS] app=%s stage=%s status=in_progress",
+            application_id,
+            live_stage.stage_id,
         )
-        stage = stage_res.scalar_one_or_none()
-        if stage:
-            prog_res = await db.execute(
-                select(CandidateStageProgress).where(
-                    CandidateStageProgress.application_id == application_id,
-                    CandidateStageProgress.stage_id == stage.stage_id,
-                )
-            )
-            progress = prog_res.scalar_one_or_none()
-            if progress:
-                progress.status = "in_progress"
-                progress.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                progress.session_id = session.id
-                progress.session_type = "live_interview"
-                db.add(progress)
-            else:
-                progress = CandidateStageProgress(
-                    application_id=application_id,
-                    stage_id=stage.stage_id,
-                    status="in_progress",
-                    session_id=session.id,
-                    session_type="live_interview",
-                    started_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                )
-                db.add(progress)
-            await db.commit()
-            logger.info(
-                "[PROGRESS] app=%s stage=%s status=in_progress",
-                application_id,
-                stage.stage_id,
-            )
-        else:
-            logger.warning(
-                "[PROGRESS] No live_interview stage found for group=%s org=%s",
-                group_id,
-                organization_id,
-            )
     except Exception as e:
         logger.error(
             "[PROGRESS] Failed to update pipeline progress on token issue: %s", e
@@ -349,7 +350,7 @@ async def _get_weak_topics(db, application_id: UUID) -> list[str]:
             OngoingAssessment.application_id == application_id,
             OngoingAssessment.status == "completed",
         )
-        .order_by(OngoingAssessment.created_at.desc())
+        .order_by(OngoingAssessment.submitted_at.desc().nullslast())
         .limit(1)
     )
     assessment_session = sess_res.scalar_one_or_none()
@@ -368,16 +369,17 @@ async def _get_weak_topics(db, application_id: UUID) -> list[str]:
         return []
 
     # Look up question topics for these answers
-    from app.models import Question
+    from app.models import QuestionBank
 
     topic_counts: dict[str, int] = {}
     for ans in wrong_answers:
         q_res = await db.execute(
-            select(Question).where(Question.question_id == ans.question_id)
+            select(QuestionBank).where(QuestionBank.id == ans.question_id)
         )
         q = q_res.scalar_one_or_none()
-        if q and hasattr(q, "topic") and q.topic:
-            topic_counts[q.topic] = topic_counts.get(q.topic, 0) + 1
+        topic = q.category if q else None
+        if topic:
+            topic_counts[topic] = topic_counts.get(topic, 0) + 1
 
     # Return top 3 weakest topics (most wrong answers)
     sorted_topics = sorted(topic_counts, key=lambda t: topic_counts[t], reverse=True)
