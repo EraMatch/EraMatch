@@ -49,3 +49,10 @@ async def init_db() -> None:
         await conn.execute(
             text("ALTER TABLE IF EXISTS cv_analysis ADD COLUMN IF NOT EXISTS github_profile JSONB")
         )
+
+        await conn.execute(
+            text("ALTER TABLE IF EXISTS li_v2_rubrics ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
+        )
+        await conn.execute(
+            text("ALTER TABLE IF EXISTS li_v2_banks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
+        )
