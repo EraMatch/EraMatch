@@ -16,7 +16,7 @@ SAMPLE_DIMENSIONS = [
     {
         "dimension_id": "d3000001-0000-0000-0000-000000000001",
         "name": "Technical Knowledge",
-        "weight": 0.4,
+        "weight": 40,
         "anchors": {
             "substandard": "Cannot explain basic concepts",
             "proficient": "Explains concepts clearly with examples",
@@ -26,7 +26,7 @@ SAMPLE_DIMENSIONS = [
     {
         "dimension_id": "d3000002-0000-0000-0000-000000000002",
         "name": "Communication",
-        "weight": 0.3,
+        "weight": 30,
         "anchors": {
             "substandard": "Unclear, disorganized responses",
             "proficient": "Clear and organized communication",
@@ -36,7 +36,7 @@ SAMPLE_DIMENSIONS = [
     {
         "dimension_id": "d3000003-0000-0000-0000-000000000003",
         "name": "Problem Solving",
-        "weight": 0.3,
+        "weight": 30,
         "anchors": {
             "substandard": "Cannot solve basic problems",
             "proficient": "Methodical approach to problem-solving",
