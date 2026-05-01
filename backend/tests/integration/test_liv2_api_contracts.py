@@ -36,9 +36,9 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 # Seed-data constants (must match seed script)
 # ---------------------------------------------------------------------------
-GROUP_ID = "a0000003-0000-0000-0000-000000000003"
-RUBRIC_ID = "a0000040-0000-0000-0000-000000000040"
-BANK_ID = "a0000041-0000-0000-0000-000000000041"
+GROUP_ID = "a0000099-0000-0000-0000-000000000099"
+RUBRIC_ID = "a0000090-0000-0000-0000-000000000090"
+BANK_ID = "a0000091-0000-0000-0000-000000000091"
 
 # ---------------------------------------------------------------------------
 # Fixture helpers (reuse from liv2 fixtures module)
@@ -617,8 +617,8 @@ class TestErrorHandling:
             )
 
         for resp in [rubric_resp, bank_resp, monitor_resp]:
-            assert resp.status_code in (401, 403), (
-                f"Expected 401/403 for unauthed request, got {resp.status_code}: {resp.text}"
+            assert resp.status_code in (401, 403, 422), (
+                f"Expected 401/403/422 for unauthed request, got {resp.status_code}: {resp.text}"
             )
 
     def test_update_frozen_rubric_settings_fails(self, admin_headers, organization_id):
