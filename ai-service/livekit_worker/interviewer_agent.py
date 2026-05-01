@@ -16,6 +16,8 @@ Context injection:
   - Language → TTS voice and prompt language instruction
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -98,20 +100,23 @@ def _build_pillars_from_bank(bank_items: list[dict]) -> list[PillarState]:
     for item in ordered:
         sub_criteria = []
         rubric = item.get("question_rubric") or {}
-        sub_criteria = rubric.get("sub_criteria", [])
+        sub_criteria = rubric.get("sub_criteria", []) or item.get("sub_criteria", [])
         if (
             isinstance(sub_criteria, list)
             and sub_criteria
             and isinstance(sub_criteria[0], dict)
         ):
             # handle {"text": ..., "weight": ...} format
-            sub_criteria = [s.get("text", str(s)) for s in sub_criteria]
+            sub_criteria = [
+                s.get("text") or s.get("name") or s.get("description") or str(s)
+                for s in sub_criteria
+            ]
 
         pillars.append(
             PillarState(
                 bank_item_id=item.get("bank_item_id", ""),
                 question_text=item.get("text", ""),
-                dimension_name=item.get("primary_dimension_id", ""),
+                dimension_name=item.get("dimension_name") or item.get("primary_dimension_id", ""),
                 sub_criteria=sub_criteria or ["Demonstrate knowledge of the topic"],
             )
         )
@@ -324,6 +329,8 @@ class InterviewerAgent(Agent):
         self.pillars: list[PillarState] = []
         self.current_pillar_idx: int = 0
         self.phase: str = "welcome"  # welcome | topic | probe | closing | done
+        self.asked_pillar_indices: set[int] = set()
+        self.control_trace: list[dict] = []
 
         # Time tracking
         self.session_start_time: float = 0.0
@@ -391,23 +398,16 @@ class InterviewerAgent(Agent):
                 "You've seen the candidate's profile. "
                 "Greet them naturally by name only — no mention of their CV. "
             )
-        opening_reply = await self.session.generate_reply(
+        await self._generate_and_record(
             instructions=(
                 f"Welcome {self.candidate_name} warmly to the EraMatch live interview. "
                 f"{cv_mention}"
                 "Tell them the interview will feel like a natural conversation. "
                 "Briefly explain how it works (you ask, they answer, natural back-and-forth). "
                 "Then ask them to introduce themselves."
-            )
-        )
-        self.transcript.append(
-            {
-                "role": "agent",
-                "text": opening_reply.content or "",
-                "pillar_idx": None,
-                "phase": "welcome",
-                "elapsed_seconds": 0,
-            }
+            ),
+            pillar_idx=None,
+            phase="welcome",
         )
         self.phase = "topic"
 
@@ -517,10 +517,25 @@ class InterviewerAgent(Agent):
 
         pillar = self.pillars[self.current_pillar_idx]
 
+        if self.current_pillar_idx not in self.asked_pillar_indices:
+            self.asked_pillar_indices.add(self.current_pillar_idx)
+            self._record_control(
+                action="ask_core_question",
+                pillar=pillar,
+                reason="candidate_intro_complete",
+            )
+            await self._generate_and_record(
+                instructions=_topic_intro_prompt(pillar),
+                pillar_idx=self.current_pillar_idx,
+                phase="topic",
+            )
+            return
+
         # --- Inline coverage check (non-spoken, fast Qwen3.5) ------------
         coverage = await _check_coverage(candidate_utterance, pillar.sub_criteria)
         pillar.covered.update(coverage.get("covered", []))
         pillar.partial.update(coverage.get("partial", []))
+        self.transcript[-1]["coverage"] = coverage
         logger.info(
             f"[{self.session_id}] Pillar {self.current_pillar_idx} coverage: "
             f"covered={len(pillar.covered)}/{len(pillar.sub_criteria)} "
@@ -538,18 +553,93 @@ class InterviewerAgent(Agent):
             # Advance to next pillar
             self.current_pillar_idx += 1
             if self.current_pillar_idx >= len(self.pillars):
+                self._record_control(
+                    action="close",
+                    pillar=pillar,
+                    reason="all_pillars_complete",
+                    coverage=coverage,
+                )
                 await self._close(self.session)
             else:
                 next_pillar = self.pillars[self.current_pillar_idx]
-                await self.session.generate_reply(
-                    instructions=_bridge_prompt(next_pillar)
+                self.asked_pillar_indices.add(self.current_pillar_idx)
+                self._record_control(
+                    action="advance",
+                    pillar=next_pillar,
+                    reason="time_budget" if advance_due_to_time else "criteria_covered_or_probe_limit",
+                    coverage=coverage,
+                )
+                await self._generate_and_record(
+                    instructions=_bridge_prompt(next_pillar),
+                    pillar_idx=self.current_pillar_idx,
+                    phase="topic",
                 )
                 self.phase = "topic"
         else:
             # Ask a follow-up probe
             pillar.probe_count += 1
-            await self.session.generate_reply(instructions=_probe_prompt(pillar))
+            self._record_control(
+                action="probe",
+                pillar=pillar,
+                reason="missing_required_evidence",
+                coverage=coverage,
+            )
+            await self._generate_and_record(
+                instructions=_probe_prompt(pillar),
+                pillar_idx=self.current_pillar_idx,
+                phase="probe",
+            )
             self.phase = "probe"
+
+        try:
+            self.session.userdata["control_trace"] = self.control_trace
+        except ValueError:
+            pass
+
+    def _record_control(
+        self,
+        action: str,
+        pillar: PillarState,
+        reason: str,
+        coverage: dict | None = None,
+    ) -> None:
+        event = {
+            "action": action,
+            "reason": reason,
+            "pillar_idx": self.current_pillar_idx,
+            "dimension_name": pillar.dimension_name,
+            "missing": pillar.missing,
+            "covered": sorted(pillar.covered),
+            "partial": sorted(pillar.partial),
+            "probe_count": pillar.probe_count,
+            "elapsed_seconds": round(self._elapsed()),
+        }
+        if coverage is not None:
+            event["coverage_result"] = coverage
+        self.control_trace.append(event)
+        if self.transcript:
+            self.transcript[-1].setdefault("control_trace", []).append(event)
+
+    async def _generate_and_record(
+        self,
+        instructions: str,
+        pillar_idx: int | None,
+        phase: str,
+    ) -> None:
+        reply = await self.session.generate_reply(instructions=instructions)
+        self.transcript.append(
+            {
+                "role": "agent",
+                "text": reply.content or "",
+                "pillar_idx": pillar_idx,
+                "phase": phase,
+                "elapsed_seconds": round(self._elapsed()),
+            }
+        )
+        try:
+            self.session.userdata["transcript"] = self.transcript
+        except ValueError:
+            pass
 
     async def _close(
         self, session: AgentSession, forced: bool = False, remaining_pillars: int = 0
@@ -557,14 +647,18 @@ class InterviewerAgent(Agent):
         """Generate closing statement and signal the backend."""
         self.phase = "closing"
         if forced and remaining_pillars > 0:
-            await session.generate_reply(
+            await self._generate_and_record(
                 instructions=_time_warning_closing_prompt(
                     self.candidate_name, remaining_pillars
-                )
+                ),
+                pillar_idx=None,
+                phase="closing",
             )
         else:
-            await session.generate_reply(
-                instructions=_closing_prompt(self.candidate_name)
+            await self._generate_and_record(
+                instructions=_closing_prompt(self.candidate_name),
+                pillar_idx=None,
+                phase="closing",
             )
         self.phase = "done"
         logger.info(
@@ -590,6 +684,7 @@ class InterviewerAgent(Agent):
         # Phase 4: persist transcript for the Judge Agent via session userdata
         try:
             session.userdata["transcript"] = self.transcript
+            session.userdata["control_trace"] = self.control_trace
             session.userdata["session_complete"] = True
             session.userdata["transcript_valid"] = is_clean
             if not is_clean:
