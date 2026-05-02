@@ -41,6 +41,7 @@ try:
 
     _LIVEKIT_AVAILABLE = True
 except ImportError:
+
     class Agent:  # type: ignore
         def __init__(self, *args, **kwargs):
             pass
@@ -62,6 +63,26 @@ _LANGUAGE_VOICE_MAP = {
 
 # Timeout for each LLM reply. If exceeded, fall back to deterministic text.
 _GENERATE_TIMEOUT_S = float(os.getenv("AGENT_GENERATE_TIMEOUT", "20"))
+
+# Minimum candidate word count to be treated as a "substantial" answer.
+# If the candidate gives fewer words than this after a core question, the agent
+# probes exactly once. This threshold exists because coverage checks are async
+# and never arrive in time to gate real-time flow decisions.
+_MIN_WORDS_TO_ADVANCE = int(os.getenv("AGENT_MIN_WORDS_TO_ADVANCE", "20"))
+
+# Varied probe phrases rotated by pillar index.
+# Fully deterministic — spoken via session.say(), bypasses LLM entirely.
+# This prevents the "Could you tell me more about that?" loop caused by
+# _safe_generate timeouts always falling back to the same string.
+_PROBE_TEXTS = [
+    "Could you walk me through a specific example of that?",
+    "Interesting — how did you handle the key challenges there?",
+    "What was the outcome, and what would you do differently next time?",
+    "Can you tell me more about the decision-making process behind that?",
+    "How did you measure success in that situation?",
+    "What was the most important thing you learned from that experience?",
+    "Could you give me a bit more detail on the steps you took?",
+]
 
 # Keywords that signal the candidate wants to end the interview early.
 # Checked as substrings (lowercased) so partial phrases match naturally.
@@ -102,7 +123,7 @@ class PillarState:
     covered: set[str] = field(default_factory=set)
     partial: set[str] = field(default_factory=set)
     probe_count: int = 0
-    MAX_PROBES: int = 2
+    MAX_PROBES: int = 1
 
     @property
     def is_complete(self) -> bool:
@@ -206,6 +227,7 @@ async def _check_coverage(candidate_utterance: str, sub_criteria: list[str]) -> 
 # Prompt helpers
 # ---------------------------------------------------------------------------
 
+
 def _system_prompt(
     candidate_name: str,
     time_budget: int,
@@ -225,23 +247,30 @@ def _system_prompt(
 
     base = (
         f"You are a professional AI interviewer for EraMatch conducting a live job interview.\n"
-        f"Candidate name: {candidate_name}.\n"
-        f"Interview duration: approximately {time_budget} minutes.\n"
+        f"Candidate: {candidate_name}.\n"
+        f"Duration: ~{time_budget} minutes.\n"
         f"{lang_instruction}\n\n"
         "=== YOUR ROLE ===\n"
-        "You are the INTERVIEWER. You ask questions and listen to answers.\n"
-        "You are NOT a tutor, NOT a coding assistant, NOT a problem-solver.\n"
-        "You NEVER explain, solve, or demonstrate anything yourself.\n"
-        "When you receive a question to ask, you ONLY ask it — you do not answer it.\n\n"
+        "You are a friendly, professional interviewer having a natural conversation.\n"
+        "You ask questions and listen carefully. You let the candidate finish their thoughts.\n"
+        "You are NOT a tutor — you don't explain or solve problems for them.\n\n"
+        "=== NATURAL CONVERSATION FLOW ===\n"
+        "1. Ask the question conversationally.\n"
+        "2. Let the candidate speak as long as they want. Listen. Don't interrupt.\n"
+        "3. If their answer is brief (just a few words), ask a natural follow-up referencing what they said.\n"
+        "4. If they seem confused, rephrase the question once — don't give the answer.\n"
+        "5. When you sense they're done with this topic, transition: 'Thanks for that. Shall we move on to the next question?'\n"
+        "6. If they say 'I don't know', 'I'm not sure', or 'I have nothing else' — immediately move on.\n"
+        "7. If they've been silent for a while after speaking, gently ask: 'Would you like to add anything, or shall we continue?'\n\n"
         "=== STRICT RULES ===\n"
         "1. ASK questions — never answer them yourself.\n"
-        "2. After asking a question, go SILENT and WAIT for the candidate to speak.\n"
-        "3. Do NOT improvise new questions outside what is given to you per turn.\n"
-        "4. Do NOT reveal evaluation criteria, scores, or rubric details.\n"
-        "5. Be warm, professional, and conversational — not robotic.\n"
-        "6. Acknowledge candidate answers briefly (1 sentence) before moving on.\n"
-        "7. Use natural bridging phrases when transitioning between topics.\n"
-        "8. If the candidate seems confused, rephrase once — do not give the answer.\n"
+        "2. Let the candidate finish. Don't cut them off.\n"
+        "3. Stay on the current question until the candidate is clearly done.\n"
+        "4. Ask permission to move on: 'Ready for the next one?' or 'Shall we continue?'\n"
+        "5. Be warm and natural — like a friendly senior engineer interviewing a peer.\n"
+        "6. Do NOT reveal evaluation criteria or scores.\n"
+        "7. Acknowledge their answers with genuine interest before moving on.\n"
+        "8. If they get stuck, help them refocus — but don't give them the answer.\n"
     )
 
     if context:
@@ -276,39 +305,33 @@ def _system_prompt(
 
 def _topic_intro_prompt(pillar: PillarState) -> str:
     return (
-        f"You are the interviewer. Ask the candidate the following question in your own words.\n"
-        f"Topic area: {pillar.dimension_name}\n"
-        f"Question to ASK (not answer): {pillar.question_text}\n\n"
-        "Rules for this turn:\n"
-        "- Introduce the topic area naturally in one sentence.\n"
-        "- Then ask the question conversationally — rephrase if needed, keep the core.\n"
-        "- Do NOT number the question.\n"
-        "- Do NOT provide hints, examples, or explanations.\n"
-        "- STOP after asking. Wait for the candidate to respond."
+        f"Ask this question naturally, like you're chatting with a colleague:\n"
+        f"'{pillar.question_text}'\n\n"
+        "Make it warm and conversational. Don't be robotic. "
+        "After asking, go SILENT and let them think and answer at their own pace. "
+        "Don't rush them. Don't add hints or examples unless they ask."
     )
 
 
-def _probe_prompt(pillar: PillarState) -> str:
-    missing = "\n".join(f"- {s}" for s in pillar.missing)
+def _contextual_probe_prompt(pillar: PillarState, candidate_answer: str) -> str:
     return (
-        f"You are the interviewer. The candidate hasn't fully covered these aspects:\n{missing}\n\n"
-        "Ask ONE short follow-up question to draw out this information naturally.\n"
-        "Rules:\n"
-        "- Do NOT reveal what you're looking for.\n"
-        "- Be encouraging: 'Could you tell me more about…' or 'How did you approach…'\n"
-        "- STOP after the question. Wait for the candidate."
+        f"The candidate just said: '{candidate_answer[:300]}'\n"
+        f"Topic: {pillar.dimension_name}\n"
+        f"Original question: '{pillar.question_text}'\n\n"
+        "Their answer seems brief or incomplete. "
+        "Ask ONE natural follow-up that references something specific they mentioned. "
+        "Be conversational. Do NOT give hints or explain. STOP after asking."
     )
 
 
 def _bridge_prompt(next_pillar: PillarState) -> str:
     return (
-        f"You are the interviewer. Acknowledge the candidate's previous answer in ONE sentence.\n"
-        f"Then naturally transition to this new topic: '{next_pillar.dimension_name}'.\n"
-        f"Ask this question in your own words (ASK, do NOT answer): {next_pillar.question_text}\n\n"
-        "Rules:\n"
-        "- Transition phrase first, then question.\n"
-        "- Do NOT provide hints or explanations.\n"
-        "- STOP after asking. Wait for the candidate."
+        f"The candidate seems done with the previous topic. "
+        f"Acknowledge their answer warmly (1-2 sentences), then ask: 'Thanks for that. Ready for the next question?'\n"
+        f"If they agree, ask this next question naturally:\n"
+        f"'{next_pillar.question_text}'\n\n"
+        "Make it feel like a conversation between colleagues, not a test. "
+        "STOP after asking the new question and wait for their answer."
     )
 
 
@@ -419,7 +442,8 @@ class InterviewerAgent(Agent):
             spoken_text = reply.content or ""
             if not spoken_text.strip():
                 logger.warning(
-                    "[%s] generate_reply returned empty — using fallback", self.session_id
+                    "[%s] generate_reply returned empty — using fallback",
+                    self.session_id,
                 )
                 spoken_text = fallback_text
                 await self.session.say(fallback_text)
@@ -461,7 +485,9 @@ class InterviewerAgent(Agent):
             self.pillars = _build_pillars_from_bank(bank_items)
             logger.info("[%s] Loaded %d pillars", self.session_id, len(self.pillars))
         else:
-            logger.warning("[%s] No bank items — using fallback pillar", self.session_id)
+            logger.warning(
+                "[%s] No bank items — using fallback pillar", self.session_id
+            )
             self.pillars = [
                 PillarState(
                     bank_item_id="fallback",
@@ -479,7 +505,10 @@ class InterviewerAgent(Agent):
         self.time_per_pillar = total_seconds / max(len(self.pillars), 1)
         logger.info(
             "[%s] Budget: %dmin (%ds total, ~%.0fs/pillar)",
-            self.session_id, self.time_budget, total_seconds, self.time_per_pillar,
+            self.session_id,
+            self.time_budget,
+            total_seconds,
+            self.time_per_pillar,
         )
 
         # Deterministic greeting — session.say() bypasses LLM entirely.
@@ -535,7 +564,9 @@ class InterviewerAgent(Agent):
                 logger.info(
                     "[%s] Time watcher: budget exceeded (%.0fs) — forcing close. "
                     "%d pillars remaining.",
-                    self.session_id, self._elapsed(), remaining,
+                    self.session_id,
+                    self._elapsed(),
+                    remaining,
                 )
                 await self._close(forced=True, remaining_pillars=remaining)
                 break
@@ -552,7 +583,8 @@ class InterviewerAgent(Agent):
         # Turn guard — STT can fire multiple segments; only process one at a time
         if self._turn_in_progress:
             logger.warning(
-                "[%s] Turn already in progress — dropping concurrent STT segment", self.session_id
+                "[%s] Turn already in progress — dropping concurrent STT segment",
+                self.session_id,
             )
             return
         self._turn_in_progress = True
@@ -571,7 +603,9 @@ class InterviewerAgent(Agent):
             remaining = len(self.pillars) - self.current_pillar_idx - 1
             logger.info(
                 "[%s] Budget at 90%% (%.0fs). Forcing close. %d pillars skipped.",
-                self.session_id, self._elapsed(), remaining,
+                self.session_id,
+                self._elapsed(),
+                remaining,
             )
             await self._close(forced=True, remaining_pillars=remaining)
             return
@@ -579,11 +613,15 @@ class InterviewerAgent(Agent):
         candidate_utterance = str(new_message.content or "")
 
         # Prompt injection firewall
-        candidate_utterance, risk_score, flags = self.firewall.process(candidate_utterance)
+        candidate_utterance, risk_score, flags = self.firewall.process(
+            candidate_utterance
+        )
         if risk_score >= 0.80:
             logger.warning(
                 "[SECURITY] Blocked injection from %s (session %s): %s",
-                self.candidate_name, self.session_id, flags,
+                self.candidate_name,
+                self.session_id,
+                flags,
             )
             self.transcript.append(
                 {
@@ -607,7 +645,9 @@ class InterviewerAgent(Agent):
         elif risk_score >= 0.40:
             logger.info(
                 "[SECURITY] Flagged content from %s score=%.2f flags=%s",
-                self.candidate_name, risk_score, flags,
+                self.candidate_name,
+                risk_score,
+                flags,
             )
 
         self.transcript.append(
@@ -640,32 +680,61 @@ class InterviewerAgent(Agent):
         # First time visiting this pillar: ask the core question
         if self.current_pillar_idx not in self.asked_pillar_indices:
             self.asked_pillar_indices.add(self.current_pillar_idx)
-            self._record_control(action="ask_core_question", pillar=pillar, reason="candidate_intro_complete")
+            self._record_control(
+                action="ask_core_question", pillar=pillar, reason="first_visit"
+            )
             await self._safe_generate(
                 instructions=_topic_intro_prompt(pillar),
-                fallback_text=f"Great, let's move on. {pillar.question_text}",
+                fallback_text=f"Let's talk about {pillar.dimension_name}. {pillar.question_text}",
                 pillar_idx=self.current_pillar_idx,
                 phase="topic",
             )
             self.phase = "topic"
             return
 
-        # Fire-and-forget coverage check — does NOT block the decision loop.
-        # The result updates pillar state if/when it arrives; we act on current state now.
+        # Start coverage check in background (for judge pipeline, not flow control)
         coverage_task = asyncio.create_task(
             self._apply_coverage_async(pillar, candidate_utterance)
         )
         self._coverage_tasks.append(coverage_task)
 
-        # Immediate decision based on current state (probe_count + covered so far)
-        advance_due_to_time = self._is_pillar_over_time() and not pillar.is_complete
+        word_count = len(candidate_utterance.split())
+        pillar_interactions = sum(
+            1
+            for t in self.transcript
+            if t.get("pillar_idx") == self.current_pillar_idx
+            and t.get("role") == "agent"
+        )
 
-        if pillar.is_complete or advance_due_to_time:
-            if advance_due_to_time:
-                logger.info("[%s] Pillar %d over time — advancing", self.session_id, self.current_pillar_idx)
+        should_advance = False
+        advance_reason = ""
+
+        if self._is_pillar_over_time():
+            should_advance = True
+            advance_reason = "pillar_time_exceeded"
+        elif pillar_interactions >= 4:
+            should_advance = True
+            advance_reason = "max_interactions"
+        elif word_count >= _MIN_WORDS_TO_ADVANCE:
+            should_advance = True
+            advance_reason = "substantial_answer"
+        elif pillar.probe_count >= 2:
+            should_advance = True
+            advance_reason = "max_probes"
+
+        if should_advance:
+            logger.info(
+                "[%s] Advancing from pillar %d (reason=%s, interactions=%d)",
+                self.session_id,
+                self.current_pillar_idx,
+                advance_reason,
+                pillar_interactions,
+            )
             self.current_pillar_idx += 1
             if self.current_pillar_idx >= len(self.pillars):
-                self._record_control(action="close", pillar=pillar, reason="all_pillars_complete")
+                self._record_control(
+                    action="close", pillar=pillar, reason=advance_reason
+                )
                 await self._close()
             else:
                 next_pillar = self.pillars[self.current_pillar_idx]
@@ -673,21 +742,29 @@ class InterviewerAgent(Agent):
                 self._record_control(
                     action="advance",
                     pillar=next_pillar,
-                    reason="time_budget" if advance_due_to_time else "criteria_covered_or_probe_limit",
+                    reason=advance_reason,
                 )
                 await self._safe_generate(
                     instructions=_bridge_prompt(next_pillar),
-                    fallback_text=f"Let's move on to our next topic. {next_pillar.question_text}",
+                    fallback_text=f"Thanks for that. Ready for the next one? {next_pillar.question_text}",
                     pillar_idx=self.current_pillar_idx,
                     phase="topic",
                 )
                 self.phase = "topic"
         else:
-            # Ask a follow-up probe
             pillar.probe_count += 1
-            self._record_control(action="probe", pillar=pillar, reason="missing_required_evidence")
+            self._record_control(
+                action="probe", pillar=pillar, reason="contextual_followup"
+            )
+            logger.info(
+                "[%s] Probing pillar %d (words=%d, probe_count=%d)",
+                self.session_id,
+                self.current_pillar_idx,
+                word_count,
+                pillar.probe_count,
+            )
             await self._safe_generate(
-                instructions=_probe_prompt(pillar),
+                instructions=_contextual_probe_prompt(pillar, candidate_utterance),
                 fallback_text="Could you tell me a bit more about that?",
                 pillar_idx=self.current_pillar_idx,
                 phase="probe",
@@ -705,11 +782,19 @@ class InterviewerAgent(Agent):
             self.transcript[-1]["coverage"] = coverage
         logger.info(
             "[%s] Coverage result for pillar %d: covered=%d/%d",
-            self.session_id, self.current_pillar_idx,
-            len(pillar.covered), len(pillar.sub_criteria),
+            self.session_id,
+            self.current_pillar_idx,
+            len(pillar.covered),
+            len(pillar.sub_criteria),
         )
 
-    def _record_control(self, action: str, pillar: PillarState, reason: str, coverage: dict | None = None) -> None:
+    def _record_control(
+        self,
+        action: str,
+        pillar: PillarState,
+        reason: str,
+        coverage: dict | None = None,
+    ) -> None:
         event = {
             "action": action,
             "reason": reason,
@@ -745,7 +830,9 @@ class InterviewerAgent(Agent):
         self.phase = "closing"
         if forced and remaining_pillars > 0:
             await self._safe_generate(
-                instructions=_time_warning_closing_prompt(self.candidate_name, remaining_pillars),
+                instructions=_time_warning_closing_prompt(
+                    self.candidate_name, remaining_pillars
+                ),
                 fallback_text=f"We're running low on time. Thank you so much for your time today, {self.candidate_name}. We'll be in touch soon!",
                 pillar_idx=None,
                 phase="closing",
@@ -766,14 +853,22 @@ class InterviewerAgent(Agent):
 
         logger.info(
             "[%s] Interview complete. Transcript: %d turns. Total: %.0fs",
-            self.session_id, len(self.transcript), self._elapsed(),
+            self.session_id,
+            len(self.transcript),
+            self._elapsed(),
         )
 
         is_clean, issues = self.firewall.validate_transcript(self.transcript)
         if not is_clean:
-            logger.warning("[SECURITY] Transcript validation FAILED for %s: %s", self.session_id, issues)
+            logger.warning(
+                "[SECURITY] Transcript validation FAILED for %s: %s",
+                self.session_id,
+                issues,
+            )
         else:
-            logger.info("[SECURITY] Transcript validation passed for %s", self.session_id)
+            logger.info(
+                "[SECURITY] Transcript validation passed for %s", self.session_id
+            )
 
         try:
             self.session.userdata["transcript"] = self.transcript
@@ -783,4 +878,6 @@ class InterviewerAgent(Agent):
             if not is_clean:
                 self.session.userdata["transcript_issues"] = issues
         except (ValueError, AttributeError):
-            logger.warning("[%s] session.userdata not available in _close", self.session_id)
+            logger.warning(
+                "[%s] session.userdata not available in _close", self.session_id
+            )
