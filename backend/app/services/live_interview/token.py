@@ -130,10 +130,16 @@ async def generate_session_token_service(
 
     # --- 2. Look up candidate name & profile -----------------------
     cand_res = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.candidate_id == candidate_id)
+        select(CandidateProfile).where(CandidateProfile.id == candidate_id)
     )
     candidate = cand_res.scalar_one_or_none()
     candidate_name = candidate.full_name if candidate else "Candidate"
+    logger.info(
+        "[TOKEN] candidate_id=%s name=%s found=%s",
+        candidate_id,
+        candidate_name,
+        candidate is not None,
+    )
 
     # --- 3. Build context payload ----------------------------------
     context_payload = await _build_context_payload(
