@@ -241,15 +241,20 @@ class TestRecentAssignments:
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
 
     def test_recent_assignments_is_list(self, client):
-        """Recent assignments response is a list (can be empty)."""
+        """Recent assignments response exposes an assignments list (can be empty)."""
         resp = client.get("/delegation/recent")
         data = resp.json()
-        assert isinstance(data, list), f"Expected list, got {type(data)}: {data}"
+        assert isinstance(data, dict), f"Expected dict, got {type(data)}: {data}"
+        assert "assignments" in data, f"Missing assignments key: {data}"
+        assert isinstance(data["assignments"], list), (
+            f"Expected assignments list, got {type(data['assignments'])}: {data}"
+        )
 
     def test_recent_assignments_have_required_fields(self, client):
         """Each recent assignment entry has action/position info and a timestamp."""
         resp = client.get("/delegation/recent")
-        assignments = resp.json()
+        data = resp.json()
+        assignments = data.get("assignments", []) if isinstance(data, dict) else data
         for entry in assignments:
             # Must have some form of temporal info and position reference
             has_time = any(k in entry for k in ["timestamp", "created_at", "changedAt", "changed_at"])
