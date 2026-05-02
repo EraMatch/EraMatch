@@ -36,6 +36,7 @@ interface LiveInterviewRoomProps {
     serverUrl: string;
     roomName: string;
     sessionId: string;
+    timeBudgetMinutes?: number;
     onComplete: () => void;
     onExit: () => void;
 }
@@ -43,7 +44,7 @@ interface LiveInterviewRoomProps {
 // ---------------------------------------------------------------------------
 // Inner room UI — rendered after LiveKitRoom context is available
 // ---------------------------------------------------------------------------
-function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComplete: () => void; onExit: () => void }) {
+function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionId: string; timeBudgetMinutes?: number; onComplete: () => void; onExit: () => void }) {
     const room = useRoomContext();
     const { localParticipant } = useLocalParticipant();
     const remoteParticipants = useRemoteParticipants();
@@ -70,7 +71,13 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
 
     // Timer state
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
-    const [timeBudgetMin, setTimeBudgetMin] = useState(30);
+    const [timeBudgetMin, setTimeBudgetMin] = useState(timeBudgetMinutes || 10);
+
+    useEffect(() => {
+        if (timeBudgetMinutes && timeBudgetMinutes > 0) {
+            setTimeBudgetMin(timeBudgetMinutes);
+        }
+    }, [timeBudgetMinutes]);
 
     // useEffect for timer
     useEffect(() => {
@@ -91,25 +98,22 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
         setIsConnected(room.state === 'connected');
     }, [room.state]);
 
-    // Agent-join timeout: if no remote participant joins within 30s, show error
-    useEffect(() => {
-        // Only start the timer once the room itself is connected
-        if (!isConnected) return;
+    const isAgentConnected = remoteParticipants.length > 0;
+    const showAgentLoading = isConnected && !isAgentConnected && !agentTimeout;
 
-        // If an agent has already joined, clear any timeout state and skip
+    // Agent-join timeout: if no remote participant joins within 60s, show error
+    useEffect(() => {
+        if (!isConnected) return;
         if (remoteParticipants.length > 0) {
             setAgentTimeout(false);
             return;
         }
-
         const timer = setTimeout(() => {
-            // Double-check: still no remote participant after 30s
             if (remoteParticipants.length === 0) {
-                console.warn('[AGENT-TIMEOUT] No remote participant joined within 30s');
+                console.warn('[AGENT-TIMEOUT] No remote participant joined within 60s');
                 setAgentTimeout(true);
             }
-        }, 30_000);
-
+        }, 60_000);
         return () => clearTimeout(timer);
     }, [isConnected, remoteParticipants.length]);
 
@@ -243,6 +247,24 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
                 </div>
             )}
 
+            {showAgentLoading && (
+                <div className="absolute inset-0 z-40 bg-white/95 backdrop-blur-sm flex items-center justify-center rounded-xl">
+                    <div className="max-w-md w-full mx-4 bg-white rounded-2xl shadow-lg border border-gray-200 p-8 text-center space-y-6">
+                        <div className="w-16 h-16 rounded-full flex items-center justify-center bg-indigo-50 mx-auto">
+                            <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+                        </div>
+                        <div className="space-y-2">
+                            <h3 className="text-lg font-semibold text-gray-800">Connecting to AI Interviewer</h3>
+                            <p className="text-sm text-gray-500">Please wait while we connect you with the AI interviewer. This usually takes a few moments.</p>
+                        </div>
+                        <div className="flex items-center justify-center gap-2 text-indigo-500 text-xs font-medium">
+                            <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
+                            Establishing secure connection...
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 md:px-6 md:py-4 border-b border-gray-100 bg-white shadow-sm z-10 relative flex-wrap gap-2">
                 <div className="w-full md:w-auto order-first md:order-last flex justify-center md:justify-end">
@@ -306,6 +328,13 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
                 <div className={`relative rounded-2xl md:rounded-3xl flex flex-col items-center justify-between p-4 md:p-8 border border-gray-200 shadow-md transition-colors duration-1000 overflow-hidden h-[45vh] md:h-full md:max-h-[70vh] ${aiPanelBgClass}`}>
                     
                     <div className="w-full flex-1 overflow-y-auto mb-4 md:mb-6 pr-2 space-y-3 md:space-y-4 scrollbar-thin scrollbar-thumb-gray-200">
+                        {agentState === 'speaking' && activeAIText && (
+                            <div className="flex justify-start">
+                                <div className="max-w-[85%] px-3 py-2 md:px-4 md:py-2.5 rounded-xl md:rounded-2xl text-[11px] md:text-sm bg-indigo-50 border border-indigo-200 text-indigo-800 shadow-sm rounded-tl-sm animate-pulse">
+                                    {activeAIText}
+                                </div>
+                            </div>
+                        )}
                         {transcript.map((msg, idx) => (
                             <div key={idx} className={`flex ${msg.role === 'ai' ? 'justify-start' : 'justify-end'}`}>
                                 <div className={`max-w-[85%] px-3 py-2 md:px-4 md:py-2.5 rounded-xl md:rounded-2xl text-[11px] md:text-sm ${msg.role === 'ai' ? 'bg-white border border-indigo-100 text-gray-700 shadow-sm rounded-tl-sm' : 'bg-indigo-50 text-indigo-900 border border-indigo-100 rounded-tr-sm'}`}>
@@ -410,7 +439,7 @@ function RoomUI({ sessionId, onComplete, onExit }: { sessionId: string; onComple
 // Exported component — wraps LiveKitRoom context then renders RoomUI
 // ---------------------------------------------------------------------------
 export function LiveInterviewRoom({
-    token, serverUrl, roomName, sessionId, onComplete, onExit,
+    token, serverUrl, roomName, sessionId, timeBudgetMinutes, onComplete, onExit,
 }: LiveInterviewRoomProps) {
     return (
         <LiveKitRoom
@@ -421,7 +450,7 @@ export function LiveInterviewRoom({
             video={true}
             className="h-full flex flex-col"
         >
-            <RoomUI sessionId={sessionId} onComplete={onComplete} onExit={onExit} />
+            <RoomUI sessionId={sessionId} timeBudgetMinutes={timeBudgetMinutes} onComplete={onComplete} onExit={onExit} />
         </LiveKitRoom>
     );
 }
