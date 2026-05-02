@@ -40,7 +40,32 @@ async def complete_session_service(
         raise NotFoundException(f"Session {session_id} not found")
 
     if session.state == "completed":
-        logger.info(f"Session {session_id} already completed — skipping duplicate.")
+        existing_transcript = session.transcript or []
+        # Race condition: auto-termination marked the session completed with an empty
+        # transcript (fires at hard time limit). The agent's real transcript arrives
+        # ~60s later via on_shutdown. Accept it and re-run the judge.
+        if not existing_transcript and transcript:
+            logger.info(
+                "[COMPLETE] session=%s was auto-completed with empty transcript — "
+                "accepting real transcript (%d turns) and re-running judge",
+                session_id,
+                len(transcript),
+            )
+            session.transcript = transcript
+            db.add(session)
+            await db.commit()
+            await db.refresh(session)
+            background_tasks.add_task(run_judge_pipeline, str(session_id))
+            return {
+                "status": "transcript_accepted_after_auto_complete",
+                "session_id": str(session_id),
+                "transcript_turns": len(transcript),
+            }
+        logger.info(
+            "[COMPLETE] session=%s already completed with %d turns — skipping duplicate.",
+            session_id,
+            len(existing_transcript),
+        )
         return {"status": "already_completed", "session_id": str(session_id)}
 
     if session.state not in ("pending", "in_progress"):
@@ -150,5 +175,6 @@ def _serialize_evaluation(ev: LiV2Evaluation) -> dict:
         "auto_tags": ev.auto_tags or {},
         "integrity_flags": ev.integrity_flags or {},
         "evaluation_confidence": ev.evaluation_confidence,
+        "judge_model": ev.judge_model,
         "judged_at": ev.judged_at.isoformat() if ev.judged_at else None,
     }

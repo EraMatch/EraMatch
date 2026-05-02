@@ -21,6 +21,7 @@ from app.models import (
     LiV2Evaluation,
     CandidateApplication,
     CandidateGroup,
+    CandidateProfile,
     Position,
     GroupStageConfig,
     CandidateStageProgress,
@@ -193,6 +194,13 @@ async def get_candidate_live_interview(
     position_name = position.job_title if position else ""
     group_name = group.group_name if group else ""
 
+    profile_stmt = select(CandidateProfile).where(
+        CandidateProfile.candidate_id == current_user.candidate_id
+    )
+    profile_result = await db.execute(profile_stmt)
+    profile = profile_result.scalar_one_or_none()
+    candidate_name = profile.full_name if profile else ""
+
     eval_data = None
     status = None
     estimated_time = None
@@ -215,10 +223,13 @@ async def get_candidate_live_interview(
         status = "grading"
         estimated_time = "~30 seconds remaining"
 
+    transcript = liv2_session.transcript or []
     return {
         "session_id": str(liv2_session.id),
+        "candidate_name": candidate_name,
         "state": liv2_session.state,
-        "transcript": liv2_session.transcript or [],
+        "transcript": transcript,
+        "transcript_turns": len(transcript),
         "duration_seconds": liv2_session.duration_seconds,
         "started_at": liv2_session.started_at.isoformat()
         if liv2_session.started_at
@@ -237,8 +248,10 @@ async def get_candidate_live_interview(
 def _empty_response() -> dict:
     return {
         "session_id": None,
+        "candidate_name": "",
         "state": None,
         "transcript": None,
+        "transcript_turns": 0,
         "duration_seconds": None,
         "started_at": None,
         "ended_at": None,

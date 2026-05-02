@@ -1,6 +1,7 @@
 """
 Database session configuration for Supabase PostgreSQL.
 """
+
 from collections.abc import AsyncGenerator
 
 from sqlmodel import SQLModel
@@ -47,12 +48,23 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
         await conn.execute(
-            text("ALTER TABLE IF EXISTS cv_analysis ADD COLUMN IF NOT EXISTS github_profile JSONB")
+            text(
+                "ALTER TABLE IF EXISTS cv_analysis ADD COLUMN IF NOT EXISTS github_profile JSONB"
+            )
         )
 
         await conn.execute(
-            text("ALTER TABLE IF EXISTS li_v2_rubrics ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
+            text(
+                "ALTER TABLE IF EXISTS li_v2_rubrics ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"
+            )
         )
         await conn.execute(
-            text("ALTER TABLE IF EXISTS li_v2_banks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
+            text(
+                "ALTER TABLE IF EXISTS li_v2_banks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE IF EXISTS li_v2_evaluations ADD COLUMN IF NOT EXISTS judge_model VARCHAR(100)"
+            )
         )

@@ -16,9 +16,9 @@ env vars:
     ELEVEN_API_KEY     — ElevenLabs fallback TTS key
 
 Dev LLM Config (override in .env for prod):
-    INTERVIEWER_PRIMARY_MODEL   = gemini-2.5-flash-lite    (primary LLM)
-    INTERVIEWER_SECONDARY_MODEL = gemma3:12b-cloud          (Ollama fallback LLM via local proxy)
-    COVERAGE_CHECK_MODEL       = qwen3.5:4b-cloud          (small + fast inline checks)
+    INTERVIEWER_PRIMARY_MODEL   = gemini-3-flash-preview:cloud  (primary — Gemini via Ollama Cloud)
+    INTERVIEWER_SECONDARY_MODEL = gemma3:12b-cloud               (fallback if Gemini unavailable)
+    COVERAGE_CHECK_MODEL       = gemma3:4b-cloud                 (small + fast inline checks, non-blocking)
 """
 
 import os
@@ -147,7 +147,7 @@ async def interviewer_session(ctx: agents.JobContext):
     session_id = metadata.get("session_id", "unknown")
     candidate_name = metadata.get("candidate_name", "Candidate")
     bank_id = metadata.get("bank_id", "")
-    time_budget = metadata.get("time_budget_minutes", 30)
+    time_budget = metadata.get("time_budget_minutes", 10)
     language = metadata.get("language", "en")
     context = metadata.get("context", {})
 
@@ -165,8 +165,8 @@ async def interviewer_session(ctx: agents.JobContext):
 
     # --- Build the pipeline ---
     gcp_creds = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    primary_model = os.getenv("INTERVIEWER_PRIMARY_MODEL", "gemma3:12b-cloud")
-    secondary_model = os.getenv("INTERVIEWER_SECONDARY_MODEL", "gemini-2.5-flash-lite")
+    primary_model = os.getenv("INTERVIEWER_PRIMARY_MODEL", "gemini-3-flash-preview:cloud")
+    secondary_model = os.getenv("INTERVIEWER_SECONDARY_MODEL", "gemma3:12b-cloud")
     primary_provider = os.getenv("INTERVIEWER_PRIMARY_PROVIDER", "").lower()
 
     # --- LLM selection: try primary, fallback to secondary ---
@@ -342,6 +342,21 @@ async def interviewer_session(ctx: agents.JobContext):
         turn_handling=TurnHandlingOptions(
             turn_detection=MultilingualModel(),
         ),
+        # ── Interruption & turn-taking config ─────────────────────────
+        allow_interruptions=True,
+        min_interruption_duration=0.5,
+        min_interruption_words=2,
+        resume_false_interruption=True,
+        false_interruption_timeout=1.0,
+        # 1.5s silence before turn ends — interview candidates pause mid-thought
+        min_endpointing_delay=1.5,
+        max_endpointing_delay=4.0,
+        # MUST be False with slow LLMs (Ollama/Gemini): preemptive_generation=True
+        # caused a 35-second audio pipeline lead time (confirmed from logs), producing
+        # overlapping double-responses after every candidate turn. Disable entirely.
+        preemptive_generation=False,
+        user_away_timeout=None,
+        userdata={},
     )
 
     # --- Instantiate our stateful agent — pass bank_items directly so

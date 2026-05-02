@@ -56,6 +56,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
     const [roomUrl, setRoomUrl] = useState<string | null>(null);
     const [roomName, setRoomName] = useState<string | null>(null);
     const [sessionId, setSessionId] = useState<string | null>(null);
+    const [timeBudgetMinutes, setTimeBudgetMinutes] = useState<number>(30);
     const [tokenLoading, setTokenLoading] = useState(false);
     const [tokenError, setTokenError] = useState<string | null>(null);
 
@@ -131,11 +132,13 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                 url: string;
                 room_name: string;
                 session_id: string;
+                time_budget_minutes?: number;
             };
             setRoomToken(data.token);
             setRoomUrl(data.url);
             setRoomName(data.room_name);
             setSessionId(data.session_id);
+            setTimeBudgetMinutes(data.time_budget_minutes || 10);
             setCurrentStep(3);
         } catch (err: any) {
             setTokenError(
@@ -171,6 +174,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                     serverUrl={roomUrl}
                     roomName={roomName}
                     sessionId={sessionId!}
+                    timeBudgetMinutes={timeBudgetMinutes}
                     onComplete={handleCompletion}
                     onExit={handleExit}
                 />

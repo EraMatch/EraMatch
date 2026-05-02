@@ -201,6 +201,7 @@ class CandidateLiV2Evaluation(BaseModel):
     coverage_ratio: Optional[float] = None
     dimension_scores: Optional[Dict[str, Any]] = None
     evaluation_confidence: Optional[str] = None
+    judge_model: Optional[str] = None
     judged_at: Optional[datetime] = None
 
 

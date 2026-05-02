@@ -313,6 +313,7 @@ async def _mock_judge_pipeline(db, session_id: str):
         confidence=confidence,
         per_question_results=per_question_results_or_none,
         transcript=transcript,
+        judge_model="mock",
     )
 
     logger.info(
@@ -345,6 +346,43 @@ async def _mock_judge_pipeline(db, session_id: str):
                 progress.passed = meets_criteria
                 db.add(progress)
                 await db.commit()
+        else:
+            logger.warning(
+                "[Judge-Mock] No live_interview stage for group=%s org=%s — trying org-wide lookup",
+                session.group_id,
+                session.organization_id,
+            )
+            fallback_stage_res = await db.execute(
+                select(GroupStageConfig).where(
+                    GroupStageConfig.organization_id == session.organization_id,
+                    GroupStageConfig.stage_type == "live_interview",
+                )
+            )
+            fallback_stage = fallback_stage_res.scalar_one_or_none()
+            if fallback_stage:
+                prog_res = await db.execute(
+                    select(CandidateStageProgress).where(
+                        CandidateStageProgress.application_id == session.application_id,
+                        CandidateStageProgress.stage_id == fallback_stage.stage_id,
+                    )
+                )
+                progress = prog_res.scalar_one_or_none()
+                if progress:
+                    progress.status = "completed"
+                    progress.completed_at = datetime.now(timezone.utc).replace(
+                        tzinfo=None
+                    )
+                    progress.score = Decimal(str(overall_score_pct))
+                    progress.max_score = Decimal("100")
+                    progress.passed = meets_criteria
+                    db.add(progress)
+                    await db.commit()
+                    logger.info(
+                        "[PROGRESS-MOCK-ORGFALLBACK] app=%s stage=%s status=completed score=%s",
+                        session.application_id,
+                        fallback_stage.stage_id,
+                        overall_score_pct,
+                    )
     except Exception as e:
         logger.error("[Judge-Mock] Failed to update pipeline progress: %s", e)
 
@@ -368,6 +406,7 @@ async def _create_fail_evaluation(db, session, reason: str):
         evaluation.coverage_ratio = Decimal("0.0")
         evaluation.dimension_scores = {}
         evaluation.evaluation_confidence = "low"
+        evaluation.judge_model = "none"
         evaluation.judged_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.add(evaluation)
         await db.commit()
@@ -397,6 +436,42 @@ async def _create_fail_evaluation(db, session, reason: str):
                 progress.passed = False
                 db.add(progress)
                 await db.commit()
+        else:
+            logger.warning(
+                "[PROGRESS-FAIL] No live_interview stage for group=%s org=%s — trying org-wide lookup",
+                session.group_id,
+                session.organization_id,
+            )
+            fallback_stage_res = await db.execute(
+                select(GroupStageConfig).where(
+                    GroupStageConfig.organization_id == session.organization_id,
+                    GroupStageConfig.stage_type == "live_interview",
+                )
+            )
+            fallback_stage = fallback_stage_res.scalar_one_or_none()
+            if fallback_stage:
+                prog_res = await db.execute(
+                    select(CandidateStageProgress).where(
+                        CandidateStageProgress.application_id == session.application_id,
+                        CandidateStageProgress.stage_id == fallback_stage.stage_id,
+                    )
+                )
+                progress = prog_res.scalar_one_or_none()
+                if progress:
+                    progress.status = "completed"
+                    progress.completed_at = datetime.now(timezone.utc).replace(
+                        tzinfo=None
+                    )
+                    progress.score = Decimal("0")
+                    progress.max_score = Decimal("100")
+                    progress.passed = False
+                    db.add(progress)
+                    await db.commit()
+                    logger.info(
+                        "[PROGRESS-FAIL-ORGFALLBACK] app=%s stage=%s status=completed score=0",
+                        session.application_id,
+                        fallback_stage.stage_id,
+                    )
     except Exception as e:
         logger.error("[Judge] Failed to create fail evaluation: %s", e, exc_info=True)
 
@@ -459,6 +534,9 @@ async def _execute_pipeline(db, session_id: str):
 
     transcript_text = _format_transcript(transcript)
 
+    # Track which models actually ran for the judge_model field
+    used_models: set[str] = set()
+
     # --- Phase A: Dimension-level evidence extraction ---
     logger.info(
         "[JUDGE-P1] session=%s entry turns=%d dimensions=%d",
@@ -467,7 +545,7 @@ async def _execute_pipeline(db, session_id: str):
         len(dimensions),
     )
     evidence_blocks = await _phase_a_segmentation(
-        llm, fallback_llm, transcript_text, dimensions
+        llm, fallback_llm, transcript_text, dimensions, used_models=used_models
     )
     evidence_with_content = sum(
         1 for v in evidence_blocks.values() if v and v != "No relevant content found."
@@ -490,7 +568,7 @@ async def _execute_pipeline(db, session_id: str):
     # --- Phase C: Per-question scoring ---
     if question_evidence:
         per_question_results = await _phase_b_question(
-            llm, fallback_llm, question_evidence, dimensions
+            llm, fallback_llm, question_evidence, dimensions, used_models=used_models
         )
         logger.info(
             "[JUDGE-P2-Q] session=%s questions_scored=%d",
@@ -509,7 +587,7 @@ async def _execute_pipeline(db, session_id: str):
             session_id,
         )
         dimension_results = await _phase_b_anchor_match(
-            llm, fallback_llm, evidence_blocks, dimensions
+            llm, fallback_llm, evidence_blocks, dimensions, used_models=used_models
         )
         overall_score_pct, overall_score, coverage_ratio = _phase_c_score(
             dimension_results, dimensions
@@ -535,6 +613,11 @@ async def _execute_pipeline(db, session_id: str):
     )
 
     # --- Persist ---
+    judge_model = (
+        f"{_FALLBACK_JUDGE_MODEL} (fallback; primary failed)"
+        if _FALLBACK_JUDGE_MODEL in used_models
+        else _JUDGE_MODEL
+    )
     evaluation = await _upsert_evaluation(
         db=db,
         session=session,
@@ -547,6 +630,7 @@ async def _execute_pipeline(db, session_id: str):
         confidence=confidence,
         per_question_results=per_question_results if per_question_results else None,
         transcript=transcript,
+        judge_model=judge_model,
     )
 
     logger.info(
@@ -594,10 +678,41 @@ async def _execute_pipeline(db, session_id: str):
                 )
         else:
             logger.warning(
-                "[PROGRESS] No live_interview stage found for group=%s org=%s",
+                "[PROGRESS] No live_interview stage found for group=%s org=%s — trying org-wide lookup",
                 session.group_id,
                 session.organization_id,
             )
+            fallback_stage_res = await db.execute(
+                select(GroupStageConfig).where(
+                    GroupStageConfig.organization_id == session.organization_id,
+                    GroupStageConfig.stage_type == "live_interview",
+                )
+            )
+            fallback_stage = fallback_stage_res.scalar_one_or_none()
+            if fallback_stage:
+                prog_res = await db.execute(
+                    select(CandidateStageProgress).where(
+                        CandidateStageProgress.application_id == session.application_id,
+                        CandidateStageProgress.stage_id == fallback_stage.stage_id,
+                    )
+                )
+                progress = prog_res.scalar_one_or_none()
+                if progress:
+                    progress.status = "completed"
+                    progress.completed_at = datetime.now(timezone.utc).replace(
+                        tzinfo=None
+                    )
+                    progress.score = Decimal(str(overall_score_pct))
+                    progress.max_score = Decimal("100")
+                    progress.passed = meets_criteria
+                    db.add(progress)
+                    await db.commit()
+                    logger.info(
+                        "[PROGRESS-ORGFALLBACK] app=%s stage=%s status=completed score=%s",
+                        session.application_id,
+                        fallback_stage.stage_id,
+                        overall_score_pct,
+                    )
     except Exception as e:
         logger.error("[PROGRESS] Failed to update pipeline progress after judge: %s", e)
 
@@ -608,7 +723,11 @@ async def _execute_pipeline(db, session_id: str):
 
 
 async def _phase_a_segmentation(
-    llm, fallback_llm, transcript_text: str, dimensions: list[dict]
+    llm,
+    fallback_llm,
+    transcript_text: str,
+    dimensions: list[dict],
+    used_models: set[str] | None = None,
 ) -> dict:
     dimension_list = "\n".join(
         f"- {d.get('dimension_id', d.get('name', ''))}: {d.get('name', '')}"
@@ -635,7 +754,10 @@ Respond ONLY with valid JSON in this exact format:
     try:
         resp = await llm.ainvoke([HumanMessage(content=prompt)])
         raw = resp.content.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        return json.loads(raw)
+        result = json.loads(raw)
+        if used_models is not None:
+            used_models.add(_JUDGE_MODEL)
+        return result
     except Exception as primary_exc:
         logger.warning("[JUDGE-P1] primary failed: %s — trying fallback", primary_exc)
         try:
@@ -648,6 +770,8 @@ Respond ONLY with valid JSON in this exact format:
                 .strip()
             )
             parsed = json.loads(raw)
+            if used_models is not None:
+                used_models.add(_FALLBACK_JUDGE_MODEL)
             logger.info("[JUDGE-P1] fallback succeeded")
             return parsed
         except Exception as fallback_exc:
@@ -765,7 +889,11 @@ def _extract_question_evidence(
 
 
 async def _phase_b_question(
-    llm, fallback_llm, question_evidence: list[dict], dimensions: list[dict]
+    llm,
+    fallback_llm,
+    question_evidence: list[dict],
+    dimensions: list[dict],
+    used_models: set[str] | None = None,
 ) -> list[dict]:
     """
     Score each question's sub-criteria individually via LLM.
@@ -853,6 +981,8 @@ Respond ONLY with valid JSON:
                 .strip()
             )
             parsed = json.loads(raw)
+            if used_models is not None:
+                used_models.add(_JUDGE_MODEL)
             result_base["question_score"] = _clamp(
                 float(parsed.get("question_score", 1.0)), 1.0, 3.0
             )
@@ -908,6 +1038,8 @@ Respond ONLY with valid JSON:
                 result_base["sub_criteria"] = _normalize_sub_criteria(
                     raw_sub_criteria, sub_criteria
                 )
+                if used_models is not None:
+                    used_models.add(_FALLBACK_JUDGE_MODEL)
                 logger.info(
                     "[JUDGE-P2-Q] pillar %s fallback succeeded", qe["pillar_idx"]
                 )
@@ -938,7 +1070,11 @@ Respond ONLY with valid JSON:
 
 
 async def _phase_b_anchor_match(
-    llm, fallback_llm, evidence_blocks: dict, dimensions: list[dict]
+    llm,
+    fallback_llm,
+    evidence_blocks: dict,
+    dimensions: list[dict],
+    used_models: set[str] | None = None,
 ) -> dict:
     """
     Dimension-level scoring (legacy fallback).
@@ -1000,6 +1136,8 @@ Respond ONLY with valid JSON:
                 .strip()
             )
             parsed = json.loads(raw)
+            if used_models is not None:
+                used_models.add(_JUDGE_MODEL)
             score_val = _safe_int(parsed.get("score"), default=1)
             parsed["score"] = max(1, min(3, score_val))
             if parsed.get("anchor_matched") not in (
@@ -1038,6 +1176,8 @@ Respond ONLY with valid JSON:
                 parsed["weight"] = weight
                 parsed["dimension_name"] = dim.get("name", dim_id)
                 results[dim_id] = parsed
+                if used_models is not None:
+                    used_models.add(_FALLBACK_JUDGE_MODEL)
                 logger.info("[JUDGE-P2] dimension %s fallback succeeded", dim_id)
             except Exception as fallback_exc:
                 logger.warning(
@@ -1271,6 +1411,7 @@ async def _upsert_evaluation(
     confidence: str,
     per_question_results: Optional[list] = None,
     transcript: Optional[list[dict]] = None,
+    judge_model: Optional[str] = None,
 ) -> LiV2Evaluation:
     existing = await db.execute(
         select(LiV2Evaluation).where(LiV2Evaluation.session_id == session.id)
@@ -1293,6 +1434,7 @@ async def _upsert_evaluation(
     )
     evaluation.dimension_scores = validation["dimension_results"]
     evaluation.evaluation_confidence = confidence
+    evaluation.judge_model = judge_model
     evaluation.judged_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     if per_question_results is not None:

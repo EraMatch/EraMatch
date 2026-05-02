@@ -163,7 +163,7 @@ async def create_rubric_service(
         group_id=rubric_in.group_id,
         organization_id=rubric_in.organization_id,
         dimensions=[d.model_dump() for d in rubric_in.dimensions],
-        time_budget_minutes=rubric_in.time_budget_minutes or 30,
+        time_budget_minutes=rubric_in.time_budget_minutes or 10,
         language=rubric_in.language or "en",
         include_weak_topics=rubric_in.include_weak_topics or False,
         state=LiV2State.DRAFT

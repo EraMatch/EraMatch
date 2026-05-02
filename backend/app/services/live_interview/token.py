@@ -11,6 +11,7 @@ Context injection order:
      AND the group has an assessment stage that was completed)
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -33,6 +34,8 @@ from app.models import (
     GroupStageConfig,
 )
 from app.core.exceptions import NotFoundException, BadRequestException
+from app.services.live_interview.judge import run_judge_pipeline
+from app.db.session import async_session_factory
 
 logger = logging.getLogger("eramatch.live_interview.token")
 
@@ -98,7 +101,9 @@ async def generate_session_token_service(
     )
     stage_progress = progress_res.scalar_one_or_none()
     if not stage_progress or stage_progress.status not in ("unlocked", "in_progress"):
-        raise BadRequestException("Live interview stage is not unlocked for this candidate.")
+        raise BadRequestException(
+            "Live interview stage is not unlocked for this candidate."
+        )
 
     # Look up the frozen bank for this group
     bank_res = await db.execute(
@@ -229,12 +234,97 @@ async def generate_session_token_service(
         context_payload=context_payload,
     )
 
+    # --- 7. Schedule auto-termination if time budget exceeded -----------
+    _schedule_auto_termination(
+        session_id=session.id,
+        time_budget_minutes=rubric.time_budget_minutes or 10,
+    )
+
     return {
         "token": token,
         "url": _LK_URL,
         "room_name": room_name,
         "session_id": str(session.id),
+        "time_budget_minutes": rubric.time_budget_minutes or 10,
     }
+
+
+# =============================================================================
+# AUTO-TERMINATION
+# =============================================================================
+
+
+async def _auto_terminate_session(session_id: UUID, time_budget_minutes: int):
+    """
+    Background coroutine: sleep for the rubric's time budget, then check
+    whether the session is still in_progress. If so, complete it with
+    whatever transcript exists (or empty) and fire the Judge pipeline.
+    """
+    sleep_seconds = time_budget_minutes * 60
+    logger.info(
+        "[AUTO-TERMINATE] Scheduled auto-termination for session %s in %d minutes",
+        session_id,
+        time_budget_minutes,
+    )
+    await asyncio.sleep(sleep_seconds)
+
+    async with async_session_factory() as db:
+        try:
+            result = await db.execute(
+                select(LiV2Session).where(LiV2Session.id == session_id)
+            )
+            session = result.scalar_one_or_none()
+
+            if not session:
+                logger.warning(
+                    "[AUTO-TERMINATE] Session %s not found — skipping", session_id
+                )
+                return
+
+            if session.state != "in_progress":
+                logger.info(
+                    "[AUTO-TERMINATE] Session %s is '%s' (not in_progress) — skipping",
+                    session_id,
+                    session.state,
+                )
+                return
+
+            logger.info(
+                "[AUTO-TERMINATE] Session %s still in_progress, auto-completing",
+                session_id,
+            )
+
+            transcript = session.transcript or []
+
+            started_at = session.started_at or session.created_at
+            ended_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            duration = int((ended_at - started_at.replace(tzinfo=None)).total_seconds())
+
+            session.state = "completed"
+            session.ended_at = ended_at
+            session.duration_seconds = duration
+            session.transcript = transcript
+
+            db.add(session)
+            await db.commit()
+
+            logger.info(
+                "[AUTO-TERMINATE] Session %s auto-completed (%ds, %d transcript turns)",
+                session_id,
+                duration,
+                len(transcript),
+            )
+
+            await run_judge_pipeline(str(session_id))
+
+        except Exception:
+            logger.exception(
+                "[AUTO-TERMINATE] Error auto-terminating session %s", session_id
+            )
+
+
+def _schedule_auto_termination(session_id: UUID, time_budget_minutes: int):
+    asyncio.create_task(_auto_terminate_session(session_id, time_budget_minutes))
 
 
 # =============================================================================
