@@ -133,5 +133,61 @@
       "candidate_id": "5a365d8b-1d52-46c9-bfb3-4122862b33b3",
       "github_url": "github.com/AhmedSolay"
     }
+  },
+  {
+    "timestamp": "2026-05-03T17:32:43.398723",
+    "step": "task_started",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "candidate_id": "e0000002-0000-0000-0000-000000000002",
+      "github_url": "https://github.com/omarkh",
+      "questions_to_generate": 10
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:32:45.295761",
+    "step": "job_status_updated",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "status": "processing"
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:32:45.296086",
+    "step": "github_analysis_request_started",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "candidate_id": "e0000002-0000-0000-0000-000000000002",
+      "github_url": "https://github.com/omarkh"
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:32:47.820543",
+    "step": "github_analysis_request_completed",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "candidate_id": "e0000002-0000-0000-0000-000000000002",
+      "status_code": 200,
+      "repo_count": 0,
+      "generated_question_count": 0
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:32:48.954902",
+    "step": "database_upsert_completed",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "candidate_id": "e0000002-0000-0000-0000-000000000002"
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:32:49.418399",
+    "step": "task_completed",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "candidate_id": "e0000002-0000-0000-0000-000000000002",
+      "status": "completed",
+      "total_generated": 0
+    }
   }
 ]

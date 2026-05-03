@@ -371,12 +371,15 @@ class GroupService:
             scheduled_at = ls_data.scheduled_at if ls_data else None
             meeting_link = ls_data.meeting_link if ls_data else None
 
+            # CandidateStageProgress for live_interview (if present)
+            live_prog = prog_map.get((app.id, 'live_interview'))
+
             live_session_id = (
-                live_prog.session_id if live_prog and live_prog.session_id else None
+                live_prog.session_id if live_prog and getattr(live_prog, 'session_id', None) else None
             )
             live_verdict = None
             live_evaluated_at = None
-            if live_session_id and live_prog.session_type == "live_interview":
+            if live_session_id and getattr(live_prog, 'session_type', None) == "live_interview":
                 liv2_ev = liv2_eval_map.get(live_session_id)
                 if liv2_ev:
                     live_verdict = liv2_ev.auto_verdict

@@ -77,7 +77,8 @@ backend/inspect_db.py
 
 uploads/
 
-
+*.pdf
+*.docx
 *.sql
 backend/*.json
 backend/logs/video_processing_debug.json

@@ -14,11 +14,9 @@ Context injection order:
 import asyncio
 import json
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from livekit import api as lk_api
 from sqlmodel import select, func
 
 from app.models import (
@@ -34,14 +32,24 @@ from app.models import (
     GroupStageConfig,
 )
 from app.core.exceptions import NotFoundException, BadRequestException
+from app.core.config import settings
 from app.services.live_interview.judge import run_judge_pipeline
 from app.db.session import async_session_factory
 
 logger = logging.getLogger("eramatch.live_interview.token")
 
-_LK_URL = os.getenv("LIVEKIT_URL", "")
-_LK_KEY = os.getenv("LIVEKIT_API_KEY", "")
-_LK_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
+
+def _get_livekit_api():
+    """Load LiveKit server API lazily so app startup does not fail on import."""
+    try:
+        from livekit import api as lk_api
+
+        return lk_api
+    except ImportError as exc:
+        raise RuntimeError(
+            "LiveKit server SDK import failed. Install 'livekit-api' in the backend "
+            "environment and remove conflicting 'livekit' realtime-only packages."
+        ) from exc
 
 
 async def generate_session_token_service(
@@ -214,9 +222,11 @@ async def generate_session_token_service(
         rubric.time_budget_minutes,
     )
 
+    lk_api = _get_livekit_api()
+
     # --- 5. Generate a LiveKit JWT for the candidate ---------------
     token = (
-        lk_api.AccessToken(api_key=_LK_KEY, api_secret=_LK_SECRET)
+        lk_api.AccessToken(api_key=settings.LIVEKIT_API_KEY, api_secret=settings.LIVEKIT_API_SECRET)
         .with_identity(f"candidate:{candidate_id}")
         .with_name(candidate_name)
         .with_ttl(timedelta(hours=2))
@@ -239,6 +249,7 @@ async def generate_session_token_service(
         rubric=rubric,
         bank=bank,
         context_payload=context_payload,
+        lk_api=lk_api,
     )
 
     # --- 7. Schedule auto-termination only on first connect (not reconnects) ---
@@ -252,7 +263,7 @@ async def generate_session_token_service(
 
     return {
         "token": token,
-        "url": _LK_URL,
+        "url": settings.LIVEKIT_URL,
         "room_name": room_name,
         "session_id": str(session.id),
         "time_budget_minutes": rubric.time_budget_minutes or 10,
@@ -498,6 +509,7 @@ async def _dispatch_agent_if_not_present(
     rubric,
     bank,
     context_payload: dict,
+    lk_api,
 ):
     """
     Dispatches the EraMatch Interviewer agent to the room via the LiveKit API.
@@ -523,7 +535,7 @@ async def _dispatch_agent_if_not_present(
 
     try:
         async with lk_api.LiveKitAPI(
-            url=_LK_URL, api_key=_LK_KEY, api_secret=_LK_SECRET
+            url=settings.LIVEKIT_URL, api_key=settings.LIVEKIT_API_KEY, api_secret=settings.LIVEKIT_API_SECRET
         ) as lk_client:
             await lk_client.agent_dispatch.create_dispatch(
                 lk_api.CreateAgentDispatchRequest(

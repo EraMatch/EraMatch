@@ -38,6 +38,9 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [assessmentResetLoading, setAssessmentResetLoading] = useState(false);
   const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
   const [assessmentResetError, setAssessmentResetError] = useState<string | null>(null);
+  const [githubReanalysisLoading, setGithubReanalysisLoading] = useState(false);
+  const [githubReanalysisMessage, setGithubReanalysisMessage] = useState<string | null>(null);
+  const [githubReanalysisError, setGithubReanalysisError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const resolvedApplicationId = applicationId || candidate?.applicationId || candidate?.application_id;
 
@@ -103,6 +106,31 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
       setAssessmentResetError(error?.message || 'Failed to reset assessment trial.');
     } finally {
       setAssessmentResetLoading(false);
+    }
+  };
+
+  const handleReanalyzeGitHub = async () => {
+    if (!candidate?.github_url) {
+      setGithubReanalysisError('Candidate does not have a GitHub profile URL.');
+      setGithubReanalysisMessage(null);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Reanalyze GitHub profile for ${candidate.name}? This will fetch fresh data and update the analysis.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setGithubReanalysisLoading(true);
+      setGithubReanalysisError(null);
+      setGithubReanalysisMessage(null);
+      await api.recruiter.reanalyzeGitHubProfile(candidateId);
+      setGithubReanalysisMessage('GitHub profile reanalysis started. Refresh the page in a few moments to see updated data.');
+    } catch (error: any) {
+      setGithubReanalysisError(error?.message || 'Failed to reanalyze GitHub profile.');
+    } finally {
+      setGithubReanalysisLoading(false);
     }
   };
 
@@ -455,8 +483,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
         {/* Profile Header */}
         <div className="bg-white rounded-[12px] border border-[#e5e7eb] p-8 mb-6">
           <div className="flex items-start gap-6">
-            <div className="w-[100px] h-[100px] rounded-[16px] bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] flex items-center justify-center text-white text-[36px]">
-              {candidate.name.split(' ').map((n: string) => n[0]).join('')}
+              <div className="w-[100px] h-[100px] rounded-[16px] bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] flex items-center justify-center text-white text-[36px]">
+              {String(candidate.name || '').split(' ').map((n: string) => (n ? n[0] : '')).join('')}
             </div>
             <div className="flex-1">
               <div className="flex items-start justify-between mb-4">
@@ -495,6 +523,16 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     </span>
                   </button>
                   <button
+                    onClick={handleReanalyzeGitHub}
+                    disabled={!candidate?.github_url || githubReanalysisLoading}
+                    title={candidate?.github_url ? 'Reanalyze GitHub profile' : 'Candidate does not have a GitHub profile'}
+                    className="flex items-center gap-2 h-[40px] px-[14px] rounded-[8px] border border-[#dbeafe] bg-[#f0f9ff] hover:bg-[#e0f2fe] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#0369a1]">
+                      {githubReanalysisLoading ? 'Reanalyzing...' : 'Reanalyze GitHub'}
+                    </span>
+                  </button>
+                  <button
                     onClick={handleResetAssessmentTrial}
                     disabled={!resolvedApplicationId || assessmentResetLoading}
                     className="flex items-center gap-2 h-[40px] px-[14px] rounded-[8px] border border-[#fecaca] bg-[#fff1f2] hover:bg-[#ffe4e6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -520,6 +558,16 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
               {assessmentResetError && (
                 <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
                   <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{assessmentResetError}</p>
+                </div>
+              )}
+              {githubReanalysisMessage && (
+                <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{githubReanalysisMessage}</p>
+                </div>
+              )}
+              {githubReanalysisError && (
+                <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{githubReanalysisError}</p>
                 </div>
               )}
 
@@ -1880,8 +1928,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
               <div className="bg-white border border-[#e5e7eb] rounded-xl p-6">
                 <h4 className="font-semibold text-gray-900 mb-4 text-lg">Full Transcript</h4>
                 <div className="space-y-4 text-gray-700 leading-relaxed">
-                  {liveInterviewData.transcript.split('\n\n').map((paragraph: string, i: number) => {
-                    const lines = paragraph.split('\n');
+                  {String(liveInterviewData.transcript || '').split('\n\n').map((paragraph: string, i: number) => {
+                    const lines = String(paragraph || '').split('\n');
                     return (
                       <div key={i} className="space-y-2">
                         {lines.map((line: string, j: number) => {
