@@ -40,10 +40,47 @@
 | Test #45 | Recruiter accesses session from different org → 403/404, group sessions for fake group → empty or 403 | Cross-organization data isolation enforced | Recruiter token from org A, session_id from org B | 403 Forbidden or 404 Not Found |
 | Test #46 | Empty transcript array → session completes without crash, minimal transcript → accepted | Graceful handling of edge-case transcripts, no 500 errors | `{transcript: []}`, `{transcript: [{role: "candidate", text: "Hello"}]}` | `{status: "completed", transcript_turns: 0}`, 200 OK |
 
-## 4.3 Bugs & Issues (Candidate & LiV2)
+## 4.3 Bugs & Issues
 
 | Bug ID | Description | Severity | Status | Fix |
 |--------|-------------|----------|--------|-----|
+| B1 | Dashboard metrics (Avg Time to Fill, Project Health) displaying guessed/inaccurate data | Medium | Fixed | Refactored AdminService for accurate computation |
+| B2 | 404 error on the alerts endpoint | High | Fixed | Corrected endpoint routing |
+| B3 | Content getting "tucked under" the sidebar | Low | Fixed | Polished layout to prevent overlap |
+| B4 | ImportError related to new notification schemas | High | Fixed | Resolved import references |
+| B5 | Unrealistic data visualization due to faulty filtering logic | Medium | Fixed | Fixed filtering for project, position, and group queries |
+| B6 | CORS wildcard origin breaking credentials policy | High | Fixed | Replaced wildcard origin with explicit dev origins |
+| B7 | Monitoring showing overlapping sessions/progress | High | Fixed | Scoped answers/progress to latest session via CTE queries |
+| B8 | Total points (raw) and total score (percentage) mixed up | Medium | Fixed | Separated raw and percentage scoring logic |
+| B9 | attempt_count missing/not extracting | Medium | Fixed | Extracted from answer_data JSONB |
+| B10 | Logically inconsistent AI interview progress rows (unlocked but not started) | Medium | Fixed | Deleted corrupted progress rows from database |
+| B11 | Group stage config linkage misaligned across DB and recruiter flow | High | Fixed | Database and flow alignment |
+| B12 | "Bypass Admin Approval" toggle accessible to non-admins | High | Fixed | Restricted toggle strictly to Admin role |
+| B13 | Recruiter suspension and deletion workflows broken | High | Fixed | Resolved user management logic |
+| B14 | 500 errors on background task fetching | High | Fixed | Resolved API crash |
+| B15 | Data format mismatches in the question bank | Medium | Fixed | Format alignment applied |
+| B16 | MCQ correct_answer JSON parsing failed | High | Fixed | Corrected correct_option JSON parsing logic |
+| B17 | Session handling: not_started detection & resumption failing | High | Fixed | Updated session detection logic |
+| B18 | Question numbering started at Q0; wrong video port | Low | Fixed | Re-indexed to Q1 and pointed video URL to correct port |
+| B19 | Microphone not recording audio in video interviews | High | Fixed | Resolved audio capture |
+| B20 | AI service crashes on Whisper transcription requests | High | Fixed | Increased timeouts / fixed AI service logic |
+| B21 | AI score parsing fails on non-standard LLM formats | High | Fixed | Improved parsing logic |
+| B22 | Monitoring page returns 500 error | High | Fixed | API/Server fix |
+| B23 | Assessment crashes with "Objects are not valid as a React child" | High | Fixed | React component / UI rendering fix |
+| B24 | Coding questions always fail test cases | High | Fixed | Redesigned runner with function-based execution support |
+| B25 | Dead placeholder DB rows generated on failed AI ingestion | High | Fixed | Deferred candidate creation via Webhook callback |
+| B26 | Stage transition applied to all candidates instead of subset | High | Fixed | Unified schemas and corrected UI ID/Status fetching |
+| B27 | 429 rate limit overloading on local Ollama instance | High | Fixed | Added strict threading.Semaphore and exponential backoff |
+| B28 | Stale interview references and bad notification JSON payloads | Medium | Fixed | Backend fixes applied for notifications |
+| B29 | Duplicate assessments and interview configs generated | Medium | Fixed | Implemented deduplication logic |
+| B30 | Assessment completion detection failing/unreliable | High | Fixed | Improved backend detection |
+| B31 | Interview response tracking out of order | Medium | Fixed | Corrected response ordering logic |
+| B32 | Missing video display | Medium | Fixed | Added video validation |
+| B33 | candidate_name returning default "Candidate" string | Low | Fixed | Corrected property vs column mismatch |
+| B34 | Live interview time budget hardcoded to 30 min | Medium | Fixed | Updated to dynamically read from rubric |
+| B35 | Agent occasionally probes at wrong times | Medium | Open | Pending parameter/prompt tuning |
+| B36 | Coverage check has 8s async delay | Low | Open | Pending backend performance tuning |
+| B37 | Frontend API localhost:8000 is hardcoded | Low | Open | Pending environment configuration update |
 | B38 | MultipleResultsFound when candidate has >1 pending LiV2 session | High | Fixed | Added `.order_by(created_at.desc()).limit(1)` to session lookup in token.py |
 | B39 | Bank freeze validation rejected valid banks — dimension ID vs name mismatch | High | Fixed | Rewrote freeze validation in bank.py to match by both `primary_dimension_id` and `dimension_name` |
 | B40 | API contract tests shared GROUP_ID causing cascade failures (frozen rubric from prior test) | High | Fixed | Added autouse DB cleanup fixture that wipes rubrics/banks/sessions per test function, fixed .env path resolution |
