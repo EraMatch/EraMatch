@@ -95,6 +95,52 @@ def organization_id(admin_headers):
         return org_id
 
 
+# ---------------------------------------------------------------------------
+# Fixture: wipe existing rubric + bank for the test group before every test
+# so later tests in the module don't collide on the unique-per-group constraint.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True, scope="function")
+def cleanup_existing_rubric():
+    """Delete any existing rubric/bank for the constant test GROUP_ID via DB
+    so that every test starts from a clean slate."""
+    import psycopg2
+    from pathlib import Path
+
+    def _db_url():
+        p = Path(__file__).resolve().parent.parent.parent / ".env"
+        if p.exists():
+            with open(p) as f:
+                for line in f:
+                    if line.startswith("DATABASE_URL="):
+                        return line.split("=", 1)[1].strip().strip('"').strip("'")
+        return os.getenv("DATABASE_URL")
+
+    db_url = _db_url()
+    if db_url:
+        try:
+            db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+            conn = psycopg2.connect(db_url)
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM li_v2_evaluations WHERE session_id IN ("
+                "   SELECT session_id FROM li_v2_sessions WHERE group_id = %s"
+                ")",
+                (GROUP_ID,),
+            )
+            cur.execute("DELETE FROM li_v2_sessions WHERE group_id = %s", (GROUP_ID,))
+            cur.execute("DELETE FROM li_v2_banks WHERE group_id = %s", (GROUP_ID,))
+            cur.execute("DELETE FROM li_v2_rubrics WHERE group_id = %s", (GROUP_ID,))
+            conn.commit()
+            cur.close()
+            conn.close()
+            print(f"[CLEANUP] Reset LiV2 rubrics/banks/sessions for group {GROUP_ID}")
+        except Exception as exc:
+            print(f"[CLEANUP WARNING] Failed to clean up DB: {exc}")
+    yield
+
+
 # ===========================================================================
 # Test: Rubric Endpoints
 # ===========================================================================
@@ -649,3 +695,9 @@ class TestErrorHandling:
         assert resp.status_code == 400, (
             f"Expected 400 for updating frozen rubric settings, got {resp.status_code}: {resp.text}"
         )
+
+
+import httpx
+import os
+
+BASE_URL = os.getenv("ERAMATCH_API_URL", "http://localhost:8000/api/v1")

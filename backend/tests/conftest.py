@@ -38,7 +38,7 @@ BASE_URL = os.getenv("ERAMATCH_API_URL", "http://localhost:8000/api/v1")
 ADMIN_EMAIL = os.getenv("ERAMATCH_ADMIN_EMAIL", "hr@eramatch.com")
 ADMIN_PASSWORD = os.getenv("ERAMATCH_ADMIN_PASSWORD", "admin12345")
 
-CANDIDATE_EMAIL = os.getenv("ERAMATCH_CANDIDATE_EMAIL", "sara.alharthi@example.com")
+CANDIDATE_EMAIL = os.getenv("ERAMATCH_CANDIDATE_EMAIL", "nour.eldin@example.com")
 CANDIDATE_PASSWORD = os.getenv("ERAMATCH_CANDIDATE_PASSWORD", "admin12345")
 
 

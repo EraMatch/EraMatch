@@ -34,7 +34,7 @@ os.environ["JUDGE_MOCK_LLM"] = "true"
 BASE_URL = os.environ.get("BACKEND_URL", "http://localhost:8000/api/v1")
 
 # Test credentials (from seeded data — see LIV2_TEST_CREDENTIALS.md)
-CANDIDATE_EMAIL = "khalid.mansour@example.com"
+CANDIDATE_EMAIL = "nour.eldin@example.com"
 CANDIDATE_PASSWORD = "admin12345"
 
 HR_EMAIL = "hr@eramatch.com"

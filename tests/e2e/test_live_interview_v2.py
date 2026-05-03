@@ -26,7 +26,7 @@ import pytest
 
 BASE_URL = os.environ.get("BACKEND_URL", "http://localhost:8000/api/v1")
 
-CANDIDATE_4_EMAIL = "khalid.mansour@example.com"
+CANDIDATE_4_EMAIL = "nour.eldin@example.com"
 CANDIDATE_4_PASSWORD = "admin12345"
 
 HR_EMAIL = "hr@eramatch.com"

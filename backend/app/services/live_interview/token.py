@@ -152,11 +152,15 @@ async def generate_session_token_service(
     )
 
     # --- 4. Reuse or create a session record -----------------------
+    # Fetch most-recent pending/in_progress session (candidate may have many).
     sess_res = await db.execute(
-        select(LiV2Session).where(
+        select(LiV2Session)
+        .where(
             LiV2Session.application_id == application_id,
             LiV2Session.state.in_(["pending", "in_progress"]),
         )
+        .order_by(LiV2Session.created_at.desc())
+        .limit(1)
     )
     session = sess_res.scalar_one_or_none()
 

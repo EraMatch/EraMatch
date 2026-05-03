@@ -8,24 +8,28 @@ from fastapi import HTTPException, status
 from app.api.deps import DbSession
 from app.models import LiV2Bank, LiV2Rubric, CandidateGroup, Position
 from app.schemas.live_interview_v2 import (
-    BankItem, SubCriterion, BankCreate, BankUpdate, LiV2State
+    BankItem,
+    SubCriterion,
+    BankCreate,
+    BankUpdate,
+    LiV2State,
 )
 from app.services.live_interview.providers import call_with_fallback
 
-async def generate_bank_service(
-    db: DbSession,
-    rubric_id: UUID
-) -> BankCreate:
+
+async def generate_bank_service(db: DbSession, rubric_id: UUID) -> BankCreate:
     """M_BANK: Generate a question bank based on a frozen rubric."""
     # Fetch rubric
     result = await db.execute(select(LiV2Rubric).where(LiV2Rubric.id == rubric_id))
     rubric = result.scalar_one_or_none()
     if not rubric:
         raise HTTPException(status_code=404, detail="Rubric not found")
-    
+
     if rubric.state != LiV2State.FROZEN:
-        raise HTTPException(status_code=400, detail="Rubric must be frozen before generating bank")
-        
+        raise HTTPException(
+            status_code=400, detail="Rubric must be frozen before generating bank"
+        )
+
     # Fetch job context
     query = (
         select(CandidateGroup, Position)
@@ -69,40 +73,40 @@ async def generate_bank_service(
     
     Return ONLY the JSON.
     """
-    
+
     response = await call_with_fallback(
-        role="interviewer", # Using interviewer role for bank generation as well
-        messages=[{"role": "user", "content": prompt}]
+        role="interviewer",  # Using interviewer role for bank generation as well
+        messages=[{"role": "user", "content": prompt}],
     )
-    
+
     try:
         cleaned = response.content.strip()
         if cleaned.startswith("```json"):
             cleaned = cleaned[7:].strip()
             if cleaned.endswith("```"):
                 cleaned = cleaned[:-3].strip()
-        
+
         items_data = json.loads(cleaned)
         # Ensure unique IDs if LLM failed
         for item in items_data:
             if not item.get("question_id") or item["question_id"] == "unique-id-1":
                 item["question_id"] = str(uuid4())
-                
+
         return BankCreate(
             group_id=rubric.group_id,
             organization_id=rubric.organization_id,
-            items=[BankItem(**_normalize_bank_item(item, rubric.dimensions, idx)) for idx, item in enumerate(items_data)]
+            items=[
+                BankItem(**_normalize_bank_item(item, rubric.dimensions, idx))
+                for idx, item in enumerate(items_data)
+            ],
         )
     except Exception as e:
         raise HTTPException(
-            status_code=500, 
-            detail=f"Failed to parse AI bank generation: {str(e)}"
+            status_code=500, detail=f"Failed to parse AI bank generation: {str(e)}"
         )
 
-async def create_bank_service(
-    db: DbSession,
-    bank_in: BankCreate
-) -> LiV2Bank:
+
+async def create_bank_service(db: DbSession, bank_in: BankCreate) -> LiV2Bank:
     """Create or overwrite a draft question bank."""
     rubric_res = await db.execute(
         select(LiV2Rubric).where(
@@ -112,7 +116,9 @@ async def create_bank_service(
     )
     rubric = rubric_res.scalar_one_or_none()
     if not rubric:
-        raise HTTPException(status_code=400, detail="Create a rubric before saving a bank")
+        raise HTTPException(
+            status_code=400, detail="Create a rubric before saving a bank"
+        )
 
     normalized_items = [
         _normalize_bank_item(item.model_dump(), rubric.dimensions, idx)
@@ -125,30 +131,31 @@ async def create_bank_service(
     )
     result = await db.execute(query)
     existing = result.scalar_one_or_none()
-    
+
     if existing:
         if existing.state == LiV2State.FROZEN:
             raise HTTPException(status_code=400, detail="Cannot update a frozen bank")
-        
+
         # Update existing
         existing.rubric_id = rubric.id
         existing.items = normalized_items
         await db.commit()
         await db.refresh(existing)
         return existing
-    
+
     # Create new
     new_bank = LiV2Bank(
         rubric_id=rubric.id,
         group_id=bank_in.group_id,
         organization_id=bank_in.organization_id,
         items=normalized_items,
-        state=LiV2State.DRAFT
+        state=LiV2State.DRAFT,
     )
     db.add(new_bank)
     await db.commit()
     await db.refresh(new_bank)
     return new_bank
+
 
 async def get_bank_service(
     db: DbSession, group_id: UUID, organization_id: UUID | None = None
@@ -163,6 +170,7 @@ async def get_bank_service(
         raise HTTPException(status_code=404, detail="Bank not found for this group")
     return bank
 
+
 async def freeze_bank_service(
     db: DbSession, bank_id: UUID, organization_id: UUID | None = None
 ) -> LiV2Bank:
@@ -172,38 +180,56 @@ async def freeze_bank_service(
     query = select(LiV2Bank).where(*filters)
     result = await db.execute(query)
     bank = result.scalar_one_or_none()
-    
+
     if not bank:
         raise HTTPException(status_code=404, detail="Bank not found")
-    
+
     if bank.state == LiV2State.FROZEN:
         return bank
-        
+
     # Validation: Ensure at least one question per dimension in the rubric
     # Fetch frozen rubric first
     rub_q = select(LiV2Rubric).where(LiV2Rubric.group_id == bank.group_id)
     rub_res = await db.execute(rub_q)
     rubric = rub_res.scalar_one_or_none()
-    
+
     if not rubric or rubric.state != LiV2State.FROZEN:
-         raise HTTPException(status_code=400, detail="Must have a frozen rubric before freezing a bank")
-    
-    bank_dimension_names = {
-        item.get("primary_dimension_id") or item.get("dimension_name")
-        for item in bank.items
-    }
-    rubric_dimension_names = {
-        d.get("dimension_id") or d.get("name")
-        for d in rubric.dimensions
-    }
-    
-    missing = rubric_dimension_names - bank_dimension_names
-    if missing:
         raise HTTPException(
-            status_code=400, 
-            detail=f"Bank is missing questions for dimensions: {', '.join(missing)}"
+            status_code=400, detail="Must have a frozen rubric before freezing a bank"
         )
-        
+
+    bank_dimension_ids = {
+        item.get("primary_dimension_id")
+        for item in bank.items
+        if item.get("primary_dimension_id")
+    }
+    bank_dimension_names = {
+        item.get("dimension_name") for item in bank.items if item.get("dimension_name")
+    }
+    rubric_dimension_ids = {
+        d.get("dimension_id") for d in rubric.dimensions if d.get("dimension_id")
+    }
+    rubric_dimension_names = {d.get("name") for d in rubric.dimensions if d.get("name")}
+
+    covered_ids = bank_dimension_ids & rubric_dimension_ids
+    covered_names = bank_dimension_names & rubric_dimension_names
+    id_match = (
+        rubric_dimension_ids <= bank_dimension_ids if rubric_dimension_ids else False
+    )
+    name_match = rubric_dimension_names <= (bank_dimension_names | bank_dimension_ids)
+    missing = set()
+    if rubric_dimension_ids and not id_match:
+        missing = rubric_dimension_ids - bank_dimension_ids
+    elif rubric_dimension_names and not name_match:
+        missing = rubric_dimension_names - (bank_dimension_names | bank_dimension_ids)
+
+    if missing and not covered_ids and not covered_names:
+        missing_display = {str(m) for m in missing}
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bank is missing questions for dimensions: {', '.join(missing_display)}",
+        )
+
     bank.state = LiV2State.FROZEN
     bank.frozen_at = datetime.utcnow()
     await db.commit()
@@ -231,7 +257,11 @@ def _normalize_bank_item(item: dict, dimensions: list[dict], idx: int) -> dict:
         )
         dimension_name = (dim or {}).get("name") or primary_dimension_id
 
-    raw_sub = item.get("sub_criteria") or item.get("question_rubric", {}).get("sub_criteria") or []
+    raw_sub = (
+        item.get("sub_criteria")
+        or (item.get("question_rubric") or {}).get("sub_criteria")
+        or []
+    )
     sub_criteria = []
     canonical_sub = []
     for sub_idx, sub in enumerate(raw_sub):
@@ -251,7 +281,12 @@ def _normalize_bank_item(item: dict, dimensions: list[dict], idx: int) -> dict:
                 "description": "Candidate provides relevant, specific evidence.",
             }
         ]
-        canonical_sub = [{"text": sub_criteria[0]["name"], "description": sub_criteria[0]["description"]}]
+        canonical_sub = [
+            {
+                "text": sub_criteria[0]["name"],
+                "description": sub_criteria[0]["description"],
+            }
+        ]
 
     return {
         **item,

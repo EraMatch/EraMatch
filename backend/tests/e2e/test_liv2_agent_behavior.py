@@ -44,8 +44,8 @@ STAGE_ID = "a0000012-0000-0000-0000-000000000012"
 CANDIDATE_4_ID = "b0001001-0000-0000-0000-000000000001"
 CANDIDATE_4_APP_ID = "b0002001-0000-0000-0000-000000000001"
 
-# Candidate 4 login (Khalid — the candidate with live_interview stage unlocked)
-CANDIDATE_4_EMAIL = "khalid.mansour@example.com"
+# Candidate 4 login (Lina — the candidate with live_interview stage unlocked)
+CANDIDATE_4_EMAIL = "nour.eldin@example.com"
 CANDIDATE_4_PASSWORD = "admin12345"
 
 # Timeout constants (seconds)

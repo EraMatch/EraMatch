@@ -45,8 +45,8 @@ BASE_URL = os.getenv("ERAMATCH_API_URL", "http://localhost:8000/api/v1")
 HR_EMAIL = os.getenv("ERAMATCH_ADMIN_EMAIL", "hr@eramatch.com")
 HR_PASSWORD = os.getenv("ERAMATCH_ADMIN_PASSWORD", "admin12345")
 
-# Candidate credentials (Khalid — Candidate 4)
-CANDIDATE_EMAIL = "khalid.mansour@example.com"
+# Candidate credentials (Lina — Candidate 3, has unlocked live_interview stage)
+CANDIDATE_EMAIL = "nour.eldin@example.com"
 CANDIDATE_PASSWORD = "admin12345"
 
 # Seed-data UUIDs (must match seed script)
