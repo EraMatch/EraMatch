@@ -25,7 +25,7 @@ interface TaskRecord {
     id: string;
     status: string;
     type: string;
-    task_category: 'video' | 'question_import' | 'github_analysis';
+    task_category: 'video' | 'question_import' | 'github_analysis' | 'qag' | 'cv_ingestion';
     candidate_name: string | null;
     question: string;
     timestamp: string;
@@ -34,6 +34,10 @@ interface TaskRecord {
     total_flagged: number | null;
     total_approved: number | null;
     import_job_id: string | null;
+    candidates_found?: number | null;
+    candidates_processed?: number | null;
+    candidates_skipped?: number | null;
+    zero_reason?: string | null;
 }
 
 interface LogEntry {
@@ -59,7 +63,7 @@ interface SloHealthResponse {
 }
 
 type PageView = 'dashboard' | 'categories';
-type CategoryId = 'video-processing' | 'profile-processing' | 'video-recording' | 'question-generation-extraction';
+type CategoryId = 'video-processing' | 'profile-processing' | 'video-recording' | 'question-generation-extraction' | 'qag-processing';
 
 type StatusFilter = 'all' | 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
@@ -115,6 +119,12 @@ const CATEGORIES: Array<{ id: CategoryId; title: string; icon: React.ReactNode; 
         icon: <WandSparkles size={15} />,
         description: 'Question import generation and extraction flows',
     },
+    {
+        id: 'qag-processing',
+        title: 'Position Pre-Matching Score',
+        icon: <Sparkles size={15} />,
+        description: 'Pre-matching criteria generation and candidate correction jobs',
+    },
 ];
 
 const PAGE_TABS: Array<{ id: PageView; title: string; subtitle: string }> = [
@@ -145,8 +155,9 @@ const isAntiCheatingTask = (task: TaskRecord) =>
     includesAny(normalizedTaskText(task), ['anti cheat', 'anti-cheat', 'cheat', 'proctor', 'suspicious', 'anomaly']);
 
 const isCvTask = (task: TaskRecord) =>
-    (task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
-    includesAny(normalizedTaskText(task), ['cv', 'resume', 'curriculum vitae', '.pdf', '.doc', '.docx']);
+    task.task_category === 'cv_ingestion' ||
+    ((task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
+    includesAny(normalizedTaskText(task), ['cv', 'resume', 'curriculum vitae', '.pdf', '.doc', '.docx']));
 
 const isGithubTask = (task: TaskRecord) =>
     (task.task_category === 'question_import' || task.task_category === 'github_analysis') &&
@@ -203,8 +214,8 @@ const getTableColumnConfig = (tableId: string): TableColumnConfig => {
                 renderSubject: (task) => (
                     <div className="flex flex-wrap items-center gap-2 text-[12px]">
                         <span className="text-[13px] text-card-foreground">{task.source_filename || 'Uploaded source'}</span>
-                        {task.total_generated != null && <span className="px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">{task.total_generated} gen</span>}
-                        {task.total_flagged != null && <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{task.total_flagged} flagged</span>}
+                        {task.total_generated != null && <span className="px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">{task.total_generated} processed</span>}
+                        {task.total_flagged != null && <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{task.total_flagged} skipped</span>}
                         {task.total_approved != null && <span className="px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-100">{task.total_approved} approved</span>}
                     </div>
                 ),
@@ -245,6 +256,36 @@ const getTableColumnConfig = (tableId: string): TableColumnConfig => {
                         {task.total_generated != null && <span className="px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">{task.total_generated} gen</span>}
                         {task.total_flagged != null && <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{task.total_flagged} flagged</span>}
                         {task.total_approved != null && <span className="px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-100">{task.total_approved} approved</span>}
+                    </div>
+                ),
+            };
+        case 'qag-generation':
+            return {
+                taskHeader: 'Criteria Generation Task',
+                subjectHeader: 'Position & Generated Criteria',
+                renderSubject: (task) => (
+                    <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                        <span className="text-[13px] text-card-foreground">{task.source_filename || 'Position'}</span>
+                        {task.total_generated != null && <span className="px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">{task.total_generated} questions</span>}
+                    </div>
+                ),
+            };
+        case 'qag-resume-correction':
+            return {
+                taskHeader: 'Candidate Correction Task',
+                subjectHeader: 'Position & Corrected Candidates',
+                renderSubject: (task) => (
+                    <div className="flex flex-col gap-1 text-[12px]">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[13px] text-card-foreground">{task.source_filename || 'Position'}</span>
+                            {task.total_approved != null && <span className="px-2 py-0.5 rounded bg-green-50 text-green-700 border border-green-100">{task.total_approved} corrected</span>}
+                            {task.candidates_found != null && <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">{task.candidates_found} found</span>}
+                            {task.candidates_processed != null && <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100">{task.candidates_processed} processed</span>}
+                            {task.candidates_skipped != null && <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{task.candidates_skipped} skipped</span>}
+                        </div>
+                        {task.zero_reason && (
+                            <span className="text-[11px] text-amber-700">{task.zero_reason}</span>
+                        )}
                     </div>
                 ),
             };
@@ -338,9 +379,10 @@ export function BackgroundTasks() {
 
     const videoTasks = useMemo(() => tasks.filter((task) => task.task_category === 'video'), [tasks]);
     const questionImportTasks = useMemo(
-        () => tasks.filter((task) => task.task_category === 'question_import' || task.task_category === 'github_analysis'),
+        () => tasks.filter((task) => task.task_category === 'question_import' || task.task_category === 'github_analysis' || task.task_category === 'cv_ingestion'),
         [tasks]
     );
+    const qagTasks = useMemo(() => tasks.filter((task) => task.task_category === 'qag'), [tasks]);
 
     const categorized = useMemo(() => {
         const recorded = videoTasks.filter((task) => !isAntiCheatingTask(task) && !isLiveVideoTask(task));
@@ -357,6 +399,11 @@ export function BackgroundTasks() {
 
         const generation = questionImportTasks.filter((task) => isGenerationTask(task));
         const extraction = questionImportTasks.filter((task) => isExtractionTask(task));
+        const qagGeneration = qagTasks.filter((task) => normalizedTaskText(task).includes('generation'));
+        const qagResumeCorrection = qagTasks.filter((task) => normalizedTaskText(task).includes('resume correction'));
+        const qagUnclassified = qagTasks.filter(
+            (task) => !normalizedTaskText(task).includes('generation') && !normalizedTaskText(task).includes('resume correction')
+        );
 
         return {
             'video-processing': [
@@ -419,8 +466,32 @@ export function BackgroundTasks() {
                     tasks: extraction,
                 },
             ],
+            'qag-processing': [
+                {
+                    id: 'qag-generation',
+                    title: 'Criteria Generation',
+                    description: 'Generate position pre-matching criteria from the approved JD',
+                    tasks: qagGeneration,
+                },
+                {
+                    id: 'qag-resume-correction',
+                    title: 'Candidate Correction',
+                    description: 'Evaluate and correct parsed candidate resumes against approved criteria',
+                    tasks: qagResumeCorrection,
+                },
+                ...(qagUnclassified.length > 0
+                    ? [
+                        {
+                            id: 'qag-unclassified',
+                            title: 'Other Pre-Matching Processing',
+                            description: 'Pre-matching jobs not matched to criteria-generation/candidate-correction tags',
+                            tasks: qagUnclassified,
+                        },
+                    ]
+                    : []),
+            ],
         } as Record<CategoryId, SectionTable[]>;
-    }, [videoTasks, questionImportTasks]);
+    }, [videoTasks, questionImportTasks, qagTasks]);
 
     const activeCategoryTables = useMemo(() => categorized[activeCategory], [activeCategory, categorized]);
 
@@ -451,6 +522,7 @@ export function BackgroundTasks() {
             'profile-processing': categorized['profile-processing'].reduce((sum, table) => sum + table.tasks.length, 0),
             'video-recording': categorized['video-recording'].reduce((sum, table) => sum + table.tasks.length, 0),
             'question-generation-extraction': categorized['question-generation-extraction'].reduce((sum, table) => sum + table.tasks.length, 0),
+            'qag-processing': categorized['qag-processing'].reduce((sum, table) => sum + table.tasks.length, 0),
         };
 
         const recent = [...tasks]
@@ -586,7 +658,11 @@ export function BackgroundTasks() {
                     ? api.recruiter.stopQuestionImportTask(task.id)
                     : task.task_category === 'github_analysis'
                         ? api.recruiter.stopGithubAnalysisTask(task.id)
-                        : api.recruiter.stopVideoTask(task.id)
+                        : task.task_category === 'qag'
+                            ? api.recruiter.stopQagTask(task.id)
+                            : task.task_category === 'cv_ingestion'
+                                ? api.recruiter.stopCvIngestionTask(task.id)
+                            : api.recruiter.stopVideoTask(task.id)
             )
         );
         const successIds = stoppable
@@ -612,7 +688,13 @@ export function BackgroundTasks() {
         const runningGithubAnalysisCount = tasks.filter(
             (task) => task.task_category === 'github_analysis' && ['pending', 'processing'].includes(task.status.toLowerCase())
         ).length;
-        const totalRunning = runningVideoCount + runningImportCount + runningGithubAnalysisCount;
+        const runningQagCount = tasks.filter(
+            (task) => task.task_category === 'qag' && ['pending', 'processing'].includes(task.status.toLowerCase())
+        ).length;
+        const runningCvIngestionCount = tasks.filter(
+            (task) => task.task_category === 'cv_ingestion' && ['pending', 'processing'].includes(task.status.toLowerCase())
+        ).length;
+        const totalRunning = runningVideoCount + runningImportCount + runningGithubAnalysisCount + runningQagCount + runningCvIngestionCount;
 
         if (totalRunning === 0) {
             window.alert('No pending or processing tasks to stop.');
@@ -620,7 +702,7 @@ export function BackgroundTasks() {
         }
 
         const confirmed = window.confirm(
-            `Stop ${totalRunning} running task(s)? (${runningVideoCount} video, ${runningImportCount} question import, ${runningGithubAnalysisCount} GitHub analysis)`
+            `Stop ${totalRunning} running task(s)? (${runningVideoCount} video, ${runningImportCount} question import, ${runningGithubAnalysisCount} GitHub analysis, ${runningQagCount} QAG, ${runningCvIngestionCount} CV ingestion)`
         );
         if (!confirmed) return;
 
@@ -631,6 +713,8 @@ export function BackgroundTasks() {
                 runningVideoCount > 0 ? api.recruiter.stopAllVideoTasks() : Promise.resolve(null),
                 runningImportCount > 0 ? api.recruiter.stopAllQuestionImportTasks() : Promise.resolve(null),
                 runningGithubAnalysisCount > 0 ? api.recruiter.stopAllGithubAnalysisTasks() : Promise.resolve(null),
+                runningQagCount > 0 ? api.recruiter.stopAllQagTasks() : Promise.resolve(null),
+                runningCvIngestionCount > 0 ? api.recruiter.stopAllCvIngestionTasks() : Promise.resolve(null),
             ]);
 
             setTasks((prev) =>
@@ -823,6 +907,8 @@ export function BackgroundTasks() {
                                             <div className="flex items-center gap-2">
                                                 {task.task_category === 'question_import' ? (
                                                     <Sparkles size={14} className="text-primary" />
+                                                ) : task.task_category === 'qag' ? (
+                                                    <WandSparkles size={14} className="text-primary" />
                                                 ) : (
                                                     <FileText size={14} className="text-primary" />
                                                 )}
@@ -1001,6 +1087,10 @@ export function BackgroundTasks() {
                                 <p className="text-[24px] font-semibold">{questionImportTasks.length}</p>
                             </div>
                             <div className="rounded-[12px] border border-border bg-card px-4 py-3">
+                                <p className="text-[12px] text-muted-foreground">Position Pre-Matching Tasks</p>
+                                <p className="text-[24px] font-semibold">{qagTasks.length}</p>
+                            </div>
+                            <div className="rounded-[12px] border border-border bg-card px-4 py-3">
                                 <p className="text-[12px] text-muted-foreground">Active (Pending + Processing)</p>
                                 <p className="text-[24px] font-semibold">
                                     {overview.countsByStatus.pending + overview.countsByStatus.processing}
@@ -1078,13 +1168,13 @@ export function BackgroundTasks() {
                         <div className="rounded-[16px] border border-border bg-card p-3 overflow-x-auto">
                             <div className="relative min-w-[860px] rounded-[12px] border border-border bg-background p-1">
                                 <div
-                                    className="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%-0.5rem)/4)] transition-transform duration-300 ease-out motion-reduce:transition-none"
+                                    className="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%-0.5rem)/5)] transition-transform duration-300 ease-out motion-reduce:transition-none"
                                     style={{ transform: `translateX(${Math.max(activeCategoryIndex, 0) * 100}%)` }}
                                 >
                                     <div className="h-full w-full rounded-[9px] border border-primary/25 bg-primary/15 shadow-[0_4px_14px_rgba(99,102,241,0.18)]" />
                                 </div>
 
-                                <div className="relative z-10 grid grid-cols-4 gap-0">
+                                <div className="relative z-10 grid grid-cols-5 gap-0">
                                     {CATEGORIES.map((category) => {
                                         const active = category.id === activeCategory;
                                         return (

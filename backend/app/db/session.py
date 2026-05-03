@@ -4,9 +4,10 @@ Database session configuration for Supabase PostgreSQL.
 
 from collections.abc import AsyncGenerator
 
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, create_engine, Session
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
 from app.core.config import settings
@@ -33,6 +34,25 @@ async_session_factory = async_sessionmaker(
     expire_on_commit=False,
 )
 
+# --- Synchronous Support (psycopg2) ---
+# Used primarily in background workers (Celery) for stability on Windows
+sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+sync_engine = create_engine(
+    sync_url,
+    echo=False,
+    pool_size=5,
+    max_overflow=10,
+    connect_args={
+        "options": "-c statement_timeout=30000" # Optional: 30s timeout
+    }
+)
+
+sync_session_factory = sessionmaker(
+    sync_engine,
+    class_=Session,
+    expire_on_commit=False,
+)
+
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency to get database session."""
@@ -44,27 +64,50 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Initialize database tables with safety against locking contention."""
+    # 1. Create tables defined in SQLModel (metadata)
+    # We do this in a separate block to avoid holding locks during subsequent checks
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-        await conn.execute(
-            text(
-                "ALTER TABLE IF EXISTS cv_analysis ADD COLUMN IF NOT EXISTS github_profile JSONB"
-            )
-        )
 
-        await conn.execute(
-            text(
-                "ALTER TABLE IF EXISTS li_v2_rubrics ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"
-            )
+    # 2. Add missing columns with short lock timeouts to avoid blocking the whole app
+    async with engine.connect() as conn:
+        await conn.execute(text("SET lock_timeout = '2s'"))
+
+        # Check and add 'github_profile' to 'cv_analysis'
+        res = await conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name='cv_analysis' AND column_name='github_profile'")
         )
-        await conn.execute(
-            text(
-                "ALTER TABLE IF EXISTS li_v2_banks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"
-            )
+        if not res.fetchone():
+            try:
+                await conn.execute(text("ALTER TABLE cv_analysis ADD COLUMN github_profile JSONB"))
+                await conn.commit()
+            except Exception:
+                pass
+
+        # Check and add 'jd_hdeval_qag' to 'positions'
+        res = await conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name='positions' AND column_name='jd_hdeval_qag'")
         )
-        await conn.execute(
-            text(
-                "ALTER TABLE IF EXISTS li_v2_evaluations ADD COLUMN IF NOT EXISTS judge_model VARCHAR(100)"
+        if not res.fetchone():
+            try:
+                await conn.execute(text("ALTER TABLE positions ADD COLUMN jd_hdeval_qag JSONB"))
+                await conn.commit()
+            except Exception:
+                pass
+
+        # LiV2 schema migrations
+        for table, col, col_type in [
+            ("li_v2_rubrics", "updated_at", "TIMESTAMP"),
+            ("li_v2_banks", "updated_at", "TIMESTAMP"),
+            ("li_v2_evaluations", "judge_model", "VARCHAR(100)"),
+        ]:
+            res = await conn.execute(
+                text(f"SELECT column_name FROM information_schema.columns WHERE table_name='{table}' AND column_name='{col}'")
             )
-        )
+            if not res.fetchone():
+                try:
+                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
+                    await conn.commit()
+                except Exception:
+                    pass

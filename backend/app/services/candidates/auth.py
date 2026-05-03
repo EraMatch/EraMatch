@@ -18,14 +18,14 @@ class CandidateAuthService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def login(self, email: str, password: str) -> TokenResponse:
+    async def login(self, email: str, password: str, group_id: UUID | None = None) -> TokenResponse:
         """
         authenticate and return the jwt
         """
         import traceback
         try:
-            print(f"[DEBUG] Attempting login for email: {email}")
-            candidate = await self._get_candidate_by_email(email)
+            print(f"[DEBUG] Attempting login for email: {email}, group_id: {group_id}")
+            candidate = await self._get_candidate_by_email(email, group_id)
             print(f"[DEBUG] Candidate lookup result: {candidate}")
             
             if not candidate:
@@ -101,31 +101,27 @@ class CandidateAuthService:
         
         return candidate
 
-    async def _get_candidate_by_email(self, email: str) -> CandidateProfile | None:
-        """Get candidate by email.
-        
-        Uses .first() instead of .scalar_one_or_none() to gracefully handle
-        cases where duplicate email rows exist (e.g., during development/seeding).
-        Prefers rows that have a password_hash set.
-        """
-        # First try to find a row with a password set (seeded/real account)
+    async def _get_candidate_by_email(self, email: str, group_id: UUID | None = None) -> CandidateProfile | None:
+        """Get candidate by email, filtering by group_id if provided to ensure correct user context."""
+        from app.models import CandidateApplication
+
         statement = select(CandidateProfile).where(
             CandidateProfile.email == email,
             CandidateProfile.is_deleted == False,
             CandidateProfile.password_hash != None,  # noqa: E711
         )
+        
+        if group_id:
+            statement = statement.join(
+                CandidateApplication,
+                CandidateProfile.id == CandidateApplication.candidate_id
+            ).where(
+                CandidateApplication.group_id == group_id,
+                CandidateApplication.is_deleted == False
+            )
+            
         result = await self.session.execute(statement)
-        candidate = result.scalars().first()
-        if candidate:
-            return candidate
-
-        # Fallback: any row with this email
-        statement_any = select(CandidateProfile).where(
-            CandidateProfile.email == email,
-            CandidateProfile.is_deleted == False,
-        )
-        result_any = await self.session.execute(statement_any)
-        return result_any.scalars().first()
+        return result.scalars().first()
 
     async def _get_candidate_by_id(self, candidate_id: UUID) -> CandidateProfile | None:
         """Get candidate by ID."""

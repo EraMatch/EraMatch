@@ -2,13 +2,15 @@
 Candidate endpoints.
 """
 from uuid import UUID
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from app.api.deps import DbSession, CurrentUser
 from app.services import CandidateService
-from app.models import CandidateProfile, CandidateApplication, Position, CVAnalysis, GitHubAnalysisJob
+from app.models import CandidateProfile, CandidateApplication, Position, CVAnalysis, GitHubAnalysis, GitHubAnalysisJob
 from app.schemas import (
     CandidateCreate,
     CandidateUpdate,
@@ -19,6 +21,31 @@ from app.schemas import (
 from worker.tasks.github_analysis import run_github_analysis
 
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
+
+
+class PersistSuspectArtifactsRequest(BaseModel):
+    application_id: UUID | None = None
+    suspicious_timestamps: list[int] = Field(default_factory=list)
+    window_seconds: int = Field(default=5, ge=1, le=30)
+
+
+class GitHubAnalysisReviewQuestion(BaseModel):
+    questionText: str
+    type: str = Field(default="essay")
+    difficulty: str = Field(default="Medium")
+    sourceFile: str | None = None
+    referenceAnswer: str | None = None
+    rubric: str | None = None
+    rubricYesNoChecks: list[dict] = Field(default_factory=list)
+    selectionReason: str | None = None
+    jdRelation: str | None = None
+    evidence: str | None = None
+    selected: bool = True
+
+
+class PersistGitHubAnalysisReviewRequest(BaseModel):
+    review_notes: str | None = None
+    questions: list[GitHubAnalysisReviewQuestion] = Field(default_factory=list)
 
 
 async def _queue_github_analysis_job(
@@ -147,6 +174,103 @@ async def _queue_github_analysis_job(
     }
 
 
+@router.post("/{candidate_id}/github-analysis/review")
+async def persist_github_analysis_review(
+    candidate_id: UUID,
+    data: PersistGitHubAnalysisReviewRequest,
+    session: DbSession,
+    current_user: CurrentUser,
+):
+    profile_result = await session.execute(
+        select(CandidateProfile).where(
+            CandidateProfile.id == candidate_id,
+            CandidateProfile.organization_id == current_user.organization_id,
+            CandidateProfile.is_deleted == False,
+        )
+    )
+    profile = profile_result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    github_res = await session.execute(
+        select(GitHubAnalysis).where(
+            GitHubAnalysis.candidate_id == candidate_id,
+            GitHubAnalysis.organization_id == current_user.organization_id,
+        )
+    )
+    github = github_res.scalar_one_or_none()
+    if not github:
+        raise HTTPException(status_code=404, detail="GitHub analysis record not found")
+
+    analysis_data = github.analysis_data if isinstance(github.analysis_data, dict) else {}
+    synthesis = analysis_data.get("synthesis") if isinstance(analysis_data.get("synthesis"), dict) else {}
+
+    normalized_questions = []
+    for item in data.questions:
+        normalized_questions.append(
+            {
+                "question": item.questionText,
+                "question_text": item.questionText,
+                "type": item.type,
+                "question_type": item.type,
+                "difficulty": item.difficulty,
+                "source_file": item.sourceFile or "",
+                "reference_answer": item.referenceAnswer or "",
+                "rubric": item.rubric or "",
+                "rubric_yes_no_checks": item.rubricYesNoChecks if isinstance(item.rubricYesNoChecks, list) else [],
+                "selection_reason": item.selectionReason or "",
+                "jd_relation": item.jdRelation or "",
+                "evidence": item.evidence or "",
+                "selected": item.selected,
+            }
+        )
+
+    reviewed_count = sum(1 for item in data.questions if item.selected)
+    review_payload = {
+        "questions": normalized_questions,
+        "selected_count": reviewed_count,
+        "total_count": len(normalized_questions),
+        "review_notes": data.review_notes,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "reviewed_by_user_id": str(getattr(current_user, "id", None) or getattr(current_user, "user_id", "")),
+    }
+
+    analysis_data["question_review"] = review_payload
+    if isinstance(synthesis, dict):
+        synthesis.setdefault("questions", synthesis.get("questions") if isinstance(synthesis.get("questions"), list) else [])
+        analysis_data["synthesis"] = synthesis
+
+    github.analysis_data = analysis_data
+    github.generated_questions = normalized_questions
+    github.analyzed_at = datetime.utcnow()
+    session.add(github)
+
+    latest_job_result = await session.execute(
+        select(GitHubAnalysisJob)
+        .where(
+            GitHubAnalysisJob.organization_id == current_user.organization_id,
+            GitHubAnalysisJob.candidate_id == candidate_id,
+            GitHubAnalysisJob.status == "completed",
+        )
+        .order_by(GitHubAnalysisJob.created_at.desc())
+        .limit(1)
+    )
+    latest_job = latest_job_result.scalar_one_or_none()
+    if latest_job:
+        latest_job.generated_questions = normalized_questions
+        latest_job.total_generated = len(normalized_questions)
+        session.add(latest_job)
+
+    await session.commit()
+
+    return {
+        "message": "GitHub analysis review saved",
+        "candidate_id": str(candidate_id),
+        "selected_count": reviewed_count,
+        "total_count": len(normalized_questions),
+    }
+
+
 @router.post("", response_model=CandidateResponse, status_code=201)
 async def create_candidate(
     data: CandidateCreate, session: DbSession, current_user: CurrentUser
@@ -253,23 +377,38 @@ async def list_candidate_applications(
     """List applications for a candidate."""
     service = CandidateService(session, current_user.organization_id)
     return await service.list_applications_by_candidate(candidate_id)
-@router.get("/{candidate_id}/suspect-review", response_model=list[dict])
+@router.get("/{candidate_id}/suspect-review", response_model=dict)
 async def get_suspect_review(
-    candidate_id: UUID, session: DbSession, current_user: CurrentUser
+    candidate_id: UUID,
+    session: DbSession,
+    current_user: CurrentUser,
+    application_id: UUID | None = Query(default=None),
 ):
     """Get suspect review activities for a candidate."""
     service = CandidateService(session, current_user.organization_id)
-    return await service.get_suspect_review(candidate_id)
+    return await service.get_suspect_review(candidate_id, application_id)
 
 
-@router.get("/{candidate_id}/knowledge-graph", response_model=dict)
-async def get_knowledge_graph(
-    candidate_id: UUID, session: DbSession, current_user: CurrentUser
+@router.post("/{candidate_id}/suspect-review/decompression-artifacts", response_model=dict)
+async def persist_suspect_review_artifacts(
+    candidate_id: UUID,
+    data: PersistSuspectArtifactsRequest,
+    session: DbSession,
+    current_user: CurrentUser,
 ):
-    """Get knowledge graph data for a candidate."""
+    """Persist decompressed suspect segments as review artifacts linked to proctoring flags."""
     service = CandidateService(session, current_user.organization_id)
-    return await service.get_knowledge_graph(candidate_id)
+    reviewer_user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
+    if reviewer_user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid authenticated recruiter context")
 
+    return await service.persist_suspect_review_artifacts(
+        candidate_id=candidate_id,
+        reviewer_user_id=reviewer_user_id,
+        suspicious_timestamps=data.suspicious_timestamps,
+        application_id=data.application_id,
+        window_seconds=data.window_seconds,
+    )
 
 @router.post("/{candidate_id}/github-analysis/start")
 async def start_github_analysis(

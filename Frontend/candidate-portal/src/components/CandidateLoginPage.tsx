@@ -9,9 +9,10 @@ import { api } from '../services/api';
 interface CandidateLoginPageProps {
   onBack: () => void;
   onSignIn: () => void;
+  groupId?: string;
 }
 
-export function CandidateLoginPage({ onBack, onSignIn }: CandidateLoginPageProps) {
+export function CandidateLoginPage({ onBack, onSignIn, groupId }: CandidateLoginPageProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -23,7 +24,7 @@ export function CandidateLoginPage({ onBack, onSignIn }: CandidateLoginPageProps
     setError('');
 
     try {
-      await api.auth.login(email, password);
+      await api.auth.login(email, password, groupId);
       onSignIn();
     } catch (err) {
       setError('Invalid email or password');

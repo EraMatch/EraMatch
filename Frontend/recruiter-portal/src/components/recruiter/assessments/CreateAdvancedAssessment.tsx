@@ -23,6 +23,7 @@ interface Section {
   variants: QuestionVariant[];
   points: number;
   selectionStrategy?: 'random' | 'sequential';
+  variantsToSelect?: number;
 }
 
 interface QuestionVariant {
@@ -101,7 +102,8 @@ export function CreateAdvancedAssessment({ onBack, onSave, initialData }: Create
       type: 'mcq',
       variants: [],
       points: 10,
-      selectionStrategy: 'random'
+      selectionStrategy: 'random',
+      variantsToSelect: 1
     };
     setSections([...sections, newSection]);
     setCurrentSectionIndex(sections.length);
@@ -321,7 +323,7 @@ export function CreateAdvancedAssessment({ onBack, onSave, initialData }: Create
                                   </span>
                                 </div>
                                 <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                                  {section.variants.length} {section.variants.length === 1 ? 'variant' : 'variants'} • {section.points} points
+                                  {section.variants.length} {section.variants.length === 1 ? 'variant' : 'variants'} • {section.variantsToSelect || 1} per candidate • {section.points} points
                                 </div>
                               </div>
                             </div>

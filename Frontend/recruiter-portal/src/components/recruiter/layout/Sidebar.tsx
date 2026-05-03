@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck, AlertTriangle, Activity, Video, User, ShieldAlert, WandSparkles, ChevronRight } from 'lucide-react';
+import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck, AlertTriangle, Activity, Video, User, ShieldAlert, WandSparkles, ChevronRight, Sparkles } from 'lucide-react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../../../services/api';
 import { authService } from '../../../services/auth.service';
@@ -32,6 +32,7 @@ export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [technicalReviewCount, setTechnicalReviewCount] = useState(0);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [runningTasks, setRunningTasks] = useState<SidebarTask[]>([]);
   const [showTaskCategoryPopover, setShowTaskCategoryPopover] = useState(false);
@@ -69,6 +70,18 @@ export function Sidebar() {
   useEffect(() => {
     if (userRole !== 'technical') return;
 
+    const fetchAssignedReviews = async () => {
+      try {
+        const assigned = await api.recruiter.getAssignedRequests();
+        setTechnicalReviewCount(Array.isArray(assigned) ? assigned.length : 0);
+      } catch (error) {
+        console.error('Failed to fetch technical review count:', error);
+      }
+    };
+
+    fetchAssignedReviews();
+    const reviewInterval = setInterval(fetchAssignedReviews, 30000);
+
     const fetchRunningTasks = async () => {
       try {
         const tasks = await api.recruiter.getBackgroundTasks();
@@ -83,8 +96,11 @@ export function Sidebar() {
     };
 
     fetchRunningTasks();
-    const interval = setInterval(fetchRunningTasks, 10000);
-    return () => clearInterval(interval);
+    const taskInterval = setInterval(fetchRunningTasks, 10000);
+    return () => {
+      clearInterval(taskInterval);
+      clearInterval(reviewInterval);
+    };
   }, [userRole]);
 
   useEffect(() => {
@@ -106,6 +122,7 @@ export function Sidebar() {
   const runningTaskCounts = useMemo(() => {
     const videoTasks = runningTasks.filter((task) => task.task_category === 'video');
     const questionImportTasks = runningTasks.filter((task) => task.task_category === 'question_import' || task.task_category === 'github_analysis');
+    const qagTasks = runningTasks.filter((task) => task.task_category === 'qag');
 
     const profileTasks = questionImportTasks.filter((task) => !isGenerationTask(task) && !isExtractionTask(task));
     const questionGenerationAndExtraction = questionImportTasks.filter((task) => isGenerationTask(task) || isExtractionTask(task));
@@ -116,6 +133,7 @@ export function Sidebar() {
       profileProcessing: profileTasks.length,
       videoRecording: videoTasks.filter((task) => isAntiCheatingTask(task)).length,
       questionGenerationExtraction: questionGenerationAndExtraction.length,
+      qagProcessing: qagTasks.length,
     };
   }, [runningTasks]);
 
@@ -170,6 +188,13 @@ export function Sidebar() {
           <NavLink to="/recruiter/reviews" className={({ isActive }) => getLinkClass(isActive)} title="Reviews">
             <div className="relative">
               <ClipboardCheck size={24} />
+              {technicalReviewCount > 0 && (
+                <div className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-[#ef4444] flex items-center justify-center">
+                  <span className="font-['Arimo',sans-serif] text-[9px] text-white font-bold leading-none">
+                    {technicalReviewCount > 99 ? '99+' : technicalReviewCount}
+                  </span>
+                </div>
+              )}
             </div>
           </NavLink>
         )}
@@ -236,6 +261,13 @@ export function Sidebar() {
                       <span>Question Generation & Extraction</span>
                     </div>
                     <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.questionGenerationExtraction}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
+                    <div className="flex items-center gap-2 text-[13px] text-[#334155]">
+                      <Sparkles size={14} />
+                      <span>Position Pre-Matching Score</span>
+                    </div>
+                    <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.qagProcessing}</span>
                   </div>
                 </div>
 

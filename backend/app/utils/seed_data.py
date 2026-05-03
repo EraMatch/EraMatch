@@ -578,7 +578,7 @@ def generate_detailed_assessments_and_interviews(org_id, candidates):
         asm_id = mapping["asm_id"]
         ai_config_id = mapping["ai_conf_id"]
 
-        if status in ["in_pipeline", "offered", "hired", "rejected"]:
+        if status in ["screening", "in_pipeline", "offered", "hired", "rejected"]:
             # Create Ongoing Assessment
             session_id = str(uuid4())
             score = round(random.uniform(60.0, 98.0), 2)

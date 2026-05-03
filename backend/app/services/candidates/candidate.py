@@ -1,15 +1,19 @@
 from uuid import UUID
+from uuid import uuid4
 import zipfile
 import io
 import os
+import json
 from datetime import datetime, timezone
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
+from sqlalchemy import text
 
-from app.models import CandidateProfile, CandidateApplication, User
+from app.models import CandidateProfile, CandidateApplication, User, Position, CVAnalysis, GitHubAnalysis, QAGProcessingJob
 from app.schemas import CandidateCreate, CandidateUpdate, ApplicationCreate, CandidateResponse, CandidateUploadResponse
 from app.core.security import hash_password
 from app.services.email import EmailService
+from app.services.prescore import PreScoreService
 import secrets
 import string
 
@@ -146,7 +150,15 @@ class CandidateService:
         candidate_title = "Software Engineer" # Default fallback
 
         work_history = []
+        project_history = []
         education_history = []
+        resume_summary = ""
+        tech_skills = {
+            "frontend": [],
+            "backend": [],
+            "devops": [],
+        }
+        certifications = []
 
         if app_row:
             app, pos, proj = app_row
@@ -157,9 +169,18 @@ class CandidateService:
             cv = cv_res.scalar_one_or_none()
             if cv:
                 cv_data = cv
-                scores["github"] = float(cv.match_score or 0.0) # Using match score as proxy for GH for now
                 parsed = cv.parsed_data or {}
                 github_profile = cv.github_profile or parsed.get("github_profile") or {}
+
+                summary_candidates = [
+                    parsed.get("summary"),
+                    parsed.get("professional_summary"),
+                    parsed.get("profile_summary"),
+                ]
+                for candidate_summary in summary_candidates:
+                    if isinstance(candidate_summary, str) and candidate_summary.strip():
+                        resume_summary = candidate_summary.strip()
+                        break
 
                 profile_part = github_profile.get("profile") if isinstance(github_profile, dict) else {}
                 stats_part = github_profile.get("stats") if isinstance(github_profile, dict) else {}
@@ -194,6 +215,44 @@ class CandidateService:
                 if exp_list and len(exp_list) > 0 and isinstance(exp_list[0], dict):
                     candidate_title = exp_list[0].get("job_title") or exp_list[0].get("title") or candidate_title
 
+                skill_entries = parsed.get("skills", [])
+                if isinstance(skill_entries, list):
+                    for entry in skill_entries:
+                        if isinstance(entry, dict):
+                            skill_name = str(entry.get("skill_name") or entry.get("name") or "").strip()
+                            category = str(entry.get("category") or "").strip().lower()
+                        else:
+                            skill_name = str(entry).strip()
+                            category = ""
+
+                        if not skill_name:
+                            continue
+
+                        if category in {"frontend", "front-end", "front end", "ui", "web"}:
+                            tech_skills["frontend"].append(skill_name)
+                        elif category in {"backend", "back-end", "back end", "api", "server"}:
+                            tech_skills["backend"].append(skill_name)
+                        elif category in {"devops", "infra", "infrastructure", "cloud", "platform"}:
+                            tech_skills["devops"].append(skill_name)
+                        else:
+                            lowered = skill_name.lower()
+                            if any(token in lowered for token in ["react", "vue", "angular", "html", "css", "tailwind", "javascript", "typescript"]):
+                                tech_skills["frontend"].append(skill_name)
+                            elif any(token in lowered for token in ["python", "java", "spring", "node", "fastapi", "django", "flask", "sql", "postgres", "mysql", "mongodb", "go", "c#", "dotnet"]):
+                                tech_skills["backend"].append(skill_name)
+                            elif any(token in lowered for token in ["docker", "kubernetes", "aws", "azure", "gcp", "terraform", "jenkins", "ci", "cd", "linux"]):
+                                tech_skills["devops"].append(skill_name)
+
+                cert_entries = parsed.get("certifications", [])
+                if isinstance(cert_entries, list):
+                    for cert in cert_entries:
+                        if isinstance(cert, dict):
+                            cert_name = str(cert.get("name") or cert.get("title") or "").strip()
+                        else:
+                            cert_name = str(cert).strip()
+                        if cert_name:
+                            certifications.append(cert_name)
+
                 # Populate workHistory
                 from app.schemas.candidate import JobExperience
                 for job in exp_list:
@@ -204,6 +263,43 @@ class CandidateService:
                             duration=str(job.get("duration") or job.get("dates") or "N/A"),
                             description=str(job.get("description") or job.get("responsibilities") or "No description provided")
                         ))
+
+                # Populate projects separately from work experience.
+                from app.schemas.candidate import CandidateProject
+                project_list = parsed.get("projects", [])
+                if isinstance(project_list, list):
+                    for project in project_list:
+                        if not isinstance(project, dict):
+                            continue
+
+                        name = str(project.get("name") or project.get("title") or "").strip()
+                        if not name:
+                            continue
+
+                        technologies_raw = project.get("technologies")
+                        technologies: list[str] = []
+                        if isinstance(technologies_raw, list):
+                            technologies = [str(t).strip() for t in technologies_raw if str(t).strip()]
+
+                        start_date = str(project.get("start_date") or "").strip()
+                        end_date = str(project.get("end_date") or "").strip()
+                        duration = "N/A"
+                        if start_date and end_date:
+                            duration = f"{start_date} - {end_date}"
+                        elif start_date:
+                            duration = f"{start_date} - Present"
+                        elif end_date:
+                            duration = end_date
+
+                        project_history.append(
+                            CandidateProject(
+                                name=name,
+                                description=str(project.get("description") or "No description provided").strip(),
+                                technologies=technologies,
+                                duration=duration,
+                                url=str(project.get("url") or "").strip() or None,
+                            )
+                        )
                 
                 # Populate education
                 from app.schemas.candidate import Education
@@ -238,11 +334,15 @@ class CandidateService:
                 analysis_data = gh.analysis_data or {}
                 if isinstance(analysis_data, dict):
                     synthesis = analysis_data.get("synthesis") if isinstance(analysis_data.get("synthesis"), dict) else {}
+                    question_review = analysis_data.get("question_review") if isinstance(analysis_data.get("question_review"), dict) else {}
+                    reviewed_questions = question_review.get("questions") if isinstance(question_review.get("questions"), list) else []
+                    synthesis_questions = synthesis.get("questions") if isinstance(synthesis.get("questions"), list) else []
+                    resolved_questions = reviewed_questions or synthesis_questions
                     github_analysis = {
                         "summary": synthesis.get("executive_summary") or analysis_data.get("summary") or "",
                         "archetypes": synthesis.get("archetypes") or analysis_data.get("archetypes") or [],
                         "assessment": synthesis.get("assessment") or analysis_data.get("assessment") or None,
-                        "questions": synthesis.get("questions") or analysis_data.get("questions") or [],
+                        "questions": resolved_questions or analysis_data.get("questions") or [],
                         "audit": analysis_data.get("audit") or [],
                         "contributionStats": analysis_data.get("contribution_stats") if isinstance(analysis_data.get("contribution_stats"), dict) else None,
                         "recentActivity": analysis_data.get("recent_activity") if isinstance(analysis_data.get("recent_activity"), list) else [],
@@ -253,8 +353,16 @@ class CandidateService:
                         "repoConfidence": analysis_data.get("repo_confidence") if isinstance(analysis_data.get("repo_confidence"), dict) else None,
                         "dataFreshness": analysis_data.get("data_freshness") if isinstance(analysis_data.get("data_freshness"), dict) else None,
                         "questionDelivery": analysis_data.get("question_delivery") if isinstance(analysis_data.get("question_delivery"), dict) else None,
+                        "questionReview": question_review,
                         "assignedQuestionStats": None,
                     }
+
+                    overall_from_analysis = analysis_data.get("overall_github_score")
+                    if overall_from_analysis is not None:
+                        try:
+                            scores["github"] = round(float(overall_from_analysis), 1)
+                        except Exception:
+                            pass
 
                     top_repos = analysis_data.get("top_repositories") or analysis_data.get("topRepos")
                     if isinstance(top_repos, list):
@@ -270,6 +378,13 @@ class CandidateService:
                     "keywords": github_personalization.get("keywords", []),
                     "matched_topics": github_personalization.get("matched_topics", []),
                 }
+
+                # Fallback score when synthesis overall is absent.
+                if scores["github"] <= 0:
+                    contribution_score = gh.contribution_score if gh and gh.contribution_score is not None else 0
+                    code_quality_score = gh.code_quality_score if gh and gh.code_quality_score is not None else 0
+                    if contribution_score or code_quality_score:
+                        scores["github"] = round((float(contribution_score) + float(code_quality_score)) / 2.0, 1)
 
             latest_assessment_res = await self.session.execute(
                 select(OngoingAssessment)
@@ -289,7 +404,20 @@ class CandidateService:
                 for row in assigned_rows:
                     snapshot = row.question_snapshot if isinstance(row.question_snapshot, dict) else {}
                     ctx = snapshot.get("assignment_context") if isinstance(snapshot.get("assignment_context"), dict) else {}
-                    if str(ctx.get("selection_strategy") or "").strip().lower() == "github_analysis":
+                    qcfg = snapshot.get("question_config") if isinstance(snapshot.get("question_config"), dict) else {}
+                    selection_strategy = str(ctx.get("selection_strategy") or "").strip().lower()
+                    source_tag = str(qcfg.get("source") or "").strip().lower()
+                    is_github_assigned = selection_strategy == "github_analysis" or source_tag == "github_analysis"
+
+                    if is_github_assigned:
+                        source_file = str(qcfg.get("source_file") or "").strip()
+                        repository_name = ""
+                        if source_file:
+                            normalized = source_file.replace("\\", "/")
+                            parts = [p for p in normalized.split("/") if p]
+                            if len(parts) >= 2 and parts[0].lower() != "src":
+                                repository_name = parts[0]
+
                         github_assigned_count += 1
                         github_assigned_questions.append(
                             {
@@ -299,6 +427,8 @@ class CandidateService:
                                 "questionType": str(snapshot.get("question_type") or "essay"),
                                 "questionText": str(snapshot.get("question_text") or ""),
                                 "points": int(snapshot.get("points") or 10),
+                                "sourceFile": source_file,
+                                "repositoryName": repository_name,
                             }
                         )
 
@@ -310,6 +440,65 @@ class CandidateService:
                     "totalAssigned": len(assigned_rows),
                     "githubAssigned": github_assigned_count,
                     "githubQuestions": github_assigned_questions,
+                }
+            else:
+                # Fallback: expose synthesized GitHub questions even before assessment starts,
+                # so recruiter profile can preview candidate-specific GitHub-inspired prompts.
+                synthesis_questions = []
+                if isinstance(github_analysis, dict):
+                    raw_questions = github_analysis.get("questions")
+                    if isinstance(raw_questions, list):
+                        synthesis_questions = raw_questions
+
+                preview_questions = []
+                for idx, q in enumerate(synthesis_questions, start=1):
+                    if not isinstance(q, dict):
+                        continue
+                    question_text = str(q.get("question") or q.get("question_text") or "").strip()
+                    if not question_text:
+                        continue
+                    question_type = str(q.get("question_type") or q.get("type") or "essay").strip().lower() or "essay"
+                    if question_type not in {"mcq", "essay", "coding"}:
+                        question_type = "essay"
+                    source_file = str(q.get("source_file") or "").strip()
+                    repository_name = ""
+                    if source_file:
+                        normalized = source_file.replace("\\", "/")
+                        parts = [p for p in normalized.split("/") if p]
+                        if len(parts) >= 2 and parts[0].lower() != "src":
+                            repository_name = parts[0]
+
+                    preview_questions.append(
+                        {
+                            "assignmentId": f"github-suggested-{idx}",
+                            "order": idx,
+                            "questionId": str(q.get("question_id") or f"github-suggested-{idx}"),
+                            "questionType": question_type,
+                            "questionText": question_text,
+                            "points": int(q.get("points") or 10),
+                            "sourceFile": source_file,
+                            "repositoryName": repository_name,
+                            "referenceAnswer": str(q.get("reference_answer") or q.get("referenceAnswer") or "").strip(),
+                            "rubric": str(q.get("rubric") or "").strip(),
+                            "rubricYesNoChecks": q.get("rubric_yes_no_checks") if isinstance(q.get("rubric_yes_no_checks"), list) else [],
+                            "selectionReason": str(q.get("selection_reason") or "").strip(),
+                            "jdRelation": str(q.get("jd_relation") or "").strip(),
+                            "evidence": str(q.get("evidence") or "").strip(),
+                            "referenceAnswer": str(q.get("reference_answer") or q.get("referenceAnswer") or "").strip(),
+                            "rubric": str(q.get("rubric") or "").strip(),
+                            "rubricYesNoChecks": q.get("rubric_yes_no_checks") if isinstance(q.get("rubric_yes_no_checks"), list) else [],
+                            "selectionReason": str(q.get("selection_reason") or "").strip(),
+                            "jdRelation": str(q.get("jd_relation") or "").strip(),
+                            "evidence": str(q.get("evidence") or "").strip(),
+                        }
+                    )
+
+                github_analysis["assignedQuestionStats"] = {
+                    "sessionId": None,
+                    "assessmentStatus": "not_started",
+                    "totalAssigned": len(preview_questions),
+                    "githubAssigned": len(preview_questions),
+                    "githubQuestions": preview_questions,
                 }
 
             # Fetch pipeline stage names from GroupStageConfig (filtration_flow removed from model)
@@ -378,15 +567,48 @@ class CandidateService:
         response.title = candidate_title
         response.scores = CandidateScores(**scores)
         response.workHistory = work_history
+        response.projects = project_history
         response.education = education_history
         if 'filtration_flow' in locals() and filtration_flow is not None:
              response.filtrationFlow = filtration_flow
         
         response.groupAssigned = bool(app_row and app_row[0].group_id)
+        response.groupId = app.group_id if app_row else None
+        response.applicationId = app.id if app_row else None
+
+        if app_row and app.group_id:
+            group_res = await self.session.execute(
+                select(CandidateGroup.group_name).where(CandidateGroup.id == app.group_id)
+            )
+            response.groupName = group_res.scalar_one_or_none()
         
         if cv_data:
             response.skills = cv_data.skills or []
             response.experience = float(cv_data.experience_years or 0.0)
+
+            # Ensure resume tab has complete parsed CV content.
+            if not resume_summary and work_history:
+                resume_summary = str(work_history[0].description or "").strip()
+            if not resume_summary:
+                resume_summary = f"Candidate profile for {profile.full_name}."
+
+            if not tech_skills["frontend"] and not tech_skills["backend"] and not tech_skills["devops"]:
+                for skill in response.skills:
+                    lowered = str(skill).lower()
+                    if any(token in lowered for token in ["react", "vue", "angular", "html", "css", "tailwind", "javascript", "typescript"]):
+                        tech_skills["frontend"].append(skill)
+                    elif any(token in lowered for token in ["docker", "kubernetes", "aws", "azure", "gcp", "terraform", "jenkins", "ci", "cd", "linux"]):
+                        tech_skills["devops"].append(skill)
+                    else:
+                        tech_skills["backend"].append(skill)
+
+            response.resumeSummary = resume_summary
+            response.techSkills = {
+                "frontend": list(dict.fromkeys(tech_skills["frontend"])),
+                "backend": list(dict.fromkeys(tech_skills["backend"])),
+                "devops": list(dict.fromkeys(tech_skills["devops"])),
+            }
+            response.certifications = list(dict.fromkeys(certifications))
             
         response.pipelineStatus = pipeline_status
         response.assessmentData = assessment_data
@@ -445,6 +667,123 @@ class CandidateService:
         self.session.add(application)
         await self.session.commit()
         await self.session.refresh(application)
+
+        # Ensure we have an ingestion-time pre-score snapshot for this application.
+        position_res = await self.session.execute(
+            select(Position).where(
+                Position.id == data.position_id,
+                Position.organization_id == self.organization_id,
+                Position.is_deleted == False,
+            )
+        )
+        position = position_res.scalar_one_or_none()
+
+        candidate_res = await self.session.execute(
+            select(CandidateProfile).where(CandidateProfile.id == candidate_id)
+        )
+        candidate = candidate_res.scalar_one_or_none()
+
+        github_res = await self.session.execute(
+            select(GitHubAnalysis).where(
+                GitHubAnalysis.candidate_id == candidate_id,
+                GitHubAnalysis.organization_id == self.organization_id,
+            )
+        )
+        github = github_res.scalar_one_or_none()
+
+        if position and candidate:
+            cv_res = await self.session.execute(
+                select(CVAnalysis).where(CVAnalysis.application_id == application.id)
+            )
+            cv = cv_res.scalar_one_or_none()
+
+            if not cv:
+                cv = CVAnalysis(
+                    application_id=application.id,
+                    organization_id=self.organization_id,
+                    cv_file_url=data.resume_url,
+                    parsed_data={},
+                    skills=[],
+                    experience_years=0,
+                    match_score=0,
+                )
+
+            parsed_data = cv.parsed_data if isinstance(cv.parsed_data, dict) else {}
+            parsed_data.setdefault("contact_info", {})
+            parsed_data["contact_info"]["email"] = candidate.email
+            parsed_data.setdefault("summary", f"Candidate profile for {candidate.full_name}")
+
+            scorer = PreScoreService()
+            jd_critic_result = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else None
+            if not jd_critic_result:
+                jd_critic_result = await scorer.run_position_jd_critic(
+                    job_title=position.job_title,
+                    job_description=position.job_description,
+                    required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
+                    years_of_experience=position.years_of_experience,
+                )
+                position.jd_hdeval_qag = jd_critic_result
+                self.session.add(position)
+
+            prescore = await scorer.score_candidate_prescore(
+                job_title=position.job_title,
+                job_description=position.job_description,
+                required_skills=position.required_skills,
+                years_of_experience=position.years_of_experience,
+                candidate_skills=cv.skills or [],
+                candidate_experience_years=float(cv.experience_years or 0.0),
+                candidate_parsed_data=parsed_data,
+                github_analysis_data={
+                    "contribution_score": github.contribution_score if github else None,
+                    "code_quality_score": github.code_quality_score if github else None,
+                    "repo_count": github.repo_count if github else None,
+                },
+                jd_critic_result=jd_critic_result,
+            )
+
+            parsed_data["prescore_v2"] = prescore
+            cv.parsed_data = parsed_data
+            cv.match_score = prescore["pre_score_final"]
+            cv.analyzed_at = datetime.utcnow()
+
+            self.session.add(cv)
+            await self.session.commit()
+
+            # If criteria were already approved for this position, auto-register a correction task
+            # for this newly added candidate so background-task history reflects the trigger.
+            artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+            approved_questions = artifact.get("approved_questions") if isinstance(artifact.get("approved_questions"), list) else []
+            is_criteria_approved = str(artifact.get("status") or "").lower() == "approved" and len(approved_questions) > 0
+
+            if is_criteria_approved:
+                now = datetime.utcnow()
+                correction_job = QAGProcessingJob(
+                    organization_id=self.organization_id,
+                    position_id=position.id,
+                    application_id=application.id,
+                    candidate_id=candidate_id,
+                    created_by_user_id=None,
+                    job_type="qag_resume_correction",
+                    status="completed",
+                    source_provider=str(artifact.get("provider") or "ai-service:ollama"),
+                    total_items=1,
+                    processed_items=1,
+                    summary={
+                        "position_id": str(position.id),
+                        "application_id": str(application.id),
+                        "candidate_id": str(candidate_id),
+                        "applications_scored": 1,
+                        "candidates_found": 1,
+                        "candidates_processed": 1,
+                        "candidates_skipped": 0,
+                        "zero_reason": None,
+                        "trigger": "candidate_application_created",
+                    },
+                    started_at=now,
+                    completed_at=now,
+                )
+                self.session.add(correction_job)
+                await self.session.commit()
         return application
 
     async def list_applications_by_candidate(self, candidate_id: UUID) -> list[CandidateApplication]:
@@ -455,33 +794,310 @@ class CandidateService:
         result = await self.session.execute(query)
         return result.scalars().all()
 
-    async def get_knowledge_graph(self, candidate_id: UUID) -> dict:
-        """Get knowledge graph data for a candidate."""
+    async def get_suspect_review(self, candidate_id: UUID, application_id: UUID | None = None) -> dict:
+        """Get real suspect-review timeline from proctoring flags."""
+        app_filter = ""
+        params: dict[str, object] = {
+            "candidate_id": candidate_id,
+            "org_id": self.organization_id,
+        }
+        if application_id is not None:
+            app_filter = " AND ca.application_id = :application_id "
+            params["application_id"] = application_id
+
+        candidate_row = await self.session.execute(
+            text(
+                f"""
+                SELECT
+                  cp.candidate_id,
+                  cp.full_name,
+                  COALESCE(cg.group_name, 'Unknown Group') AS group_name,
+                  COALESCE(p.job_title, 'Unknown Position') AS position_title,
+                  ca.application_id
+                FROM candidate_profiles cp
+                JOIN candidate_applications ca
+                  ON ca.candidate_id = cp.candidate_id
+                LEFT JOIN candidate_groups cg
+                  ON cg.group_id = ca.group_id
+                LEFT JOIN positions p
+                  ON p.position_id = ca.position_id
+                WHERE cp.candidate_id = :candidate_id
+                  AND ca.organization_id = :org_id
+                  AND ca.is_deleted = false
+                  {app_filter}
+                ORDER BY ca.applied_at DESC
+                LIMIT 1
+                """
+            ),
+            params,
+        )
+        candidate = candidate_row.mappings().first()
+        if not candidate:
+            return {
+                "candidate_id": str(candidate_id),
+                "candidate_name": "Unknown Candidate",
+                "group_name": "Unknown Group",
+                "position_title": "Unknown Position",
+                "current_module": "Assessment",
+                "recording_url": None,
+                "duration": 0,
+                "suspicious_timestamps": [],
+                "flags": [],
+            }
+
+        app_id = application_id or candidate["application_id"]
+        recording_row = await self.session.execute(
+            text(
+                """
+                SELECT oa.recording_url
+                FROM ongoing_assessments oa
+                WHERE oa.application_id = :application_id
+                  AND oa.recording_url IS NOT NULL
+                ORDER BY COALESCE(oa.submitted_at, oa.started_at) DESC
+                LIMIT 1
+                """
+            ),
+            {"application_id": app_id},
+        )
+        recording = recording_row.mappings().first()
+
+        flags_row = await self.session.execute(
+            text(
+                """
+                SELECT
+                  pf.flag_id,
+                  pf.timestamp_seconds,
+                  pf.event_type,
+                  pf.severity,
+                  pf.session_type,
+                  pf.evidence,
+                  pf.status,
+                  pf.created_at
+                FROM proctoring_flags pf
+                WHERE pf.application_id = :application_id
+                ORDER BY COALESCE(pf.timestamp_seconds, 0) ASC, pf.created_at ASC
+                """
+            ),
+            {"application_id": app_id},
+        )
+        rows = flags_row.mappings().all()
+
+        max_ts = 0
+        suspicious_timestamp_buckets: set[int] = set()
+        mapped_flags: list[dict] = []
+        for row in rows:
+            ts = int(row["timestamp_seconds"] or 0)
+            max_ts = max(max_ts, ts)
+            suspicious_timestamp_buckets.add((ts // 5) * 5)
+
+            module = "Assessment" if row["session_type"] == "assessment" else "AI Interview"
+            event = str(row["event_type"] or "unknown_event").replace("_", " ").title()
+
+            evidence_obj = row["evidence"]
+            if isinstance(evidence_obj, str):
+                try:
+                    evidence_obj = json.loads(evidence_obj)
+                except json.JSONDecodeError:
+                    evidence_obj = {"raw": evidence_obj}
+
+            note = ""
+            evidence_text = ""
+            metadata_payload: dict | None = None
+            proof_payload: dict | None = None
+            if isinstance(evidence_obj, dict):
+                metadata = evidence_obj.get("metadata") if isinstance(evidence_obj.get("metadata"), dict) else {}
+                proof = metadata.get("proof") if isinstance(metadata.get("proof"), dict) else {}
+                metadata_payload = metadata if metadata else None
+                proof_payload = proof if proof else None
+                note = str(proof.get("adapter_mode") or evidence_obj.get("evidence") or "").strip()
+                if proof:
+                    evidence_text = f"model_backed={proof.get('model_backed')} mode={proof.get('adapter_mode')}"
+                elif evidence_obj.get("source"):
+                    evidence_text = f"source={evidence_obj.get('source')}"
+
+            mapped_flags.append(
+                {
+                    "id": str(row["flag_id"]),
+                    "timestamp": ts,
+                    "timeDisplay": f"{ts // 60}:{str(ts % 60).zfill(2)}",
+                    "event": event,
+                    "severity": str(row["severity"] or "low").lower(),
+                    "module": module,
+                    "evidence": evidence_text or "No structured evidence",
+                    "metadata": metadata_payload,
+                    "proof": proof_payload,
+                    "notes": note,
+                    "status": str(row["status"] or "pending").lower(),
+                }
+            )
+
+        current_module = "Assessment"
+        if rows:
+            latest_session_type = rows[-1]["session_type"]
+            current_module = "Assessment" if latest_session_type == "assessment" else "AI Interview"
+
         return {
-            "nodes": [
-                {"id": "1", "label": "Python", "type": "skill", "value": 90},
-                {"id": "2", "label": "FastAPI", "type": "skill", "value": 85},
-                {"id": "3", "label": "React", "type": "skill", "value": 70},
-                {"id": "4", "label": "5 Years Exp", "type": "experience", "value": 100},
-            ],
-            "edges": [
-                {"source": "1", "target": "2", "label": "used in"},
-                {"source": "3", "target": "2", "label": "connects to"},
-            ]
+            "candidate_id": str(candidate["candidate_id"]),
+            "application_id": str(app_id),
+            "candidate_name": candidate["full_name"],
+            "group_name": candidate["group_name"],
+            "position_title": candidate["position_title"],
+            "current_module": current_module,
+            "recording_url": recording["recording_url"] if recording else None,
+            "duration": max(60, max_ts + 30 if max_ts > 0 else 0),
+            "suspicious_timestamps": sorted(suspicious_timestamp_buckets),
+            "flags": mapped_flags,
         }
 
-    async def get_suspect_review(self, candidate_id: UUID) -> list[dict]:
-        """Get suspect review activities (for anti-cheating)."""
-        # Normally fetches from CandidateStageProgress acceptance_result or audit logs
-        return [
-            {
-                "id": "1",
-                "type": "tab-switch",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "severity": "medium",
-                "description": "Candidate switched tabs during assessment"
+    async def persist_suspect_review_artifacts(
+        self,
+        candidate_id: UUID,
+        reviewer_user_id: UUID,
+        suspicious_timestamps: list[int],
+        application_id: UUID | None = None,
+        window_seconds: int = 5,
+    ) -> dict:
+        if not suspicious_timestamps:
+            return {
+                "saved_segments": 0,
+                "updated_flags": 0,
+                "application_id": str(application_id) if application_id else None,
+                "artifacts": [],
             }
-        ]
+
+        app_filter = ""
+        params: dict[str, object] = {
+            "candidate_id": candidate_id,
+            "org_id": self.organization_id,
+        }
+        if application_id is not None:
+            app_filter = " AND ca.application_id = :application_id "
+            params["application_id"] = application_id
+
+        app_row = await self.session.execute(
+            text(
+                f"""
+                SELECT ca.application_id
+                FROM candidate_applications ca
+                WHERE ca.candidate_id = :candidate_id
+                  AND ca.organization_id = :org_id
+                  AND ca.is_deleted = false
+                  {app_filter}
+                ORDER BY ca.applied_at DESC
+                LIMIT 1
+                """
+            ),
+            params,
+        )
+        resolved_app = app_row.mappings().first()
+        if not resolved_app:
+            return {
+                "saved_segments": 0,
+                "updated_flags": 0,
+                "application_id": str(application_id) if application_id else None,
+                "artifacts": [],
+            }
+
+        resolved_application_id = resolved_app["application_id"]
+        flag_rows = await self.session.execute(
+            text(
+                """
+                SELECT pf.flag_id, pf.timestamp_seconds, pf.evidence
+                FROM proctoring_flags pf
+                WHERE pf.application_id = :application_id
+                ORDER BY COALESCE(pf.timestamp_seconds, 0) ASC, pf.created_at ASC
+                """
+            ),
+            {"application_id": resolved_application_id},
+        )
+        flags = flag_rows.mappings().all()
+        if not flags:
+            return {
+                "saved_segments": 0,
+                "updated_flags": 0,
+                "application_id": str(resolved_application_id),
+                "artifacts": [],
+            }
+
+        safe_window = max(1, int(window_seconds or 5))
+        normalized_timestamps = sorted({max(0, int(ts)) for ts in suspicious_timestamps})
+
+        artifacts: list[dict] = []
+        updates_by_flag: dict[UUID, dict] = {}
+
+        for ts in normalized_timestamps:
+            chosen_flag = min(
+                flags,
+                key=lambda row: abs(int(row["timestamp_seconds"] or 0) - ts),
+            )
+            artifact = {
+                "artifact_id": str(uuid4()),
+                "artifact_type": "decompressed_segment",
+                "segment_start_second": ts,
+                "segment_end_second": ts + safe_window,
+                "timestamp_bucket_seconds": safe_window,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_by_user_id": str(reviewer_user_id),
+                "linked_flag_id": str(chosen_flag["flag_id"]),
+            }
+            artifacts.append(artifact)
+
+            flag_id = chosen_flag["flag_id"]
+            existing_evidence = updates_by_flag.get(flag_id)
+            if existing_evidence is None:
+                raw = chosen_flag["evidence"]
+                if isinstance(raw, str):
+                    try:
+                        existing_evidence = json.loads(raw)
+                    except json.JSONDecodeError:
+                        existing_evidence = {"raw": raw}
+                elif isinstance(raw, dict):
+                    existing_evidence = raw
+                else:
+                    existing_evidence = {}
+            if not isinstance(existing_evidence, dict):
+                existing_evidence = {}
+
+            metadata = existing_evidence.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+
+            review_artifacts = metadata.get("review_artifacts")
+            if not isinstance(review_artifacts, list):
+                review_artifacts = []
+
+            review_artifacts.append(artifact)
+            metadata["review_artifacts"] = review_artifacts
+            metadata["suspect_timestamps"] = normalized_timestamps
+            existing_evidence["metadata"] = metadata
+            updates_by_flag[flag_id] = existing_evidence
+
+        for flag_id, payload in updates_by_flag.items():
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE proctoring_flags
+                    SET evidence = :evidence,
+                        reviewed_by_user_id = :reviewed_by,
+                        status = CASE WHEN status = 'pending' THEN 'reviewed' ELSE status END
+                    WHERE flag_id = :flag_id
+                    """
+                ),
+                {
+                    "flag_id": flag_id,
+                    "evidence": json.dumps(payload),
+                    "reviewed_by": reviewer_user_id,
+                },
+            )
+
+        await self.session.commit()
+
+        return {
+            "saved_segments": len(artifacts),
+            "updated_flags": len(updates_by_flag),
+            "application_id": str(resolved_application_id),
+            "artifacts": artifacts,
+        }
 
     # Bulk Upload
     async def process_zip_upload(self, file_content: bytes, position_id: UUID) -> CandidateUploadResponse:

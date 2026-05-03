@@ -47,7 +47,9 @@ export function RecordedInterviewQuestionSetup({
             question_type: 'interview',
             topic: groupName,
             difficulty: 'Medium',
-            context: 'Recorded interview setup. Generate concise, role-relevant open-ended screening questions.'
+            context: 'Recorded interview setup. Generate concise, role-relevant open-ended screening questions.',
+            use_case: 'recorded_interview_suggest',
+            metadata: { group_name: groupName, desired_count: 8 },
           })
         )
       );
@@ -236,7 +238,10 @@ export function RecordedInterviewQuestionSetup({
                             if (!question.text.trim()) return;
                             setIsRefining(question.id);
                             try {
-                              const response = await recruiterService.refineAIQuestion(question.text);
+                              const response = await recruiterService.refineAIQuestion(question.text, {
+                                useCase: 'recorded_interview_question',
+                                metadata: { group_name: groupName },
+                              });
                               handleQuestionChange(question.id, 'text', response.refinedText);
                               toast.success('Question refined with AI!');
                             } catch (error) {

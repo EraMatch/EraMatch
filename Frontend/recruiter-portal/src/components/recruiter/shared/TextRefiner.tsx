@@ -21,7 +21,17 @@ export function TextRefiner({ originalText, onApply, onClose, context = "text" }
     setRefineError(null);
 
     try {
-      const response = await recruiterService.refineAIQuestion(originalText);
+      const useCaseMap: Record<string, string> = {
+        question: 'assessment_question',
+        rubric: 'assessment_rubric',
+        option: 'assessment_question',
+        explanation: 'assessment_rubric',
+        text: 'assessment_question',
+      };
+      const response = await recruiterService.refineAIQuestion(originalText, {
+        useCase: useCaseMap[context] || 'assessment_question',
+        metadata: { context },
+      });
       setRefinedText((response?.refinedText || originalText).trim() || originalText);
       setShowResult(true);
     } catch (error) {

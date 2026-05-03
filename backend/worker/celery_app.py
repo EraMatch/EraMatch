@@ -9,7 +9,14 @@ celery_app = Celery(
     "eramatch",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["worker.tasks.video", "worker.tasks.question_import", "worker.tasks.github_analysis"],
+    include=[
+        "worker.tasks.video", 
+        "worker.tasks.question_import", 
+        "worker.tasks.github_analysis",
+        "worker.tasks.cv_ingestion",
+        "worker.tasks.cv_parsing",
+        "worker.tasks.qag",
+    ],
 )
 
 # Celery configuration
@@ -23,3 +30,11 @@ celery_app.conf.update(
     task_time_limit=600,  # 10 minutes max per task
     worker_prefetch_multiplier=1,
 )
+
+from celery.signals import worker_ready
+
+@worker_ready.connect
+def recover_schedules_on_startup(sender, **kwargs):
+    """Trigger recovery of missed Drive API syncs when the worker starts."""
+    from worker.tasks.cv_ingestion import recover_missed_schedules
+    recover_missed_schedules.delay()

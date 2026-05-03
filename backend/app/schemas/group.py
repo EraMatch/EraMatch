@@ -59,6 +59,7 @@ class PipelineStage(BaseModel):
 class CandidateStageStatus(BaseModel):
     score: float | None = None
     status: str = "pending"
+    passed: bool | None = None
     scheduled_at: datetime | None = None
     meeting_link: str | None = None
     session_id: UUID | None = None  # LiV2 session ID
@@ -80,10 +81,12 @@ class CandidateProgressItem(BaseModel):
     assessment: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
     ai_interview: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
     live_interview: CandidateStageStatus = Field(default_factory=CandidateStageStatus)
+    stages: dict[str, CandidateStageStatus] = Field(default_factory=dict)
     meets_criteria: bool = False
     verdict: str = "pending"
     flags: list[IntegrityFlag] = []
-    status: str = "Active"
+    status: str
+
     has_notes: bool = False
 
 
@@ -301,6 +304,8 @@ class AssignInterviewRequest(BaseModel):
     interview_config_id: UUID | None = None
     create_new: bool = False
     interview_config: dict | None = None
+    config: dict | None = None
+    interviewConfig: dict | None = None
 
 
 class AssignInterviewResponse(BaseModel):
@@ -372,6 +377,43 @@ class IntegrityFlagDetail(BaseModel):
 
 class IntegrityFlagsResponse(BaseModel):
     flags: list[IntegrityFlagDetail] = []
+
+
+
+class GroupIntegrityDecisionCandidate(BaseModel):
+    application_id: str
+    candidate_id: str
+    candidate_name: str
+    stage: str
+    stage_status: str
+    stage_score: float | None = None
+    decision: str
+    cheating_detected: bool
+    total_flags: int
+    high_flags: int
+    medium_flags: int
+    low_flags: int
+    critical_flags: int
+    latest_event_type: str | None = None
+    latest_flag_at: str | None = None
+
+
+class GroupIntegrityStageAggregate(BaseModel):
+    stage: str
+    total_candidates: int
+    confirmed_cheating: int
+    suspicious_review: int
+    monitoring: int
+    clean: int
+
+
+class GroupIntegrityDecisionsResponse(BaseModel):
+    group_id: str
+    stage: str | None = None
+    candidates: list[GroupIntegrityDecisionCandidate] = []
+    summary: GroupIntegrityStageAggregate
+    stage_aggregates: list[GroupIntegrityStageAggregate] = []
+    updated_at: str
 
 
 # ─── Export (CSV is handled at the route level, this schema is for request) ─

@@ -10,6 +10,13 @@ import { toast } from 'sonner';
 import { Loader2, Briefcase, MapPin, DollarSign, Users, Info, Plus, X } from 'lucide-react';
 import { Badge } from '../ui/badge';
 
+const getErrorMessage = (error: unknown, fallback: string): string => {
+    if (error instanceof Error && error.message) {
+        return error.message;
+    }
+    return fallback;
+};
+
 interface AdminPositionModalProps {
     isOpen: boolean;
     onClose: () => void;
@@ -178,7 +185,9 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
             onSuccess();
             onClose();
         } catch (error) {
-            toast.error(position ? 'Failed to update position' : 'Failed to create position');
+            toast.error(
+                getErrorMessage(error, position ? 'Failed to update position' : 'Failed to create position')
+            );
         } finally {
             setIsLoading(false);
         }

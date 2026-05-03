@@ -1,4 +1,4 @@
-import { createBrowserRouter, useNavigate, useSearchParams, useParams, Navigate } from 'react-router-dom';
+import { createBrowserRouter, useNavigate, useSearchParams, useParams, Navigate, useLocation } from 'react-router-dom';
 import React from 'react';
 import { Toaster } from 'sonner';
 import { AdminLoginPage } from './components/admin/AdminLoginPage';
@@ -19,6 +19,8 @@ import { ProjectsPage } from './components/recruiter/projects/ProjectsPage';
 import { CandidatesPage } from './components/recruiter/candidates/CandidatesPage';
 import { QuestionBankPage } from './components/recruiter/assessments/QuestionBankPage';
 import { CandidateProfile } from './components/recruiter/candidates/CandidateProfile';
+import { CandidateGitHubAnalysisReviewPage } from './components/recruiter/candidates/CandidateGitHubAnalysisReviewPage';
+import { CandidateQAGAuditPage } from './components/recruiter/candidates/CandidateQAGAuditPage';
 import { AlertsNotifications } from './components/common/AlertsNotifications';
 import { EnhancedGroupOverviewV2 } from './components/recruiter/groups/EnhancedGroupOverviewV2';
 import { LandingPage } from './components/common/LandingPage';
@@ -27,7 +29,11 @@ import { RecruiterSettings } from './components/recruiter/settings/RecruiterSett
 import { SuspiciousActivityLog } from './components/recruiter/dashboard/SuspiciousActivityLog';
 import { BackgroundTasks } from './components/recruiter/dashboard/BackgroundTasks';
 import { ReviewRequests } from './components/recruiter/reviews/ReviewRequests';
+import { PositionPreMatchingReviewPage } from './components/recruiter/reviews/PositionPreMatchingReviewPage';
 import { api, PositionGroup } from './services/api';
+import { NavigationStackProvider, useNavigationStack } from './components/common/NavigationStack';
+import { ProjectDetailView } from './components/recruiter/projects/ProjectDetailView';
+import { PositionDetailView } from './components/recruiter/positions/PositionDetailView';
 
 import AdminRequests from './components/admin/AdminRequests';
 
@@ -55,7 +61,7 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
     );
 };
 
-const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
+const RecruiterLayoutInner = ({ children }: { children: React.ReactNode }) => {
     return (
         <div className="min-h-screen bg-[#edf0f8]">
             <Sidebar />
@@ -64,6 +70,14 @@ const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
                 <Toaster richColors position="top-right" />
             </div>
         </div>
+    );
+};
+
+const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
+    return (
+        <NavigationStackProvider>
+            <RecruiterLayoutInner>{children}</RecruiterLayoutInner>
+        </NavigationStackProvider>
     );
 };
 
@@ -100,58 +114,87 @@ const LandingPageWrapper = () => {
 // Wrapper Components for Navigation
 const DashboardWrapper = () => {
     const navigate = useNavigate();
+    const { navigateWithStack } = useNavigationStack();
     return (
         <Dashboard
             onViewAllProjects={() => navigate('/recruiter/projects')}
-            onViewProject={(title) => navigate(`/recruiter/projects?project=${encodeURIComponent(title)}`)}
+            onViewProject={(projectId) => navigateWithStack(`/recruiter/project/${projectId}`)}
             onViewSuspicious={() => navigate('/recruiter/suspicious-activity')}
         />
     );
 };
 
 const ProjectsPageWrapper = () => {
-    const navigate = useNavigate();
-    const [searchParams, setSearchParams] = useSearchParams();
-    const initialProjectTitle = searchParams.get('project') || undefined;
-    const initialPosition = searchParams.get('position') || undefined;
-
-    const handlePositionSelect = (positionTitle: string) => {
-        // Update URL with position param without reloading
-        const newParams = new URLSearchParams(searchParams);
-        if (positionTitle) {
-            newParams.set('position', positionTitle);
-        } else {
-            newParams.delete('position');
-        }
-        setSearchParams(newParams);
-    };
+    const { navigateWithStack } = useNavigationStack();
 
     return (
         <ProjectsPage
-            onViewProject={(title) => {
-                // When viewing a project, we might want to clear position or keep it? 
-                // Usually viewing a project starts without a specific position unless specified.
-                // But the helper usually just navigates.
-                navigate(`/recruiter/projects?project=${encodeURIComponent(title)}`);
-            }}
-            initialProjectTitle={initialProjectTitle}
-            onBackToDashboard={() => navigate('/recruiter/dashboard')}
+            onViewProject={(projectId) => navigateWithStack(`/recruiter/project/${projectId}`)}
+            onViewPosition={(positionId) => navigateWithStack(`/recruiter/position/${positionId}`)}
             onCreateAssessment={() => console.log('Create Assessment')}
-            onViewDashboard={(title, position) => navigate(`/recruiter/dashboard`)}
-            onViewGroup={(groupId) => {
-                // Before navigating to the group, update the *current* URL (in history) to include tab=groups
-                // This ensures that when the user clicks 'Back', they return to the Groups tab
-                const url = new URL(window.location.href);
-                url.searchParams.set('tab', 'groups');
-                window.history.replaceState(window.history.state, '', url);
+        />
+    );
+};
 
-                navigate(`/recruiter/group/${groupId}`);
-            }}
-            pendingAssessment={null}
-            onAssessmentConsumed={() => { }}
-            returnToGroupsTab={searchParams.get('tab') === 'groups'}
-            initialPosition={initialPosition}
-            onPositionSelect={handlePositionSelect}
+const ProjectDetailWrapper = () => {
+    const { projectId } = useParams();
+    const { navigateWithStack, goBack } = useNavigationStack();
+
+    return (
+        <ProjectDetailView
+            projectId={projectId || ''}
+            onBack={() => goBack()}
+            backLabel="Back"
+            onCreateAssessment={() => console.log('Create Assessment')}
+            onViewDashboard={() => goBack('/recruiter/dashboard')}
+            onViewGroup={(groupId) => navigateWithStack(`/recruiter/group/${groupId}`)}
+            onViewPosition={(positionId) => navigateWithStack(`/recruiter/position/${positionId}`)}
+        />
+    );
+};
+
+const PositionDetailWrapper = () => {
+    const { positionId } = useParams();
+    const { goBack } = useNavigationStack();
+    const navigate = useNavigate();
+
+    // We need to fetch position details to get the required props
+    const [positionData, setPositionData] = React.useState<any>(null);
+    const [loading, setLoading] = React.useState(true);
+
+    React.useEffect(() => {
+        const loadPosition = async () => {
+            if (!positionId) return;
+            try {
+                const position = await api.recruiter.getPosition(positionId) as any;
+                setPositionData(position);
+            } catch (err) {
+                console.error('Failed to load position:', err);
+            } finally {
+                setLoading(false);
+            }
+        };
+        loadPosition();
+    }, [positionId]);
+
+    if (loading) return (
+        <div className="flex items-center justify-center min-h-screen bg-[#edf0f8]">
+            <p className="text-[#64748b] font-medium">Loading position details...</p>
+        </div>
+    );
+
+    return (
+        <PositionDetailView
+            positionId={positionId || ''}
+            positionTitle={positionData?.jobTitle || positionData?.job_title || positionData?.title || 'Position'}
+            projectTitle={positionData?.projectName || positionData?.project_name || 'Project'}
+            description={positionData?.jobDescription || positionData?.job_description || positionData?.description}
+            screeningConditions={positionData?.screeningConditions || positionData?.screening_conditions}
+            isOpen={String(positionData?.status || '').toLowerCase() === 'open' || String(positionData?.status || '').toLowerCase() === 'active'}
+            onBack={() => goBack()}
+            onSave={() => {}}
+            onCreateAssessment={() => console.log('Create Assessment')}
+            onViewGroup={(groupId) => navigate(`/recruiter/group/${groupId}`)}
         />
     );
 };
@@ -250,17 +293,39 @@ const GroupOverviewWrapper = () => {
 const CandidateProfileWrapper = () => {
     const { candidateId } = useParams();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
 
     // Pass candidateId as a string (UUID) directly
     const id = candidateId ?? '';
+    const applicationId = searchParams.get('applicationId') ?? undefined;
 
     return (
         <CandidateProfile
             candidateId={id}
+            applicationId={applicationId}
             onBack={() => navigate(-1)}
-            onViewKnowledgeGraph={() => console.log('View Knowledge Graph')}
         />
     );
+};
+
+const CandidateQAGAuditWrapper = () => {
+    const { candidateId } = useParams();
+    const [searchParams] = useSearchParams();
+
+    const id = candidateId ?? '';
+    const applicationId = searchParams.get('applicationId') ?? undefined;
+
+    return <CandidateQAGAuditPage candidateId={id} applicationId={applicationId} />;
+};
+
+const CandidateGitHubAnalysisReviewWrapper = () => {
+    const { candidateId } = useParams();
+    const [searchParams] = useSearchParams();
+
+    const id = candidateId ?? '';
+    const applicationId = searchParams.get('applicationId') ?? undefined;
+
+    return <CandidateGitHubAnalysisReviewPage candidateId={id} applicationId={applicationId} />;
 };
 
 export const router = createBrowserRouter([
@@ -410,6 +475,26 @@ export const router = createBrowserRouter([
         ),
     },
     {
+        path: "/recruiter/project/:projectId",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <ProjectDetailWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        ),
+    },
+    {
+        path: "/recruiter/position/:positionId",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <PositionDetailWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        ),
+    },
+    {
         path: "/recruiter/group/:groupId",
         element: (
             <RecruiterProtectedRoute>
@@ -445,6 +530,16 @@ export const router = createBrowserRouter([
             <RecruiterProtectedRoute>
                 <RecruiterLayout>
                     <ReviewRequests />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        )
+    },
+    {
+        path: "/recruiter/reviews/:requestId/pre-matching",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <PositionPreMatchingReviewPage />
                 </RecruiterLayout>
             </RecruiterProtectedRoute>
         )
@@ -503,6 +598,26 @@ export const router = createBrowserRouter([
                 </RecruiterLayout>
             </RecruiterProtectedRoute>
         ),
+    },
+    {
+        path: "/recruiter/candidates/:candidateId/qag-audit",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <CandidateQAGAuditWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        ),
+    },
+    {
+        path: "/recruiter/candidates/:candidateId/github-analysis-review",
+        element: (
+            <RecruiterProtectedRoute>
+                <RecruiterLayout>
+                    <CandidateGitHubAnalysisReviewWrapper />
+                </RecruiterLayout>
+            </RecruiterProtectedRoute>
+        )
     },
     {
         path: "/recruiter/background-tasks",

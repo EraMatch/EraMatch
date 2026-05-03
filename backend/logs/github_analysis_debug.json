@@ -1,0 +1,137 @@
+[
+  {
+    "timestamp": "2026-04-20T15:39:10.377048",
+    "step": "task_started",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "candidate_id": "4d0bcd04-5ade-4ea0-8239-0119307e8bd5",
+      "github_url": "https://github.com/aadhamashraf",
+      "questions_to_generate": 10
+    }
+  },
+  {
+    "timestamp": "2026-04-20T15:39:11.134194",
+    "step": "job_status_updated",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "status": "processing"
+    }
+  },
+  {
+    "timestamp": "2026-04-20T15:39:11.134505",
+    "step": "github_analysis_request_started",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "candidate_id": "4d0bcd04-5ade-4ea0-8239-0119307e8bd5",
+      "github_url": "https://github.com/aadhamashraf"
+    }
+  },
+  {
+    "timestamp": "2026-04-20T15:46:11.244597",
+    "step": "task_error",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "candidate_id": "4d0bcd04-5ade-4ea0-8239-0119307e8bd5",
+      "error": "HTTPConnectionPool(host='127.0.0.1', port=8001): Read timed out. (read timeout=420)"
+    }
+  },
+  {
+    "timestamp": "2026-04-20T15:46:21.463132",
+    "step": "task_started",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "candidate_id": "4d0bcd04-5ade-4ea0-8239-0119307e8bd5",
+      "github_url": "https://github.com/aadhamashraf",
+      "questions_to_generate": 10
+    }
+  },
+  {
+    "timestamp": "2026-04-20T15:46:22.183257",
+    "step": "job_status_updated",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "status": "processing"
+    }
+  },
+  {
+    "timestamp": "2026-04-20T15:46:22.184178",
+    "step": "github_analysis_request_started",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "candidate_id": "4d0bcd04-5ade-4ea0-8239-0119307e8bd5",
+      "github_url": "https://github.com/aadhamashraf"
+    }
+  },
+  {
+    "timestamp": "2026-04-20T15:53:22.257019",
+    "step": "task_error",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "candidate_id": "4d0bcd04-5ade-4ea0-8239-0119307e8bd5",
+      "error": "HTTPConnectionPool(host='127.0.0.1', port=8001): Read timed out. (read timeout=420)"
+    }
+  },
+  {
+    "timestamp": "2026-04-20T15:53:32.463814",
+    "step": "task_started",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "candidate_id": "4d0bcd04-5ade-4ea0-8239-0119307e8bd5",
+      "github_url": "https://github.com/aadhamashraf",
+      "questions_to_generate": 10
+    }
+  },
+  {
+    "timestamp": "2026-04-20T15:53:33.241417",
+    "step": "job_status_updated",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "status": "processing"
+    }
+  },
+  {
+    "timestamp": "2026-04-20T15:53:33.241725",
+    "step": "github_analysis_request_started",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "candidate_id": "4d0bcd04-5ade-4ea0-8239-0119307e8bd5",
+      "github_url": "https://github.com/aadhamashraf"
+    }
+  },
+  {
+    "timestamp": "2026-04-20T16:00:33.351060",
+    "step": "task_error",
+    "data": {
+      "job_id": "ff89c6d8-6968-4051-8b9e-7e598e338bcd",
+      "candidate_id": "4d0bcd04-5ade-4ea0-8239-0119307e8bd5",
+      "error": "HTTPConnectionPool(host='127.0.0.1', port=8001): Read timed out. (read timeout=420)"
+    }
+  },
+  {
+    "timestamp": "2026-04-22T21:01:15.805605",
+    "step": "task_started",
+    "data": {
+      "job_id": "f57ba586-4525-403b-b668-a7a11d2734bb",
+      "candidate_id": "5a365d8b-1d52-46c9-bfb3-4122862b33b3",
+      "github_url": "github.com/AhmedSolay",
+      "questions_to_generate": 10
+    }
+  },
+  {
+    "timestamp": "2026-04-22T21:01:16.456393",
+    "step": "job_status_updated",
+    "data": {
+      "job_id": "f57ba586-4525-403b-b668-a7a11d2734bb",
+      "status": "processing"
+    }
+  },
+  {
+    "timestamp": "2026-04-22T21:01:16.457228",
+    "step": "github_analysis_request_started",
+    "data": {
+      "job_id": "f57ba586-4525-403b-b668-a7a11d2734bb",
+      "candidate_id": "5a365d8b-1d52-46c9-bfb3-4122862b33b3",
+      "github_url": "github.com/AhmedSolay"
+    }
+  }
+]

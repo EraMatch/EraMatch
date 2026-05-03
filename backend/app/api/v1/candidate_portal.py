@@ -43,7 +43,7 @@ async def candidate_login(data: CandidateLoginRequest, session: DbSession):
     Returns access and refresh tokens.
     """
     service = CandidateAuthService(session)
-    return await service.login(data.email, data.password)
+    return await service.login(data.email, data.password, data.group_id)
 
 
 @router.post("/refresh", response_model=TokenResponse)

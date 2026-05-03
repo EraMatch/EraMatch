@@ -41,8 +41,8 @@ class TestListApplications:
         resp = client.get("/recruiter/applications")
         apps = resp.json()
         valid_statuses = {
-            "applied", "screening", "in_pipeline", "rejected",
-            "offered", "hired", "withdrawn", "on_hold"
+            "applied", "screening", "rejected",
+            "offered", "hired", "withdrawn", "holded"
         }
         for app in apps:
             status = app.get("status", "")

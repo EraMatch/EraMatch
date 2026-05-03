@@ -1,7 +1,6 @@
 import { Plus, Filter, ArrowUpDown, Search, Loader2 } from 'lucide-react';
 import { ProjectCard } from '../../common/ProjectCard';
 import LoadingSpinner from '../../common/LoadingSpinner';
-import { ProjectDetailView } from './ProjectDetailView';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../../ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../../ui/popover';
 import { Checkbox } from '../../ui/checkbox';
@@ -39,27 +38,24 @@ type SortOption =
   | 'roles-desc';
 
 interface ProjectsPageProps {
-  onViewProject: (projectTitle: string) => void;
-  initialProjectTitle?: string;
-  onBackToDashboard?: () => void;
+  onViewProject: (projectId: string | number) => void;
+  onViewPosition?: (positionId: string | number) => void;
   onCreateAssessment?: () => void;
-  pendingAssessment?: any;
-  onAssessmentConsumed?: () => void;
-  onViewDashboard?: (projectTitle: string, positionTitle: string) => void;
-  onViewGroup?: (groupId: string) => void;
-  returnToGroupsTab?: boolean;
-  initialPosition?: string; // Position to show when loading a project
-  onPositionSelect?: (positionTitle: string) => void; // Callback when position changes
 }
 
-export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashboard, onCreateAssessment, pendingAssessment, onAssessmentConsumed, onViewDashboard, onViewGroup, returnToGroupsTab = false, initialPosition = '', onPositionSelect }: ProjectsPageProps) {
+export function ProjectsPage({ onViewProject, onViewPosition, onCreateAssessment }: ProjectsPageProps) {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [positions, setPositions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
 
   const fetchProjects = async () => {
     try {
       setIsLoading(true);
-      const allProjects = await api.recruiter.getProjects();
+      const [allProjects, allPositions] = await Promise.all([
+        api.recruiter.getProjects(),
+        api.recruiter.getPositions()
+      ]);
 
       const mappedProjects = allProjects.map(p => ({
         id: p.id,
@@ -72,6 +68,7 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
       }));
 
       setProjects(mappedProjects);
+      setPositions(allPositions);
     } catch (error) {
       toast.error('Failed to load projects');
     } finally {
@@ -83,22 +80,6 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
     fetchProjects();
   }, []);
 
-  // Initialize viewingProject based on initialProjectTitle
-  const initialProject = initialProjectTitle
-    ? projects.find(p => p.title === initialProjectTitle) || null
-    : null;
-
-  const [viewingProject, setViewingProject] = useState<Project | null>(initialProject);
-
-  // Update viewingProject when projects are loaded if initialProjectTitle is present
-  useEffect(() => {
-    if (initialProjectTitle && projects.length > 0 && !viewingProject) {
-      const project = projects.find(p => p.title === initialProjectTitle);
-      if (project) {
-        setViewingProject(project);
-      }
-    }
-  }, [projects, initialProjectTitle]);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -202,6 +183,16 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
     }
   });
 
+  // Search Results for the "Jump to" dropdown
+  const searchResults = searchQuery.length >= 2 ? [
+    ...projects
+      .filter(p => p.title.toLowerCase().includes(searchQuery.toLowerCase()))
+      .map(p => ({ id: p.id, title: p.title, type: 'project' as const })),
+    ...positions
+      .filter(p => p.jobTitle.toLowerCase().includes(searchQuery.toLowerCase()))
+      .map(p => ({ id: p.id, title: p.jobTitle, type: 'position' as const }))
+  ].slice(0, 8) : [];
+
   const handleAddProject = () => {
     setEditingProject(null);
     setIsAddDialogOpen(true);
@@ -243,42 +234,8 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
   };
 
   const handleViewProject = (project: Project) => {
-    setViewingProject(project);
+    onViewProject(project.id);
   };
-
-  const handleBackToProjects = () => {
-    setViewingProject(null);
-  };
-
-  const handleBack = () => {
-    // If we came from dashboard (initialProjectTitle is set and onBackToDashboard exists), go back to dashboard
-    if (initialProjectTitle && onBackToDashboard) {
-      onBackToDashboard();
-    } else {
-      // Otherwise, just go back to projects list
-      setViewingProject(null);
-    }
-  };
-
-  // If viewing a project, show the detail view
-  if (viewingProject) {
-    return (
-      <ProjectDetailView
-        projectTitle={viewingProject.title}
-        projectDescription={viewingProject.description}
-        onBack={handleBack}
-        backLabel="Back"
-        onCreateAssessment={onCreateAssessment || (() => { })}
-        pendingAssessment={pendingAssessment}
-        onAssessmentConsumed={onAssessmentConsumed}
-        onViewDashboard={onViewDashboard}
-        onViewGroup={onViewGroup}
-        returnToGroupsTab={returnToGroupsTab}
-        initialPosition={initialPosition}
-        onPositionSelect={onPositionSelect}
-      />
-    );
-  }
 
   return (
     <>
@@ -306,16 +263,50 @@ export function ProjectsPage({ onViewProject, initialProjectTitle, onBackToDashb
                 </button>
               )}
 
-              {/* Search Input */}
+              {/* Search Input with Jump to dropdown */}
               <div className="relative w-[241.5px] h-[42px]">
                 <input
                   type="text"
-                  placeholder="Search"
+                  placeholder="Search projects or positions..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setIsSearchFocused(true)}
+                  onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
                   className="w-full h-full bg-white rounded-[10px] border border-[#edf0f8] pl-[40px] pr-[16px] py-[8px] font-['Arimo',sans-serif] text-[16px] text-black placeholder:text-[#aaaaaa] focus:outline-none focus:ring-2 focus:ring-[#4834ab] focus:border-transparent"
                 />
                 <Search size={20} className="absolute left-[12px] top-[11px] text-[#aaaaaa]" strokeWidth={1.67} />
+                
+                {/* Search Results Dropdown */}
+                {isSearchFocused && searchResults.length > 0 && (
+                  <div className="absolute top-[48px] left-0 right-0 bg-white rounded-[10px] shadow-lg border border-[#edf0f8] z-50 overflow-hidden">
+                    <div className="py-2">
+                      <p className="px-4 py-1 text-[12px] font-bold text-[#9ca3af] uppercase tracking-wider">
+                        Jump to
+                      </p>
+                      {searchResults.map((result) => (
+                        <button
+                          key={`${result.type}-${result.id}`}
+                          onClick={() => {
+                            if (result.type === 'project') {
+                              onViewProject(result.id);
+                            } else if (onViewPosition) {
+                              onViewPosition(result.id);
+                            }
+                            setSearchQuery('');
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-[#f3f4f6] flex flex-col transition-colors"
+                        >
+                          <span className="text-[14px] font-medium text-black">
+                            {result.title}
+                          </span>
+                          <span className="text-[12px] text-[#6b7280] capitalize">
+                            {result.type}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Filter Button with Popover */}

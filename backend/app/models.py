@@ -23,10 +23,11 @@ class UserRole(str, Enum):
 class ApplicationStatus(str, Enum):
     APPLIED = "applied"
     SCREENING = "screening"
-    IN_PIPELINE = "in_pipeline"
     OFFERED = "offered"
     HIRED = "hired"
     REJECTED = "rejected"
+    HOLDED = "holded"
+    WITHDRAWN = "withdrawn"
 
 
 class PositionStatus(str, Enum):
@@ -327,6 +328,10 @@ class Position(SQLModel, table=True):
     years_of_experience: int = Field(default=0)
     education_level: str | None = Field(default=None, max_length=100)
     benefits: list = Field(default_factory=list, sa_column=Column(JSONB))
+    jd_hdeval_qag: dict | None = Field(default=None, sa_column=Column(JSONB))
+    jd_keywords: dict | None = Field(
+        default=None, sa_column=Column(JSONB)
+    )  # LLM-extracted keyword groups
     status: str = Field(default="open", max_length=20)
     assigned_hr_id: UUID | None = Field(
         default=None, foreign_key="organization_users.user_id"
@@ -596,6 +601,47 @@ class GitHubAnalysisJob(SQLModel, table=True):
 
     error_message: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = Field(default=None)
+
+
+class QAGProcessingJob(SQLModel, table=True):
+    """
+    Tracks HD Eval + QAG processing jobs.
+    Lifecycle: pending -> processing -> completed|failed|cancelled
+    """
+
+    __tablename__ = "qag_processing_jobs"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="job_id",
+        sa_column=Column("job_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    position_id: UUID = Field(foreign_key="positions.position_id")
+    application_id: UUID | None = Field(
+        default=None, foreign_key="candidate_applications.application_id"
+    )
+    candidate_id: UUID | None = Field(
+        default=None, foreign_key="candidate_profiles.candidate_id"
+    )
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
+
+    job_type: str = Field(max_length=40)  # qag_generation|qag_resume_correction
+    status: str = Field(
+        default="pending", max_length=20
+    )  # pending|processing|completed|failed|cancelled
+
+    source_provider: str | None = Field(default=None, max_length=80)
+    total_items: int = Field(default=0)
+    processed_items: int = Field(default=0)
+    summary: dict | None = Field(default=None, sa_column=Column(JSONB))
+
+    error_message: str | None = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime | None = Field(default=None)
     completed_at: datetime | None = Field(default=None)
 
 
@@ -923,6 +969,9 @@ class CVAnalysis(BaseModel, table=True):
     skills: list | None = Field(default=None, sa_column=Column(ARRAY(String)))
     experience_years: Decimal | None = Field(default=None)
     match_score: Decimal | None = Field(default=None)
+    keyword_match_score: Decimal | None = Field(
+        default=None
+    )  # 0-100, computed from jd_keywords vs parsed_data
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -1272,6 +1321,91 @@ class LiV2Evaluation(BaseModel, table=True):
     # high | medium | low
     judge_model: str | None = Field(default=None, max_length=100)
     judged_at: datetime | None = Field(default=None)
+
+
+# =============================================================================
+# SECTION 16: CV INGESTION PIPELINE (2 Tables)
+# =============================================================================
+
+
+class CVIngestionJob(SQLModel, table=True):
+    """
+    Tracks a CV ingestion job (from ZIP upload or Google Drive sync).
+    Lifecycle: pending → processing → completed | failed
+    """
+
+    __tablename__ = "cv_ingestion_jobs"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="job_id",
+        sa_column=Column("job_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    position_id: UUID = Field(foreign_key="positions.position_id")
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
+
+    # Status lifecycle
+    status: str = Field(
+        default="pending", max_length=20
+    )  # pending|processing|completed|failed
+    source_type: str = Field(max_length=20)  # zip_upload | google_drive
+    source_filename: str | None = Field(default=None, max_length=255)
+
+    # Progress counters
+    total_files: int = Field(default=0)
+    processed_files: int = Field(default=0)
+    skipped_files: int = Field(default=0)
+
+    # Error and log
+    error_message: str | None = Field(default=None, sa_column=Column(Text))
+    processing_log: list | None = Field(default=None, sa_column=Column(JSONB))
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = Field(default=None)
+
+
+class DriveIngestionSchedule(SQLModel, table=True):
+    """
+    Tracks a recurring or one-time Google Drive folder sync schedule.
+    Uses Celery ETA self-chaining: schedule dispatches a task at start_date,
+    which re-enqueues itself at next_run_at after completion.
+    """
+
+    __tablename__ = "drive_ingestion_schedules"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="schedule_id",
+        sa_column=Column("schedule_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    position_id: UUID = Field(foreign_key="positions.position_id")
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
+
+    # Google Drive config
+    drive_folder_id: str = Field(max_length=255)
+    drive_folder_url: str | None = Field(default=None, max_length=500)
+
+    # Frequency: both 0 = one-time run
+    frequency_days: int = Field(default=0)
+    frequency_hours: int = Field(default=0)
+
+    # Scheduling
+    start_date: datetime = Field(default_factory=datetime.utcnow)
+    next_run_at: datetime | None = Field(default=None)
+    last_run_at: datetime | None = Field(default=None)
+    last_job_id: UUID | None = Field(default=None)
+
+    # Celery task tracking (for revocation)
+    celery_task_id: str | None = Field(default=None, max_length=255)
+
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # =============================================================================

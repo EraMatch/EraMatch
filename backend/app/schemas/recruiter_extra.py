@@ -23,6 +23,10 @@ class AIGenerateQuestionRequest(BaseModel):
     topic: str
     difficulty: str
     context: str = ""
+    use_case: str = ""
+    metadata: dict[str, Any] | None = None
 
 class AIRefineQuestionRequest(BaseModel):
     question_text: str
+    use_case: str = ""
+    metadata: dict[str, Any] | None = None

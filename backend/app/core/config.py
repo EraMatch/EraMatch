@@ -59,9 +59,21 @@ class Settings(BaseSettings):
     DEFAULT_LLM_PROVIDER: str = "gemini"
     DEFAULT_EMBEDDING_PROVIDER: str = "gemini"
 
+    # PreScore HD Eval + QAG runtime controls
+    PRESCORE_USE_AI_SERVICE: bool = True
+    PRESCORE_LLM_PROVIDER: str = "ollama"
+    PRESCORE_LLM_MODEL: str | None = None
+    PRESCORE_AI_SERVICE_TIMEOUT_SECONDS: float = 90.0
+    PRESCORE_ALLOW_FALLBACK: bool = False
+
     # Internal Services
-    AI_SERVICE_URL: str = "http://localhost:8001"
+    AI_SERVICE_URL: str = "http://127.0.0.1:8001"
+    BACKEND_URL: str = "http://127.0.0.1:8000"
+    WEBHOOK_SECRET: str = "shared-secret-change-me"
     GITHUB_TOKEN: str = ""
+
+    # Google Drive Integration
+    GOOGLE_SERVICE_ACCOUNT_FILE: str = "credentials.json"
 
     # =========================================================================
     # LIVE INTERVIEW V2 — LiveKit

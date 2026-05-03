@@ -1,0 +1,62 @@
+name: Regression Phase Gate
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+  pull_request:
+
+jobs:
+  backend-regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest
+
+      - name: Pytest collection check
+        working-directory: .
+        run: python -m pytest --collect-only -q
+
+      - name: No-DB route smoke check
+        run: python ../scripts/smoke_routes_no_db.py
+
+  frontend-builds:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        portal:
+          - candidate-portal
+          - recruiter-portal
+    defaults:
+      run:
+        working-directory: Frontend/${{ matrix.portal }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build
+        run: npm run build

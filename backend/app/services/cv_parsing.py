@@ -1,0 +1,139 @@
+import logging
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import CVAnalysis, CandidateApplication, CandidateProfile
+
+logger = logging.getLogger(__name__)
+
+
+class CVParsingWorkerService:
+    """Synchronous service for CV parsing database operations in Celery workers."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def upsert_cv_analysis(
+        self,
+        application_id: UUID,
+        organization_id: UUID,
+        file_path: str,
+        parsed_data: dict,
+        skills_list: list[str],
+        experience_years: float | None,
+    ):
+        """Create or update CVAnalysis with parsed data using SQLAlchemy."""
+        prescore = parsed_data.get("prescore_v2") if isinstance(parsed_data, dict) else {}
+        match_score = None
+        if isinstance(prescore, dict) and prescore.get("pre_score_final") is not None:
+            try:
+                match_score = float(prescore.get("pre_score_final"))
+            except (TypeError, ValueError):
+                match_score = None
+
+        stmt = select(CVAnalysis).where(CVAnalysis.application_id == application_id)
+        analysis = self.session.execute(stmt).scalars().first()
+
+        if analysis:
+            analysis.parsed_data = parsed_data
+            if skills_list:
+                analysis.skills = skills_list
+            if experience_years is not None:
+                analysis.experience_years = experience_years
+            if match_score is not None:
+                analysis.match_score = match_score
+            analysis.cv_file_url = file_path
+            analysis.analyzed_at = datetime.utcnow()
+            logger.info(f"[CVParsing] Updated existing CVAnalysis for application {application_id}")
+        else:
+            analysis = CVAnalysis(
+                application_id=application_id,
+                organization_id=organization_id,
+                cv_file_url=file_path,
+                parsed_data=parsed_data,
+                skills=skills_list if skills_list else None,
+                experience_years=experience_years if experience_years is not None else None,
+                match_score=match_score if match_score is not None else 0.0,
+                analyzed_at=datetime.utcnow()
+            )
+            self.session.add(analysis)
+            logger.info(f"[CVParsing] Created new CVAnalysis for application {application_id}")
+
+        self.session.commit()
+
+    def backfill_candidate_profile(self, application_id: UUID, parsed_data: dict):
+        """
+        Update CandidateProfile with contact info extracted from the CV.
+        Only updates fields that are currently empty/placeholder.
+        """
+        try:
+            # 1. Get CandidateApplication to find the CandidateProfile
+            app_stmt = select(CandidateApplication).where(CandidateApplication.id == application_id)
+            application = self.session.execute(app_stmt).scalars().first()
+            if not application:
+                return
+
+            candidate_id = application.candidate_id
+
+            # 2. Get CandidateProfile
+            profile_stmt = select(CandidateProfile).where(CandidateProfile.id == candidate_id)
+            profile = self.session.execute(profile_stmt).scalars().first()
+            if not profile:
+                return
+
+            contact = parsed_data.get("contact_info") or {}
+            updated = False
+
+            # Email: update only if current is a placeholder
+            parsed_email = parsed_data.get("email") or contact.get("email")
+            if parsed_email and "@example.com" in (profile.email or ""):
+                profile.email = parsed_email
+                updated = True
+
+            # Full name: update if current looks like a placeholder
+            parsed_name = parsed_data.get("full_name") or contact.get("full_name")
+            if parsed_name and ("@example.com" in (profile.email or "") or profile.full_name == profile.email):
+                profile.full_name = parsed_name
+                updated = True
+
+            # Phone
+            parsed_phone = contact.get("phone")
+            if parsed_phone and not profile.phone:
+                profile.phone = parsed_phone
+                updated = True
+
+            # Location
+            parsed_location = parsed_data.get("location") or contact.get("location")
+            if parsed_location and not profile.location:
+                profile.location = parsed_location
+                updated = True
+
+            # LinkedIn
+            parsed_linkedin = contact.get("linkedin_url")
+            if parsed_linkedin and not profile.linkedin_url:
+                profile.linkedin_url = parsed_linkedin
+                updated = True
+
+            # GitHub
+            parsed_github = contact.get("github_url")
+            if parsed_github and not profile.github_url:
+                profile.github_url = parsed_github
+                updated = True
+
+            # Portfolio
+            parsed_portfolio = contact.get("portfolio_url")
+            if parsed_portfolio and not profile.portfolio_url:
+                profile.portfolio_url = parsed_portfolio
+                updated = True
+
+            if updated:
+                self.session.add(profile)
+                self.session.commit()
+                logger.info(f"[CVParsing] Backfilled CandidateProfile {candidate_id}")
+
+        except Exception as e:
+            logger.error(f"[CVParsing] Failed to backfill candidate profile for app {application_id}: {e}")
+            self.session.rollback()

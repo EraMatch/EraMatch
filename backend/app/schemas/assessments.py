@@ -56,6 +56,7 @@ class SectionCreate(BaseModel):
     type: str = Field(description="mcq, essay, or coding")
     points: int
     selectionStrategy: str = Field(default="random")
+    variantsToSelect: Optional[int] = Field(default=1)
     variants: List[QuestionCreate]
 
 # =============================================================================

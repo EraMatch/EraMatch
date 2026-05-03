@@ -1,0 +1,33 @@
+groups:
+  - name: eramatch.integrity
+    interval: 30s
+    rules:
+      - alert: EraMatchIntegrityDroppedSpike
+        expr: sum by (stage) (increase(eramatch_integrity_events_total{outcome="dropped"}[5m])) > 30
+        for: 3m
+        labels:
+          severity: warning
+          service: eramatch-backend
+        annotations:
+          summary: "High dropped integrity event volume"
+          description: "Dropped integrity events exceeded 30 over 5m for stage {{ $labels.stage }}."
+
+      - alert: EraMatchIntegrityRateLimitSurge
+        expr: sum by (stage) (increase(eramatch_integrity_events_total{outcome="dropped",reason="rate_limited"}[5m])) > 20
+        for: 2m
+        labels:
+          severity: critical
+          service: eramatch-backend
+        annotations:
+          summary: "Rate-limit surge detected"
+          description: "Rate-limited integrity events exceeded 20 over 5m for stage {{ $labels.stage }}."
+
+      - alert: EraMatchIntegrityAcceptanceFlatline
+        expr: sum(increase(eramatch_integrity_events_total{outcome="accepted"}[15m])) == 0
+        for: 15m
+        labels:
+          severity: warning
+          service: eramatch-backend
+        annotations:
+          summary: "No accepted integrity events"
+          description: "No accepted integrity events were observed in the last 15m; verify ingestion health."
