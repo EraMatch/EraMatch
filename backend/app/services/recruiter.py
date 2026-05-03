@@ -2935,7 +2935,7 @@ class RecruiterService:
         metadata: dict[str, Any] | None = None,
     ) -> str:
         """Refine or polish a question text using Ollama."""
-        llm = get_llm("ollama")
+        llm = get_llm("ollama", temperature=0.2)
         metadata = metadata if isinstance(metadata, dict) else {}
         use_case = (use_case or "").strip().lower()
 
@@ -2949,8 +2949,10 @@ class RecruiterService:
         }.get(use_case, "assessment_refine_question.md")
 
         fallback_prompt = (
-            "Refine the following text for recruiter workflows. Keep intent unchanged, improve clarity and professionalism, "
-            "and return ONLY the refined text.\n"
+            "Rewrite the following text for recruiter workflows so it is clearly improved, not copied. "
+            "Keep the intent unchanged, but fix grammar, punctuation, and phrasing. "
+            "If the source is already a question, still produce a cleaner reworded version. "
+            "Return ONLY the refined text and do not explain changes.\n"
             "Use case: {{USE_CASE}}\n"
             "Metadata: {{METADATA_JSON}}\n"
             "Text: {{QUESTION_TEXT}}"
@@ -2971,6 +2973,18 @@ class RecruiterService:
             refined = str(getattr(response, "content", "")).strip()
             if refined.startswith("```") and refined.endswith("```"):
                 refined = refined.strip("`").strip()
+            if refined and refined.strip() == question_text.strip():
+                stronger_prompt = (
+                    prompt
+                    + "\n\nRewrite this again with a visibly different phrasing while preserving meaning. "
+                    + "Do not reuse the original sentence structure or wording."
+                )
+                retry_response = await llm.ainvoke(stronger_prompt)
+                retry_refined = str(getattr(retry_response, "content", "")).strip()
+                if retry_refined.startswith("```") and retry_refined.endswith("```"):
+                    retry_refined = retry_refined.strip("`").strip()
+                if retry_refined and retry_refined.strip() != question_text.strip():
+                    refined = retry_refined
             return refined or question_text
         except Exception as e:
             print(f"Ollama refinement failed: {e}")

@@ -8,6 +8,8 @@ Input text:
 
 Instructions:
 - Keep the original intent.
-- Improve clarity, grammar, and technical precision.
+- Rewrite the text so it is clearly improved, not a near-copy of the input.
+- Improve clarity, grammar, punctuation, and technical precision.
+- If the input is already a question, still rephrase it into a cleaner question.
 - Keep tone professional.
 - Return ONLY the refined text without markdown or commentary.
