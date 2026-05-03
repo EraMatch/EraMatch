@@ -181,7 +181,8 @@ async def generate_session_token_service(
         room_name = session.room_name
         logger.info(f"Reusing LiV2Session {session.id} → room {room_name}")
 
-    if session.state == "pending":
+    is_new_session = session.state == "pending"
+    if is_new_session:
         session.state = "in_progress"
         session.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.add(session)
@@ -240,11 +241,14 @@ async def generate_session_token_service(
         context_payload=context_payload,
     )
 
-    # --- 7. Schedule auto-termination if time budget exceeded -----------
-    _schedule_auto_termination(
-        session_id=session.id,
-        time_budget_minutes=rubric.time_budget_minutes or 10,
-    )
+    # --- 7. Schedule auto-termination only on first connect (not reconnects) ---
+    # Reconnect/page-refresh reuses an in_progress session — scheduling again
+    # creates duplicate background tasks that race on the same session.
+    if is_new_session:
+        _schedule_auto_termination(
+            session_id=session.id,
+            time_budget_minutes=rubric.time_budget_minutes or 10,
+        )
 
     return {
         "token": token,

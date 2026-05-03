@@ -96,14 +96,27 @@ async def init_db() -> None:
             except Exception:
                 pass
 
-        # LiV2 schema migrations
+        # All columns added to pre-existing tables in this PR
         for table, col, col_type in [
+            # LiV2 columns (table may predate these columns)
             ("li_v2_rubrics", "updated_at", "TIMESTAMP"),
+            ("li_v2_rubrics", "created_by_user_id", "UUID"),
             ("li_v2_banks", "updated_at", "TIMESTAMP"),
+            ("li_v2_banks", "created_by_user_id", "UUID"),
             ("li_v2_evaluations", "judge_model", "VARCHAR(100)"),
+            # Core table columns added in LiV2 PR
+            ("projects", "created_by_user_id", "UUID"),
+            ("candidate_groups", "created_by_user_id", "UUID"),
+            ("question_bank", "created_by_user_id", "UUID"),
+            ("assessments", "created_by_user_id", "UUID"),
+            ("candidate_answers", "assignment_id", "UUID"),
+            ("ai_interview_configs", "created_by_user_id", "UUID"),
         ]:
             res = await conn.execute(
-                text(f"SELECT column_name FROM information_schema.columns WHERE table_name='{table}' AND column_name='{col}'")
+                text(
+                    f"SELECT column_name FROM information_schema.columns "
+                    f"WHERE table_name='{table}' AND column_name='{col}'"
+                )
             )
             if not res.fetchone():
                 try:

@@ -22,41 +22,27 @@ class CandidateAuthService:
         """
         authenticate and return the jwt
         """
-        import traceback
-        try:
-            print(f"[DEBUG] Attempting login for email: {email}, group_id: {group_id}")
-            candidate = await self._get_candidate_by_email(email, group_id)
-            print(f"[DEBUG] Candidate lookup result: {candidate}")
-            
-            if not candidate:
-                raise UnauthorizedException("Invalid email or password")
-            
-            print(f"[DEBUG] Password hash: {candidate.password_hash[:20]}...")
-            
-            if not candidate.password_hash:
-                raise UnauthorizedException("Password not set. Please contact support.")
-            
-            print(f"[DEBUG] Verifying password...")
-            if not verify_password(password, candidate.password_hash):
-                raise UnauthorizedException("Invalid email or password")
-            
-            print(f"[DEBUG] Password verified, creating tokens...")
-            # Create tokens with candidate_id as subject and user_type to distinguish
-            access_token = create_access_token(
-                subject=str(candidate.id),
-                extra_data={"user_type": "candidate", "org_id": str(candidate.organization_id)}
-            )
-            refresh_token = create_refresh_token(subject=str(candidate.id))
-            
-            print(f"[DEBUG] Login successful")
-            return TokenResponse(
-                access_token=access_token,
-                refresh_token=refresh_token,
-            )
-        except Exception as e:
-            print(f"[DEBUG ERROR] Login failed: {type(e).__name__}: {e}")
-            traceback.print_exc()
-            raise
+        candidate = await self._get_candidate_by_email(email, group_id)
+
+        if not candidate:
+            raise UnauthorizedException("Invalid email or password")
+
+        if not candidate.password_hash:
+            raise UnauthorizedException("Password not set. Please contact support.")
+
+        if not verify_password(password, candidate.password_hash):
+            raise UnauthorizedException("Invalid email or password")
+
+        access_token = create_access_token(
+            subject=str(candidate.id),
+            extra_data={"user_type": "candidate", "org_id": str(candidate.organization_id)}
+        )
+        refresh_token = create_refresh_token(subject=str(candidate.id))
+
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+        )
     
     async def refresh_tokens(self, refresh_token: str) -> TokenResponse:
         """Refresh access token using refresh token."""
