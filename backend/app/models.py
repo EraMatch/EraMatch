@@ -1,6 +1,7 @@
 """
 ORM layer, modelling for the database - All 37 tables from EraMatch initial schema with date 2/3/26 (v1.2)
 """
+
 from datetime import datetime, date
 from decimal import Decimal
 from enum import Enum
@@ -86,17 +87,23 @@ class OfferStatus(str, Enum):
 # BASE MODEL
 # =============================================================================
 
+
 class BaseModel(SQLModel):
     # Base class without any default fields to avoid "UndefinedColumnError"
     pass
 
 
-# SECTION 1: organization and users 
+# SECTION 1: organization and users
+
 
 class SubscriptionPlan(BaseModel, table=True):
     __tablename__ = "subscription_plans"
-    
-    id: UUID = Field(default_factory=uuid4, alias="plan_id", sa_column=Column("plan_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="plan_id",
+        sa_column=Column("plan_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     name: str = Field(max_length=100, unique=True)
     monthly_price: Decimal = Field(max_digits=10, decimal_places=2)
     features_json: dict = Field(default_factory=dict, sa_column=Column(JSONB))
@@ -106,8 +113,12 @@ class SubscriptionPlan(BaseModel, table=True):
 
 class Organization(BaseModel, table=True):
     __tablename__ = "organizations"
-    
-    id: UUID = Field(default_factory=uuid4, alias="organization_id", sa_column=Column("organization_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="organization_id",
+        sa_column=Column("organization_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     plan_id: UUID | None = Field(default=None, foreign_key="subscription_plans.plan_id")
     organization_name: str = Field(max_length=255)
     organization_size: str | None = Field(default=None, max_length=50)
@@ -122,8 +133,12 @@ class Organization(BaseModel, table=True):
 
 class OrganizationDepartment(BaseModel, table=True):
     __tablename__ = "organization_departments"
-    
-    id: UUID = Field(default_factory=uuid4, alias="department_id", sa_column=Column("department_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="department_id",
+        sa_column=Column("department_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     name: str = Field(max_length=100)
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -131,10 +146,16 @@ class OrganizationDepartment(BaseModel, table=True):
 
 class OrganizationUser(BaseModel, table=True):
     __tablename__ = "organization_users"
-    
-    id: UUID = Field(default_factory=uuid4, alias="user_id", sa_column=Column("user_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="user_id",
+        sa_column=Column("user_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
-    department_id: UUID | None = Field(default=None, foreign_key="organization_departments.department_id")
+    department_id: UUID | None = Field(
+        default=None, foreign_key="organization_departments.department_id"
+    )
     email: str = Field(max_length=255, unique=True)
     password_hash: str = Field(max_length=255)
     first_name: str = Field(max_length=100)
@@ -154,9 +175,13 @@ class OrganizationUser(BaseModel, table=True):
 
 class UserPermission(BaseModel, table=True):
     __tablename__ = "user_permissions"
-    
+
     # Override default 'id'
-    id: UUID = Field(default_factory=uuid4, alias="permission_id", sa_column=Column("permission_id", PG_UUID(as_uuid=True), primary_key=True))
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="permission_id",
+        sa_column=Column("permission_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
 
     user_id: UUID = Field(foreign_key="organization_users.user_id", unique=True)
     can_manage_positions: bool = Field(default=False)
@@ -169,35 +194,45 @@ class UserPermission(BaseModel, table=True):
 
 class OrganizationUserSettings(BaseModel, table=True):
     """Preferences and configurations for organization users (Recruiters/HR)."""
+
     __tablename__ = "organization_user_settings"
-    
-    id: UUID = Field(default_factory=uuid4, alias="settings_id", sa_column=Column("settings_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="settings_id",
+        sa_column=Column("settings_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     user_id: UUID = Field(foreign_key="organization_users.user_id", unique=True)
-    
+
     # Notification Preferences
     email_notifications: bool = Field(default=True)
     new_member_requests: bool = Field(default=True)
     project_updates: bool = Field(default=True)
     weekly_summary: bool = Field(default=False)
-    
+
     # Security Settings
     two_factor_auth: bool = Field(default=False)
     session_timeout: bool = Field(default=True)
-    
+
     # AI Pipeline Configuration (JSONB)
     ai_pipeline_config: dict | None = Field(default=None, sa_column=Column(JSONB))
-    
+
     # Workflow Settings
     bypass_admin_approval: bool = Field(default=False)
-    
+
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class FilterTemplate(BaseModel, table=True):
     """Persistent saved filter templates for candidates."""
+
     __tablename__ = "filter_templates"
-    
-    id: UUID = Field(default_factory=uuid4, alias="template_id", sa_column=Column("template_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="template_id",
+        sa_column=Column("template_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     user_id: UUID = Field(foreign_key="organization_users.user_id")
     name: str = Field(max_length=255)
     filters: dict = Field(default_factory=dict, sa_column=Column(JSONB))
@@ -206,8 +241,12 @@ class FilterTemplate(BaseModel, table=True):
 
 class PaymentMethod(BaseModel, table=True):
     __tablename__ = "payment_methods"
-    
-    id: UUID = Field(default_factory=uuid4, alias="payment_id", sa_column=Column("payment_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="payment_id",
+        sa_column=Column("payment_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     card_brand: str | None = Field(default=None, max_length=20)
     last4: str = Field(max_length=4)
@@ -216,13 +255,20 @@ class PaymentMethod(BaseModel, table=True):
     stripe_payment_method_id: str | None = Field(default=None, max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+
 # ================= SECTION 2: projects and positions ==============
 class Project(BaseModel, table=True):
     __tablename__ = "projects"
-    
-    id: UUID = Field(default_factory=uuid4, alias="project_id", sa_column=Column("project_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="project_id",
+        sa_column=Column("project_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     name: str = Field(max_length=255)
     description: str | None = Field(default=None, sa_column=Column(Text))
     status: str = Field(default="active", max_length=20)
@@ -230,7 +276,7 @@ class Project(BaseModel, table=True):
     budget: Decimal | None = Field(default=None)
     start_date: date | None = Field(default=None)
     end_date: date | None = Field(default=None)
-    priority: str = Field(default="medium", max_length=20) # low, medium, high, urgent
+    priority: str = Field(default="medium", max_length=20)  # low, medium, high, urgent
     department: str | None = Field(default=None, max_length=100)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     closed_at: datetime | None = Field(default=None)
@@ -239,8 +285,12 @@ class Project(BaseModel, table=True):
 
 class ProjectAccess(BaseModel, table=True):
     __tablename__ = "project_access"
-    
-    id: UUID = Field(default_factory=uuid4, alias="access_id", sa_column=Column("access_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="access_id",
+        sa_column=Column("access_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     project_id: UUID = Field(foreign_key="projects.project_id")
     user_id: UUID = Field(foreign_key="organization_users.user_id")
     access_level: str = Field(default="viewer", max_length=20)
@@ -249,9 +299,14 @@ class ProjectAccess(BaseModel, table=True):
 
 class Position(SQLModel, table=True):
     """Position - uses position_id as primary key."""
+
     __tablename__ = "positions"
-    
-    id: UUID = Field(default_factory=uuid4, alias="position_id", sa_column=Column("position_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="position_id",
+        sa_column=Column("position_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     project_id: UUID = Field(foreign_key="projects.project_id")
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     job_title: str = Field(max_length=255)
@@ -261,17 +316,29 @@ class Position(SQLModel, table=True):
     work_type: str | None = Field(default=None, max_length=20)
     salary_min: Decimal | None = Field(default=None)
     salary_max: Decimal | None = Field(default=None)
-    employment_type: str = Field(default="full-time", max_length=30) # full-time, part-time, contract, internship
-    location_type: str = Field(default="remote", max_length=20) # remote, hybrid, on-site
-    location_data: dict | None = Field(default=None, sa_column=Column(JSONB)) # office address, remote requirements
+    employment_type: str = Field(
+        default="full-time", max_length=30
+    )  # full-time, part-time, contract, internship
+    location_type: str = Field(
+        default="remote", max_length=20
+    )  # remote, hybrid, on-site
+    location_data: dict | None = Field(
+        default=None, sa_column=Column(JSONB)
+    )  # office address, remote requirements
     years_of_experience: int = Field(default=0)
     education_level: str | None = Field(default=None, max_length=100)
     benefits: list = Field(default_factory=list, sa_column=Column(JSONB))
     jd_hdeval_qag: dict | None = Field(default=None, sa_column=Column(JSONB))
-    jd_keywords: dict | None = Field(default=None, sa_column=Column(JSONB))  # LLM-extracted keyword groups
+    jd_keywords: dict | None = Field(
+        default=None, sa_column=Column(JSONB)
+    )  # LLM-extracted keyword groups
     status: str = Field(default="open", max_length=20)
-    assigned_hr_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
-    assigned_tech_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    assigned_hr_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
+    assigned_tech_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
 
@@ -280,45 +347,63 @@ class Position(SQLModel, table=True):
 # SECTION 3: GROUPS & PIPELINE CONFIG (3 Tables)
 # =============================================================================
 
+
 class CandidateGroup(SQLModel, table=True):
     """Candidate group - uses group_id as primary key."""
+
     __tablename__ = "candidate_groups"
-    
-    id: UUID = Field(default_factory=uuid4, alias="group_id", sa_column=Column("group_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="group_id",
+        sa_column=Column("group_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     position_id: UUID = Field(foreign_key="positions.position_id")
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     group_name: str = Field(max_length=100)
-    assigned_hr_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
-    assigned_tech_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    assigned_hr_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
+    assigned_tech_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     status: str = Field(default="active", max_length=20)
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class GroupStageConfig(SQLModel, table=True):
     """Group pipeline stage configuration - maps to group_pipeline_stages table."""
+
     __tablename__ = "group_pipeline_stages"
-    
+
     stage_id: UUID = Field(default_factory=uuid4, primary_key=True)
     group_id: UUID = Field(foreign_key="candidate_groups.group_id")
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     stage_type: str = Field(max_length=30)  # assessment, ai_interview, live_interview
     stage_order: int
     stage_name: str | None = Field(default=None, max_length=100)
-    config_id: UUID | None = Field(default=None)  # FK to ai_interview_configs or assessments
+    config_id: UUID | None = Field(
+        default=None
+    )  # FK to ai_interview_configs or assessments
     acceptance_criteria: dict | None = Field(default=None, sa_column=Column(JSONB))
     state: str = Field(default="not_started", max_length=20)
     started_at: datetime | None = Field(default=None)
     closed_at: datetime | None = Field(default=None)
-    started_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    started_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class CandidateStageProgress(SQLModel, table=True):
     """Tracks each candidate's progress through pipeline stages - maps to candidate_pipeline_progress."""
+
     __tablename__ = "candidate_pipeline_progress"
-    
+
     progress_id: UUID = Field(default_factory=uuid4, primary_key=True)
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
     stage_id: UUID = Field(foreign_key="group_pipeline_stages.stage_id")
@@ -338,11 +423,17 @@ class CandidateStageProgress(SQLModel, table=True):
 # SECTION 4: CANDIDATES (3 Tables)
 # =============================================================================
 
+
 class CandidateProfile(SQLModel, table=True):
     """Candidate profile - uses candidate_id as primary key (not inherited id)."""
+
     __tablename__ = "candidate_profiles"
 
-    id: UUID = Field(default_factory=uuid4, alias="candidate_id", sa_column=Column("candidate_id", PG_UUID(as_uuid=True), primary_key=True))
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="candidate_id",
+        sa_column=Column("candidate_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
 
     @property
     def candidate_id(self) -> UUID:
@@ -365,9 +456,14 @@ class CandidateProfile(SQLModel, table=True):
 
 class CandidateApplication(SQLModel, table=True):
     """Candidate application - uses application_id as primary key."""
+
     __tablename__ = "candidate_applications"
-    
-    id: UUID = Field(default_factory=uuid4, alias="application_id", sa_column=Column("application_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="application_id",
+        sa_column=Column("application_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     candidate_id: UUID = Field(foreign_key="candidate_profiles.candidate_id")
     position_id: UUID = Field(foreign_key="positions.position_id")
     group_id: UUID | None = Field(default=None, foreign_key="candidate_groups.group_id")
@@ -382,8 +478,12 @@ class CandidateApplication(SQLModel, table=True):
 
 class RecruiterNote(BaseModel, table=True):
     __tablename__ = "recruiter_notes"
-    
-    id: UUID = Field(default_factory=uuid4, alias="note_id", sa_column=Column("note_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="note_id",
+        sa_column=Column("note_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
     author_id: UUID = Field(foreign_key="organization_users.user_id")
     content: str = Field(sa_column=Column(Text))
@@ -395,10 +495,15 @@ class RecruiterNote(BaseModel, table=True):
 # SECTION 5: QUESTION BANK (2 Tables)
 # =============================================================================
 
+
 class QuestionBank(BaseModel, table=True):
     __tablename__ = "question_bank"
-    
-    id: UUID = Field(default_factory=uuid4, alias="question_id", sa_column=Column("question_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="question_id",
+        sa_column=Column("question_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     question_type: str = Field(max_length=20)  # mcq, essay, coding
     question_text: str = Field(sa_column=Column(Text))
@@ -408,7 +513,9 @@ class QuestionBank(BaseModel, table=True):
     difficulty: int | None = Field(default=None)
     tags: list | None = Field(default=None, sa_column=Column(ARRAY(String)))
     points: int = Field(default=10)
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     usage_count: int = Field(default=0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
@@ -417,8 +524,12 @@ class QuestionBank(BaseModel, table=True):
 
 class QuestionBankFavorite(BaseModel, table=True):
     __tablename__ = "question_bank_favorites"
-    
-    id: UUID = Field(default_factory=uuid4, alias="favorite_id", sa_column=Column("favorite_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="favorite_id",
+        sa_column=Column("favorite_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     question_id: UUID = Field(foreign_key="question_bank.question_id")
     user_id: UUID = Field(foreign_key="organization_users.user_id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -430,6 +541,7 @@ class QuestionImportJob(SQLModel, table=True):
     A job goes through: pending → processing → completed | failed
     Draft questions are stored in JSONB until the recruiter approves them.
     """
+
     __tablename__ = "question_import_jobs"
 
     id: UUID = Field(
@@ -441,7 +553,9 @@ class QuestionImportJob(SQLModel, table=True):
     created_by_user_id: UUID = Field(foreign_key="organization_users.user_id")
 
     # Status lifecycle
-    status: str = Field(default="pending", max_length=20)  # pending|processing|completed|failed
+    status: str = Field(
+        default="pending", max_length=20
+    )  # pending|processing|completed|failed
     import_type: str = Field(max_length=30)  # generative|csv|extraction
 
     # Source file info
@@ -466,6 +580,7 @@ class GitHubAnalysisJob(SQLModel, table=True):
     Tracks GitHub profile analysis and GitHub-inspired question generation jobs.
     Lifecycle: pending -> processing -> completed|failed|cancelled
     """
+
     __tablename__ = "github_analysis_jobs"
 
     id: UUID = Field(
@@ -494,6 +609,7 @@ class QAGProcessingJob(SQLModel, table=True):
     Tracks HD Eval + QAG processing jobs.
     Lifecycle: pending -> processing -> completed|failed|cancelled
     """
+
     __tablename__ = "qag_processing_jobs"
 
     id: UUID = Field(
@@ -503,12 +619,20 @@ class QAGProcessingJob(SQLModel, table=True):
     )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID = Field(foreign_key="positions.position_id")
-    application_id: UUID | None = Field(default=None, foreign_key="candidate_applications.application_id")
-    candidate_id: UUID | None = Field(default=None, foreign_key="candidate_profiles.candidate_id")
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    application_id: UUID | None = Field(
+        default=None, foreign_key="candidate_applications.application_id"
+    )
+    candidate_id: UUID | None = Field(
+        default=None, foreign_key="candidate_profiles.candidate_id"
+    )
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
 
     job_type: str = Field(max_length=40)  # qag_generation|qag_resume_correction
-    status: str = Field(default="pending", max_length=20)  # pending|processing|completed|failed|cancelled
+    status: str = Field(
+        default="pending", max_length=20
+    )  # pending|processing|completed|failed|cancelled
 
     source_provider: str | None = Field(default=None, max_length=80)
     total_items: int = Field(default=0)
@@ -525,10 +649,15 @@ class QAGProcessingJob(SQLModel, table=True):
 # SECTION 6: ASSESSMENT CONFIG & SESSIONS (4 Tables)
 # =============================================================================
 
+
 class Assessment(BaseModel, table=True):
     __tablename__ = "assessments"
-    
-    id: UUID = Field(default_factory=uuid4, alias="assessment_id", sa_column=Column("assessment_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="assessment_id",
+        sa_column=Column("assessment_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID | None = Field(default=None, foreign_key="positions.position_id")
     group_id: UUID | None = Field(default=None, foreign_key="candidate_groups.group_id")
@@ -540,7 +669,9 @@ class Assessment(BaseModel, table=True):
     shuffle_sections: bool = Field(default=False)
     anti_cheating_enabled: bool = Field(default=True)
     status: str = Field(default="draft", max_length=20)
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
@@ -548,9 +679,19 @@ class Assessment(BaseModel, table=True):
 
 class AssessmentSection(BaseModel, table=True):
     __tablename__ = "assessment_sections"
-    __table_args__ = (UniqueConstraint("assessment_id", "section_order", name="assessment_sections_assessment_id_section_order_key"),)
-    
-    id: UUID = Field(default_factory=uuid4, alias="section_id", sa_column=Column("section_id", PG_UUID(as_uuid=True), primary_key=True))
+    __table_args__ = (
+        UniqueConstraint(
+            "assessment_id",
+            "section_order",
+            name="assessment_sections_assessment_id_section_order_key",
+        ),
+    )
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="section_id",
+        sa_column=Column("section_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     assessment_id: UUID = Field(foreign_key="assessments.assessment_id")
     section_order: int
     section_title: str | None = Field(default=None, max_length=255)
@@ -563,20 +704,30 @@ class AssessmentSection(BaseModel, table=True):
 
 class SectionQuestionPool(BaseModel, table=True):
     __tablename__ = "section_question_pool"
-    
-    id: UUID = Field(default_factory=uuid4, alias="pool_entry_id", sa_column=Column("pool_entry_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="pool_entry_id",
+        sa_column=Column("pool_entry_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     section_id: UUID = Field(foreign_key="assessment_sections.section_id")
     question_id: UUID = Field(foreign_key="question_bank.question_id")
     variant_order: int | None = Field(default=None)
     is_active: bool | None = Field(default=True)
-    difficulty_weight: Decimal | None = Field(default=Decimal("1.0"), max_digits=3, decimal_places=2)
+    difficulty_weight: Decimal | None = Field(
+        default=Decimal("1.0"), max_digits=3, decimal_places=2
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class OngoingAssessment(BaseModel, table=True):
     __tablename__ = "ongoing_assessments"
-    
-    id: UUID = Field(default_factory=uuid4, alias="session_id", sa_column=Column("session_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="session_id",
+        sa_column=Column("session_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     assessment_id: UUID = Field(foreign_key="assessments.assessment_id")
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
@@ -594,8 +745,12 @@ class OngoingAssessment(BaseModel, table=True):
 
 class CandidateAssignedQuestion(BaseModel, table=True):
     __tablename__ = "candidate_assigned_questions"
-    
-    id: UUID = Field(default_factory=uuid4, alias="assignment_id", sa_column=Column("assignment_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="assignment_id",
+        sa_column=Column("assignment_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     session_id: UUID = Field(foreign_key="ongoing_assessments.session_id")
     section_id: UUID
     pool_entry_id: UUID
@@ -606,8 +761,12 @@ class CandidateAssignedQuestion(BaseModel, table=True):
 
 class CandidateAnswer(BaseModel, table=True):
     __tablename__ = "candidate_answers"
-    
-    id: UUID = Field(default_factory=uuid4, alias="answer_id", sa_column=Column("answer_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="answer_id",
+        sa_column=Column("answer_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     session_id: UUID = Field(foreign_key="ongoing_assessments.session_id")
     question_id: UUID = Field(foreign_key="question_bank.question_id")
     question_order: int
@@ -617,13 +776,19 @@ class CandidateAnswer(BaseModel, table=True):
     points_max: int
     time_spent_seconds: int | None = Field(default=None)
     answered_at: datetime | None = Field(default=None)
-    assignment_id: UUID | None = Field(default=None, foreign_key="candidate_assigned_questions.assignment_id")
+    assignment_id: UUID | None = Field(
+        default=None, foreign_key="candidate_assigned_questions.assignment_id"
+    )
 
 
 class StageOnboarding(BaseModel, table=True):
     __tablename__ = "stage_onboarding"
-    
-    id: UUID = Field(default_factory=uuid4, alias="onboarding_id", sa_column=Column("onboarding_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="onboarding_id",
+        sa_column=Column("onboarding_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
     stage_type: str = Field(max_length=30)
     session_id: UUID | None = Field(default=None)
@@ -639,10 +804,12 @@ class StageOnboarding(BaseModel, table=True):
 # SECTION 7: AI INTERVIEW CONFIG & SESSIONS (4 Tables)
 # =============================================================================
 
+
 class AIInterviewConfig(SQLModel, table=True):
     """AI interview configuration - uses config_id as primary key."""
+
     __tablename__ = "ai_interview_configs"
-    
+
     config_id: UUID = Field(default_factory=uuid4, primary_key=True)
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID | None = Field(default=None, foreign_key="positions.position_id")
@@ -659,7 +826,9 @@ class AIInterviewConfig(SQLModel, table=True):
     show_ai_feedback: bool = Field(default=True)
     recording_required: bool = Field(default=True)
     live_flow_config: dict | None = Field(default=None, sa_column=Column(JSONB))
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
@@ -667,8 +836,9 @@ class AIInterviewConfig(SQLModel, table=True):
 
 class OngoingInterview(SQLModel, table=True):
     """Ongoing interview session - uses session_id as primary key."""
+
     __tablename__ = "ongoing_interviews"
-    
+
     session_id: UUID = Field(default_factory=uuid4, primary_key=True)
     config_id: UUID = Field(foreign_key="ai_interview_configs.config_id")
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
@@ -689,8 +859,9 @@ class OngoingInterview(SQLModel, table=True):
 
 class InterviewResponse(SQLModel, table=True):
     """Interview response - uses response_id as primary key."""
+
     __tablename__ = "interview_responses"
-    
+
     response_id: UUID = Field(default_factory=uuid4, primary_key=True)
     session_id: UUID = Field(foreign_key="ongoing_interviews.session_id")
     question_id: str = Field(max_length=50)
@@ -711,8 +882,12 @@ class InterviewResponse(SQLModel, table=True):
 
 class AIInterviewTurn(BaseModel, table=True):
     __tablename__ = "ai_interview_turns"
-    
-    id: UUID = Field(default_factory=uuid4, alias="turn_id", sa_column=Column("turn_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="turn_id",
+        sa_column=Column("turn_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     session_id: UUID = Field(foreign_key="ongoing_interviews.session_id")
     turn_number: int
     speaker: str = Field(max_length=20)  # ai, candidate
@@ -727,10 +902,15 @@ class AIInterviewTurn(BaseModel, table=True):
 # SECTION 8: LIVE INTERVIEW (2 Tables)
 # =============================================================================
 
+
 class LiveInterviewConfig(BaseModel, table=True):
     __tablename__ = "live_interview_configs"
-    
-    id: UUID = Field(default_factory=uuid4, alias="config_id", sa_column=Column("config_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="config_id",
+        sa_column=Column("config_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID | None = Field(default=None, foreign_key="positions.position_id")
     title: str = Field(max_length=255)
@@ -743,12 +923,18 @@ class LiveInterviewConfig(BaseModel, table=True):
 
 class LiveInterviewSession(BaseModel, table=True):
     __tablename__ = "live_interview_sessions"
-    
-    id: UUID = Field(default_factory=uuid4, alias="session_id", sa_column=Column("session_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="session_id",
+        sa_column=Column("session_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     config_id: UUID = Field(foreign_key="live_interview_configs.config_id")
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
-    interviewer_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    interviewer_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     scheduled_at: datetime | None = Field(default=None)
     meeting_link: str | None = Field(default=None, max_length=500)
     status: str = Field(default="scheduled", max_length=20)
@@ -764,11 +950,18 @@ class LiveInterviewSession(BaseModel, table=True):
 # SECTION 9: CV & GITHUB ANALYSIS (2 Tables)
 # =============================================================================
 
+
 class CVAnalysis(BaseModel, table=True):
     __tablename__ = "cv_analysis"
-    
-    id: UUID = Field(default_factory=uuid4, alias="analysis_id", sa_column=Column("analysis_id", PG_UUID(as_uuid=True), primary_key=True))
-    application_id: UUID = Field(foreign_key="candidate_applications.application_id", unique=True)
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="analysis_id",
+        sa_column=Column("analysis_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    application_id: UUID = Field(
+        foreign_key="candidate_applications.application_id", unique=True
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     cv_file_url: str | None = Field(default=None, max_length=500)
     parsed_data: dict | None = Field(default=None, sa_column=Column(JSONB))
@@ -776,15 +969,23 @@ class CVAnalysis(BaseModel, table=True):
     skills: list | None = Field(default=None, sa_column=Column(ARRAY(String)))
     experience_years: Decimal | None = Field(default=None)
     match_score: Decimal | None = Field(default=None)
-    keyword_match_score: Decimal | None = Field(default=None)  # 0-100, computed from jd_keywords vs parsed_data
+    keyword_match_score: Decimal | None = Field(
+        default=None
+    )  # 0-100, computed from jd_keywords vs parsed_data
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class GitHubAnalysis(BaseModel, table=True):
     __tablename__ = "github_analysis"
-    
-    id: UUID = Field(default_factory=uuid4, alias="analysis_id", sa_column=Column("analysis_id", PG_UUID(as_uuid=True), primary_key=True))
-    candidate_id: UUID = Field(foreign_key="candidate_profiles.candidate_id", unique=True)
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="analysis_id",
+        sa_column=Column("analysis_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    candidate_id: UUID = Field(
+        foreign_key="candidate_profiles.candidate_id", unique=True
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     github_url: str | None = Field(default=None, max_length=500)
     top_languages: dict | None = Field(default=None, sa_column=Column(JSONB))
@@ -799,10 +1000,15 @@ class GitHubAnalysis(BaseModel, table=True):
 # SECTION 10: INTEGRITY & PROCTORING (1 Table)
 # =============================================================================
 
+
 class ProctoringFlag(BaseModel, table=True):
     __tablename__ = "proctoring_flags"
-    
-    id: UUID = Field(default_factory=uuid4, alias="flag_id", sa_column=Column("flag_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="flag_id",
+        sa_column=Column("flag_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
     session_id: UUID
     session_type: str = Field(max_length=30)  # assessment, ai_interview
@@ -813,7 +1019,9 @@ class ProctoringFlag(BaseModel, table=True):
     evidence: str | None = Field(default=None, sa_column=Column(Text))
     detected_by: str | None = Field(default=None, max_length=50)
     status: str = Field(default="pending", max_length=20)
-    reviewed_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    reviewed_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     review_notes: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -822,23 +1030,34 @@ class ProctoringFlag(BaseModel, table=True):
 # SECTION 11: PIPELINE TRACKING (2 Tables)
 # =============================================================================
 
+
 class PipelineTransition(BaseModel, table=True):
     __tablename__ = "pipeline_transitions"
-    
-    id: UUID = Field(default_factory=uuid4, alias="transition_id", sa_column=Column("transition_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="transition_id",
+        sa_column=Column("transition_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     from_status: str | None = Field(default=None, max_length=30)
     to_status: str = Field(max_length=30)
-    triggered_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    triggered_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     reason: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class RecruiterAssignmentLog(BaseModel, table=True):
     __tablename__ = "recruiter_assignment_logs"
-    
-    id: UUID = Field(default_factory=uuid4, alias="log_id", sa_column=Column("log_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="log_id",
+        sa_column=Column("log_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID | None = Field(default=None, foreign_key="positions.position_id")
     group_id: UUID | None = Field(default=None, foreign_key="candidate_groups.group_id")
@@ -851,10 +1070,15 @@ class RecruiterAssignmentLog(BaseModel, table=True):
 # SECTION 12: OFFERS & HIRING (2 Tables)
 # =============================================================================
 
+
 class Offer(BaseModel, table=True):
     __tablename__ = "offers"
-    
-    id: UUID = Field(default_factory=uuid4, alias="offer_id", sa_column=Column("offer_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="offer_id",
+        sa_column=Column("offer_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID = Field(foreign_key="positions.position_id")
@@ -868,9 +1092,15 @@ class Offer(BaseModel, table=True):
 
 class Hire(BaseModel, table=True):
     __tablename__ = "hires"
-    
-    id: UUID = Field(default_factory=uuid4, alias="hire_id", sa_column=Column("hire_id", PG_UUID(as_uuid=True), primary_key=True))
-    application_id: UUID = Field(foreign_key="candidate_applications.application_id", unique=True)
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="hire_id",
+        sa_column=Column("hire_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    application_id: UUID = Field(
+        foreign_key="candidate_applications.application_id", unique=True
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID = Field(foreign_key="positions.position_id")
     offer_id: UUID | None = Field(default=None, foreign_key="offers.offer_id")
@@ -884,13 +1114,22 @@ class Hire(BaseModel, table=True):
 # SECTION 13: NOTIFICATIONS & LOGS (3 Tables)
 # =============================================================================
 
+
 class Notification(BaseModel, table=True):
     __tablename__ = "notifications"
-    
-    id: UUID = Field(default_factory=uuid4, alias="notification_id", sa_column=Column("notification_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="notification_id",
+        sa_column=Column("notification_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
-    recipient_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
-    recipient_candidate_id: UUID | None = Field(default=None, foreign_key="candidate_profiles.candidate_id")
+    recipient_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
+    recipient_candidate_id: UUID | None = Field(
+        default=None, foreign_key="candidate_profiles.candidate_id"
+    )
     type: str = Field(max_length=50)
     title: str = Field(max_length=255)
     message: str | None = Field(default=None, sa_column=Column(Text))
@@ -901,8 +1140,12 @@ class Notification(BaseModel, table=True):
 
 class EmailLog(BaseModel, table=True):
     __tablename__ = "email_logs"
-    
-    id: UUID = Field(default_factory=uuid4, alias="email_id", sa_column=Column("email_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="email_id",
+        sa_column=Column("email_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     recipient_email: str = Field(max_length=255)
     subject: str = Field(max_length=255)
@@ -914,9 +1157,15 @@ class EmailLog(BaseModel, table=True):
 
 class SystemLog(BaseModel, table=True):
     __tablename__ = "system_logs"
-    
-    id: UUID = Field(default_factory=uuid4, alias="log_id", sa_column=Column("log_id", PG_UUID(as_uuid=True), primary_key=True))
-    organization_id: UUID | None = Field(default=None, foreign_key="organizations.organization_id")
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="log_id",
+        sa_column=Column("log_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    organization_id: UUID | None = Field(
+        default=None, foreign_key="organizations.organization_id"
+    )
     user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
     action: str = Field(max_length=100)
     entity_type: str | None = Field(default=None, max_length=50)
@@ -929,14 +1178,21 @@ class SystemLog(BaseModel, table=True):
 # SECTION 14: APPROVAL REQUESTS (1 Table)
 # =============================================================================
 
+
 class ApprovalRequest(BaseModel, table=True):
     __tablename__ = "approval_requests"
-    
-    id: UUID = Field(default_factory=uuid4, alias="request_id", sa_column=Column("request_id", PG_UUID(as_uuid=True), primary_key=True))
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="request_id",
+        sa_column=Column("request_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     requester_id: UUID = Field()
     request_type: str = Field(max_length=20)  # project, position
-    entity_id: UUID | None = Field(default=None)  # the ID of the project/position being approved
+    entity_id: UUID | None = Field(
+        default=None
+    )  # the ID of the project/position being approved
     data: dict = Field(sa_column=Column(JSONB))  # creation payload
     status: str = Field(default="pending", max_length=20)  # pending, approved, rejected
     reviewer_id: UUID | None = Field(default=None)
@@ -947,14 +1203,137 @@ class ApprovalRequest(BaseModel, table=True):
 
 
 # =============================================================================
-# SECTION 15: CV INGESTION PIPELINE (2 Tables)
+# SECTION 15: LIVE INTERVIEW V2 — AI-POWERED (4 Tables)
 # =============================================================================
+
+
+class LiV2Rubric(BaseModel, table=True):
+    """Live Interview V2 rubric — defines competency dimensions with behavioral anchors."""
+
+    __tablename__ = "li_v2_rubrics"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="rubric_id",
+        sa_column=Column("rubric_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    group_id: UUID = Field(foreign_key="candidate_groups.group_id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    version: int = Field(default=1)
+    dimensions: list = Field(default_factory=list, sa_column=Column(JSONB))
+    # dimensions: [{dimension_id, name, weight, anchors: {substandard, proficient, excellent}}]
+    state: str = Field(default="draft", max_length=20)  # draft | frozen
+    time_budget_minutes: int = Field(default=30)
+    language: str = Field(default="en", max_length=5)  # en | ar (arabic support future)
+    include_weak_topics: bool = Field(
+        default=False
+    )  # inject candidate's weak assessment topics into agent context
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    frozen_at: datetime | None = Field(default=None)
+    updated_at: datetime | None = Field(default=None)
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
+
+
+class LiV2Bank(BaseModel, table=True):
+    """Live Interview V2 question bank — approved questions with per-question rubrics."""
+
+    __tablename__ = "li_v2_banks"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="bank_id",
+        sa_column=Column("bank_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    rubric_id: UUID = Field(foreign_key="li_v2_rubrics.rubric_id")
+    group_id: UUID = Field(foreign_key="candidate_groups.group_id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    version: int = Field(default=1)
+    items: list = Field(default_factory=list, sa_column=Column(JSONB))
+    # items: [{bank_item_id, text, primary_dimension_id, secondary_dimension_ids, difficulty,
+    #          is_mandatory, is_approved, estimated_duration_seconds, question_rubric: {sub_criteria: [...]}}]
+    state: str = Field(default="draft", max_length=20)  # draft | frozen
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    frozen_at: datetime | None = Field(default=None)
+    updated_at: datetime | None = Field(default=None)
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
+
+
+class LiV2Session(BaseModel, table=True):
+    """Live Interview V2 session — one candidate interview with the AI agent."""
+
+    __tablename__ = "li_v2_sessions"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="session_id",
+        sa_column=Column("session_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    candidate_id: UUID = Field(foreign_key="candidate_profiles.candidate_id")
+    application_id: UUID = Field(foreign_key="candidate_applications.application_id")
+    group_id: UUID = Field(foreign_key="candidate_groups.group_id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    rubric_id: UUID = Field(foreign_key="li_v2_rubrics.rubric_id")
+    bank_id: UUID = Field(foreign_key="li_v2_banks.bank_id")
+    room_name: str | None = Field(default=None, max_length=255)
+    state: str = Field(default="pending", max_length=20)
+    # pending | in_progress | completed | failed | cancelled
+    started_at: datetime | None = Field(default=None)
+    ended_at: datetime | None = Field(default=None)
+    duration_seconds: int | None = Field(default=None)
+    context_pool: dict | None = Field(default=None, sa_column=Column(JSONB))
+    transcript: list | None = Field(default=None, sa_column=Column(JSONB))
+    # transcript: [{role, text, pillar_idx, phase, timestamp}] — saved by agent on shutdown
+    recording_url: str | None = Field(default=None, max_length=500)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LiV2Evaluation(BaseModel, table=True):
+    """Live Interview V2 evaluation — judge pipeline results for a session."""
+
+    __tablename__ = "li_v2_evaluations"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        alias="evaluation_id",
+        sa_column=Column("evaluation_id", PG_UUID(as_uuid=True), primary_key=True),
+    )
+    session_id: UUID = Field(foreign_key="li_v2_sessions.session_id")
+    organization_id: UUID = Field(foreign_key="organizations.organization_id")
+    overall_score: Decimal | None = Field(default=None)  # 0.0 to 1.0
+    overall_score_pct: int | None = Field(default=None)  # 0 to 100
+    auto_verdict: str | None = Field(default=None, max_length=20)
+    # strong_pass | pass | borderline | fail
+    meets_criteria: bool | None = Field(default=None)
+    coverage_ratio: Decimal | None = Field(
+        default=None
+    )  # fraction of dimensions covered
+    per_question_results: dict | None = Field(default=None, sa_column=Column(JSONB))
+    dimension_scores: dict | None = Field(default=None, sa_column=Column(JSONB))
+    auto_tags: dict | None = Field(default=None, sa_column=Column(JSONB))
+    # strong_on, weak_on, cv_verified, etc.
+    integrity_flags: dict | None = Field(default=None, sa_column=Column(JSONB))
+    # injection attempts, anomalies
+    evaluation_confidence: str | None = Field(default=None, max_length=10)
+    # high | medium | low
+    judge_model: str | None = Field(default=None, max_length=100)
+    judged_at: datetime | None = Field(default=None)
+
+
+# =============================================================================
+# SECTION 16: CV INGESTION PIPELINE (2 Tables)
+# =============================================================================
+
 
 class CVIngestionJob(SQLModel, table=True):
     """
     Tracks a CV ingestion job (from ZIP upload or Google Drive sync).
     Lifecycle: pending → processing → completed | failed
     """
+
     __tablename__ = "cv_ingestion_jobs"
 
     id: UUID = Field(
@@ -964,10 +1343,14 @@ class CVIngestionJob(SQLModel, table=True):
     )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID = Field(foreign_key="positions.position_id")
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
 
     # Status lifecycle
-    status: str = Field(default="pending", max_length=20)  # pending|processing|completed|failed
+    status: str = Field(
+        default="pending", max_length=20
+    )  # pending|processing|completed|failed
     source_type: str = Field(max_length=20)  # zip_upload | google_drive
     source_filename: str | None = Field(default=None, max_length=255)
 
@@ -990,6 +1373,7 @@ class DriveIngestionSchedule(SQLModel, table=True):
     Uses Celery ETA self-chaining: schedule dispatches a task at start_date,
     which re-enqueues itself at next_run_at after completion.
     """
+
     __tablename__ = "drive_ingestion_schedules"
 
     id: UUID = Field(
@@ -999,7 +1383,9 @@ class DriveIngestionSchedule(SQLModel, table=True):
     )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID = Field(foreign_key="positions.position_id")
-    created_by_user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
 
     # Google Drive config
     drive_folder_id: str = Field(max_length=255)

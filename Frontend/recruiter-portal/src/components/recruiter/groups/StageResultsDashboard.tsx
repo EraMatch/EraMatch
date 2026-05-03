@@ -20,27 +20,27 @@ export function StageResultsDashboard({
   startDate,
   endDate
 }: StageResultsDashboardProps) {
+  const getCandidateScore = (c: any): number => {
+    if (stageId === 'assessment') return c.assessmentScore || 0;
+    if (stageId === 'ai-interview') return c.aiInterviewScore || 0;
+    if (stageId === 'live-interview') return c.liveInterviewScore || 0;
+    return 0;
+  };
+
   // Calculate stage statistics
   const completedCandidates = candidates.filter(c => {
     if (stageId === 'assessment') return c.assessment === 'completed';
     if (stageId === 'ai-interview') return c.aiInterview === 'completed';
+    if (stageId === 'live-interview') return c.liveInterview === 'completed';
     return false;
   });
 
   const averageScore = completedCandidates.length > 0
-    ? completedCandidates.reduce((sum, c) => {
-      if (stageId === 'assessment') return sum + c.assessmentScore;
-      if (stageId === 'ai-interview') return sum + c.aiInterviewScore;
-      return sum;
-    }, 0) / completedCandidates.length
+    ? completedCandidates.reduce((sum, c) => sum + getCandidateScore(c), 0) / completedCandidates.length
     : 0;
 
   const topPerformers = [...completedCandidates]
-    .sort((a, b) => {
-      const scoreA = stageId === 'assessment' ? a.assessmentScore : a.aiInterviewScore;
-      const scoreB = stageId === 'assessment' ? b.assessmentScore : b.aiInterviewScore;
-      return scoreB - scoreA;
-    })
+    .sort((a, b) => getCandidateScore(b) - getCandidateScore(a))
     .slice(0, 5);
 
   const candidatesWithFlags = candidates.filter(c => c.flags.length > 0);
@@ -191,7 +191,7 @@ export function StageResultsDashboard({
           </h3>
           <div className="space-y-3">
             {topPerformers.map((candidate, index) => {
-              const score = stageId === 'assessment' ? candidate.assessmentScore : candidate.aiInterviewScore;
+              const score = getCandidateScore(candidate);
               return (
                 <div
                   key={candidate.id}
@@ -245,7 +245,7 @@ export function StageResultsDashboard({
                 { range: 'Below 60%', min: 0, max: 59, color: 'red' }
               ].map((bucket) => {
                 const count = completedCandidates.filter(c => {
-                  const score = stageId === 'assessment' ? c.assessmentScore : c.aiInterviewScore;
+                  const score = getCandidateScore(c);
                   return score >= bucket.min && score <= bucket.max;
                 }).length;
                 const percentage = completedCandidates.length > 0
@@ -308,7 +308,7 @@ export function StageResultsDashboard({
                   </div>
                   <div className="text-right">
                     <div className="text-[18px] font-bold text-red-700">
-                      {stageId === 'assessment' ? candidate.assessmentScore : candidate.aiInterviewScore}%
+                      {getCandidateScore(candidate)}%
                     </div>
                     <div className="text-[11px] text-red-600">Needs Review</div>
                   </div>

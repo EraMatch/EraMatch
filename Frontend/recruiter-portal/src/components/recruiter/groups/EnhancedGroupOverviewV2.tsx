@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, AlertCircle, Clock, Eye, Trash2, UserPlus, UserMinus, Activity, MoreVertical, Flag, Filter, X, ChevronDown, Plus, UserCog, Shield, Lock, MessageSquare, FileText, CheckSquare, Ban, Archive, AlertTriangle, BarChart3, Target, Video, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SuspectReviewPage } from '../candidates/SuspectReviewPage';
@@ -14,10 +14,13 @@ import { FinalDecisionModal } from './FinalDecisionModal';
 import { FiltrationFlowConfigModal } from './FiltrationFlowConfigModal';
 import { StageReviewPage } from './StageReviewPage';
 import { FinalDecisionPage } from './FinalDecisionPage';
+import { ConfigWizardV2 } from '../live-interview-v2/ConfigWizardV2';
+import { LiveInterviewMonitor } from '../live-interview-v2/LiveInterviewMonitor';
+import { LiveInterviewResults } from '../live-interview-v2/LiveInterviewResults';
+
 import { ActivityLogPanel } from './ActivityLogPanel';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
-import { API_URL } from '../../../services/client';
 import { useEffect } from 'react';
 import LoadingSpinner from '../../common/LoadingSpinner';
 
@@ -101,11 +104,11 @@ interface CandidateStatus {
   offer: 'completed' | 'pending' | 'not-started' | 'failed';
   assessmentScore: number;
   aiInterviewScore: number;
+  liveInterviewScore: number;
   flags: string[];
   currentStage: string;
   technicalVerdict?: 'pass' | 'fail' | 'conditional';
   meetsCriteria?: boolean;
-  applicationStatus?: string;
   progressionState?: 'selected' | 'rejected' | 'on-hold' | 'archived' | 'active';
   overrideApplied?: boolean;
   email?: string;
@@ -114,9 +117,6 @@ interface CandidateStatus {
   applicationId?: string;
   liveInterviewScheduledAt?: string;
   liveInterviewMeetingLink?: string;
-  assessmentPassed?: boolean;
-  aiInterviewPassed?: boolean;
-  liveInterviewPassed?: boolean;
 }
 
 export function EnhancedGroupOverviewV2({
@@ -179,6 +179,11 @@ export function EnhancedGroupOverviewV2({
   const [groupInterviews, setGroupInterviews] = useState<any[]>([]);
   const [editingInterviewData, setEditingInterviewData] = useState<any>(null);
 
+  // NEW: Live Interview V2 Setup
+  const [showLiveInterviewV2Setup, setShowLiveInterviewV2Setup] = useState(false);
+  const [showLiveMonitor, setShowLiveMonitor] = useState(false);
+  const [liv2ResultSessionId, setLiv2ResultSessionId] = useState<string | null>(null);
+
   // NEW: Stage-gated state
   const [currentStage, setCurrentStage] = useState<string>(filtrationFlow[0] || 'assessment');
   const [stageState, setStageState] = useState<StageState>('not-started');
@@ -234,18 +239,6 @@ export function EnhancedGroupOverviewV2({
   const [isLoading, setIsLoading] = useState(true);
   const [positionId, setPositionId] = useState<string>('');
   const [interviewConfigId, setInterviewConfigId] = useState<string | null>(null);
-  const [liveAlertsConnected, setLiveAlertsConnected] = useState(false);
-  const [integrityMetrics, setIntegrityMetrics] = useState<any>(null);
-  const [integrityDecisions, setIntegrityDecisions] = useState<any>(null);
-  const liveAlertCursorRef = useRef<string | null>(null);
-  const lastLiveAlertToastRef = useRef<number>(0);
-
-  // Reset any editing interview payload when switching flows or stages
-  // This prevents stale `editingInterviewData` causing "Edit" UI to appear
-  // when the user expects to create a new configuration for a different stage.
-  useEffect(() => {
-    setEditingInterviewData(null);
-  }, [activeFlow, currentStage]);
 
   // Fetch data on mount
   useEffect(() => {
@@ -256,6 +249,10 @@ export function EnhancedGroupOverviewV2({
         if (data.position_id) {
           setPositionId(data.position_id);
         }
+        if (data.interview_config_id) {
+          setInterviewConfigId(data.interview_config_id);
+        }
+
         let activeFlowRaw = filtrationFlow; // Default to prop
         if (data.group && data.group.filtration_flow) {
           // Parse backend response which might be object array or strings
@@ -355,7 +352,6 @@ export function EnhancedGroupOverviewV2({
         // Map candidates
         const candidates: CandidateStatus[] = data.candidates.map((c: any) => ({
           id: c.candidate_id, // backend sends candidate_id
-          applicationId: c.application_id,
           name: c.name,
           email: c.email,
           phone: c.phone || `+1-555-${String(c.candidate_id).slice(-4)}`,
@@ -367,21 +363,15 @@ export function EnhancedGroupOverviewV2({
           offer: 'not-started',
           assessmentScore: c.assessment?.score || 0,
           aiInterviewScore: c.ai_interview?.score || 0,
+          liveInterviewScore: c.live_interview?.score || 0,
           flags: c.flags ? c.flags.map((f: any) => f.description) : [],
           currentStage: c.currentStage || 'assessment',
           technicalVerdict: c.verdict === 'pass' || c.verdict === 'fail' || c.verdict === 'conditional' ? c.verdict : undefined,
           meetsCriteria: c.meets_criteria,
-          applicationStatus: c.status,
-          progressionState: c.status === 'screening' || c.status === 'applied' ? 'active' :
-            c.status === 'holded' ? 'on-hold' :
-              c.status === 'rejected' ? 'rejected' :
-                c.status === 'hired' ? 'selected' : 'active',
+          progressionState: 'active',
           overrideApplied: false,
           liveInterviewScheduledAt: c.live_interview?.scheduled_at,
-          liveInterviewMeetingLink: c.live_interview?.meeting_link,
-          assessmentPassed: c.assessment?.passed,
-          aiInterviewPassed: c.ai_interview?.passed,
-          liveInterviewPassed: c.live_interview?.passed
+          liveInterviewMeetingLink: c.live_interview?.meeting_link
         }));
 
         setCandidateStatuses(candidates);
@@ -411,153 +401,12 @@ export function EnhancedGroupOverviewV2({
     fetchData();
   }, [groupId, refreshKey]);
 
-  useEffect(() => {
-    if (!showModuleMonitoring) return;
-
-    let isCancelled = false;
-    let pollInterval: number | null = null;
-
-    const refreshMetrics = async () => {
-      try {
-        const [metrics, decisions] = await Promise.all([
-          api.recruiter.getGroupIntegrityMetrics(groupId, 60),
-          api.recruiter.getGroupIntegrityDecisions(groupId),
-        ]);
-        setIntegrityMetrics(metrics);
-        setIntegrityDecisions(decisions);
-      } catch (error) {
-        console.error('Failed to load integrity monitoring payload:', error);
-      }
-    };
-
-    void refreshMetrics();
-
-    const applyAlerts = (alerts: any[]) => {
-      if (!alerts || alerts.length === 0) return;
-
-      const latest = alerts[alerts.length - 1];
-      if (latest?.created_at) {
-        liveAlertCursorRef.current = latest.created_at;
-      }
-
-      setRefreshKey(prev => prev + 1);
-
-      const now = Date.now();
-      if (now - lastLiveAlertToastRef.current > 5000) {
-        const highCount = alerts.filter(a => String(a.severity).toLowerCase() === 'high').length;
-        showToast(
-          highCount > 0
-            ? `Live Alert: ${highCount} high-risk integrity event(s)`
-            : `Live Alert: ${alerts.length} new integrity event(s)`
-        );
-        lastLiveAlertToastRef.current = now;
-      }
-    };
-
-    const startPollingFallback = () => {
-      if (isCancelled) return;
-      setLiveAlertsConnected(false);
-
-      const pollOnce = async () => {
-        try {
-          const payload = await api.recruiter.pollGroupAlerts(groupId, liveAlertCursorRef.current || undefined) as any;
-          if (payload?.cursor) {
-            liveAlertCursorRef.current = payload.cursor;
-          }
-          applyAlerts(payload?.alerts || []);
-          await refreshMetrics();
-        } catch (error) {
-          console.error('Polling live alerts failed:', error);
-        }
-      };
-
-      void pollOnce();
-      pollInterval = window.setInterval(pollOnce, 8000);
-    };
-
-    const connectStream = async () => {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        startPollingFallback();
-        return;
-      }
-
-      const since = liveAlertCursorRef.current ? `?since=${encodeURIComponent(liveAlertCursorRef.current)}` : '';
-      const streamUrl = `${API_URL}/recruiter/groups/${groupId}/alerts/stream${since}`;
-
-      const response = await fetch(streamUrl, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'text/event-stream',
-        },
-      });
-
-      if (!response.ok || !response.body) {
-        throw new Error(`Stream connection failed with status ${response.status}`);
-      }
-
-      setLiveAlertsConnected(true);
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (!isCancelled) {
-        const { value, done } = await reader.read();
-        if (done) {
-          throw new Error('Stream closed');
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-
-        let boundary = buffer.indexOf('\n\n');
-        while (boundary !== -1) {
-          const chunk = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-
-          const lines = chunk.split('\n');
-          const eventLine = lines.find(line => line.startsWith('event: '));
-          const dataLine = lines.find(line => line.startsWith('data: '));
-
-          if (eventLine?.includes('alerts') && dataLine) {
-            try {
-              const payload = JSON.parse(dataLine.slice(6));
-              if (payload?.cursor) {
-                liveAlertCursorRef.current = payload.cursor;
-              }
-              applyAlerts(payload?.alerts || []);
-              await refreshMetrics();
-            } catch (parseError) {
-              console.error('Failed to parse live alert payload:', parseError);
-            }
-          }
-
-          boundary = buffer.indexOf('\n\n');
-        }
-      }
-    };
-
-    connectStream().catch((error) => {
-      console.error('Live alert stream unavailable, switching to polling:', error);
-      startPollingFallback();
-    });
-
-    return () => {
-      isCancelled = true;
-      setLiveAlertsConnected(false);
-      if (pollInterval) {
-        window.clearInterval(pollInterval);
-      }
-    };
-  }, [groupId, showModuleMonitoring]);
-
   const handleSaveFlow = async (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[], configuredGithubQuestionsCount: number) => {
     try {
       await api.recruiter.updateGroup(groupId, {
         filtration_flow: flowConfig,
         github_questions_count: configuredGithubQuestionsCount,
-      } as any);
+      });
       setGithubQuestionsCount(configuredGithubQuestionsCount);
       setShowFlowConfigModal(false);
       setRefreshKey(prev => prev + 1); // Trigger refresh
@@ -729,18 +578,17 @@ export function EnhancedGroupOverviewV2({
     const updatedCandidates = candidateStatuses.map(candidate => {
       if (selectedIds.includes(candidate.id)) {
         if (action === 'progress') {
-          return { ...candidate, progressionState: 'selected' as const, applicationStatus: 'screening' };
+          return { ...candidate, progressionState: 'selected' as const };
         } else if (action === 'reject') {
-          return { ...candidate, progressionState: 'rejected' as const, applicationStatus: 'rejected' };
+          return { ...candidate, progressionState: 'rejected' as const };
         } else if (action === 'hold') {
-          return { ...candidate, progressionState: 'on-hold' as const, applicationStatus: 'holded' };
+          return { ...candidate, progressionState: 'on-hold' as const };
         }
       }
       return candidate;
     });
 
     setCandidateStatuses(updatedCandidates);
-    setRefreshKey(prev => prev + 1); // Refresh data and analytics
 
     if (action === 'progress') {
       const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
@@ -780,41 +628,24 @@ export function EnhancedGroupOverviewV2({
     });
   };
 
-  const handleProceedSelected = async () => {
+  const handleProceedSelected = () => {
     if (selectedCandidates.length === 0) {
       alert('Please select at least one candidate to proceed');
       return;
     }
 
-    try {
-      const appIds = selectedCandidates.map(id => {
-        const c = candidateStatuses.find(c => c.id === id);
-        return c?.applicationId ?? String(id);
-      });
-
-      await api.recruiter.bulkProgressCandidates(groupId, {
-        application_ids: appIds,
-        action: 'progress',
-        current_stage_type: currentStage
-      } as any);
-    } catch (error) {
-      console.error('Failed to progress candidates on backend:', error);
-      showToast('Failed to progress candidates — please try again');
-      return;
-    }
-
-
-    // Update candidate states optimistically
+    // Update candidate states
     const updatedCandidates = candidateStatuses.map(candidate => {
       if (selectedCandidates.includes(candidate.id)) {
-        return { ...candidate, progressionState: 'selected' as const, applicationStatus: 'screening' };
+        return { ...candidate, progressionState: 'selected' as const };
+      } else if (candidate.progressionState === 'active') {
+        // Mark non-selected as needs decision
+        return candidate;
       }
       return candidate;
     });
 
     setCandidateStatuses(updatedCandidates);
-    setSelectedCandidates([]); // Clear selection after progression
-    setRefreshKey(prev => prev + 1); // Refresh data and analytics
 
     // Move to next stage
     const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
@@ -1034,16 +865,7 @@ export function EnhancedGroupOverviewV2({
     );
   };
 
-  const getStatusIcon = (status: string, passed?: boolean) => {
-    // If we have explicit passage boolean, use it to override the status-based icon
-    if (passed === true) {
-      return <CheckCircle size={16} className="text-[#10b981]" />;
-    }
-    if (passed === false) {
-      return <XCircle size={16} className="text-[#ef4444]" />;
-    }
-
-    // Fallback to status strings
+  const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
       case 'passed':
@@ -1227,7 +1049,7 @@ export function EnhancedGroupOverviewV2({
       <StageReviewPage
         stageName={pipelineSteps.find(s => s.id === currentStage)?.name || ''}
         stageId={currentStage}
-        candidates={candidateStatuses.filter(c => c.applicationStatus !== 'holded' && c.applicationStatus !== 'rejected')}
+        candidates={candidateStatuses}
         pipelineSteps={pipelineSteps.map(s => ({ id: s.id, name: s.name }))}
         currentStageIndex={currentStepIndex}
         isLastStage={isLastStageCheck}
@@ -1264,6 +1086,7 @@ export function EnhancedGroupOverviewV2({
             phone: c.phone || `+1-555-${String(c.id).padStart(4, '0')}`,
             assessmentScore: c.assessmentScore,
             aiInterviewScore: c.aiInterviewScore,
+            liveInterviewScore: c.liveInterviewScore,
             flags: c.flags,
             meetsCriteria: c.meetsCriteria,
             technicalVerdict: c.technicalVerdict,
@@ -1563,13 +1386,9 @@ export function EnhancedGroupOverviewV2({
                           showToast('Cannot modify configuration - stage is active');
                           return;
                         }
-                        if (groupAssessments.length > 0) {
-                          showToast('Only one assessment can be created for this group');
-                          return;
-                        }
                         setShowAssessmentCreation(true);
                       }}
-                      disabled={stageConfigLocked || groupAssessments.length > 0}
+                      disabled={stageConfigLocked}
                       className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Plus size={16} />
@@ -1578,43 +1397,50 @@ export function EnhancedGroupOverviewV2({
                       </span>
                     </button>
                   )}
-                  {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (() => {
-                    const hasRecordedReq = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');
-                    const hasLiveReq = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');
-                    const hasRecordedCfg = groupInterviews.some(i => i.interview_type === 'recorded');
-                    const hasLiveCfg = groupInterviews.some(i => i.interview_type === 'live' || i.interview_type === 'live_ai');
-                    const isFullyConfigured = (!hasRecordedReq || hasRecordedCfg) && (!hasLiveReq || hasLiveCfg);
-                    
-                    return (
-                      <button
-                        onClick={() => {
-                          if (stageConfigLocked) {
-                            showToast('Cannot modify configuration - stage is active');
-                            return;
-                          }
-                          if (isFullyConfigured) {
-                            showToast('Only one interview can be created for each stage');
-                            return;
-                          }
-                          setEditingInterviewData(null);
+                  {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
+                    <button
+                      onClick={() => {
+                        if (stageConfigLocked) {
+                          showToast('Cannot modify configuration - stage is active');
+                          return;
+                        }
+                        const hasLive = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');
+                        const hasRecorded = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');
+                        if (hasLive) {
+                          setShowLiveInterviewV2Setup(true);
+                        } else if (hasRecorded) {
                           setShowUnifiedAIInterviewSetup(true);
-                        }}
-                        disabled={stageConfigLocked || isFullyConfigured}
-                        className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <Plus size={16} />
-                        <span className="font-['Arimo',sans-serif] text-[14px]">
-                          Add AI Interview Settings
-                        </span>
-                      </button>
-                    );
-                  })()}
+                        }
+                      }}
+                      disabled={stageConfigLocked}
+                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {activeFlow.includes('live-interview') ? <Sparkles size={16} /> : <Activity size={16} />}
+                      <span className="font-['Arimo',sans-serif] text-[14px]">
+                        {activeFlow.includes('live-interview') ? 'AI Interview V2 Settings' : interviewConfigId ? 'Edit AI Interview Settings' : 'AI Interview Settings'}
+                      </span>
+                      {(!activeFlow.includes('live-interview') && interviewConfigId) && <CheckCircle size={16} className="text-white ml-1" />}
+                    </button>
+                  )}
                 </div>
 
               </div>
             )}
-          </div>
 
+            {/* Session Monitor button — available to both HR and Technical */}
+            {(activeFlow.includes('live-interview') || activeFlow.includes('live_interview')) && (userRole === 'technical' || userRole === 'recruiter') && (
+              <div className="mt-3">
+                <button
+                  onClick={() => setShowLiveMonitor(true)}
+                  className="flex items-center justify-center gap-2 h-[40px] px-[14px] rounded-[8px] bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors"
+                  title="Open real-time session monitoring dashboard"
+                >
+                  <Activity size={16} />
+                  <span className="font-['Arimo',sans-serif] text-[14px]">Monitor</span>
+                </button>
+              </div>
+            )}
+          </div>
           {/* Display Created Assessments (Technical Recruiter Only) */}
           {userRole === 'technical' && (
             <div className="mt-4">
@@ -2054,7 +1880,7 @@ export function EnhancedGroupOverviewV2({
                                     }}
                                     className={`flex flex-col items-center gap-1 mx-auto ${candidate.assessmentScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
                                   >
-                                    {getStatusIcon(candidate.assessment, candidate.assessmentPassed)}
+                                    {getStatusIcon(candidate.assessment)}
                                     {candidate.assessmentScore > 0 && (
                                       <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
                                         {candidate.assessmentScore}%
@@ -2081,7 +1907,7 @@ export function EnhancedGroupOverviewV2({
                                     }}
                                     className={`flex flex-col items-center gap-1 mx-auto ${candidate.aiInterviewScore > 0 ? 'hover:bg-[#f9fafb] rounded-[6px] p-2 transition-colors' : ''}`}
                                   >
-                                    {getStatusIcon(candidate.aiInterview, candidate.aiInterviewPassed)}
+                                    {getStatusIcon(candidate.aiInterview)}
                                     {candidate.aiInterviewScore > 0 && (
                                       <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1] hover:underline">
                                         {candidate.aiInterviewScore}%
@@ -2095,7 +1921,12 @@ export function EnhancedGroupOverviewV2({
                               return (
                                 <td key={stageType} className="p-4 text-center">
                                   <div className="flex flex-col items-center gap-1 mx-auto">
-                                    {getStatusIcon(candidate.liveInterview, candidate.liveInterviewPassed)}
+                                    {getStatusIcon(candidate.liveInterview)}
+                                    {candidate.liveInterviewScore > 0 && (
+                                      <span className="font-['Arimo',sans-serif] text-[11px] text-[#6366f1]">
+                                        {candidate.liveInterviewScore}%
+                                      </span>
+                                    )}
 
                                     {candidate.liveInterviewScheduledAt ? (
                                       <div className="flex flex-col items-center mt-1">
@@ -2146,30 +1977,22 @@ export function EnhancedGroupOverviewV2({
                             </button>
                           </td>
                           <td className="p-4 text-center">
-                            {(() => {
-                              const status = candidate.applicationStatus || 'screening';
-                              const statusStyles: Record<string, string> = {
-                                'applied': 'bg-blue-50 text-blue-600 border-blue-100',
-                                'screening': 'bg-emerald-50 text-emerald-600 border-emerald-100',
-                                'holded': 'bg-amber-50 text-amber-600 border-amber-100',
-                                'rejected': 'bg-red-50 text-red-600 border-red-100',
-                                'offered': 'bg-purple-50 text-purple-600 border-purple-100',
-                                'hired': 'bg-indigo-50 text-indigo-600 border-indigo-100',
-                              };
-                              const labelMap: Record<string, string> = {
-                                'applied': 'Applied',
-                                'screening': 'Active',
-                                'holded': 'On Hold',
-                                'rejected': 'Rejected',
-                                'offered': 'Offered',
-                                'hired': 'Hired',
-                              };
-                              return (
-                                <span className={`px-3 py-1 rounded-full text-[12px] font-medium border ${statusStyles[status] || 'bg-gray-50 text-gray-600 border-gray-100'}`}>
-                                  {labelMap[status] || status.charAt(0).toUpperCase() + status.slice(1)}
-                                </span>
-                              );
-                            })()}
+                            {candidate.progressionState && candidate.progressionState !== 'active' ? (
+                              <span className={`px-3 py-1 rounded-full text-[12px] font-medium ${candidate.progressionState === 'selected'
+                                ? 'bg-blue-100 text-blue-700'
+                                : candidate.progressionState === 'rejected'
+                                  ? 'bg-red-100 text-red-700'
+                                  : candidate.progressionState === 'on-hold'
+                                    ? 'bg-yellow-100 text-yellow-700'
+                                    : 'bg-gray-100 text-gray-700'
+                                }`}>
+                                {candidate.progressionState.replace('-', ' ')}
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 rounded-full text-[12px] font-medium bg-emerald-100 text-emerald-700">
+                                Active
+                              </span>
+                            )}
                           </td>
                           <td className="p-4">
                             <div className="flex items-center justify-center gap-2">
@@ -2419,20 +2242,7 @@ export function EnhancedGroupOverviewV2({
             candidates={candidateStatuses}
             activeFlow={activeFlow}
             pipelineSteps={pipelineSteps}
-            liveAlertsConnected={liveAlertsConnected}
-            integrityMetrics={integrityMetrics}
-            integrityDecisions={integrityDecisions}
             onClose={() => setShowModuleMonitoring(null)}
-            onManualRefresh={() => {
-              setRefreshKey(prev => prev + 1);
-              void Promise.all([
-                api.recruiter.getGroupIntegrityMetrics(groupId, 60),
-                api.recruiter.getGroupIntegrityDecisions(groupId),
-              ]).then(([metrics, decisions]) => {
-                setIntegrityMetrics(metrics);
-                setIntegrityDecisions(decisions);
-              }).catch(() => {});
-            }}
             onViewCandidate={(candidateId) => {
               setShowModuleMonitoring(null);
               onViewCandidate(candidateId);
@@ -2660,6 +2470,66 @@ export function EnhancedGroupOverviewV2({
           candidateName={selectedCandidateForSchedule.name}
           applicationId={selectedCandidateForSchedule.id}
         />
+      )}
+
+      {/* Live Interview V2 Monitor Overlay */}
+      {showLiveMonitor && !liv2ResultSessionId && (
+        <LiveInterviewMonitor
+          groupId={groupId}
+          groupName={groupName}
+          onClose={() => setShowLiveMonitor(false)}
+          onViewResults={(sessionId) => setLiv2ResultSessionId(sessionId)}
+        />
+      )}
+
+      {/* Live Interview V2 Config Wizard Overlay */}
+      {showLiveInterviewV2Setup && (
+        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
+          <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3">
+            <button
+              onClick={() => setShowLiveInterviewV2Setup(false)}
+              className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
+            >
+              <ChevronLeft size={16} />
+              Back to Group
+            </button>
+            <span className="text-gray-300">|</span>
+            <span className="text-sm text-gray-500">AI Interview V2 Setup</span>
+          </div>
+          <div className="p-6 max-w-5xl mx-auto">
+            <ConfigWizardV2
+              groupId={groupId}
+              stageId={currentStage}
+              onComplete={() => {
+                setShowLiveInterviewV2Setup(false);
+                setRefreshKey(prev => prev + 1);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Live Interview V2 Results Overlay */}
+      {showLiveMonitor && liv2ResultSessionId && (
+        <div className="fixed inset-0 z-50 bg-white overflow-y-auto">
+          <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3">
+            <button
+              onClick={() => setLiv2ResultSessionId(null)}
+              className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
+            >
+              <ChevronLeft size={16} />
+              Back to Monitor
+            </button>
+            <span className="text-gray-300">|</span>
+            <span className="text-sm text-gray-500">Live Interview Results</span>
+          </div>
+          <LiveInterviewResults
+            sessionId={liv2ResultSessionId}
+            onClose={() => {
+              setLiv2ResultSessionId(null);
+            }}
+          />
+        </div>
       )}
     </div>
   );
