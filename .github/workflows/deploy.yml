@@ -1,0 +1,48 @@
+name: Deploy EraMatch (Dev)
+
+on:
+  push:
+    branches: [ dev-release-2.0 ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_IP }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Navigate to project
+            cd ~/EraMatch
+            
+            # Fetch and switch to the correct branch
+            git fetch origin
+            git checkout dev-release-2.0
+            git pull origin dev-release-2.0
+            
+            # Stop existing processes
+            ./start.sh stop || true
+            
+            # Ensure Python virtual environments exist
+            if [ ! -d "backend/.venv" ]; then
+              python3 -m venv backend/.venv
+            fi
+            if [ ! -d "ai-service/.venv" ]; then
+              python3 -m venv ai-service/.venv
+            fi
+            
+            # Install/Update dependencies
+            source backend/.venv/bin/activate && pip install -r backend/requirements.txt
+            source ai-service/.venv/bin/activate && pip install -r ai-service/requirements.txt
+            
+            cd Frontend/recruiter-portal && npm install && cd ../..
+            cd Frontend/candidate-portal && npm install && cd ../..
+            
+            # Start services in background
+            mkdir -p .logs
+            nohup ./start.sh --tunnel > .logs/deploy.log 2>&1 &
+            
+            echo "Deployment complete. Services are starting in the background."

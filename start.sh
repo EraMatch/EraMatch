@@ -115,12 +115,21 @@ log "${C_GREEN}[OK]" "Env loaded: DATABASE_URL=${DATABASE_URL:0:30}..."
 
 # ── TUNNEL STARTUP ──────────────────────────────────────────────────────────
 if [ "$USE_TUNNEL" = true ]; then
-    log "${C_MAGENTA}[TUNNEL]" "Starting Cloudflare Tunnels..."
+    log "${C_MAGENTA}[TUNNEL]" "Checking for tunnels..."
     
     # Helper to start tunnel and wait for URL
     start_tunnel() {
         local name="${1}"
         local port="${2}"
+        local name_upper=$(echo "$name" | tr '[:lower:]' '[:upper:]')
+        local env_var_name="${name_upper}_URL"
+        
+        # If the URL is already set (manual/static mode), skip creation
+        if [ -n "${!env_var_name:-}" ]; then
+            log "${C_GREEN}[STATIC]" "Using existing $name tunnel: ${!env_var_name}"
+            return 0
+        fi
+
         local logfile="$LOG_DIR/tunnel-$name.log"
         rm -f "$logfile"
         nohup cloudflared tunnel --url "http://localhost:$port" > "$logfile" 2>&1 &
@@ -136,18 +145,16 @@ if [ "$USE_TUNNEL" = true ]; then
         if [ -z "$url" ]; then echo -e "${C_RED}Failed!${C_RESET}"; return 1; fi
         echo -e "${C_CYAN}$url${C_RESET}"
         
-        # Use tr for compatibility with older bash versions (macOS)
-        local name_upper=$(echo "$name" | tr '[:lower:]' '[:upper:]')
-        eval "${name_upper}_URL='$url'"
+        eval "${env_var_name}='$url'"
     }
 
     start_tunnel "backend" 8000
     start_tunnel "recruiter" 5173
     start_tunnel "candidate" 5174
 
-    # Inject into environment
-    export VITE_API_URL="$BACKEND_URL/api/v1"
-    # Convert space-separated list to JSON array for FastAPI
+    # Inject into environment for frontends and backend
+    export VITE_API_URL="${BACKEND_URL}/api/v1"
+    # Ensure local dev ports are always allowed as fallback
     export BACKEND_CORS_ORIGINS="[\"$RECRUITER_URL\", \"$CANDIDATE_URL\", \"http://localhost:5173\", \"http://localhost:5174\"]"
     
     echo ""
