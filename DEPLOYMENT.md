@@ -49,6 +49,18 @@ The production portals are hosted at:
 
 To access the production environment directly via SSH:
 
+### Prerequisites for SSH
+1. **Install Google Cloud SDK**: Follow the [official guide](https://cloud.google.com/sdk/docs/install).
+2. **Login to Google Cloud**:
+   ```bash
+   gcloud auth login
+   ```
+3. **Set Project**:
+   ```bash
+   gcloud config set project [YOUR_PROJECT_ID]
+   ```
+
+### SSH Command
 ```bash
 gcloud compute ssh eramatch-vm --zone=us-central1-a
 ```
