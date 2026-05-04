@@ -1021,8 +1021,12 @@ class GroupService:
             if prog:
                 # HR starts/unlocks the stage; candidate start moves it to in_progress.
                 if prog.status in ("locked", "not_started", "unlocked"):
-                    prog.status = "unlocked"
-                    prog.unlocked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    prog.status = "in_progress" # Actually move to in_progress when stage starts
+                    prog.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    # Ensure session_type is recorded for assessments so progress records
+                    # consistently indicate the type of session they relate to.
+                    if stage == "assessment":
+                        prog.session_type = "assessment"
                     self.session.add(prog)
                     invitations_sent += 1
             else:
@@ -1034,8 +1038,9 @@ class GroupService:
                 new_prog = CandidateStageProgress(
                     application_id=app.id,
                     stage_id=stage_config.stage_id,
-                    status="unlocked",
-                    unlocked_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    status="in_progress",
+                    started_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    session_type=("assessment" if stage == "assessment" else None),
                 )
                 self.session.add(new_prog)
                 invitations_sent += 1
@@ -2714,6 +2719,7 @@ class GroupService:
                     group_name=group.group_name,
                     temp_password=temp_password,   # plaintext, NOT the hash
                     group_id=str(group.id),
+                    username=profile.username or "",
                 )
             except Exception as e:
                 import logging
@@ -3106,6 +3112,7 @@ class GroupService:
                             stage_id=source_stage.stage_id,
                             status="completed",
                             passed=True,
+                            session_type=(source_stage.stage_type if getattr(source_stage, 'stage_type', None) else None),
                         )
                         self.session.add(prog)
 

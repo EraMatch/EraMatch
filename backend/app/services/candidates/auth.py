@@ -18,27 +18,28 @@ class CandidateAuthService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def login(self, email: str, password: str, group_id: UUID | None = None) -> TokenResponse:
+    async def login(self, username: str, password: str) -> TokenResponse:
         """
-        authenticate and return the jwt
+        Authenticate candidate by username and return JWT tokens.
         """
-        candidate = await self._get_candidate_by_email(email, group_id)
-
+        candidate = await self._get_candidate_by_username(username)
+        
         if not candidate:
-            raise UnauthorizedException("Invalid email or password")
-
+            raise UnauthorizedException("Invalid username or password")
+        
         if not candidate.password_hash:
             raise UnauthorizedException("Password not set. Please contact support.")
-
+        
         if not verify_password(password, candidate.password_hash):
-            raise UnauthorizedException("Invalid email or password")
-
+            raise UnauthorizedException("Invalid username or password")
+        
+        # Create tokens with candidate_id as subject and user_type to distinguish
         access_token = create_access_token(
             subject=str(candidate.id),
             extra_data={"user_type": "candidate", "org_id": str(candidate.organization_id)}
         )
         refresh_token = create_refresh_token(subject=str(candidate.id))
-
+        
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -87,25 +88,12 @@ class CandidateAuthService:
         
         return candidate
 
-    async def _get_candidate_by_email(self, email: str, group_id: UUID | None = None) -> CandidateProfile | None:
-        """Get candidate by email, filtering by group_id if provided to ensure correct user context."""
-        from app.models import CandidateApplication
-
+    async def _get_candidate_by_username(self, username: str) -> CandidateProfile | None:
+        """Get candidate by username."""
         statement = select(CandidateProfile).where(
-            CandidateProfile.email == email,
-            CandidateProfile.is_deleted == False,
-            CandidateProfile.password_hash != None,  # noqa: E711
+            CandidateProfile.username == username,
+            CandidateProfile.is_deleted == False
         )
-        
-        if group_id:
-            statement = statement.join(
-                CandidateApplication,
-                CandidateProfile.id == CandidateApplication.candidate_id
-            ).where(
-                CandidateApplication.group_id == group_id,
-                CandidateApplication.is_deleted == False
-            )
-            
         result = await self.session.execute(statement)
         return result.scalars().first()
 

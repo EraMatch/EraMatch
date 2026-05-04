@@ -22,19 +22,59 @@ class CandidateService:
         self.session = session
         self.organization_id = organization_id
 
-    # Profile operations
-    async def create_profile(self, data: CandidateCreate) -> CandidateProfile:
-        # Check if email exists in this org
-        query = select(CandidateProfile).where(
-            CandidateProfile.organization_id == self.organization_id,
-            CandidateProfile.email == data.email
-        )
-        result = await self.session.execute(query)
-        existing = result.scalar_one_or_none()
+    async def _generate_username(self) -> str:
+        """Generate a unique 10-character username of random lowercase letters and digits."""
+        import random
+        chars = string.ascii_lowercase + string.digits
+        for _ in range(20):  # max retries
+            username = ''.join(random.choice(chars) for _ in range(10))
+            # Check uniqueness across all candidates (global unique)
+            result = await self.session.execute(
+                select(CandidateProfile).where(CandidateProfile.username == username)
+            )
+            if not result.scalar_one_or_none():
+                return username
+        # Extremely unlikely fallback
+        return ''.join(random.choice(chars) for _ in range(10))
 
-        if existing:
-            # Update existing? Or just return it? For now, let's return it.
-            return existing
+    # Profile operations
+    async def create_profile(self, data: CandidateCreate, position_id: UUID | None = None) -> CandidateProfile:
+        # Position-aware email duplicate check
+        if position_id:
+            from app.models import CandidateApplication
+            # Check if this email already has an application for the SAME position
+            dup_query = (
+                select(CandidateApplication)
+                .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+                .where(
+                    CandidateProfile.email == data.email,
+                    CandidateProfile.organization_id == self.organization_id,
+                    CandidateApplication.position_id == position_id,
+                    CandidateApplication.is_deleted == False,
+                )
+            )
+            dup_result = await self.session.execute(dup_query)
+            if dup_result.scalar_one_or_none():
+                # Same email + same position → return existing profile
+                existing_query = select(CandidateProfile).where(
+                    CandidateProfile.organization_id == self.organization_id,
+                    CandidateProfile.email == data.email,
+                )
+                existing_result = await self.session.execute(existing_query)
+                return existing_result.scalar_one()
+        else:
+            # Legacy behavior: check if email exists in org (no position context)
+            query = select(CandidateProfile).where(
+                CandidateProfile.organization_id == self.organization_id,
+                CandidateProfile.email == data.email
+            )
+            result = await self.session.execute(query)
+            existing = result.scalar_one_or_none()
+            if existing:
+                return existing
+
+        # Generate unique username
+        username = await self._generate_username()
 
         # Generate a temporary password
         alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
@@ -43,19 +83,21 @@ class CandidateService:
         candidate = CandidateProfile(
             organization_id=self.organization_id,
             password_hash=hash_password(temp_password),
+            username=username,
             **data.model_dump()
         )
         self.session.add(candidate)
         await self.session.commit()
         await self.session.refresh(candidate)
 
-        # Send welcome email with the temporary password
+        # Send welcome email with the temporary password and username
         try:
             await EmailService.send_welcome_email(
                 email=candidate.email,
                 name=candidate.full_name,
                 role="Candidate",
-                temp_password=temp_password
+                temp_password=temp_password,
+                username=username,
             )
         except Exception as e:
             print(f"Failed to send welcome email to {candidate.email}: {e}")
@@ -521,35 +563,24 @@ class CandidateService:
             progress_query = select(CandidateStageProgress).where(CandidateStageProgress.application_id == app.id)
             progress_res = await self.session.execute(progress_query)
             progresses = progress_res.scalars().all()
-
             for p in progresses:
                 # Map to pipelineStatus (simplified mapping)
                 if p.session_type == "assessment":
                     pipeline_status["assessment"]["status"] = p.status
-                    if p.status == "completed":
+                    # Store completion info for later use
+                    if p.status == "completed" or p.score is not None:
                         score_val = float(p.score or 0.0)
                         max_val = float(p.max_score or 100.0)
                         perc = (score_val / max_val) * 100 if max_val > 0 else 0.0
                         scores["assessment"] = round(perc, 1)
-                        assessment_data = {
-                            "questionsCorrect": int(p.score or 0),
-                            "questionsTotal": int(p.max_score or 10),
-                            "completedAt": p.completed_at.isoformat() if p.completed_at else "N/A",
-                            "duration": "45 mins",
-                            "topicScores": []
-                        }
                 elif p.session_type == "ai_interview":
                     pipeline_status["aiInterview"]["status"] = p.status
-                    if p.status == "completed":
+                    # Store AI interview score even if not completed
+                    if p.score is not None:
                         score_val = float(p.score or 0.0)
                         max_val = float(p.max_score or 100.0)
                         perc = (score_val / max_val) * 100 if max_val > 0 else 0.0
                         scores["aiInterview"] = round(perc, 1)
-                        interview_data = {
-                            "completedAt": p.completed_at.isoformat() if p.completed_at else "N/A",
-                            "duration": "30 mins",
-                            "overallFeedback": "Good communication skills and technical knowledge."
-                        }
                 elif p.session_type == "live_interview":
                     pipeline_status["liveInterview"]["status"] = p.status
                     if p.session_id:
@@ -575,6 +606,7 @@ class CandidateService:
         response.groupAssigned = bool(app_row and app_row[0].group_id)
         response.groupId = app.group_id if app_row else None
         response.applicationId = app.id if app_row else None
+        response.resumeUrl = app.resume_url if app_row else None
 
         if app_row and app.group_id:
             group_res = await self.session.execute(
@@ -609,6 +641,240 @@ class CandidateService:
                 "devops": list(dict.fromkeys(tech_skills["devops"])),
             }
             response.certifications = list(dict.fromkeys(certifications))
+
+        # Fetch assessment questions with answers
+        from app.models import OngoingAssessment, CandidateAnswer, CandidateAssignedQuestion
+        if app_row:
+            app = app_row[0]
+            
+            # Get latest assessment session
+            latest_assessment = await self.session.execute(
+                select(OngoingAssessment)
+                .where(
+                    OngoingAssessment.application_id == app.id,
+                    OngoingAssessment.started_at.isnot(None)
+                )
+                .order_by(OngoingAssessment.started_at.desc())
+                .limit(1)
+            )
+            latest_assessment_session = latest_assessment.scalar_one_or_none()
+            
+            if latest_assessment_session:
+                # Update assessment status based on session status
+                if latest_assessment_session.status in {"submitted", "completed"}:
+                    pipeline_status["assessment"]["status"] = "completed"
+                    pipeline_status["assessment"]["completedAt"] = latest_assessment_session.submitted_at.isoformat() if latest_assessment_session.submitted_at else None
+                elif latest_assessment_session.status == "in_progress":
+                    pipeline_status["assessment"]["status"] = "in-progress"
+                
+                # Fetch assessment answers with question snapshots
+                answers_query = await self.session.execute(
+                    select(CandidateAnswer, CandidateAssignedQuestion)
+                    .outerjoin(
+                        CandidateAssignedQuestion,
+                        CandidateAnswer.assignment_id == CandidateAssignedQuestion.id
+                    )
+                    .where(CandidateAnswer.session_id == latest_assessment_session.id)
+                    .order_by(CandidateAnswer.question_order)
+                )
+                answer_rows = answers_query.all()
+                
+                assessment_questions = []
+                total_points = 0
+                earned_points = 0
+                correct_count = 0
+                for answer, assigned in answer_rows:
+                    snapshot = assigned.question_snapshot if assigned and isinstance(assigned.question_snapshot, dict) else {}
+                    question_text = str(snapshot.get("question_text") or "").strip()
+                    if not question_text:
+                        question_text = str(snapshot.get("question") or "").strip()
+
+                    # Fallback to answer payload if snapshot lacks text
+                    if not question_text and isinstance(answer.answer_data, dict):
+                        question_text = str(answer.answer_data.get("question_text") or answer.answer_data.get("question") or answer.answer_data.get("text") or "").strip()
+
+                    # Extract question config details (options, rubric, reference answers)
+                    qcfg = snapshot.get("question_config") if isinstance(snapshot.get("question_config"), dict) else {}
+                    options = qcfg.get("options") if isinstance(qcfg.get("options"), list) else None
+                    reference = None
+                    correct_index = None
+                    if isinstance(snapshot.get("correct_answer"), (dict, str)):
+                        if isinstance(snapshot.get("correct_answer"), dict):
+                            reference = snapshot.get("correct_answer").get("correct_text") or None
+                            correct_index = snapshot.get("correct_answer").get("correct_index")
+                        else:
+                            reference = str(snapshot.get("correct_answer"))
+                    # Fallback to qcfg / answer payload
+                    if not reference and isinstance(qcfg.get("correct_text"), str):
+                        reference = qcfg.get("correct_text")
+                    if not correct_index and isinstance(qcfg.get("correct_index"), int):
+                        correct_index = qcfg.get("correct_index")
+
+                    rubric = None
+                    if isinstance(qcfg.get("rubric"), str):
+                        rubric = qcfg.get("rubric")
+
+                    # If answer payload encodes selected index/value, expose it for frontend
+                    selected = None
+                    try:
+                        if isinstance(answer.answer_data, dict):
+                            selected = answer.answer_data.get("selected_index") if answer.answer_data.get("selected_index") is not None else answer.answer_data.get("selected_value")
+                    except Exception:
+                        selected = None
+
+                    assessment_questions.append({
+                        "id": str(answer.question_id),
+                        "order": answer.question_order,
+                        "question": question_text,
+                        "questionType": str(snapshot.get("question_type") or qcfg.get("question_type") or "essay"),
+                        "options": options,
+                        "referenceAnswer": reference,
+                        "correctIndex": correct_index,
+                        "answer": answer.answer_data,
+                        "selected": selected,
+                        "isCorrect": answer.is_correct,
+                        "pointsEarned": float(answer.points_earned or 0),
+                        "pointsMax": answer.points_max,
+                        "rubric": rubric,
+                        "duration": f"{answer.time_spent_seconds}s" if answer.time_spent_seconds else "N/A"
+                    })
+                    
+                    total_points += answer.points_max
+                    earned_points += float(answer.points_earned or 0)
+                    if answer.is_correct:
+                        correct_count += 1
+                
+                # If no answers found, try to populate from assigned questions (preview/invited)
+                if not assessment_questions:
+                    assigned_q_res = await self.session.execute(
+                        select(CandidateAssignedQuestion).where(CandidateAssignedQuestion.session_id == latest_assessment_session.id).order_by(CandidateAssignedQuestion.display_order)
+                    )
+                    assigned_rows = assigned_q_res.scalars().all()
+                    for idx, assigned in enumerate(assigned_rows, start=1):
+                        snapshot = assigned.question_snapshot if isinstance(assigned.question_snapshot, dict) else {}
+                        question_text = str(snapshot.get("question_text") or snapshot.get("question") or "").strip()
+                        question_type = str(snapshot.get("question_type") or "essay").strip().lower() or "essay"
+                        # include options/rubric/reference for assigned questions so UI can render MCQ and rubrics
+                        qcfg = snapshot.get("question_config") if isinstance(snapshot.get("question_config"), dict) else {}
+                        options = qcfg.get("options") if isinstance(qcfg.get("options"), list) else None
+                        reference = None
+                        correct_index = None
+                        if isinstance(snapshot.get("correct_answer"), dict):
+                            reference = snapshot.get("correct_answer").get("correct_text")
+                            correct_index = snapshot.get("correct_answer").get("correct_index")
+                        elif isinstance(snapshot.get("correct_answer"), str):
+                            reference = snapshot.get("correct_answer")
+
+                        if not reference and isinstance(qcfg.get("correct_text"), str):
+                            reference = qcfg.get("correct_text")
+                        if not correct_index and isinstance(qcfg.get("correct_index"), int):
+                            correct_index = qcfg.get("correct_index")
+
+                        rubric = qcfg.get("rubric") if isinstance(qcfg.get("rubric"), str) else None
+
+                        assessment_questions.append({
+                            "id": str(snapshot.get("question_id") or f"assigned-{idx}"),
+                            "order": int(assigned.display_order or idx),
+                            "question": question_text,
+                            "questionType": question_type,
+                            "options": options,
+                            "referenceAnswer": reference,
+                            "correctIndex": correct_index,
+                            "answer": None,
+                            "isCorrect": None,
+                            "pointsEarned": 0.0,
+                            "pointsMax": int(snapshot.get("points") or snapshot.get("points_max") or 10),
+                            "rubric": rubric,
+                            "duration": "N/A"
+                        })
+
+                response.assessmentQuestions = assessment_questions
+                
+                # Populate assessment_data from actual answers and session
+                if answer_rows or latest_assessment_session:
+                    time_spent = latest_assessment_session.time_spent_seconds or 0
+                    duration_str = f"{time_spent // 60}m {time_spent % 60}s" if time_spent > 0 else "N/A"
+                    percentage_score = (earned_points / total_points * 100) if total_points > 0 else 0
+                    
+                    assessment_data = {
+                        "questionsCorrect": correct_count,
+                        "questionsTotal": len(answer_rows),
+                        "completedAt": latest_assessment_session.submitted_at.isoformat() if latest_assessment_session.submitted_at else "N/A",
+                        "duration": duration_str,
+                        "topicScores": [],
+                        "totalPoints": earned_points,
+                        "maxPoints": total_points,
+                        "percentageScore": round(percentage_score, 1)
+                    }
+                    # Always update scores from actual data
+                    scores["assessment"] = round(percentage_score, 1)
+
+            
+            # Fetch video interview responses
+            from app.models import OngoingInterview, InterviewResponse
+            interview_query = await self.session.execute(
+                select(OngoingInterview)
+                .where(OngoingInterview.application_id == app.id)
+                .order_by(OngoingInterview.started_at.desc())
+                .limit(1)
+            )
+            interview_session = interview_query.scalar_one_or_none()
+            
+            if interview_session:
+                # Update interview status based on session status
+                if interview_session.status == "completed":
+                    pipeline_status["aiInterview"]["status"] = "completed"
+                    pipeline_status["aiInterview"]["completedAt"] = interview_session.completed_at.isoformat() if interview_session.completed_at else None
+                    if interview_session.overall_score is not None:
+                        scores["aiInterview"] = round(float(interview_session.overall_score), 1)
+                elif interview_session.status == "in_progress":
+                    pipeline_status["aiInterview"]["status"] = "in-progress"
+                
+                # Fetch interview responses
+                responses_query = await self.session.execute(
+                    select(InterviewResponse)
+                    .where(InterviewResponse.session_id == interview_session.session_id)
+                    .order_by(InterviewResponse.question_order)
+                )
+                responses = responses_query.scalars().all()
+                
+                video_interview_questions = []
+                total_duration = 0
+                
+                for resp in responses:
+                    # Score is stored as 0-100 decimal, divide by 10 to get out of 10 format
+                    ai_score = float(resp.ai_score) if resp.ai_score else 0
+                    score_out_of_10 = round(ai_score / 10, 1) if ai_score > 0 else None
+                    
+                    if resp.duration_seconds:
+                        total_duration += resp.duration_seconds
+                    
+                    video_interview_questions.append({
+                        "id": str(resp.response_id),
+                        "order": resp.question_order,
+                        "question": resp.question_text,
+                        "videoUrl": resp.video_url,
+                        "transcript": resp.transcript,
+                        "score": score_out_of_10,
+                        "feedback": resp.ai_feedback,
+                        "duration": f"{resp.duration_seconds}s" if resp.duration_seconds else "N/A",
+                        "emotionAnalysis": resp.emotion_analysis,
+                        "processingStatus": resp.processing_status
+                    })
+                
+                response.videoInterviewQuestions = video_interview_questions
+                
+                # Update interview data with actual duration
+                if responses:
+                    total_duration_str = f"{total_duration}s" if total_duration > 0 else "N/A"
+                    interview_data = {
+                        "completedAt": interview_session.completed_at.isoformat() if interview_session.completed_at else "N/A",
+                        "duration": total_duration_str,
+                        "overallFeedback": interview_session.ai_analysis.get("summary", "") if interview_session.ai_analysis and isinstance(interview_session.ai_analysis, dict) else "Interview completed"
+                    }
+            
+            # Set resume URL
+            response.resumeUrl = app.resume_url
             
         response.pipelineStatus = pipeline_status
         response.assessmentData = assessment_data

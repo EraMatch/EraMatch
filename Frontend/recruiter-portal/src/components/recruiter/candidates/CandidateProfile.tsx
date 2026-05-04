@@ -7,6 +7,7 @@ import { LiveInterviewTranscript } from '../interviews/LiveInterviewTranscript';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../ui/dialog';
 import { Button } from '../../ui/button';
 import { api } from '../../../services/api';
+import { API_URL } from '../../../services/client';
 import { LiveInterviewResults } from '../live-interview-v2/LiveInterviewResults';
 import type { ApplicationScoreBreakdown } from '../../../services/types';
 import { useNavigate } from 'react-router-dom';
@@ -42,6 +43,21 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [githubReanalysisMessage, setGithubReanalysisMessage] = useState<string | null>(null);
   const [githubReanalysisError, setGithubReanalysisError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const backendOrigin = (() => {
+    try {
+      return new URL(API_URL).origin;
+    } catch {
+      return '';
+    }
+  })();
+
+  const resolveBackendMediaUrl = (url?: string | null): string | undefined => {
+    if (!url) return undefined;
+    if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url)) return url;
+    if (!url.startsWith('/')) return url;
+    return `${backendOrigin}${url}`;
+  };
+
   const resolvedApplicationId = applicationId || candidate?.applicationId || candidate?.application_id;
 
   useEffect(() => {
@@ -161,6 +177,18 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
     completedAt: 'N/A',
     duration: 'N/A',
     topicScores: []
+  };
+
+  const formatInterviewScore = (value: unknown): string => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) {
+      return 'N/A';
+    }
+
+    const normalizedValue = numericValue > 10 ? numericValue / 10 : numericValue;
+    return Number.isInteger(normalizedValue)
+      ? String(normalizedValue)
+      : normalizedValue.toFixed(1);
   };
 
   const interviewData = candidate.interviewData || {
@@ -541,7 +569,17 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                       {assessmentResetLoading ? 'Resetting...' : 'Reset Trial'}
                     </span>
                   </button>
-                  <button className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors">
+                  <button 
+                    onClick={() => {
+                      const resumeUrl = resolveBackendMediaUrl(candidate.resumeUrl);
+                      if (resumeUrl) {
+                        window.open(resumeUrl, '_blank');
+                      } else {
+                        alert("No resume available for download.");
+                      }
+                    }}
+                    className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors"
+                  >
                     <Download size={16} className="text-[#6b7280]" />
                     <span className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
                       Download Resume
@@ -577,28 +615,51 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                   <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Overall Score</div>
                   <div className="text-[24px] text-[#111827]">{formatScore(displayOverallScore, 1)}</div>
                 </div>
-                <div
-                  onClick={() => handleStageClick('assessment')}
-                  className={`rounded-[8px] p-4 cursor-pointer transition-all hover:shadow-md active:scale-95 ${tabs.find(t => t.id === 'assessment')?.locked ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'bg-[#f4f7ff] hover:bg-[#ebf0ff] border border-indigo-100'
-                    }`}
-                >
-                  <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
-                    Assessment
-                    {!tabs.find(t => t.id === 'assessment')?.locked && <Eye size={12} className="text-indigo-400" />}
+                
+                {activeFlow.includes('assessment') && (
+                  <div
+                    onClick={() => handleStageClick('assessment')}
+                    className={`rounded-[8px] p-4 cursor-pointer transition-all hover:shadow-md active:scale-95 ${tabs.find(t => t.id === 'assessment')?.locked ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'bg-[#f4f7ff] hover:bg-[#ebf0ff] border border-indigo-100'
+                      }`}
+                  >
+                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
+                      Assessment
+                      {!tabs.find(t => t.id === 'assessment')?.locked && <Eye size={12} className="text-indigo-400" />}
+                    </div>
+                    <div className="text-[24px] text-[#111827]">{formatScore(displayAssessmentScore, 1)}</div>
                   </div>
-                  <div className="text-[24px] text-[#111827]">{formatScore(displayAssessmentScore, 1)}</div>
-                </div>
-                <div
-                  onClick={() => handleStageClick('aiInterview')}
-                  className={`rounded-[8px] p-4 cursor-pointer transition-all hover:shadow-md active:scale-95 ${tabs.find(t => t.id === 'interview')?.locked ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'bg-[#f4f7ff] hover:bg-[#ebf0ff] border border-indigo-100'
-                    }`}
-                >
-                  <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
-                    AI Interview
-                    {!tabs.find(t => t.id === 'interview')?.locked && <Eye size={12} className="text-indigo-400" />}
+                )}
+                
+                {(activeFlow.includes('ai_interview') || activeFlow.includes('ai-interview') || activeFlow.includes('aiInterview')) && (
+                  <div
+                    onClick={() => handleStageClick('aiInterview')}
+                    className={`rounded-[8px] p-4 cursor-pointer transition-all hover:shadow-md active:scale-95 ${tabs.find(t => t.id === 'interview')?.locked ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'bg-[#f4f7ff] hover:bg-[#ebf0ff] border border-indigo-100'
+                      }`}
+                  >
+                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
+                      AI Interview
+                      {!tabs.find(t => t.id === 'interview')?.locked && <Eye size={12} className="text-indigo-400" />}
+                    </div>
+                    <div className="text-[24px] text-[#111827]">{formatScore(displayAIInterviewScore, 1)}</div>
                   </div>
-                  <div className="text-[24px] text-[#111827]">{formatScore(displayAIInterviewScore, 1)}</div>
-                </div>
+                )}
+                
+                {(activeFlow.includes('live_interview') || activeFlow.includes('live-interview') || activeFlow.includes('liveInterview')) && (
+                  <div
+                    onClick={() => handleStageClick('liveInterview')}
+                    className={`rounded-[8px] p-4 cursor-pointer transition-all hover:shadow-md active:scale-95 ${tabs.find(t => t.id === 'live-interview')?.locked ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'bg-[#f4f7ff] hover:bg-[#ebf0ff] border border-indigo-100'
+                      }`}
+                  >
+                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
+                      Live Interview
+                      {!tabs.find(t => t.id === 'live-interview')?.locked && <Eye size={12} className="text-indigo-400" />}
+                    </div>
+                    <div className="text-[24px] text-[#111827]">
+                      {pipelineStatus.liveInterview?.status === 'completed' ? 'Done' : 'Pending'}
+                    </div>
+                  </div>
+                )}
+                
                 <div
                   onClick={() => handleStageClick('github')}
                   className="bg-[#f9fafb] rounded-[8px] p-4 cursor-pointer transition-all hover:bg-[#f3f4f6] hover:shadow-md active:scale-95 border border-transparent hover:border-gray-200"
@@ -667,8 +728,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                       Resend Offer Email
                     </Button>
                     <Button variant="outline" className="border-emerald-600 text-emerald-700 hover:bg-emerald-50">
-                      <FileText size={16} className="mr-2" />
-                      View Offer Details
+                      View Contract
                     </Button>
                   </div>
                 )}
@@ -1816,7 +1876,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                         <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium">
                           Q{i + 1}
                         </span>
-                        <span className="text-sm text-gray-500">{q.topic}</span>
+                        <span className="text-sm text-gray-500">{q.topic || q.questionType || 'Assessment'}</span>
                       </div>
                       <h4 className="text-lg font-medium text-gray-900 mb-3">{q.question}</h4>
                     </div>
@@ -1830,12 +1890,18 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                   <div className="space-y-4">
                     <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
                       <div className="text-sm font-medium text-blue-900 mb-1">Candidate's Answer</div>
-                      <div className="text-sm text-blue-800">{q.candidateAnswer}</div>
+                      <div className="text-sm text-blue-800">
+                        {typeof q.candidateAnswer !== 'undefined'
+                          ? q.candidateAnswer
+                          : typeof q.answer !== 'undefined'
+                            ? (typeof q.answer === 'object' ? JSON.stringify(q.answer, null, 2) : q.answer)
+                            : 'N/A'}
+                      </div>
                     </div>
 
                     <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded">
                       <div className="text-sm font-medium text-emerald-900 mb-1">Correct Answer</div>
-                      <div className="text-sm text-emerald-800">{q.correctAnswer}</div>
+                      <div className="text-sm text-emerald-800">{q.correctAnswer || q.referenceAnswer || 'N/A'}</div>
                     </div>
                   </div>
                 </div>
@@ -1852,13 +1918,31 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
             </DialogHeader>
             {showVideoResponse && videoInterviewQuestions.find((q: any) => q.id === showVideoResponse) && (
               <div className="mt-4">
-                <div className="bg-gray-100 rounded-lg aspect-video flex items-center justify-center mb-4">
-                  <div className="text-center">
-                    <Play size={64} className="text-gray-400 mx-auto mb-2" />
-                    <p className="text-gray-600">Video Player Placeholder</p>
-                    <p className="text-sm text-gray-500 mt-1">
-                      Duration: {videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.duration}
-                    </p>
+                {resolveBackendMediaUrl(videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.videoUrl) ? (
+                  <video 
+                    controls
+                    className="w-full rounded-lg aspect-video mb-4 bg-black"
+                    src={resolveBackendMediaUrl(videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.videoUrl)}
+                  />
+                ) : (
+                  <div className="bg-gray-100 rounded-lg aspect-video flex items-center justify-center mb-4">
+                    <div className="text-center">
+                      <Play size={64} className="text-gray-400 mx-auto mb-2" />
+                      <p className="text-gray-600">Video Not Available</p>
+                      <p className="text-sm text-gray-500 mt-1">
+                        Duration: {videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.duration}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                    <div className="text-sm text-indigo-700 font-medium">Score</div>
+                    <div className="text-2xl font-bold text-indigo-900">{formatInterviewScore(videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.score)}/10</div>
+                  </div>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <div className="text-sm text-gray-700 font-medium">Duration</div>
+                    <div className="text-2xl font-bold text-gray-900">{videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.duration}</div>
                   </div>
                 </div>
                 <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">

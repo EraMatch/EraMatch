@@ -448,6 +448,7 @@ class CandidateProfile(SQLModel, table=True):
     linkedin_url: str | None = Field(default=None, max_length=500)
     github_url: str | None = Field(default=None, max_length=500)
     portfolio_url: str | None = Field(default=None, max_length=500)
+    username: str | None = Field(default=None, max_length=100, sa_column_kwargs={"unique": True})
     password_hash: str | None = Field(default=None, max_length=255)
     avatar_url: str | None = Field(default=None, max_length=500)
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -753,7 +754,7 @@ class CandidateAssignedQuestion(BaseModel, table=True):
     )
     session_id: UUID = Field(foreign_key="ongoing_assessments.session_id")
     section_id: UUID
-    pool_entry_id: UUID
+    pool_entry_id: UUID | None = Field(default=None)
     question_snapshot: dict = Field(sa_column=Column(JSONB))
     display_order: int
     assigned_at: datetime = Field(default_factory=datetime.utcnow)

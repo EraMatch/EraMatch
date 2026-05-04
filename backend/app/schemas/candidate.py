@@ -104,6 +104,7 @@ class CandidateResponse(BaseModel):
     groupId: UUID | None = None
     groupName: str | None = None
     applicationId: UUID | None = None
+    resumeUrl: str | None = None
     
     class Config:
         from_attributes = True
