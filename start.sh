@@ -130,14 +130,10 @@ if [ "$USE_TUNNEL" = true ]; then
         local name_upper=$(echo "$name" | tr '[:lower:]' '[:upper:]')
         local env_var_name="${name_upper}_URL"
         
-        # If the URL is already set (manual/static mode), skip creation
-        if [ -n "${!env_var_name:-}" ]; then
-            log "${C_GREEN}[STATIC]" "Using existing $name tunnel: ${!env_var_name}"
-            return 0
-        fi
-
         local logfile="$LOG_DIR/tunnel-$name.log"
         rm -f "$logfile"
+        
+        # Always start a new tunnel to get a fresh URL
         nohup cloudflared tunnel --url "http://localhost:$port" > "$logfile" 2>&1 &
         
         # Wait for URL to appear in logs
