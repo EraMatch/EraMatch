@@ -10,6 +10,8 @@ jobs:
     runs-on: [self-hosted]
     steps:
       - name: Update Code and Restart
+        env:
+          RUNNER_TRACKING_ID: ""
         run: |
           cd ~/EraMatch
           # Update to latest version
