@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "EraMatch"
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = True
+    BACKEND_CORS_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ]
 
     # Database
     DATABASE_URL: str = ""
