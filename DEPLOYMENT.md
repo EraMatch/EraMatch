@@ -6,11 +6,6 @@ This document explains how to deploy and run the EraMatch platform in different 
 
 Use this mode if you want to run the entire platform on your local machine and expose it to the internet via Cloudflare Tunnels (Quick Tunnels).
 
-### Prerequisites
-- [uv](https://docs.astral.sh/uv/) installed.
-- [Node.js](https://nodejs.org/) installed.
-- [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started-guides/local/) installed.
-
 ### Steps
 1. Navigate to the `EraMatch` root directory.
 2. Run the start script with the `--local-device` flag:
@@ -46,9 +41,7 @@ GitHub will automatically trigger the deployment on the VM, which:
 
 ### Cloud Portal URLs
 The production portals are hosted at:
-- **Backend API**: [URL_HERE]
-- **Recruiter Portal**: [URL_HERE]
-- **Candidate Portal**: [URL_HERE]
+
 
 ---
 
