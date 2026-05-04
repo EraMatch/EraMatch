@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     RUBRIC_BUILDER_SECONDARY_PROVIDER: str = ""
     RUBRIC_BUILDER_SECONDARY_MODEL: str = ""
 
+    # Portal Tunnels
+    recruiter_url: str = "http://localhost:5173"
+    candidate_url: str = "http://localhost:5174"
+
     # =========================================================================
     # LIVE INTERVIEW V2 — TTS Providers
     # =========================================================================
