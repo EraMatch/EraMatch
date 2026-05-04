@@ -174,8 +174,7 @@ stream_log() {
 log "${C_BLUE}[START]" "Starting Backend API on :8000..."
 (
     cd "$BACKEND_DIR"
-    source .venv/bin/activate
-    exec uvicorn app.main:app --reload --port 8000 --log-level info
+    exec uv run uvicorn app.main:app --reload --port 8000 --log-level info
 ) > "$LOG_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 stream_log "backend  " "$C_BLUE" "$LOG_DIR/backend.log"
@@ -185,8 +184,7 @@ echo "   PID: $BACKEND_PID → $LOG_DIR/backend.log"
 log "${C_CYAN}[START]" "Starting AI Service on :8001..."
 (
     cd "$AI_DIR"
-    source .venv/bin/activate
-    exec uvicorn main:app --reload --port 8001 --log-level info
+    exec uv run uvicorn main:app --reload --port 8001 --log-level info
 ) > "$LOG_DIR/ai-service.log" 2>&1 &
 AI_PID=$!
 stream_log "ai-svc   " "$C_CYAN" "$LOG_DIR/ai-service.log"
@@ -196,8 +194,7 @@ echo "   PID: $AI_PID → $LOG_DIR/ai-service.log"
 log "${C_MAGENTA}[START]" "Starting LiveKit Agent Worker..."
 (
     cd "$AI_DIR"
-    source .venv/bin/activate
-    # Explicitly pass env vars so the forked subprocess inherits them
+    # Explicitly pass env vars
     export KMP_DUPLICATE_LIB_OK=TRUE
     export LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET
     export GOOGLE_APPLICATION_CREDENTIALS
@@ -206,7 +203,7 @@ log "${C_MAGENTA}[START]" "Starting LiveKit Agent Worker..."
     export DEEPGRAM_INFERENCE_VOICE TTS_PRIMARY_VOICE TTS_PRIMARY_PROVIDER
     export STT_PRIMARY_PROVIDER STT_PRIMARY_MODEL
     export DATABASE_URL BACKEND_URL GOOGLE_API_KEY ELEVEN_API_KEY
-    exec python livekit_worker/agent_server.py dev
+    exec uv run python livekit_worker/agent_server.py dev
 ) > "$LOG_DIR/livekit-worker.log" 2>&1 &
 WORKER_PID=$!
 stream_log "lk-worker" "$C_MAGENTA" "$LOG_DIR/livekit-worker.log"
@@ -236,16 +233,14 @@ echo "   PID: $CANDIDATE_PID → $LOG_DIR/candidate.log"
 log "${C_MAGENTA}[START]" "Starting Celery Workers..."
 (
     cd "$BACKEND_DIR"
-    source .venv/bin/activate
-    exec celery -A worker.celery_app worker --loglevel=info
+    exec uv run celery -A worker.celery_app worker --loglevel=info
 ) > "$LOG_DIR/celery-backend.log" 2>&1 &
 CELERY_BACKEND_PID=$!
 stream_log "celery-be" "$C_MAGENTA" "$LOG_DIR/celery-backend.log"
 
 (
     cd "$AI_DIR"
-    source .venv/bin/activate
-    exec celery -A worker.celery_app worker --loglevel=info
+    exec uv run celery -A worker.celery_app worker --loglevel=info
 ) > "$LOG_DIR/celery-ai.log" 2>&1 &
 CELERY_AI_PID=$!
 stream_log "celery-ai" "$C_CYAN" "$LOG_DIR/celery-ai.log"
