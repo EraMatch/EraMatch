@@ -113,6 +113,12 @@ fi
 log "${C_GREEN}[OK]" "Env loaded: LIVEKIT_URL=${LIVEKIT_URL:0:30}..."
 log "${C_GREEN}[OK]" "Env loaded: DATABASE_URL=${DATABASE_URL:0:30}..."
 
+# ── UV SYNC ──────────────────────────────────────────────────────────────────
+log "${C_CYAN}[SYNC]" "Synchronizing virtual environments with uv..."
+(cd "$BACKEND_DIR" && uv sync)
+(cd "$AI_DIR" && uv sync)
+log "${C_GREEN}[OK]" "Environments synchronized."
+
 # ── TUNNEL STARTUP ──────────────────────────────────────────────────────────
 if [ "$USE_TUNNEL" = true ]; then
     log "${C_MAGENTA}[TUNNEL]" "Checking for tunnels..."
