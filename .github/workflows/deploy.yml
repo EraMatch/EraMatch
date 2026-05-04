@@ -1,8 +1,8 @@
 name: Deploy EraMatch (Dev)
 
 on:
-  # push:
-  #   branches: [ dev-release-2.0 ]
+  push:
+    branches: [ dev-release-2.0 ]
   workflow_dispatch: {}
 
 jobs:
@@ -44,6 +44,6 @@ jobs:
             
             # Start services in background
             mkdir -p .logs
-            nohup ./start.sh --tunnel > .logs/deploy.log 2>&1 &
+            nohup ./start.sh > .logs/deploy.log 2>&1 &
             
             echo "Deployment complete. Services are starting in the background."

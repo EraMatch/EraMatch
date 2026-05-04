@@ -52,21 +52,31 @@ load_env() {
 
 # ── STOP ────────────────────────────────────────────────────────────────────
 if [ "${1:-}" = "stop" ]; then
-    log "${C_RED}[STOP]" "Stopping all EraMatch services..."
+    log "${C_RED}[STOP]" "Stopping all EraMatch services (keeping tunnels alive)..."
     kill_port 8000
     kill_port 8001
     kill_port 5173
     kill_port 5174
     kill_port 5175
     pkill -f "livekit_worker/agent_server.py" 2>/dev/null || true
+    pkill -f "celery -A worker.celery_app" 2>/dev/null || true
+    log "${C_GREEN}[OK]" "Services stopped. Tunnels are still running."
+    exit 0
+fi
+
+# Hard stop (kills tunnels too)
+if [ "${1:-}" = "kill" ]; then
+    log "${C_RED}[KILL]" "Killing everything including tunnels..."
+    ./start.sh stop
     pkill -f "cloudflared" 2>/dev/null || true
-    log "${C_GREEN}[OK]" "All services and tunnels stopped."
+    rm -f "$ROOT/.tunnels.env"
+    log "${C_GREEN}[OK]" "All processes and tunnels cleared."
     exit 0
 fi
 
 # ── TUNNEL CONFIG ───────────────────────────────────────────────────────────
 USE_TUNNEL=false
-if [[ "${1:-}" == "--tunnel" ]]; then
+if [[ "${1:-}" == "--tunnel" ]] || [[ "${1:-}" == "--local-device" ]]; then
     USE_TUNNEL=true
     shift
 fi
@@ -88,13 +98,19 @@ log "${C_BOLD}${C_BLUE}" "  EraMatch — Starting All Services"
 log "${C_BOLD}${C_BLUE}" "═══════════════════════════════════════"
 echo ""
 
-log "${C_YELLOW}[CLEAN]" "Clearing ports 8000 8001 5173 5174 5175..."
+log "${C_YELLOW}[CLEAN]" "Clearing service ports..."
 for port in 8000 8001 5173 5174 5175; do kill_port "$port"; done
 pkill -f "livekit_worker/agent_server.py" 2>/dev/null || true
-pkill -f "cloudflared" 2>/dev/null || true
+pkill -f "celery -A worker.celery_app" 2>/dev/null || true
 sleep 1
 
 # ── LOAD ENV VARS ────────────────────────────────────────────────────────────
+# Load tunnel env first if it exists (allows overriding from manually started tunnels)
+if [ -f "$ROOT/.tunnels.env" ]; then
+    # shellcheck disable=SC1090
+    source "$ROOT/.tunnels.env"
+fi
+
 # Load both env files so all subprocesses inherit them
 load_env "$ROOT/../.env"          # project root .env (if exists)
 load_env "$AI_DIR/.env"           # ai-service .env (has LIVEKIT_URL etc.)
@@ -121,7 +137,7 @@ log "${C_GREEN}[OK]" "Environments synchronized."
 
 # ── TUNNEL STARTUP ──────────────────────────────────────────────────────────
 if [ "$USE_TUNNEL" = true ]; then
-    log "${C_MAGENTA}[TUNNEL]" "Checking for tunnels..."
+    log "${C_MAGENTA}[TUNNEL]" "Managing tunnels (--local-device mode)..."
     
     # Helper to start tunnel and wait for URL
     start_tunnel() {
@@ -130,10 +146,20 @@ if [ "$USE_TUNNEL" = true ]; then
         local name_upper=$(echo "$name" | tr '[:lower:]' '[:upper:]')
         local env_var_name="${name_upper}_URL"
         
+        # Check if a cloudflared process for this port is ALREADY running
+        if pgrep -f "cloudflared tunnel --url http://localhost:$port" > /dev/null; then
+            if [ -n "${!env_var_name:-}" ]; then
+                log "${C_GREEN}[ACTIVE]" "Reusing $name tunnel: ${!env_var_name}"
+                return 0
+            fi
+        fi
+
         local logfile="$LOG_DIR/tunnel-$name.log"
         rm -f "$logfile"
         
-        # Always start a new tunnel to get a fresh URL
+        # Kill any orphaned tunnel on this specific port before starting
+        pkill -f "cloudflared tunnel --url http://localhost:$port" 2>/dev/null || true
+        
         nohup cloudflared tunnel --url "http://localhost:$port" > "$logfile" 2>&1 &
         
         # Wait for URL to appear in logs
@@ -148,6 +174,8 @@ if [ "$USE_TUNNEL" = true ]; then
         echo -e "${C_CYAN}$url${C_RESET}"
         
         eval "${env_var_name}='$url'"
+        # Persist to file for this session
+        echo "export ${env_var_name}='$url'" >> "$ROOT/.tunnels.env"
     }
 
     start_tunnel "backend" 8000
