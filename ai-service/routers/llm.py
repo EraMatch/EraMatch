@@ -1,10 +1,11 @@
 """
 LLM router - endpoints for LLM inference via Ollama Cloud.
 
-Example use cases: 
+Example use cases:
 - Interview evaluation (transcript + reference + rubric)
 - Generic chat/prompt completion
 """
+
 from pathlib import Path
 import logging
 
@@ -42,6 +43,7 @@ SYSTEM_PROMPT = _load_prompt_template("system_prompt.md").strip()
 
 class ChatRequest(BaseModel):
     """Generic chat/prompt request."""
+
     messages: list[dict]  # [{role: "user", content": "..."}]
     model: str | None = None  # Override default model
     stream: bool = False
@@ -49,12 +51,14 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """Chat response."""
+
     content: str
     model: str
 
 
 class EvaluateRequest(BaseModel):
     """Evaluate transcript against reference (video interview use case)."""
+
     transcript: str
     reference_answer: str | None = None
     question: str | None = None
@@ -63,6 +67,7 @@ class EvaluateRequest(BaseModel):
 
 class EvaluateResponse(BaseModel):
     """Evaluation result."""
+
     score: float
     feedback: str
     strengths: list[str] | None = None
@@ -90,37 +95,43 @@ async def chat(request: ChatRequest):
 async def evaluate(request: EvaluateRequest):
     """
     Evaluate video interview transcript with rubric-based criteria.
-    
+
     Uses system prompt for expert interviewer persona and rubric for structured evaluation.
     """
     rubric_block = ""
     if request.rubric:
-        rubric_block = "\n".join([
-            "## Evaluation Rubric (REQUIRED - evaluate strictly against these criteria)",
-            request.rubric,
-            "",
-            "For EACH criterion above:",
-            "- Check if addressed in the response",
-            "- Assess depth and accuracy",
-            "- Note specific examples or lack thereof",
-            "",
-        ])
+        rubric_block = "\n".join(
+            [
+                "## Evaluation Rubric (REQUIRED - evaluate strictly against these criteria)",
+                request.rubric,
+                "",
+                "For EACH criterion above:",
+                "- Check if addressed in the response",
+                "- Assess depth and accuracy",
+                "- Note specific examples or lack thereof",
+                "",
+            ]
+        )
 
     question_block = ""
     if request.question:
-        question_block = "\n".join([
-            "## Interview Question",
-            request.question,
-            "",
-        ])
+        question_block = "\n".join(
+            [
+                "## Interview Question",
+                request.question,
+                "",
+            ]
+        )
 
     reference_block = ""
     if request.reference_answer:
-        reference_block = "\n".join([
-            "## Reference/Model Answer",
-            request.reference_answer,
-            "",
-        ])
+        reference_block = "\n".join(
+            [
+                "## Reference/Model Answer",
+                request.reference_answer,
+                "",
+            ]
+        )
 
     prompt = _render_prompt_template(
         "evaluate_rubric.md",
@@ -137,10 +148,10 @@ async def evaluate(request: EvaluateRequest):
         result = await chat_completion(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": prompt},
             ],
         )
-        
+
         content = result["content"]
         score = 50.0
         feedback = content
@@ -154,7 +165,7 @@ async def evaluate(request: EvaluateRequest):
             if line.startswith("SCORE:"):
                 try:
                     score_text = line.split("SCORE:")[1].strip()
-                    match = re.search(r'(\d+\.?\d*)', score_text)
+                    match = re.search(r"(\d+\.?\d*)", score_text)
                     if match:
                         score = float(match.group(1))
                 except:
@@ -162,10 +173,18 @@ async def evaluate(request: EvaluateRequest):
             elif line.startswith("FEEDBACK:"):
                 feedback = line.split("FEEDBACK:")[1].strip()
             elif line.startswith("STRENGTHS:"):
-                strengths = [s.strip() for s in line.split("STRENGTHS:")[1].split(",") if s.strip()]
+                strengths = [
+                    s.strip()
+                    for s in line.split("STRENGTHS:")[1].split(",")
+                    if s.strip()
+                ]
             elif line.startswith("IMPROVEMENTS:"):
-                improvements = [s.strip() for s in line.split("IMPROVEMENTS:")[1].split(",") if s.strip()]
-        
+                improvements = [
+                    s.strip()
+                    for s in line.split("IMPROVEMENTS:")[1].split(",")
+                    if s.strip()
+                ]
+
         return EvaluateResponse(
             score=max(0, min(100, score)),
             feedback=feedback,
@@ -179,11 +198,11 @@ async def evaluate(request: EvaluateRequest):
 @router.post("/evaluate", response_model=EvaluateResponse)
 async def evaluate(request: EvaluateRequest):
     """
-    for the ai video based interivew, pairs of q and reference a and prompt fo a model here 
+    for the ai video based interivew, pairs of q and reference a and prompt fo a model here
     """
-    # evaluation prompt for the llm that will judge 
+    # evaluation prompt for the llm that will judge
     has_reference = bool(request.reference_answer and request.reference_answer.strip())
-    
+
     prompt = _render_prompt_template(
         "evaluate_simple.md",
         {
@@ -201,25 +220,25 @@ async def evaluate(request: EvaluateRequest):
         result = await chat_completion(
             messages=[{"role": "user", "content": prompt}],
         )
-        
+
         # Parse response (simple parsing for now)
         content = result["content"]
         score = 70.0  # Default
         feedback = content
-        
+
         if "SCORE:" in content:
             try:
                 score_part = content.split("SCORE:")[1].split("|")[0].strip()
                 score = float(score_part)
             except:
                 pass
-        
+
         if "FEEDBACK:" in content:
             try:
                 feedback = content.split("FEEDBACK:")[1].strip()
             except:
                 pass
-        
+
         return EvaluateResponse(
             score=score,
             feedback=feedback,
@@ -230,8 +249,10 @@ async def evaluate(request: EvaluateRequest):
 
 # ── Smart Candidate Ranking ───────────────────────────────────────────────────
 
+
 class SmartRankCandidate(BaseModel):
     """Slim candidate profile for ranking."""
+
     id: str
     name: str
     skills: list[str] = []
@@ -243,6 +264,7 @@ class SmartRankCandidate(BaseModel):
 
 class SmartRankRequest(BaseModel):
     """Request LLM-based candidate ranking from a natural language query."""
+
     query: str
     candidates: list[SmartRankCandidate]
     max_candidates: int = 100  # Truncate to avoid token limits
@@ -250,6 +272,7 @@ class SmartRankRequest(BaseModel):
 
 class SmartRankIntent(BaseModel):
     """Detected intent from the recruiter query."""
+
     skills: list[str] = []
     min_years: int | None = None
     location: str | None = None
@@ -259,6 +282,7 @@ class SmartRankIntent(BaseModel):
 
 class SmartRankResponse(BaseModel):
     """LLM ranking result."""
+
     ranked_ids: list[str]
     reasoning: dict[str, str]  # candidate_id -> reasoning sentence
     intent: SmartRankIntent
@@ -285,15 +309,15 @@ async def smart_rank(request: SmartRankRequest):
         )
 
     # Build a compact candidate summary (truncated to max_candidates)
-    candidates = request.candidates[:request.max_candidates]
+    candidates = request.candidates[: request.max_candidates]
 
     cand_lines = []
     for c in candidates:
         skills_str = ", ".join(c.skills[:8]) if c.skills else "N/A"
         titles_str = ", ".join(c.titles[:3]) if c.titles else "N/A"
         line = (
-            f'ID:{c.id} | {c.name} | {c.experience}yrs | '
-            f'Skills:{skills_str} | Titles:{titles_str} | Location:{c.location or "N/A"}'
+            f"ID:{c.id} | {c.name} | {c.experience}yrs | "
+            f"Skills:{skills_str} | Titles:{titles_str} | Location:{c.location or 'N/A'}"
         )
         cand_lines.append(line)
 
@@ -362,7 +386,10 @@ async def smart_rank(request: SmartRankRequest):
         fallback_ids = [c.id for c in candidates]
         return SmartRankResponse(
             ranked_ids=fallback_ids,
-            reasoning={c.id: "AI ranking unavailable — showing original order." for c in candidates},
+            reasoning={
+                c.id: "AI ranking unavailable — showing original order."
+                for c in candidates
+            },
             intent=SmartRankIntent(summary=f"Fallback: {str(e)[:80]}"),
             model="fallback",
         )
@@ -370,8 +397,10 @@ async def smart_rank(request: SmartRankRequest):
 
 # ── JD Keyword Extraction ─────────────────────────────────────────────────────
 
+
 class KeywordExtractRequest(BaseModel):
     """Request keyword extraction from a job description."""
+
     job_title: str
     job_description: str
     required_skills: list[str] = []
@@ -380,16 +409,18 @@ class KeywordExtractRequest(BaseModel):
 
 class ExtractedKeywords(BaseModel):
     """Structured keywords grouped by semantic category."""
-    technical_skills: list[str] = []     # Python, FastAPI, Docker, SQL
-    soft_skills: list[str] = []          # leadership, communication
-    domain_keywords: list[str] = []      # fintech, healthcare, machine learning
+
+    technical_skills: list[str] = []  # Python, FastAPI, Docker, SQL
+    soft_skills: list[str] = []  # leadership, communication
+    domain_keywords: list[str] = []  # fintech, healthcare, machine learning
     experience_keywords: list[str] = []  # senior, 5 years, team lead
-    education_keywords: list[str] = []   # BSc, Computer Science, MBA
-    seniority_signals: list[str] = []    # principal, staff, lead, manager
+    education_keywords: list[str] = []  # BSc, Computer Science, MBA
+    seniority_signals: list[str] = []  # principal, staff, lead, manager
 
 
 class KeywordExtractResponse(BaseModel):
     """Response containing structured JD keywords."""
+
     keywords: ExtractedKeywords
     model: str
 
@@ -409,7 +440,9 @@ async def extract_keywords(request: KeywordExtractRequest):
     if len(jd_text) > 3000:
         jd_text = jd_text[:3000] + "\n[JD truncated]"
 
-    required_skills_str = ", ".join(request.required_skills) if request.required_skills else "None listed"
+    required_skills_str = (
+        ", ".join(request.required_skills) if request.required_skills else "None listed"
+    )
     exp_level = request.experience_level or "Not specified"
 
     prompt = _render_prompt_template(
@@ -442,7 +475,11 @@ async def extract_keywords(request: KeywordExtractRequest):
         def _clean_list(lst: object) -> list[str]:
             if not isinstance(lst, list):
                 return []
-            return [str(x).strip().lower() for x in lst if isinstance(x, str) and str(x).strip()]
+            return [
+                str(x).strip().lower()
+                for x in lst
+                if isinstance(x, str) and str(x).strip()
+            ]
 
         keywords = ExtractedKeywords(
             technical_skills=_clean_list(parsed.get("technical_skills")),
@@ -454,7 +491,9 @@ async def extract_keywords(request: KeywordExtractRequest):
         )
 
         # Ensure required_skills are always in technical_skills
-        required_lower = {s.strip().lower() for s in request.required_skills if s.strip()}
+        required_lower = {
+            s.strip().lower() for s in request.required_skills if s.strip()
+        }
         existing_lower = {s.lower() for s in keywords.technical_skills}
         for skill in required_lower - existing_lower:
             keywords.technical_skills.append(skill)
@@ -467,9 +506,18 @@ async def extract_keywords(request: KeywordExtractRequest):
     except Exception as e:
         # Fallback: build keywords directly from required_skills + job title tokens
         import re as _re2
-        fallback_technical = [s.strip().lower() for s in request.required_skills if s.strip()]
-        title_tokens = [t.lower() for t in _re2.findall(r"[a-zA-Z]{3,}", request.job_title)]
-        fallback_seniority = [t for t in title_tokens if t in {"senior", "lead", "principal", "staff", "manager", "junior", "mid"}]
+
+        fallback_technical = [
+            s.strip().lower() for s in request.required_skills if s.strip()
+        ]
+        title_tokens = [
+            t.lower() for t in _re2.findall(r"[a-zA-Z]{3,}", request.job_title)
+        ]
+        fallback_seniority = [
+            t
+            for t in title_tokens
+            if t in {"senior", "lead", "principal", "staff", "manager", "junior", "mid"}
+        ]
         return KeywordExtractResponse(
             keywords=ExtractedKeywords(
                 technical_skills=fallback_technical,
@@ -488,6 +536,7 @@ async def extract_keywords(request: KeywordExtractRequest):
 
 class JDRankCandidate(BaseModel):
     """Rich candidate profile for JD-based ranking."""
+
     id: str
     name: str
     skills: list[str] = []
@@ -501,6 +550,7 @@ class JDRankCandidate(BaseModel):
 
 class JDRankRequest(BaseModel):
     """Request LLM-based candidate ranking from a job description."""
+
     job_title: str
     job_description: str
     required_skills: list[str] = []
@@ -512,9 +562,10 @@ class JDRankRequest(BaseModel):
 
 class JDRankResponse(BaseModel):
     """JD-based LLM ranking result."""
+
     ranked_ids: list[str]
-    reasoning: dict[str, str]   # candidate_id -> 1-sentence reason
-    fit_summary: str             # Short summary of what the LLM looked for
+    reasoning: dict[str, str]  # candidate_id -> 1-sentence reason
+    fit_summary: str  # Short summary of what the LLM looked for
     model: str
 
 
@@ -541,7 +592,7 @@ async def jd_rank(request: JDRankRequest):
             model="none",
         )
 
-    candidates = request.candidates[:request.max_candidates]
+    candidates = request.candidates[: request.max_candidates]
 
     # Build compact candidate summaries
     cand_lines = []
@@ -551,9 +602,9 @@ async def jd_rank(request: JDRankRequest):
         companies_str = ", ".join(c.companies[:3]) if c.companies else "N/A"
         edu_str = ", ".join(c.degrees[:2]) if c.degrees else "N/A"
         line = (
-            f'ID:{c.id} | {c.name} | {c.experience}yrs | '
-            f'Skills:{skills_str} | Titles:{titles_str} | '
-            f'Companies:{companies_str} | Education:{edu_str} | Location:{c.location or "N/A"}'
+            f"ID:{c.id} | {c.name} | {c.experience}yrs | "
+            f"Skills:{skills_str} | Titles:{titles_str} | "
+            f"Companies:{companies_str} | Education:{edu_str} | Location:{c.location or 'N/A'}"
         )
         cand_lines.append(line)
 
@@ -564,9 +615,17 @@ async def jd_rank(request: JDRankRequest):
     if len(jd_text) > 3000:
         jd_text = jd_text[:3000] + "\n[JD truncated for length]"
 
-    required_skills_str = ", ".join(request.required_skills) if request.required_skills else "Not specified"
+    required_skills_str = (
+        ", ".join(request.required_skills)
+        if request.required_skills
+        else "Not specified"
+    )
     exp_level = request.experience_level or "Not specified"
-    years_req = f"{request.years_of_experience}+" if request.years_of_experience else "Not specified"
+    years_req = (
+        f"{request.years_of_experience}+"
+        if request.years_of_experience
+        else "Not specified"
+    )
 
     prompt = _render_prompt_template(
         "jd_rank.md",
@@ -593,6 +652,7 @@ async def jd_rank(request: JDRankRequest):
 
     def _sanitize_json_strings(text: str) -> str:
         """Replace unescaped colons inside JSON string values with a dash."""
+
         # Only target values (after a key), not keys themselves or structural colons
         # Replace ": " patterns inside string values (naive but effective for reasoning)
         def _fix_value(m: _re.Match) -> str:
@@ -600,6 +660,7 @@ async def jd_rank(request: JDRankRequest):
             # Replace colons that are NOT at the start (structural) with em-dash
             val = val.replace(":", " -")
             return f'"{val}"'
+
         # Match "key": "value" pairs and sanitize the value
         return _re.sub(r'"([^"\\]*(?:\\.[^"\\]*)*)"', _fix_value, text)
 
@@ -632,22 +693,29 @@ async def jd_rank(request: JDRankRequest):
             try:
                 sanitized = _sanitize_json_strings(raw_json)
                 parsed = json.loads(sanitized)
-                logger.warning("jd-rank: used sanitized JSON after initial parse failure")
+                logger.warning(
+                    "jd-rank: used sanitized JSON after initial parse failure"
+                )
             except json.JSONDecodeError:
                 pass
 
         all_ids = {c.id for c in candidates}
 
         if parsed:
-            ranked_ids = [str(x) for x in parsed.get("ranked_ids", []) if str(x) in all_ids]
+            ranked_ids = [
+                str(x) for x in parsed.get("ranked_ids", []) if str(x) in all_ids
+            ]
             reasoning: dict[str, str] = {
-                str(k): str(v) for k, v in parsed.get("reasoning", {}).items()
+                str(k): str(v)
+                for k, v in parsed.get("reasoning", {}).items()
                 if str(k) in all_ids
             }
             fit_summary = str(parsed.get("fit_summary", request.job_title))
         else:
             # ── Layer 3: regex extraction of ranked_ids only ───────────────
-            logger.warning(f"jd-rank: JSON parse failed ({parse_error}), falling back to regex extraction")
+            logger.warning(
+                f"jd-rank: JSON parse failed ({parse_error}), falling back to regex extraction"
+            )
             ranked_ids = _extract_ranked_ids_regex(raw_json, all_ids)
             reasoning = {}
             fit_summary = request.job_title
@@ -673,7 +741,10 @@ async def jd_rank(request: JDRankRequest):
         fallback_ids = [c.id for c in candidates]
         return JDRankResponse(
             ranked_ids=fallback_ids,
-            reasoning={c.id: "JD ranking unavailable — showing original order." for c in candidates},
+            reasoning={
+                c.id: "JD ranking unavailable — showing original order."
+                for c in candidates
+            },
             fit_summary=f"Fallback: {str(e)[:80]}",
             model="fallback",
         )

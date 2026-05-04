@@ -172,6 +172,11 @@ export const recruiterService = {
             method: 'POST'
         }),
 
+    reanalyzeGitHubProfile: async (candidateId: string) =>
+        fetchAPI<{ job_id: string; status: string; message: string }>(`/candidates/${candidateId}/github-analysis/reanalyze`, {
+            method: 'POST'
+        }),
+
     getSuspectReview: async (candidateId: string, applicationId?: string) => {
         const query = applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : '';
         return fetchAPI(`/candidates/${candidateId}/suspect-review${query}`);

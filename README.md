@@ -64,3 +64,4 @@ npm run dev
 - **Mock Backend**: FastAPI (Python)
 - **Charts**: Recharts
 - **Routing**: React Router v7
+

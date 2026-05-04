@@ -268,6 +268,7 @@ def run_github_analysis(
         all_generated_questions = ((payload.get("analysis_data") or {}).get("synthesis") or {}).get("questions") or []
         target_count = max(1, min(int(questions_to_generate or 10), 30))
         generated_questions = list(all_generated_questions)[:target_count]
+        repo_count = len(payload.get("top_repos") or [])
 
         analysis_data = payload.get("analysis_data") or {}
         if isinstance(analysis_data, dict):
@@ -280,6 +281,43 @@ def run_github_analysis(
         _upsert_github_analysis(conn, candidate_id, org_id, github_url, payload)
         _update_cv_analysis_profile(conn, candidate_id, org_id, payload)
         log_debug("database_upsert_completed", {"job_id": job_id, "candidate_id": candidate_id})
+
+        if len(generated_questions) == 0:
+            failure_reason = "No GitHub-inspired questions were generated."
+            if repo_count == 0:
+                failure_reason += " No repositories were found for this GitHub profile (repo_count=0)."
+            else:
+                failure_reason += f" Repositories were found (repo_count={repo_count}), but synthesis returned an empty question list."
+
+            update_job_status(
+                conn,
+                job_id,
+                "failed",
+                analysis_data=json.dumps(payload.get("analysis_data") or {}),
+                generated_questions=json.dumps(generated_questions),
+                total_generated=0,
+                error_message=failure_reason,
+                completed_at=datetime.now(timezone.utc),
+            )
+            log_debug(
+                "task_failed_zero_questions",
+                {
+                    "job_id": job_id,
+                    "candidate_id": candidate_id,
+                    "status": "failed",
+                    "total_generated": 0,
+                    "repo_count": repo_count,
+                    "reason": failure_reason,
+                },
+            )
+
+            return {
+                "job_id": job_id,
+                "status": "failed",
+                "total_generated": 0,
+                "reason": failure_reason,
+                "delivery_target": "candidate_assessment",
+            }
 
         normalized_questions = []
         for idx, q in enumerate(generated_questions):

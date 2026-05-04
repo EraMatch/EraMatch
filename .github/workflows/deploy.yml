@@ -1,0 +1,26 @@
+name: Deploy EraMatch (Dev)
+
+on:
+  push:
+    branches: [ dev-release-2.0 ]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: [self-hosted]
+    steps:
+      - name: Update Code and Restart
+        env:
+          RUNNER_TRACKING_ID: ""
+        run: |
+          cd ~/EraMatch
+          # Update to latest version
+          git fetch origin dev-release-2.0
+          git reset --hard origin/dev-release-2.0
+          
+          # Restart services
+          ./start.sh stop || true
+          mkdir -p .logs
+          nohup ./start.sh > .logs/deploy.log 2>&1 &
+          
+          echo "Deployment complete on VM."

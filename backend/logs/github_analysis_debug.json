@@ -141,6 +141,12 @@
       "job_id": "d77a82f2-7b11-4fb3-b4d5-3e57c4cfb2ba",
       "candidate_id": "c3626e52-6e89-47e6-93ee-d078f6a5ca18",
       "github_url": "github.com/youssef-saaed",
+    "timestamp": "2026-05-03T17:32:43.398723",
+    "step": "task_started",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "candidate_id": "e0000002-0000-0000-0000-000000000002",
+      "github_url": "https://github.com/omarkh",
       "questions_to_generate": 10
     }
   },
@@ -149,6 +155,10 @@
     "step": "job_status_updated",
     "data": {
       "job_id": "d77a82f2-7b11-4fb3-b4d5-3e57c4cfb2ba",
+    "timestamp": "2026-05-03T17:32:45.295761",
+    "step": "job_status_updated",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
       "status": "processing"
     }
   },
@@ -188,6 +198,97 @@
       "candidate_id": "c3626e52-6e89-47e6-93ee-d078f6a5ca18",
       "status": "completed",
       "total_generated": 10
+    "timestamp": "2026-05-03T17:32:45.296086",
+    "step": "github_analysis_request_started",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "candidate_id": "e0000002-0000-0000-0000-000000000002",
+      "github_url": "https://github.com/omarkh"
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:32:47.820543",
+    "step": "github_analysis_request_completed",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "candidate_id": "e0000002-0000-0000-0000-000000000002",
+      "status_code": 200,
+      "repo_count": 0,
+      "generated_question_count": 0
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:32:48.954902",
+    "step": "database_upsert_completed",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "candidate_id": "e0000002-0000-0000-0000-000000000002"
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:32:49.418399",
+    "step": "task_completed",
+    "data": {
+      "job_id": "b156313b-5907-4bec-ad5e-e3e583bb399d",
+      "candidate_id": "e0000002-0000-0000-0000-000000000002",
+      "status": "completed",
+      "total_generated": 0
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:58:19.285419",
+    "step": "task_started",
+    "data": {
+      "job_id": "1203f7fc-c56b-4588-b036-8c838e336929",
+      "candidate_id": "55c16075-bbdf-43b8-823c-e8a5019a3363",
+      "github_url": "https://github.com/wahdann",
+      "questions_to_generate": 10
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:58:21.056883",
+    "step": "job_status_updated",
+    "data": {
+      "job_id": "1203f7fc-c56b-4588-b036-8c838e336929",
+      "status": "processing"
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:58:21.057485",
+    "step": "github_analysis_request_started",
+    "data": {
+      "job_id": "1203f7fc-c56b-4588-b036-8c838e336929",
+      "candidate_id": "55c16075-bbdf-43b8-823c-e8a5019a3363",
+      "github_url": "https://github.com/wahdann"
+    }
+  },
+  {
+    "timestamp": "2026-05-03T17:59:53.042574",
+    "step": "github_analysis_request_completed",
+    "data": {
+      "job_id": "1203f7fc-c56b-4588-b036-8c838e336929",
+      "candidate_id": "55c16075-bbdf-43b8-823c-e8a5019a3363",
+      "status_code": 200,
+      "repo_count": 6,
+      "generated_question_count": 0
+    }
+  },
+  {
+    "timestamp": "2026-05-03T18:00:01.623482",
+    "step": "database_upsert_completed",
+    "data": {
+      "job_id": "1203f7fc-c56b-4588-b036-8c838e336929",
+      "candidate_id": "55c16075-bbdf-43b8-823c-e8a5019a3363"
+    }
+  },
+  {
+    "timestamp": "2026-05-03T18:00:02.404416",
+    "step": "task_completed",
+    "data": {
+      "job_id": "1203f7fc-c56b-4588-b036-8c838e336929",
+      "candidate_id": "55c16075-bbdf-43b8-823c-e8a5019a3363",
+      "status": "completed",
+      "total_generated": 0
     }
   }
 ]

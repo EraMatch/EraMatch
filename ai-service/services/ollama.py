@@ -6,8 +6,15 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 # Asyncio semaphore to limit concurrent Ollama calls cooperatively (avoids thread-blocking timeout issues)
-_ollama_semaphore = asyncio.Semaphore(settings.OLLAMA_MAX_CONCURRENT_CALLS)
+_ollama_semaphore = None
 
+
+def get_ollama_semaphore() -> asyncio.Semaphore:
+    """Lazy initializing semaphore to ensure it attaches to the right event loop."""
+    global _ollama_semaphore
+    if _ollama_semaphore is None:
+        _ollama_semaphore = asyncio.Semaphore(settings.OLLAMA_MAX_CONCURRENT_CALLS)
+    return _ollama_semaphore
 
 
 def get_client(host: str | None = None) -> Client:
@@ -20,7 +27,7 @@ def get_client(host: str | None = None) -> Client:
     return Client(host=target_host, headers=headers)
 
 
-async def chat_completion(  
+async def chat_completion(
     messages: list[dict],
     model: str | None = None,
     stream: bool = False,
@@ -29,20 +36,20 @@ async def chat_completion(
     host: str | None = None,
 ) -> dict:
     """
-    Send chat completion request to Ollama (cloud or local).
-    
+    Send chat completion request to Ollama (cloud or local) with concurrency limits.
+
     Args:
         messages: List of message dicts [{role: "user", content: "..."}]
         model: Model to use (default from settings)
         stream: Whether to stream response
         host: Override Ollama host (e.g. settings.OLLAMA_LOCAL_HOST for local models)
-        
+
     Returns:
         dict with content and model
     """
     client = get_client(host=host)
     model_name = model or settings.OLLAMA_MODEL
-    
+
     chat_kwargs = {
         "model": model_name,
         "messages": messages,
@@ -62,6 +69,7 @@ async def chat_completion(
                 # waiting for a slot is cooperative and doesn't burn timeout budget.
                 async with _ollama_semaphore:
                     if stream:
+
                         def _stream_call() -> dict:
                             full_content = ""
                             for part in client.chat(**chat_kwargs):
@@ -80,20 +88,29 @@ async def chat_completion(
                     }
             except ResponseError as e:
                 if e.status_code == 429 and attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
-                    logger.warning(f"Ollama rate limit reached (429). Retrying in {delay} seconds (attempt {attempt + 1}/{max_retries - 1})...")
+                    delay = base_delay * (2**attempt)
+                    logger.warning(
+                        f"Ollama rate limit reached (429). Retrying in {delay} seconds (attempt {attempt + 1}/{max_retries - 1})..."
+                    )
                     await asyncio.sleep(delay)
                 else:
                     raise
             except Exception as e:
                 if "429" in str(e) and attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
-                    logger.warning(f"Ollama rate limit reached (429). Retrying in {delay} seconds (attempt {attempt + 1}/{max_retries - 1})...")
+                    delay = base_delay * (2**attempt)
+                    logger.warning(
+                        f"Ollama rate limit reached (429). Retrying in {delay} seconds (attempt {attempt + 1}/{max_retries - 1})..."
+                    )
                     await asyncio.sleep(delay)
                 else:
                     raise
 
-    if timeout_seconds and timeout_seconds > 0:
-        return await asyncio.wait_for(_run_chat(), timeout=timeout_seconds)
-    return await _run_chat()
+    semaphore = get_ollama_semaphore()
 
+    async def _run_with_semaphore():
+        async with semaphore:
+            return await _run_chat()
+
+    if timeout_seconds and timeout_seconds > 0:
+        return await asyncio.wait_for(_run_with_semaphore(), timeout=timeout_seconds)
+    return await _run_with_semaphore()

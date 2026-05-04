@@ -49,11 +49,13 @@ __pycache__/
 .venv/
 venv/
 ENV/
-requirements.txt
+
 # Misc
 *.local
 .claude/
 txt code/
+# Specific text files to ignore (NOT requirements.txt — it must be committed)
+requirements.freeze.bak
 Eramatchcombineduicopycopy/
 transform_ts_to_txt.js
 .github/rulesets/development-branch-ruleset.json
@@ -68,22 +70,39 @@ version_docs/
 
  
 
+
+
 backend/inspect_db.py
 
 
 uploads/
 
-
+*.pdf
+*.docx
 *.sql
 backend/*.json
 backend/logs/video_processing_debug.json
-backend/uv.lock
 backend/seed_test_users.py
-backend/pyproject.toml
 COMMIT_SUMMARY.md
-backend/uv.lock
-backend/uv.lock
 
+
+# Non-dev markdown files (agent notes, memory docs, QWEN exports)
+answers.md
+QWEN.md
+logic-verifier.md
+main-coder.md
+unit-test-agent.md
+live-video-interview-prompts.md
+memory-liveVideo.md
+memory-livekit.md
+pr-description.md
+issues.md
+seed-candidates-plan.md
+db_changes_log.md
+
+# OpenCode config (not project code)
+.opencode/
+agents/
 
 # testing reports
 tests/recruiter-view/unit_testing/logs/reports
@@ -91,3 +110,13 @@ tests/recruiter-view/unit_testing/logs/reports
 # Ignore log and static files
 backend/static
 backend/logs
+# EraMatch Project Metadata
+AGENTS.md
+**/*.json
+.serena/
+LIV2_TEST_CREDENTIALS.md
+
+# Debug scripts (one-off)
+backend/check_cv.py
+backend/check_cv2.py
+backend/test_cv_db.py

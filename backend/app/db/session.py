@@ -1,6 +1,7 @@
 """
 Database session configuration for Supabase PostgreSQL.
 """
+
 from collections.abc import AsyncGenerator
 
 from sqlmodel import SQLModel, create_engine, Session
@@ -68,14 +69,11 @@ async def init_db() -> None:
     # We do this in a separate block to avoid holding locks during subsequent checks
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-    
+
     # 2. Add missing columns with short lock timeouts to avoid blocking the whole app
-    # We use a new connection for each to ensure we don't hold a long transaction.
     async with engine.connect() as conn:
-        # Set a short lock timeout (2 seconds) for this connection.
-        # This prevents ALTER TABLE from waiting forever and blocking other queries.
         await conn.execute(text("SET lock_timeout = '2s'"))
-        
+
         # Check and add 'github_profile' to 'cv_analysis'
         res = await conn.execute(
             text("SELECT column_name FROM information_schema.columns WHERE table_name='cv_analysis' AND column_name='github_profile'")
@@ -85,9 +83,8 @@ async def init_db() -> None:
                 await conn.execute(text("ALTER TABLE cv_analysis ADD COLUMN github_profile JSONB"))
                 await conn.commit()
             except Exception:
-                # If we couldn't get the lock in 2s, we skip it. It will try again on next startup.
                 pass
-                
+
         # Check and add 'jd_hdeval_qag' to 'positions'
         res = await conn.execute(
             text("SELECT column_name FROM information_schema.columns WHERE table_name='positions' AND column_name='jd_hdeval_qag'")
@@ -98,3 +95,32 @@ async def init_db() -> None:
                 await conn.commit()
             except Exception:
                 pass
+
+        # All columns added to pre-existing tables in this PR
+        for table, col, col_type in [
+            # LiV2 columns (table may predate these columns)
+            ("li_v2_rubrics", "updated_at", "TIMESTAMP"),
+            ("li_v2_rubrics", "created_by_user_id", "UUID"),
+            ("li_v2_banks", "updated_at", "TIMESTAMP"),
+            ("li_v2_banks", "created_by_user_id", "UUID"),
+            ("li_v2_evaluations", "judge_model", "VARCHAR(100)"),
+            # Core table columns added in LiV2 PR
+            ("projects", "created_by_user_id", "UUID"),
+            ("candidate_groups", "created_by_user_id", "UUID"),
+            ("question_bank", "created_by_user_id", "UUID"),
+            ("assessments", "created_by_user_id", "UUID"),
+            ("candidate_answers", "assignment_id", "UUID"),
+            ("ai_interview_configs", "created_by_user_id", "UUID"),
+        ]:
+            res = await conn.execute(
+                text(
+                    f"SELECT column_name FROM information_schema.columns "
+                    f"WHERE table_name='{table}' AND column_name='{col}'"
+                )
+            )
+            if not res.fetchone():
+                try:
+                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
+                    await conn.commit()
+                except Exception:
+                    pass

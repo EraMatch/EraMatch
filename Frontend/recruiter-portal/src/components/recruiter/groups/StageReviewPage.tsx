@@ -15,9 +15,10 @@ interface CandidateData {
     avatar: string;
     assessmentScore: number;
     aiInterviewScore: number;
+    liveInterviewScore?: number;
     flags: string[];
     meetsCriteria?: boolean;
-    technicalVerdict?: 'pass' | 'fail' | 'conditional';
+    technicalVerdict?: 'strong_pass' | 'pass' | 'fail' | 'conditional' | 'borderline';
     progressionState?: 'selected' | 'rejected' | 'on-hold' | 'archived' | 'active';
     overrideApplied?: boolean;
     email?: string;
@@ -82,8 +83,8 @@ export function StageReviewPage({
     const [scoreRange, setScoreRange] = useState<[number, number]>([0, 100]);
     const [flagsFilter, setFlagsFilter] = useState<'all' | 'none' | 'has-flags'>('all');
     const [meetsCriteriaFilter, setMeetsCriteriaFilter] = useState<'all' | 'yes' | 'no'>('all');
-    const [verdictFilter, setVerdictFilter] = useState<'all' | 'pass' | 'fail' | 'conditional'>('all');
-    const [progressionFilter, setProgressionFilter] = useState<'all' | 'active' | 'selected' | 'rejected' | 'on-hold'>('active');
+    const [verdictFilter, setVerdictFilter] = useState<'all' | 'strong_pass' | 'pass' | 'fail' | 'conditional' | 'borderline'>('all');
+    const [progressionFilter, setProgressionFilter] = useState<'all' | 'active' | 'selected' | 'rejected' | 'on-hold'>('all');
     const [sortBy, setSortBy] = useState<SortField>('score-desc');
 
     // ─── Collapsible sections ────────────────────────────────────────
@@ -96,7 +97,8 @@ export function StageReviewPage({
     const getScore = (c: CandidateData) =>
         stageId === 'assessment' ? c.assessmentScore
             : stageId === 'ai-interview' ? c.aiInterviewScore
-                : Math.max(c.assessmentScore, c.aiInterviewScore);
+                : stageId === 'live-interview' ? (c.liveInterviewScore || 0)
+                    : Math.max(c.assessmentScore, c.aiInterviewScore || 0, c.liveInterviewScore || 0);
 
     // ─── Calculated stats ────────────────────────────────────────────
 
@@ -629,7 +631,9 @@ export function StageReviewPage({
                                                         className="w-full h-[36px] px-2 rounded-[8px] border border-[#e5e7eb] bg-white text-[13px]"
                                                     >
                                                         <option value="all">All</option>
+                                                        <option value="strong_pass">Strong Pass</option>
                                                         <option value="pass">Pass</option>
+                                                        <option value="borderline">Borderline</option>
                                                         <option value="conditional">Conditional</option>
                                                         <option value="fail">Fail</option>
                                                     </select>
@@ -785,11 +789,14 @@ export function StageReviewPage({
                                                 </td>
                                                 <td className="p-4 text-center">
                                                     {candidate.technicalVerdict ? (
-                                                        <span className={`px-2.5 py-1 text-[11px] rounded-full font-medium ${candidate.technicalVerdict === 'pass' ? 'bg-emerald-100 text-emerald-700' :
+                                                        <span className={`px-2.5 py-1 text-[11px] rounded-full font-medium ${
+                                                            candidate.technicalVerdict === 'strong_pass' ? 'bg-emerald-200 text-emerald-800' :
+                                                            candidate.technicalVerdict === 'pass' ? 'bg-emerald-100 text-emerald-700' :
+                                                                candidate.technicalVerdict === 'borderline' ? 'bg-orange-100 text-orange-700' :
                                                                 candidate.technicalVerdict === 'conditional' ? 'bg-amber-100 text-amber-700' :
                                                                     'bg-red-100 text-red-700'
                                                             }`}>
-                                                            {candidate.technicalVerdict}
+                                                            {candidate.technicalVerdict.replace('_', ' ')}
                                                         </span>
                                                     ) : (
                                                         <span className="text-[11px] text-[#9ca3af]">—</span>

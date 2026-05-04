@@ -1,0 +1,77 @@
+[project]
+name = "eramatch-ai-service"
+version = "0.1.0"
+description = "EraMatch AI Service for transcription and LLM evaluation"
+authors = [
+    { name = "Anas Ahmed" }
+]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # Web framework
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "starlette>=0.36.0",
+    "python-multipart>=0.0.6",
+    # Settings & validation
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "python-dotenv>=1.0.0",
+    # LiveKit Agent framework (CRITICAL)
+    "livekit>=1.1.0",
+    "livekit-api>=1.1.0",
+    "livekit-agents>=1.5.2",
+    # LiveKit plugins
+    "livekit-plugins-google>=1.5.0",
+    "livekit-plugins-openai>=1.5.0",
+    "livekit-plugins-silero>=1.5.0",
+    "livekit-plugins-turn-detector>=1.5.0",
+    # STT / TTS / LLM providers
+    "faster-whisper>=1.0.0",
+    "ollama>=0.1.0",
+    "openai>=1.0.0",
+    "google-genai>=0.1.0",
+    "google-cloud-speech>=2.20.0",
+    "google-cloud-texttospeech>=2.14.0",
+    # ML / inference (pinned: torch 2.4+ has no Intel x86_64 macOS wheels)
+    "torch>=2.2.0,<2.3",
+    "numpy>=1.24.0,<2",
+    "transformers>=4.36.0",
+    # Database
+    "asyncpg>=0.29.0",
+    # Async utilities
+    "aiohttp>=3.9.0",
+    "aiofiles>=23.0.0",
+    "nest-asyncio>=1.5.0",
+    # HTTP / networking
+    "httpx>=0.26.0",
+    # Audio
+    "sounddevice>=0.4.0",
+    # Auth / JWT
+    "PyJWT>=2.8.0",
+    # Dev server file watcher
+    "watchfiles>=0.19.0",
+    # Task Queue
+    "celery[redis]>=5.3.0",
+    "redis>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.uv]
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]

@@ -423,3 +423,17 @@ async def start_github_analysis(
         candidate_id=candidate_id,
         questions_to_generate=10,
     )
+
+@router.post("/{candidate_id}/github-analysis/reanalyze")
+async def reanalyze_github_profile(
+    candidate_id: UUID,
+    session: DbSession,
+    current_user: CurrentUser,
+):
+    """Force reanalysis of GitHub profile by queuing a new analysis job."""
+    return await _queue_github_analysis_job(
+        session=session,
+        current_user=current_user,
+        candidate_id=candidate_id,
+        questions_to_generate=10,
+    )

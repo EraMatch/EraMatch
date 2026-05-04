@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../ui/dialo
 import { Button } from '../../ui/button';
 import { api } from '../../../services/api';
 import { API_URL } from '../../../services/client';
+import { LiveInterviewResults } from '../live-interview-v2/LiveInterviewResults';
 import type { ApplicationScoreBreakdown } from '../../../services/types';
 import { useNavigate } from 'react-router-dom';
 
@@ -38,6 +39,9 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [assessmentResetLoading, setAssessmentResetLoading] = useState(false);
   const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
   const [assessmentResetError, setAssessmentResetError] = useState<string | null>(null);
+  const [githubReanalysisLoading, setGithubReanalysisLoading] = useState(false);
+  const [githubReanalysisMessage, setGithubReanalysisMessage] = useState<string | null>(null);
+  const [githubReanalysisError, setGithubReanalysisError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const backendOrigin = (() => {
     try {
@@ -118,6 +122,31 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
       setAssessmentResetError(error?.message || 'Failed to reset assessment trial.');
     } finally {
       setAssessmentResetLoading(false);
+    }
+  };
+
+  const handleReanalyzeGitHub = async () => {
+    if (!candidate?.github_url) {
+      setGithubReanalysisError('Candidate does not have a GitHub profile URL.');
+      setGithubReanalysisMessage(null);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Reanalyze GitHub profile for ${candidate.name}? This will fetch fresh data and update the analysis.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setGithubReanalysisLoading(true);
+      setGithubReanalysisError(null);
+      setGithubReanalysisMessage(null);
+      await api.recruiter.reanalyzeGitHubProfile(candidateId);
+      setGithubReanalysisMessage('GitHub profile reanalysis started. Refresh the page in a few moments to see updated data.');
+    } catch (error: any) {
+      setGithubReanalysisError(error?.message || 'Failed to reanalyze GitHub profile.');
+    } finally {
+      setGithubReanalysisLoading(false);
     }
   };
 
@@ -482,8 +511,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
         {/* Profile Header */}
         <div className="bg-white rounded-[12px] border border-[#e5e7eb] p-8 mb-6">
           <div className="flex items-start gap-6">
-            <div className="w-[100px] h-[100px] rounded-[16px] bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] flex items-center justify-center text-white text-[36px]">
-              {candidate.name.split(' ').map((n: string) => n[0]).join('')}
+              <div className="w-[100px] h-[100px] rounded-[16px] bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] flex items-center justify-center text-white text-[36px]">
+              {String(candidate.name || '').split(' ').map((n: string) => (n ? n[0] : '')).join('')}
             </div>
             <div className="flex-1">
               <div className="flex items-start justify-between mb-4">
@@ -522,6 +551,16 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     </span>
                   </button>
                   <button
+                    onClick={handleReanalyzeGitHub}
+                    disabled={!candidate?.github_url || githubReanalysisLoading}
+                    title={candidate?.github_url ? 'Reanalyze GitHub profile' : 'Candidate does not have a GitHub profile'}
+                    className="flex items-center gap-2 h-[40px] px-[14px] rounded-[8px] border border-[#dbeafe] bg-[#f0f9ff] hover:bg-[#e0f2fe] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#0369a1]">
+                      {githubReanalysisLoading ? 'Reanalyzing...' : 'Reanalyze GitHub'}
+                    </span>
+                  </button>
+                  <button
                     onClick={handleResetAssessmentTrial}
                     disabled={!resolvedApplicationId || assessmentResetLoading}
                     className="flex items-center gap-2 h-[40px] px-[14px] rounded-[8px] border border-[#fecaca] bg-[#fff1f2] hover:bg-[#ffe4e6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -557,6 +596,16 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
               {assessmentResetError && (
                 <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
                   <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{assessmentResetError}</p>
+                </div>
+              )}
+              {githubReanalysisMessage && (
+                <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{githubReanalysisMessage}</p>
+                </div>
+              )}
+              {githubReanalysisError && (
+                <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{githubReanalysisError}</p>
                 </div>
               )}
 
@@ -1543,89 +1592,25 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
             {activeTab === 'live-interview' && (
               <div className="space-y-6">
-                {/* Score Cards */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gradient-to-r from-emerald-50 to-emerald-100 border-2 border-emerald-200 rounded-2xl p-5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm text-emerald-700 mb-1">Confidence Score</div>
-                        <div className="text-3xl font-bold text-emerald-900">{liveInterviewData.overallConfidence}%</div>
-                      </div>
-                      <div className="w-12 h-12 rounded-full bg-emerald-500 flex items-center justify-center">
-                        <TrendingUp size={24} className="text-white" />
-                      </div>
-                    </div>
+                {/* Real LiveInterviewResults — session ID comes from backend via liveInterviewData */}
+                {(candidate as any).liveInterviewData?.sessionId ? (
+                  <LiveInterviewResults
+                    sessionId={(candidate as any).liveInterviewData.sessionId}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                    <div className="text-5xl mb-4">🎙️</div>
+                    <p className="text-lg font-medium text-slate-300">No live interview session yet</p>
+                    <p className="text-sm mt-1">The candidate hasn't started the live interview stage.</p>
                   </div>
-                  <div className="bg-gradient-to-r from-indigo-50 to-indigo-100 border-2 border-indigo-200 rounded-2xl p-5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm text-indigo-700 mb-1">Answer Correctness</div>
-                        <div className="text-3xl font-bold text-indigo-900">{liveInterviewData.overallCorrectness}%</div>
-                      </div>
-                      <div className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center">
-                        <CheckCircle size={24} className="text-white" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                )}
+              </div>
+            )}
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Completed</div>
-                    <div className="font-['Arimo',sans-serif] text-[16px] text-[#111827]">
-                      {liveInterviewData.completedAt}
-                    </div>
-                  </div>
-                  <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Duration</div>
-                    <div className="font-['Arimo',sans-serif] text-[16px] text-[#111827]">
-                      {liveInterviewData.duration}
-                    </div>
-                  </div>
-                </div>
-
-                {/* View Full Transcript Button */}
-                <Button
-                  onClick={() => setShowLiveInterviewTranscript(true)}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-6 flex items-center justify-center gap-2"
-                >
-                  <FileText size={20} />
-                  View Full Interview Transcript
-                </Button>
-
-                {/* Emotion Metrics */}
-                <div>
-                  <h3 className="text-[#111827] mb-4">Overall Emotion Metrics</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    {liveInterviewData.emotionMetrics.map((metric: any, i: number) => (
-                      <div key={i} className="bg-white border border-[#e5e7eb] rounded-[12px] p-5">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            {metric.icon === 'smile' && <Smile size={20} style={{ color: metric.color }} />}
-                            {metric.icon === 'activity' && <Activity size={20} style={{ color: metric.color }} />}
-                            {metric.icon === 'meh' && <Meh size={20} style={{ color: metric.color }} />}
-                            {metric.icon === 'trending-up' && <TrendingUp size={20} style={{ color: metric.color }} />}
-                            <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                              {metric.emotion}
-                            </span>
-                          </div>
-                          <span className="text-lg font-semibold" style={{ color: metric.color }}>
-                            {metric.percentage}%
-                          </span>
-                        </div>
-                        <div className="w-full h-2 bg-[#e5e7eb] rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all"
-                            style={{
-                              width: `${metric.percentage}%`,
-                              backgroundColor: metric.color
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+            {activeTab === 'github' && (
+              <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                <div className="text-5xl mb-4">📂</div>
+                <p className="text-lg font-medium text-slate-300">GitHub analysis not available</p>
               </div>
             )}
 
@@ -2027,8 +2012,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
               <div className="bg-white border border-[#e5e7eb] rounded-xl p-6">
                 <h4 className="font-semibold text-gray-900 mb-4 text-lg">Full Transcript</h4>
                 <div className="space-y-4 text-gray-700 leading-relaxed">
-                  {liveInterviewData.transcript.split('\n\n').map((paragraph: string, i: number) => {
-                    const lines = paragraph.split('\n');
+                  {String(liveInterviewData.transcript || '').split('\n\n').map((paragraph: string, i: number) => {
+                    const lines = String(paragraph || '').split('\n');
                     return (
                       <div key={i} className="space-y-2">
                         {lines.map((line: string, j: number) => {
