@@ -8,6 +8,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+# Add common tool paths for GitHub Runner / non-interactive shells
+export PATH="$HOME/.local/bin:$PATH"
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 LOG_DIR="$ROOT/.logs"
 mkdir -p "$LOG_DIR"
 
