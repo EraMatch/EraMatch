@@ -45,11 +45,19 @@ The production portals are hosted at:
 
 ---
 
-## 3. Manual VM Management
+## 4. Connecting to the VM
 
-If you need to manually manage the services on the VM:
+To access the production environment directly via SSH:
 
-- **Start Services**: `./start.sh` (Assuming tunnels are already running).
-- **Stop Services**: `./start.sh stop` (Keeps tunnels alive).
-- **Restart Everything**: `./start.sh kill` then `./start.sh` (Warning: requires restarting tunnels manually).
-- **View Logs**: `./start.sh logs`
+```bash
+gcloud compute ssh eramatch-vm --zone=us-central1-a
+```
+
+Once connected, the project is located at `~/EraMatch`.
+
+---
+
+## 5. Troubleshooting
+- **Check Tunnel Logs**: `tail -f ~/EraMatch/.logs/tunnel-backend.log`
+- **Check App Logs**: `./start.sh logs`
+- **Restart Everything**: `./start.sh kill` then `./start.sh`
