@@ -57,7 +57,7 @@ To access the production environment directly via SSH:
    ```
 3. **Set Project**:
    ```bash
-   gcloud config set project [YOUR_PROJECT_ID]
+   gcloud config set project eramatch
    ```
 
 ### SSH Command
