@@ -1,7 +1,9 @@
 import io
 import logging
 import os
+import random
 import re
+import string
 import tempfile
 import zipfile
 import base64
@@ -109,22 +111,49 @@ class CVIngestionService:
         self.session.add(schedule)
         await self.session.commit()
 
-    async def get_or_create_candidate(self, organization_id: UUID, email: str, name: str) -> UUID:
-        """Gets existing candidate ID or creates a new candidate profile."""
-        stmt = select(CandidateProfile).where(
-            CandidateProfile.organization_id == organization_id,
-            CandidateProfile.email == email
-        )
-        res = await self.session.execute(stmt)
-        candidate = res.scalars().first()
+    async def get_or_create_candidate(self, organization_id: UUID, email: str, name: str, position_id: UUID | None = None) -> UUID:
+        """Gets existing candidate ID or creates a new candidate profile.
 
-        if candidate:
-            return candidate.id
+        If `position_id` is provided we only consider an email a duplicate when
+        there's already an application for the SAME position. This mirrors the
+        position-scoped behavior in the main CandidateService.
+        """
+        # Position-aware duplicate check: if an application exists for this
+        # email on the same position, return the existing profile ID.
+        if position_id:
+            # Join through the application to get the exact candidate tied to this position,
+            # avoiding the wrong-profile risk when the same email exists across positions.
+            dup_stmt = (
+                select(CandidateProfile)
+                .join(CandidateApplication, CandidateApplication.candidate_id == CandidateProfile.id)
+                .where(
+                    CandidateProfile.email == email,
+                    CandidateProfile.organization_id == organization_id,
+                    CandidateApplication.position_id == position_id,
+                    CandidateApplication.is_deleted == False,
+                )
+            )
+            dup_res = await self.session.execute(dup_stmt)
+            existing = dup_res.scalars().first()
+            if existing:
+                return existing.id
+
+        # Otherwise create a new candidate profile even if the email exists
+        # elsewhere in the organization (i.e. duplicate allowed across positions).
+        chars = string.ascii_lowercase + string.digits
+        for _ in range(20):
+            username = ''.join(random.choice(chars) for _ in range(10))
+            check = await self.session.execute(
+                select(CandidateProfile).where(CandidateProfile.username == username)
+            )
+            if not check.scalar_one_or_none():
+                break
 
         new_candidate = CandidateProfile(
             organization_id=organization_id,
             full_name=name,
-            email=email
+            email=email,
+            username=username,
         )
         self.session.add(new_candidate)
         await self.session.commit()
@@ -177,7 +206,7 @@ class CVIngestionService:
 
         logger.info(f"Webhook creating candidate {email} for {file_path}")
 
-        candidate_id = await self.get_or_create_candidate(UUID(str(tenant_id)), email, name)
+        candidate_id = await self.get_or_create_candidate(UUID(str(tenant_id)), email, name, UUID(str(job_id)))
         app_source = source if parsed_ok else f"{source}_parse_failed"
         app_id = await self.apply_for_position(UUID(str(tenant_id)), UUID(str(job_id)), candidate_id, app_source)
 
@@ -463,21 +492,47 @@ class CVIngestionWorkerService:
         self.session.add(job)
         self.session.commit()
 
-    def get_or_create_candidate(self, organization_id: UUID, email: str, name: str) -> UUID:
-        """Gets existing candidate ID or creates a new candidate profile (Synchronous)."""
-        stmt = select(CandidateProfile).where(
-            CandidateProfile.organization_id == organization_id,
-            CandidateProfile.email == email
-        )
-        candidate = self.session.execute(stmt).scalars().first()
+    def get_or_create_candidate(self, organization_id: UUID, email: str, name: str, position_id: UUID | None = None) -> UUID:
+        """Gets existing candidate ID or creates a new candidate profile (Synchronous).
 
-        if candidate:
-            return candidate.id
+        Position-aware: if `position_id` provided only consider email a duplicate
+        when there's already an application for the same position.
+        """
+        if position_id:
+            dup_stmt = (
+                select(CandidateApplication)
+                .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+                .where(
+                    CandidateProfile.email == email,
+                    CandidateProfile.organization_id == organization_id,
+                    CandidateApplication.position_id == position_id,
+                    CandidateApplication.is_deleted == False,
+                )
+            )
+            dup_res = self.session.execute(dup_stmt)
+            if dup_res.scalars().first():
+                existing_stmt = select(CandidateProfile).where(
+                    CandidateProfile.organization_id == organization_id,
+                    CandidateProfile.email == email,
+                )
+                existing = self.session.execute(existing_stmt).scalars().first()
+                if existing:
+                    return existing.id
+
+        chars = string.ascii_lowercase + string.digits
+        for _ in range(20):
+            username = ''.join(random.choice(chars) for _ in range(10))
+            check = self.session.execute(
+                select(CandidateProfile).where(CandidateProfile.username == username)
+            )
+            if not check.scalar_one_or_none():
+                break
 
         new_candidate = CandidateProfile(
             organization_id=organization_id,
             full_name=name,
-            email=email
+            email=email,
+            username=username,
         )
         self.session.add(new_candidate)
         self.session.commit()
@@ -520,7 +575,7 @@ class CVIngestionWorkerService:
 
         logger.info(f"Webhook creating candidate {email} for {file_path} (Sync)")
 
-        candidate_id = self.get_or_create_candidate(UUID(str(tenant_id)), email, name)
+        candidate_id = self.get_or_create_candidate(UUID(str(tenant_id)), email, name, UUID(str(job_id)))
         app_source = source if parsed_ok else f"{source}_parse_failed"
         app_id = self.apply_for_position(UUID(str(tenant_id)), UUID(str(job_id)), candidate_id, app_source)
 

@@ -9,11 +9,10 @@ import { api } from '../services/api';
 interface CandidateLoginPageProps {
   onBack: () => void;
   onSignIn: () => void;
-  groupId?: string;
 }
 
-export function CandidateLoginPage({ onBack, onSignIn, groupId }: CandidateLoginPageProps) {
-  const [email, setEmail] = useState('');
+export function CandidateLoginPage({ onBack, onSignIn }: CandidateLoginPageProps) {
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -24,10 +23,10 @@ export function CandidateLoginPage({ onBack, onSignIn, groupId }: CandidateLogin
     setError('');
 
     try {
-      await api.auth.login(email, password, groupId);
+      await api.auth.login(username, password);
       onSignIn();
     } catch (err) {
-      setError('Invalid email or password');
+      setError('Invalid username or password');
       console.error('Login failed:', err);
     } finally {
       setIsLoading(false);
@@ -70,13 +69,13 @@ export function CandidateLoginPage({ onBack, onSignIn, groupId }: CandidateLogin
           {/* Login Form */}
           <form onSubmit={handleSignIn} className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-gray-700">Email</Label>
+              <Label htmlFor="username" className="text-gray-700">Username</Label>
               <Input
-                id="email"
-                type="email"
-                placeholder="Enter your email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                id="username"
+                type="text"
+                placeholder="Enter your username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 className="w-full"
                 required
                 disabled={isLoading}
@@ -116,7 +115,7 @@ export function CandidateLoginPage({ onBack, onSignIn, groupId }: CandidateLogin
 
           {/* Dev hint */}
           <p className="mt-4 text-xs text-gray-400 text-center">
-            Test: amy18@example.org / candidate123
+            Use the username sent to your email to log in
           </p>
         </div>
       </div>

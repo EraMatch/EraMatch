@@ -1020,9 +1020,11 @@ class GroupService:
             prog = prog_res.scalars().first()
             if prog:
                 # HR starts/unlocks the stage; candidate start moves it to in_progress.
-                if prog.status in ("locked", "not_started", "unlocked"):
+                if prog.status in ("locked", "not_started"):
                     prog.status = "unlocked"
                     prog.unlocked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    if stage == "assessment":
+                        prog.session_type = "assessment"
                     self.session.add(prog)
                     invitations_sent += 1
             else:
@@ -1036,6 +1038,7 @@ class GroupService:
                     stage_id=stage_config.stage_id,
                     status="unlocked",
                     unlocked_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    session_type=("assessment" if stage == "assessment" else None),
                 )
                 self.session.add(new_prog)
                 invitations_sent += 1
@@ -2714,6 +2717,7 @@ class GroupService:
                     group_name=group.group_name,
                     temp_password=temp_password,   # plaintext, NOT the hash
                     group_id=str(group.id),
+                    username=profile.username or "",
                 )
             except Exception as e:
                 import logging
@@ -3106,6 +3110,7 @@ class GroupService:
                             stage_id=source_stage.stage_id,
                             status="completed",
                             passed=True,
+                            session_type=(source_stage.stage_type if getattr(source_stage, 'stage_type', None) else None),
                         )
                         self.session.add(prog)
 

@@ -52,16 +52,32 @@ class EmailService:
             logger.error(f"Failed to send email to {email_to}: {str(e)}")
 
     @staticmethod
-    async def send_welcome_email(email: str, name: str, role: str, temp_password: str):
+    async def send_welcome_email(email: str, name: str, role: str, temp_password: str, username: str | None = None):
         """Sent when a new recruiter or candidate is created by admin."""
-        subject = f"Welcome to EraMatch - Your Temporary Password"
+        subject = f"Welcome to EraMatch - Your Credentials"
+        credential_block = ""
+        if username:
+            credential_block = f"""
+                <table style="border-collapse: collapse; margin: 16px 0;">
+                    <tr>
+                        <td style="padding: 8px 16px; border: 1px solid #ddd; font-weight: bold;">Username</td>
+                        <td style="padding: 8px 16px; border: 1px solid #ddd;"><code>{username}</code></td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 16px; border: 1px solid #ddd; font-weight: bold;">Password</td>
+                        <td style="padding: 8px 16px; border: 1px solid #ddd;"><code>{temp_password}</code></td>
+                    </tr>
+                </table>
+            """
+        else:
+            credential_block = f"<h3>{temp_password}</h3>"
         html = f"""
         <html>
             <body>
                 <h2>Welcome to EraMatch, {name}!</h2>
                 <p>Your account has been created with the role of <strong>{role}</strong>.</p>
-                <p>Please log in using the following temporary password:</p>
-                <h3>{temp_password}</h3>
+                <p>Please log in using the following credentials:</p>
+                {credential_block}
                 <p>For security reasons, we highly recommend changing this password upon your first login.</p>
                 <br>
                 <p>Best regards,<br>The EraMatch Team</p>
@@ -90,14 +106,14 @@ class EmailService:
     @staticmethod
     async def send_stage_invitation_email(email: str, name: str, stage_title: str, group_id: str):
         """Sent when a recruiter starts a stage for a candidate."""
-        login_url = f"https://eramatch.com/login/{group_id}"
+        login_url = "https://eramatch.com/login"
         subject = f"Action Required: EraMatch {stage_title} Invitation"
         html = f"""
         <html>
             <body>
                 <h2>Hello {name},</h2>
                 <p>You have been invited to complete the <strong>{stage_title}</strong> stage for your application.</p>
-                <p>Please use the link below to log in and begin this stage:</p>
+                <p>Please use the link below to log in with your username and begin this stage:</p>
                 <p><a href="{login_url}" style="display: inline-block; padding: 12px 24px; background-color: #6366f1; color: #fff; text-decoration: none; border-radius: 6px;">Log In & Start {stage_title}</a></p>
                 <p>We wish you the best of luck!</p>
                 <br>
@@ -146,21 +162,21 @@ class EmailService:
     @staticmethod
     async def send_group_credentials_email(
         email: str, name: str, group_name: str,
-        temp_password: str, group_id: str
+        temp_password: str, group_id: str, username: str = ""
     ):
         """Sent when a candidate is added to a new group with fresh credentials."""
-        login_url = f"https://eramatch.com/login/{group_id}"
+        login_url = "https://eramatch.com/login"
         subject = f"EraMatch - Your New Group Credentials"
         html = f"""
         <html>
             <body>
                 <h2>Hello {name},</h2>
                 <p>You have been added to a new candidate group: <strong>{group_name}</strong>.</p>
-                <p>Your login credentials for this group are:</p>
+                <p>Your login credentials are:</p>
                 <table style="border-collapse: collapse; margin: 16px 0;">
                     <tr>
-                        <td style="padding: 8px 16px; border: 1px solid #ddd; font-weight: bold;">Email</td>
-                        <td style="padding: 8px 16px; border: 1px solid #ddd;"><code>{email}</code></td>
+                        <td style="padding: 8px 16px; border: 1px solid #ddd; font-weight: bold;">Username</td>
+                        <td style="padding: 8px 16px; border: 1px solid #ddd;"><code>{username}</code></td>
                     </tr>
                     <tr>
                         <td style="padding: 8px 16px; border: 1px solid #ddd; font-weight: bold;">Password</td>

@@ -28,7 +28,7 @@ class CandidateDashboardService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_home(self, candidate_id: UUID, candidate: "CandidateProfile" = None) -> dict:
+    async def get_home(self, candidate_id: UUID, candidate: "CandidateProfile" = None, group_id: UUID | None = None) -> dict:
         """
         Get dashboard home data for a candidate.
         
@@ -68,30 +68,37 @@ class CandidateDashboardService:
             }
             
             # Get application info with position and project details
+            query = """
+                SELECT 
+                    ca.application_id, 
+                    ca.status, 
+                    ca.applied_at, 
+                    ca.group_id, 
+                    ca.position_id,
+                    p.job_title,
+                    p.job_description,
+                    pr.project_id,
+                    pr.name as project_name,
+                    pr.description as project_description,
+                    cg.group_id,
+                    cg.group_name
+                FROM candidate_applications ca
+                LEFT JOIN positions p ON ca.position_id = p.position_id
+                LEFT JOIN projects pr ON p.project_id = pr.project_id
+                LEFT JOIN candidate_groups cg ON ca.group_id = cg.group_id
+                WHERE ca.candidate_id = :cid AND ca.is_deleted = false
+            """
+            params = {"cid": str(candidate_id)}
+            
+            if group_id:
+                query += " AND ca.group_id = :gid"
+                params["gid"] = str(group_id)
+                
+            query += " ORDER BY ca.applied_at DESC LIMIT 1"
+
             app_result = await self.session.execute(
-                text("""
-                    SELECT 
-                        ca.application_id, 
-                        ca.status, 
-                        ca.applied_at, 
-                        ca.group_id, 
-                        ca.position_id,
-                        p.job_title,
-                        p.job_description,
-                        pr.project_id,
-                        pr.name as project_name,
-                        pr.description as project_description,
-                        cg.group_id,
-                        cg.group_name
-                    FROM candidate_applications ca
-                    LEFT JOIN positions p ON ca.position_id = p.position_id
-                    LEFT JOIN projects pr ON p.project_id = pr.project_id
-                    LEFT JOIN candidate_groups cg ON ca.group_id = cg.group_id
-                    WHERE ca.candidate_id = :cid AND ca.is_deleted = false
-                    ORDER BY ca.applied_at DESC
-                    LIMIT 1
-                """),
-                {"cid": str(candidate_id)}
+                text(query),
+                params
             )
             app_row = app_result.fetchone()
             
@@ -259,22 +266,29 @@ class CandidateDashboardService:
             }
 
 
-    async def get_assessments(self, candidate_id: UUID) -> list[dict]:
+    async def get_assessments(self, candidate_id: UUID, group_id: UUID | None = None) -> list[dict]:
         """
         Get list of assessments/stages available for the candidate.
         Returns stages with their status (locked, unlocked, in_progress, completed).
         Uses raw SQL with correct tables: group_pipeline_stages + candidate_pipeline_progress.
         """
         # 1. Get active application
+        query = """
+            SELECT application_id, group_id, status
+            FROM candidate_applications
+            WHERE candidate_id = :cid AND is_deleted = false
+        """
+        params = {"cid": str(candidate_id)}
+        
+        if group_id:
+            query += " AND group_id = :gid"
+            params["gid"] = str(group_id)
+            
+        query += " ORDER BY applied_at DESC LIMIT 1"
+        
         app_result = await self.session.execute(
-            text("""
-                SELECT application_id, group_id, status
-                FROM candidate_applications
-                WHERE candidate_id = :cid AND is_deleted = false
-                ORDER BY applied_at DESC
-                LIMIT 1
-            """),
-            {"cid": str(candidate_id)}
+            text(query),
+            params
         )
         app_row = app_result.mappings().first()
         if not app_row or not app_row["group_id"]:

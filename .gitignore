@@ -106,6 +106,10 @@ agents/
 
 # testing reports
 tests/recruiter-view/unit_testing/logs/reports
+
+# Ignore log and static files
+backend/static
+backend/logs
 # EraMatch Project Metadata
 AGENTS.md
 **/*.json
