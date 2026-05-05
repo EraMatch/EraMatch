@@ -53,9 +53,9 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
   const resolveBackendMediaUrl = (url?: string | null): string | undefined => {
     if (!url) return undefined;
-    if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url)) return url;
-    if (!url.startsWith('/')) return url;
-    return `${backendOrigin}${url}`;
+    if (/^https?:\/\//i.test(url)) return url;
+    const path = url.startsWith('/') ? url : `/${url}`;
+    return `${backendOrigin}${path}`;
   };
 
   const resolvedApplicationId = applicationId || candidate?.applicationId || candidate?.application_id;
@@ -181,7 +181,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
   const formatInterviewScore = (value: unknown): string => {
     const numericValue = Number(value);
-    if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    if (!Number.isFinite(numericValue) || numericValue < 0) {
       return 'N/A';
     }
 
@@ -1891,17 +1891,25 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
                       <div className="text-sm font-medium text-blue-900 mb-1">Candidate's Answer</div>
                       <div className="text-sm text-blue-800">
-                        {typeof q.candidateAnswer !== 'undefined'
-                          ? q.candidateAnswer
-                          : typeof q.answer !== 'undefined'
-                            ? (typeof q.answer === 'object' ? JSON.stringify(q.answer, null, 2) : q.answer)
-                            : 'N/A'}
+                        {(() => {
+                          const ans = typeof q.candidateAnswer !== 'undefined' ? q.candidateAnswer : q.answer;
+                          if (typeof ans === 'undefined' || ans === null) return 'N/A';
+                          if (typeof ans === 'object') return JSON.stringify(ans, null, 2);
+                          return String(ans);
+                        })()}
                       </div>
                     </div>
 
                     <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded">
                       <div className="text-sm font-medium text-emerald-900 mb-1">Correct Answer</div>
-                      <div className="text-sm text-emerald-800">{q.correctAnswer || q.referenceAnswer || 'N/A'}</div>
+                      <div className="text-sm text-emerald-800">
+                        {(() => {
+                          const ans = q.correctAnswer ?? q.referenceAnswer;
+                          if (ans === null || ans === undefined) return 'N/A';
+                          if (typeof ans === 'object') return JSON.stringify(ans, null, 2);
+                          return String(ans);
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>

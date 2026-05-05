@@ -1020,11 +1020,9 @@ class GroupService:
             prog = prog_res.scalars().first()
             if prog:
                 # HR starts/unlocks the stage; candidate start moves it to in_progress.
-                if prog.status in ("locked", "not_started", "unlocked"):
-                    prog.status = "in_progress" # Actually move to in_progress when stage starts
-                    prog.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                    # Ensure session_type is recorded for assessments so progress records
-                    # consistently indicate the type of session they relate to.
+                if prog.status in ("locked", "not_started"):
+                    prog.status = "unlocked"
+                    prog.unlocked_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     if stage == "assessment":
                         prog.session_type = "assessment"
                     self.session.add(prog)
@@ -1038,8 +1036,8 @@ class GroupService:
                 new_prog = CandidateStageProgress(
                     application_id=app.id,
                     stage_id=stage_config.stage_id,
-                    status="in_progress",
-                    started_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    status="unlocked",
+                    unlocked_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     session_type=("assessment" if stage == "assessment" else None),
                 )
                 self.session.add(new_prog)

@@ -96,6 +96,18 @@ async def init_db() -> None:
             except Exception:
                 pass
 
+        # Backfill NULL usernames so existing candidates can still log in after
+        # the switch from email-based to username-based login.
+        try:
+            await conn.execute(text("""
+                UPDATE candidate_profiles
+                SET username = LOWER(SUBSTRING(MD5(RANDOM()::TEXT), 1, 10))
+                WHERE username IS NULL
+            """))
+            await conn.commit()
+        except Exception:
+            pass
+
         # All columns added to pre-existing tables in this PR
         for table, col, col_type in [
             # LiV2 columns (table may predate these columns)

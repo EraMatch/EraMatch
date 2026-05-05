@@ -1028,6 +1028,7 @@ async def _start_assessment_session_impl(
                 # If the referenced pool_entry_id does not exist in
                 # section_question_pool (foreign-key), fall back to NULL
                 # so the assignment can still be created.
+                await session.rollback()
                 logger.warning("pool_entry_id FK missing; inserting assignment with NULL pool_entry_id (%s)", ie)
                 await session.execute(
                     text("""

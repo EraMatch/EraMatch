@@ -753,18 +753,9 @@ async def submit_video_response(
     # Absolute URL for worker
     video_url_full = f"http://localhost:8000/static/uploads/{filename}"
 
-    # Determine question_order safely — count existing responses for this session
-    order_result = await session.execute(
-        text("""
-            SELECT COUNT(*) AS cnt FROM interview_responses
-            WHERE session_id = :session_id
-        """).bindparams(
-            bindparam("session_id", type_=pgUUID(as_uuid=True)),
-        ),
-        {"session_id": session_id}
-    )
-    order_row = order_result.mappings().first()
-    next_order = (order_row["cnt"] if order_row else 0) + 1
+    # Determine question_order atomically — MAX+1 inside the INSERT avoids
+    # the read-then-write race that COUNT(*) has under concurrent uploads.
+    next_order = None  # resolved inside the INSERT via a subquery
 
     await session.execute(
         text("""
@@ -772,7 +763,8 @@ async def submit_video_response(
                 response_id, session_id, question_id, question_order,
                 question_text, video_url, retake_number, answered_at, processing_status
             ) VALUES (
-                :response_id, :session_id, :question_id, :question_order,
+                :response_id, :session_id, :question_id,
+                COALESCE((SELECT MAX(question_order) FROM interview_responses WHERE session_id = :session_id), 0) + 1,
                 :question_text, :video_url, 1, NOW(), 'pending'
             )
         """).bindparams(
@@ -783,7 +775,6 @@ async def submit_video_response(
             "response_id": UUID(response_id),
             "session_id": session_id,
             "question_id": question_id,
-            "question_order": next_order,
             "question_text": question_text,
             "video_url": video_url_db,
         }
