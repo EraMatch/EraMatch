@@ -73,22 +73,29 @@ class CandidateService:
             if existing:
                 return existing
 
-        # Generate unique username
-        username = await self._generate_username()
-
         # Generate a temporary password
         alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
         temp_password = ''.join(secrets.choice(alphabet) for i in range(12))
 
-        candidate = CandidateProfile(
-            organization_id=self.organization_id,
-            password_hash=hash_password(temp_password),
-            username=username,
-            **data.model_dump()
-        )
-        self.session.add(candidate)
-        await self.session.commit()
-        await self.session.refresh(candidate)
+        from sqlalchemy.exc import IntegrityError
+        for _ in range(5):
+            username = await self._generate_username()
+            candidate = CandidateProfile(
+                organization_id=self.organization_id,
+                password_hash=hash_password(temp_password),
+                username=username,
+                **data.model_dump()
+            )
+            self.session.add(candidate)
+            try:
+                await self.session.commit()
+                await self.session.refresh(candidate)
+                break
+            except IntegrityError:
+                await self.session.rollback()
+                candidate = None
+        if candidate is None:
+            raise RuntimeError("Failed to generate a unique username after retries")
 
         # Send welcome email with the temporary password and username
         try:

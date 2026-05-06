@@ -121,9 +121,11 @@ class CVIngestionService:
         # Position-aware duplicate check: if an application exists for this
         # email on the same position, return the existing profile ID.
         if position_id:
+            # Join through the application to get the exact candidate tied to this position,
+            # avoiding the wrong-profile risk when the same email exists across positions.
             dup_stmt = (
-                select(CandidateApplication)
-                .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+                select(CandidateProfile)
+                .join(CandidateApplication, CandidateApplication.candidate_id == CandidateProfile.id)
                 .where(
                     CandidateProfile.email == email,
                     CandidateProfile.organization_id == organization_id,
@@ -132,14 +134,9 @@ class CVIngestionService:
                 )
             )
             dup_res = await self.session.execute(dup_stmt)
-            if dup_res.scalars().first():
-                existing_stmt = select(CandidateProfile).where(
-                    CandidateProfile.organization_id == organization_id,
-                    CandidateProfile.email == email,
-                )
-                existing = (await self.session.execute(existing_stmt)).scalars().first()
-                if existing:
-                    return existing.id
+            existing = dup_res.scalars().first()
+            if existing:
+                return existing.id
 
         # Otherwise create a new candidate profile even if the email exists
         # elsewhere in the organization (i.e. duplicate allowed across positions).

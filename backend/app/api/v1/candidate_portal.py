@@ -89,7 +89,13 @@ async def get_candidate_home(
     from uuid import UUID
     
     service = CandidateDashboardService(session)
-    group_id_val = UUID(x_group_id) if x_group_id else None
+    group_id_val = None
+    if x_group_id:
+        try:
+            group_id_val = UUID(x_group_id)
+        except ValueError:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid group ID format")
     return await service.get_home(candidate.candidate_id, group_id=group_id_val)
 
 
@@ -108,7 +114,13 @@ async def get_candidate_assessments(
     from uuid import UUID
     
     service = CandidateDashboardService(session)
-    group_id_val = UUID(x_group_id) if x_group_id else None
+    group_id_val = None
+    if x_group_id:
+        try:
+            group_id_val = UUID(x_group_id)
+        except ValueError:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid group ID format")
     return await service.get_assessments(candidate.candidate_id, group_id=group_id_val)
 
 
