@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { ShieldCheck, Loader2, ChevronLeft, AlertTriangle, Info, Brain } from 'lucide-react';
 import { fetchAPI } from '../../../services/client';
 
@@ -11,7 +11,7 @@ interface FreezeConfirmationProps {
   onFreeze: () => void;
 }
 
-export function FreezeConfirmation({ groupId, bankId, rubricId, isFrozen, onBack, onFreeze }: FreezeConfirmationProps) {
+export function FreezeConfirmation({ bankId, rubricId, isFrozen, onBack, onFreeze }: FreezeConfirmationProps) {
   const [isFreezing, setIsFreezing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,13 +40,11 @@ export function FreezeConfirmation({ groupId, bankId, rubricId, isFrozen, onBack
       // Step 2: Freeze rubric
       await fetchAPI(`/live-interview-v2/rubric/${rubricId}/freeze`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
       });
 
       // Step 3: Freeze bank
       await fetchAPI(`/live-interview-v2/bank/${bankId}/freeze`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
       });
 
       onFreeze();

@@ -44,19 +44,19 @@ export function ConfigWizardV2({ groupId, stageId, onComplete }: ConfigWizardV2P
           }
           
           if (rubricRes.state === 'frozen') {
-            setIsFrozen(true);
             // Move to bank or freeze step
             try {
               const bankRes = await fetchAPI<{ bank_id?: string; state?: string }>(`/live-interview-v2/bank/group/${groupId}`);
               if (bankRes && bankRes.bank_id) {
                  setBankId(bankRes.bank_id);
                  if (bankRes.state === 'frozen') {
-                     setCurrentStep(4); // Fully frozen
+                     setIsFrozen(true); // Both rubric and bank frozen → full lock
+                     setCurrentStep(4);
                  } else {
-                     setCurrentStep(3); // Drafting bank
+                     setCurrentStep(3); // Rubric frozen, bank still in draft
                  }
               } else {
-                setCurrentStep(3); // Needs bank
+                setCurrentStep(3); // Rubric frozen, no bank yet
               }
             } catch (e) {
               setCurrentStep(3); // No bank yet
@@ -199,12 +199,12 @@ export function ConfigWizardV2({ groupId, stageId, onComplete }: ConfigWizardV2P
                      </select>
                    </div>
                 </div>
-                <RubricEditor 
-                  groupId={groupId} 
+                <RubricEditor
+                  groupId={groupId}
                   rubricId={rubricId}
                   isFrozen={isFrozen}
                   onBack={handlePrev}
-                  onSave={() => handleNext()} 
+                  onSave={() => handleNext()}
                 />
               </div>
             )}
