@@ -1,7 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle, Sparkles, Inbox } from 'lucide-react';
 import { api } from '../../../services/api';
+import { useQuestionBank, useImportJobs, useCreateQuestion, useDeleteQuestion, useToggleQuestionFavorite, useDeleteImportJob } from '../../../hooks/questionBank/useQuestionBank';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../../../lib/queryKeys';
 import { MCQEditor } from '../../common/MCQEditor';
 import { EssayEditor } from '../../common/EssayEditor';
 import { CodeEditor } from '../../common/CodeEditor';
@@ -90,8 +93,17 @@ interface QuestionBankPageProps {
 
 export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
+
+  // --- TanStack Query hooks ---
+  const { data: rawQuestions = [], isLoading: loading } = useQuestionBank();
+  const { data: rawImportJobs = [] } = useImportJobs();
+  const createQuestionMutation = useCreateQuestion();
+  const deleteQuestionMutation = useDeleteQuestion();
+  const toggleFavoriteMutation = useToggleQuestionFavorite();
+  const deleteImportJobMutation = useDeleteImportJob();
+
   // --- State ---
-  const [questions, setQuestions] = useState<Question[]>([]);
   const [viewMode, setViewMode] = useState<'list' | 'editor' | 'import-review' | 'import-review-list'>('list');
   const [editorType, setEditorType] = useState<'mcq' | 'essay' | 'code' | null>(null);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
@@ -105,7 +117,6 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const [showFilters, setShowFilters] = useState(false);
   const [showCreateMenu, setShowCreateMenu] = useState(false);
 
-  const [loading, setLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [togglingFavorites, setTogglingFavorites] = useState<Record<string, boolean>>({});
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
@@ -114,7 +125,6 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   // ── Import state ────────────────────────────────────────────────────────
   const [showImportModal, setShowImportModal] = useState(false);
   const [pendingReviewJobId, setPendingReviewJobId] = useState<string | null>(null);
-  const [importJobs, setImportJobs] = useState<any[]>([]);
   const [selectedImportJobIds, setSelectedImportJobIds] = useState<string[]>([]);
   const [deletingImportJobIds, setDeletingImportJobIds] = useState<string[]>([]);
   const [isDeletingImportJobs, setIsDeletingImportJobs] = useState(false);
@@ -127,41 +137,18 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     });
   };
 
-  // --- Effects ---
-
-  useEffect(() => {
-    const fetchQuestions = async () => {
-      try {
-        setLoading(true);
-        const data = await api.recruiter.getQuestionBank();
-        // Ensure data matches interface and has defaults
-        const mappedData = (data as any[]).map(q => ({
-          ...q,
-          options: q.options || [],
-          tags: q.tags || [],
-          usageCount: q.usageCount || 0,
-          avgScore: q.avgScore || 0,
-          createdAt: q.createdAt || new Date().toISOString().split('T')[0],
-          createdBy: q.createdBy || 'System',
-          isFavorite: q.isFavorite || false
-        }));
-        setQuestions(mappedData);
-      } catch (error) {
-        console.error('Failed to fetch questions:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchQuestions();
-  }, []);
-
-  // Load completed import jobs for the badge
-  useEffect(() => {
-    api.recruiter.listImportJobs()
-      .then((jobs: any[]) => setImportJobs(filterPendingReviewJobs(jobs)))
-      .catch(() => {});
-  }, []);
+  // --- Derived data ---
+  const questions: Question[] = (rawQuestions as any[]).map(q => ({
+    ...q,
+    options: q.options || [],
+    tags: q.tags || [],
+    usageCount: q.usageCount || 0,
+    avgScore: q.avgScore || 0,
+    createdAt: q.createdAt || new Date().toISOString().split('T')[0],
+    createdBy: q.createdBy || 'System',
+    isFavorite: q.isFavorite || false
+  }));
+  const importJobs: any[] = filterPendingReviewJobs(rawImportJobs as any[]);
 
   // Auto-open review when arriving from Background Tasks link.
   useEffect(() => {
@@ -304,19 +291,8 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const handleEditorSave = async (variant: QuestionVariant) => {
     try {
       setIsActionLoading(true);
-      const isUpdate = !!editingQuestionId;
       const questionPayload = fromVariant(variant, editingQuestionId || undefined);
-
-      // Call API for create (Update not implemented yet but can be added later)
-      const res = await api.recruiter.createQuestionBank(questionPayload);
-      const newQuestion = res as unknown as Question;
-
-      if (isUpdate) {
-        setQuestions(questions.map(q => (q.id === editingQuestionId ? { ...q, ...newQuestion } : q)));
-      } else {
-        setQuestions([newQuestion, ...questions]);
-      }
-
+      await createQuestionMutation.mutateAsync(questionPayload);
       setViewMode('list');
       setEditingQuestionId(null);
     } catch (err) {
@@ -331,8 +307,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     if (confirm('Are you sure you want to delete this question?')) {
       try {
         setIsActionLoading(true);
-        await api.recruiter.deleteQuestionBank(id);
-        setQuestions(questions.filter(q => q.id !== id));
+        await deleteQuestionMutation.mutateAsync(id);
         setSelectedQuestionIds(prev => prev.filter(qId => qId !== id));
       } catch (err) {
         console.error("Failed to delete question:", err);
@@ -346,11 +321,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const handleToggleFavorite = async (id: string) => {
     try {
       setTogglingFavorites(prev => ({ ...prev, [id]: true }));
-      const res = await api.recruiter.toggleQuestionFavorite(id);
-
-      setQuestions(questions.map(q =>
-        q.id === id ? { ...q, isFavorite: (res as any).isFavorite } : q
-      ));
+      await toggleFavoriteMutation.mutateAsync(id);
     } catch (err) {
       console.error("Failed to toggle favorite:", err);
     } finally {
@@ -503,14 +474,13 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     try {
       setIsActionLoading(true);
       const results = await Promise.allSettled(
-        selectedQuestionIds.map((id) => api.recruiter.deleteQuestionBank(id))
+        selectedQuestionIds.map((id) => deleteQuestionMutation.mutateAsync(id))
       );
 
       const successIds = selectedQuestionIds.filter((_, idx) => results[idx].status === 'fulfilled');
       const failedCount = selectedQuestionIds.length - successIds.length;
 
       if (successIds.length > 0) {
-        setQuestions(prev => prev.filter(q => !successIds.includes(q.id)));
         setSelectedQuestionIds(prev => prev.filter(id => !successIds.includes(id)));
       }
 
@@ -563,24 +533,8 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
           next.delete('reviewJobId');
           next.set('reviewImports', '1');
           setSearchParams(next);
-          // Refresh question list after approval
-          api.recruiter.getQuestionBank().then((rawData: unknown) => {
-            const data = rawData as any[];
-            setQuestions(data.map(q => ({
-              ...q,
-              options: q.options || [],
-              tags: q.tags || [],
-              usageCount: q.usageCount || 0,
-              avgScore: q.avgScore || 0,
-              createdAt: q.createdAt || new Date().toISOString().split('T')[0],
-              createdBy: q.createdBy || 'System',
-              isFavorite: q.isFavorite || false
-            })));
-          }).catch(() => {});
-          // Refresh import jobs badge
-          api.recruiter.listImportJobs()
-            .then(jobs => setImportJobs(filterPendingReviewJobs(jobs)))
-            .catch(() => {});
+          queryClient.invalidateQueries({ queryKey: queryKeys.questionBank.list() });
+          queryClient.invalidateQueries({ queryKey: queryKeys.questionBank.importJobs() });
         }}
       />
     );
@@ -616,15 +570,15 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       setDeletingImportJobIds(selectedImportJobIds);
 
       const results = await Promise.allSettled(
-        selectedImportJobIds.map((jobId) => api.recruiter.deleteBackgroundTask(jobId, 'question_import'))
+        selectedImportJobIds.map((jobId) => deleteImportJobMutation.mutateAsync(jobId))
       );
 
       const successIds = selectedImportJobIds.filter((_, idx) => results[idx].status === 'fulfilled');
       const failedCount = selectedImportJobIds.length - successIds.length;
 
       if (successIds.length > 0) {
-        setImportJobs(prev => prev.filter((job: any) => !successIds.includes(String(job?.job_id || job?.id || ''))));
         setSelectedImportJobIds(prev => prev.filter(id => !successIds.includes(id)));
+        queryClient.invalidateQueries({ queryKey: queryKeys.questionBank.importJobs() });
       }
 
       if (failedCount > 0) {
@@ -889,13 +843,11 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
             {showImportModal && (
               <QuestionImportModal
                 onClose={() => setShowImportModal(false)}
-                onJobQueued={(jobId) => {
+                onJobQueued={(_jobId) => {
                   // Keep modal open so user sees the Step 3 success confirmation,
-                  // but refresh jobs list shortly after queueing.
+                  // but invalidate the import jobs cache shortly after queueing.
                   setTimeout(() => {
-                    api.recruiter.listImportJobs()
-                      .then(jobs => setImportJobs(filterPendingReviewJobs(jobs)))
-                      .catch(() => {});
+                    queryClient.invalidateQueries({ queryKey: queryKeys.questionBank.importJobs() });
                   }, 3000);
                 }}
               />

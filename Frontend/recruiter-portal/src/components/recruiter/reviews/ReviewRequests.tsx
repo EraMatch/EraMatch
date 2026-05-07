@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../../ui/card';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
-import { api } from '../../../services/api';
 import { toast } from 'sonner';
+import { useAssignedRequests, useReviewRequest } from '../../../hooks/reviews/useReviews';
 import { Loader2, CheckCircle, XCircle, FileText, Calendar, Briefcase, MapPin, DollarSign, ChevronDown, ChevronUp, Search, Filter } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '../../ui/dialog';
 import { Textarea } from '../../ui/textarea';
@@ -13,8 +13,9 @@ import { AdminPositionModal } from '../../admin/AdminPositionModal';
 
 export function ReviewRequests() {
     const navigate = useNavigate();
-    const [requests, setRequests] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const { data: requestsData, isLoading } = useAssignedRequests();
+    const requests: any[] = requestsData ?? [];
+    const reviewRequestMutation = useReviewRequest();
     const [selectedRequest, setSelectedRequest] = useState<any>(null);
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -25,23 +26,6 @@ export function ReviewRequests() {
     const [expandedIds, setExpandedIds] = useState<string[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [organizationFilter, setOrganizationFilter] = useState<'all' | 'needs_attention' | 'ready'>('all');
-
-    useEffect(() => {
-        fetchRequests();
-    }, []);
-
-    const fetchRequests = async () => {
-        try {
-            setIsLoading(true);
-            const data = await api.recruiter.getAssignedRequests();
-            setRequests(data);
-        } catch (error) {
-            console.error('Failed to fetch requests:', error);
-            toast.error('Failed to load review requests');
-        } finally {
-            setIsLoading(false);
-        }
-    };
 
     const handleAction = (request: any, action: 'approved' | 'rejected') => {
         if (action === 'approved' && request.entity_id) {
@@ -72,10 +56,9 @@ export function ReviewRequests() {
 
         try {
             setIsSubmitting(true);
-            await api.recruiter.reviewRequest(selectedRequest.id, reviewAction, reviewNotes);
+            await reviewRequestMutation.mutateAsync({ id: selectedRequest.id, action: reviewAction, notes: reviewNotes });
             toast.success(`Request ${reviewAction} successfully`);
             setIsReviewModalOpen(false);
-            fetchRequests(); // Refresh list
         } catch (error) {
             console.error('Failed to submit review:', error);
             toast.error('Failed to submit review');
@@ -341,7 +324,6 @@ export function ReviewRequests() {
                     onClose={() => setIsEditModalOpen(false)}
                     onSuccess={() => {
                         setIsEditModalOpen(false);
-                        fetchRequests(); // Refresh list to see updated JD
                     }}
                     projectId={editingPosition.project_id}
                     position={editingPosition}

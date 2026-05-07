@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Bell, X, CheckCheck, Loader2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
 
 interface Notification {
@@ -13,40 +14,31 @@ interface Notification {
 
 export function Notifications() {
   const [showDropdown, setShowDropdown] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [localOverrides, setLocalOverrides] = useState<Record<number, boolean>>({});
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const { data: rawData = [], isLoading } = useQuery({
+    queryKey: ['admin', 'notifications'],
+    queryFn: () => api.admin.getNotifications(),
+    staleTime: 60 * 1000,
+  });
 
-  // Fetch notifications from API when dropdown opens
-  useEffect(() => {
-    if (showDropdown && notifications.length === 0) {
-      const fetchNotifications = async () => {
-        try {
-          setIsLoading(true);
-          const data = await api.admin.getNotifications() as any[];
-          // Map API data to component format
-          const mappedNotifications: Notification[] = data.map((n: any) => ({
-            id: n.id,
-            title: n.title,
-            message: n.message,
-            time: n.timestamp,
-            type: n.type as 'info' | 'success' | 'warning' | 'alert',
-            read: n.read
-          }));
-          setNotifications(mappedNotifications);
-        } catch (error) {
-          console.error('Failed to fetch notifications:', error);
-        } finally {
-          setIsLoading(false);
-        }
-      };
-      fetchNotifications();
-    }
-  }, [showDropdown]);
+  const [deletedIds, setDeletedIds] = useState<Set<number>>(new Set());
+
+  const notifications: Notification[] = (rawData as any[])
+    .filter((n: any) => !deletedIds.has(n.id))
+    .map((n: any) => ({
+      id: n.id,
+      title: n.title,
+      message: n.message,
+      time: n.timestamp,
+      type: n.type as 'info' | 'success' | 'warning' | 'alert',
+      read: localOverrides[n.id] !== undefined ? localOverrides[n.id] : n.read,
+    }));
+
+  const unreadCount = notifications.filter(n => !n.read).length;
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -67,17 +59,17 @@ export function Notifications() {
   }, []);
 
   const markAsRead = (id: number) => {
-    setNotifications(notifications.map(n =>
-      n.id === id ? { ...n, read: true } : n
-    ));
+    setLocalOverrides(prev => ({ ...prev, [id]: true }));
   };
 
   const markAllAsRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, read: true })));
+    const updates: Record<number, boolean> = {};
+    notifications.forEach(n => { updates[n.id] = true; });
+    setLocalOverrides(prev => ({ ...prev, ...updates }));
   };
 
   const deleteNotification = (id: number) => {
-    setNotifications(notifications.filter(n => n.id !== id));
+    setDeletedIds(prev => new Set(prev).add(id));
   };
 
   const getTypeColor = (type: string) => {

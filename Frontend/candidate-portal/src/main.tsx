@@ -8,6 +8,15 @@ import { queryClient } from './lib/queryClient'
 import { router } from './router'
 import './index.css'
 
+const candidateUserId = (() => {
+    try {
+        const token = localStorage.getItem('access_token')
+        if (!token) return 'guest'
+        const payload = JSON.parse(atob(token.split('.')[1]))
+        return String(payload.sub ?? payload.user_id ?? payload.id ?? 'guest')
+    } catch { return 'guest' }
+})()
+
 const persister = createSyncStoragePersister({
     storage: window.localStorage,
     key: 'eramatch-candidate-cache',
@@ -28,7 +37,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             client={queryClient}
             persistOptions={{
                 persister,
-                buster: 'v1',
+                buster: `v1-${candidateUserId}`,
                 maxAge: 24 * 60 * 60 * 1000,
                 dehydrateOptions: {
                     shouldDehydrateQuery: (query) => {

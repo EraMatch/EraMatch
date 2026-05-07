@@ -13,6 +13,12 @@ import { toast } from 'sonner';
 import EraMatchLogo from '../../assets/image-eramatch.png';
 import { useNavigate } from 'react-router-dom';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../../lib/queryKeys';
+import { useAdminPendingRequests, useRecruiterDelegation } from '../../hooks/admin/useAdminDashboard';
+import { useApproveRequest, useRejectRequest } from '../../hooks/admin/useAdminMutations';
+import { useProjects } from '../../hooks/projects/useProjects';
+import { usePositions } from '../../hooks/positions/usePositions';
 
 const getErrorMessage = (error: unknown, fallback: string): string => {
     if (error instanceof Error && error.message) {
@@ -30,11 +36,21 @@ export default function AdminRequests() {
 }
 
 function AdminRequestsContent() {
+    const queryClient = useQueryClient();
+
+    // TanStack Query hooks
+    const { data: requestsData, isLoading: requestsLoading } = useAdminPendingRequests('pending');
+    const { data: projectsData, isLoading: projectsLoading } = useProjects();
+    const { data: positionsData, isLoading: positionsLoading } = usePositions();
+    const { data: delegationData, isLoading: delegationLoading } = useRecruiterDelegation();
+    const approveRequestMutation = useApproveRequest();
+    const rejectRequestMutation = useRejectRequest();
+
     const [projects, setProjects] = useState<any[]>([]);
     const [positions, setPositions] = useState<any[]>([]);
     const [requests, setRequests] = useState<any[]>([]);
     const [activeTab, setActiveTab] = useState<'create_project' | 'create_position' | 'requests'>('requests');
-    const [isLoading, setIsLoading] = useState(true);
+    const isLoading = requestsLoading || projectsLoading || positionsLoading || delegationLoading;
     const [searchQuery, setSearchQuery] = useState('');
     const [filterType, setFilterType] = useState('all');
     const [requesterFilter, setRequesterFilter] = useState('all');
@@ -86,15 +102,30 @@ function AdminRequestsContent() {
     const [hrRecruiters, setHRRecruiters] = useState<any[]>([]); // Added
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    // Sync query data into local state
+    useEffect(() => {
+        if (requestsData) setRequests(requestsData);
+    }, [requestsData]);
+
+    useEffect(() => {
+        if (projectsData) setProjects(projectsData);
+    }, [projectsData]);
+
+    useEffect(() => {
+        if (positionsData) setPositions(positionsData);
+    }, [positionsData]);
+
+    useEffect(() => {
+        if (delegationData) {
+            setTechRecruiters(delegationData.technicalRecruiters || []);
+            setHRRecruiters(delegationData.hrRecruiters || []);
+        }
+    }, [delegationData]);
+
     const activeProjects = projects.filter((p) => {
         const status = String(p?.status || '').toLowerCase();
         return status === 'active';
     });
-
-    useEffect(() => {
-        fetchAll();
-        fetchTechRecruiters();
-    }, []);
 
     useEffect(() => {
         if (!selectedProjectIdForPosition) return;
@@ -108,34 +139,6 @@ function AdminRequestsContent() {
     useEffect(() => {
         setSelectedRequestIds((prev) => prev.filter((id) => requests.some((req) => String(req.id) === id)));
     }, [requests]);
-
-    const fetchAll = async () => {
-        try {
-            setIsLoading(true);
-            const [reqs, projs, pos] = await Promise.all([
-                api.admin.listApprovalRequests('pending'),
-                api.recruiter.getProjects(),
-                api.recruiter.getPositions()
-            ]);
-            setRequests(reqs || []);
-            setProjects(projs || []);
-            setPositions(pos || []);
-        } catch (error) {
-            toast.error('Failed to load provisioning data');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const fetchTechRecruiters = async () => {
-        try {
-            const res = await api.admin.getRecruiterDelegation();
-            setTechRecruiters(res.technicalRecruiters || []);
-            setHRRecruiters(res.hrRecruiters || []); // Added
-        } catch (error) {
-            console.error('Failed to fetch recruiters');
-        }
-    };
 
     const handleCreateProject = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -155,7 +158,8 @@ function AdminRequestsContent() {
             toast.success('Project created successfully');
             setProjName('');
             setProjDescription('');
-            fetchAll();
+            queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.admin.requests() });
             setActiveTab('requests');
         } catch (error) {
             toast.error('Failed to create project');
@@ -203,7 +207,8 @@ function AdminRequestsContent() {
             toast.success('Position created successfully');
             setPosJobTitle('');
             setPosJobDescription('');
-            fetchAll();
+            queryClient.invalidateQueries({ queryKey: queryKeys.positions.all() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.admin.requests() });
             setActiveTab('requests');
         } catch (error) {
             toast.error(getErrorMessage(error, 'Failed to create position'));
@@ -224,9 +229,12 @@ function AdminRequestsContent() {
                     return;
                 }
 
-                await api.admin.approveRequest(selectedRequest.id, {
-                    assigned_tech_id: assignedTechId || undefined,
-                    review_notes: reviewNotes
+                await approveRequestMutation.mutateAsync({
+                    requestId: selectedRequest.id,
+                    decision: {
+                        assigned_tech_id: assignedTechId || undefined,
+                        review_notes: reviewNotes
+                    }
                 });
                 toast.success('Request approved and resource created!');
             } else {
@@ -235,14 +243,16 @@ function AdminRequestsContent() {
                     setIsSubmitting(false);
                     return;
                 }
-                await api.admin.rejectRequest(selectedRequest.id, reviewNotes);
+                await rejectRequestMutation.mutateAsync({
+                    requestId: selectedRequest.id,
+                    notes: reviewNotes
+                });
                 toast.success('Request rejected');
             }
 
             setIsDecisionOpen(false);
             setIsDetailOpen(false);
             setReviewNotes('');
-            fetchAll();
         } catch (error) {
             toast.error('Failed to process request');
         } finally {
@@ -263,9 +273,12 @@ function AdminRequestsContent() {
                 throw new Error('Technical recruiter assignment is required for position approvals.');
             }
 
-            await api.admin.approveRequest(req.id, {
-                assigned_tech_id: techId || undefined,
-                review_notes: notes || undefined,
+            await approveRequestMutation.mutateAsync({
+                requestId: req.id,
+                decision: {
+                    assigned_tech_id: techId || undefined,
+                    review_notes: notes || undefined,
+                }
             });
             return;
         }
@@ -273,7 +286,7 @@ function AdminRequestsContent() {
         if (!notes.trim()) {
             throw new Error('Rejection reason is required.');
         }
-        await api.admin.rejectRequest(req.id, notes);
+        await rejectRequestMutation.mutateAsync({ requestId: req.id, notes });
     };
 
     const filteredRequests = requests.filter((req) => {
@@ -362,7 +375,6 @@ function AdminRequestsContent() {
         setBulkReviewNotes('');
         setBulkAssignedTechId('');
         setIsBulkSubmitting(false);
-        fetchAll();
     };
 
     const formatCreatedAt = (value?: string) => {

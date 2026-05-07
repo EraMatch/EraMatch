@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import {
     X, Clock, RefreshCw, Filter, ChevronDown,
     User, Layers, Award, Video, Mic, UserCheck,
     ArrowRightLeft, Settings, AlertTriangle, Download
 } from 'lucide-react';
-import { api } from '../../../services/api';
+import { useGroupActivityLog } from '../../../hooks/groups/useGroups';
 
 interface ActivityUser {
     id: string;
@@ -119,32 +119,14 @@ const FILTER_OPTIONS = [
 ];
 
 export function ActivityLogPanel({ groupId, groupName, onClose }: ActivityLogPanelProps) {
-    const [activities, setActivities] = useState<ActivityItem[]>([]);
-    const [totalCount, setTotalCount] = useState(0);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isRefreshing, setIsRefreshing] = useState(false);
     const [filterType, setFilterType] = useState<string>('all');
     const [showFilterDropdown, setShowFilterDropdown] = useState(false);
     const [expandedId, setExpandedId] = useState<string | null>(null);
 
-    const fetchLog = useCallback(async (showRefresh = false) => {
-        if (showRefresh) setIsRefreshing(true);
-        else setIsLoading(true);
-        try {
-            const data = await api.recruiter.getGroupActivityLog(groupId) as any;
-            setActivities(data.activities || []);
-            setTotalCount(data.total_count || 0);
-        } catch (err) {
-            console.error('Failed to load activity log:', err);
-        } finally {
-            setIsLoading(false);
-            setIsRefreshing(false);
-        }
-    }, [groupId]);
-
-    useEffect(() => {
-        fetchLog(false);
-    }, [fetchLog]);
+    const { data: logData, isLoading, isFetching, refetch } = useGroupActivityLog(groupId);
+    const activities: ActivityItem[] = (logData as any)?.activities ?? [];
+    const totalCount: number = (logData as any)?.total_count ?? 0;
+    const isRefreshing = isFetching && !isLoading;
 
     const filtered = filterType === 'all'
         ? activities
@@ -196,7 +178,7 @@ export function ActivityLogPanel({ groupId, groupName, onClose }: ActivityLogPan
                         </div>
                         <div className="flex items-center gap-2">
                             <button
-                                onClick={() => fetchLog(true)}
+                                onClick={() => refetch()}
                                 disabled={isRefreshing}
                                 className={`flex items-center gap-1.5 px-3 py-2 rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-gray-50 text-[13px] text-[#374151] transition-all ${isRefreshing ? 'opacity-60 cursor-not-allowed' : ''}`}
                             >

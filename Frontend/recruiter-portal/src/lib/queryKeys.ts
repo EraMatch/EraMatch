@@ -6,11 +6,12 @@ export const queryKeys = {
         positions:(id: string | number) => ['projects', String(id), 'positions'] as const,
     },
     positions: {
-        all:      ()   => ['positions'] as const,
-        list:     ()   => ['positions', 'list'] as const,
-        detail:   (id: string) => ['positions', 'detail', id] as const,
-        insights: (id: string) => ['positions', id, 'insights'] as const,
-        groups:   (id: string) => ['positions', id, 'groups'] as const,
+        all:       ()          => ['positions'] as const,
+        list:      ()          => ['positions', 'list'] as const,
+        detail:    (id: string) => ['positions', 'detail', id] as const,
+        insights:  (id: string) => ['positions', id, 'insights'] as const,
+        groups:    (id: string) => ['positions', id, 'groups'] as const,
+        hdEvalQAG: (id: string) => ['positions', id, 'hdEvalQAG'] as const,
     },
     groups: {
         all:              ()   => ['groups'] as const,
@@ -32,11 +33,19 @@ export const queryKeys = {
         notifications: () => ['dashboard', 'notifications'] as const,
     },
     admin: {
-        stats:       () => ['admin', 'stats', 'global'] as const,
-        members:     () => ['members'] as const,
-        delegation:  () => ['delegation'] as const,
-        requests:    (s = 'pending') => ['admin', 'requests', s] as const,
-        subscription:() => ['admin', 'subscription'] as const,
+        stats:             () => ['admin', 'stats', 'global'] as const,
+        members:           () => ['members'] as const,
+        memberStats:       () => ['admin', 'memberStats'] as const,
+        delegation:        () => ['delegation'] as const,
+        recentAssignments: () => ['admin', 'recentAssignments'] as const,
+        workload:          () => ['admin', 'workload'] as const,
+        requests:          (s = 'pending') => ['admin', 'requests', s] as const,
+        subscription:      () => ['admin', 'subscription'] as const,
+        settings:          () => ['admin', 'settings'] as const,
+        paymentMethod:     () => ['admin', 'payment'] as const,
+        archivedProjects:  () => ['admin', 'archive', 'projects'] as const,
+        archivedPositions: (projectId: string) => ['admin', 'archive', 'positions', projectId] as const,
+        archiveDetails:    (positionId: string) => ['admin', 'archive', 'details', positionId] as const,
     },
     settings:     () => ['settings'] as const,
     questionBank: {
@@ -62,5 +71,9 @@ export const queryKeys = {
     },
     liveInterview: {
         config: (groupId: string) => ['liveInterview', 'config', groupId] as const,
+    },
+    interviews: {
+        aiConfig: (id: string) => ['interviews', 'aiConfig', id] as const,
+        aiResult: (candidateId: string) => ['interviews', 'aiResult', candidateId] as const,
     },
 };

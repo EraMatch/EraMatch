@@ -34,3 +34,12 @@ export function usePositionGroups(positionId: string | undefined) {
         enabled: !!positionId,
     })
 }
+
+export function usePositionHDEvalQAG(positionId: string | undefined) {
+    return useQuery({
+        queryKey: queryKeys.positions.hdEvalQAG(positionId ?? ''),
+        queryFn: () => api.recruiter.getPositionHDEvalQAG(positionId!),
+        enabled: !!positionId,
+        staleTime: 2 * 60 * 1000,
+    })
+}

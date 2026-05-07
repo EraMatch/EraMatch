@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../../../services/api';
+import { useDraftQuestions, useApproveImportQuestions } from '../../../hooks/questionBank/useQuestionBank';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -121,11 +122,12 @@ const HIERARCHICAL_CHECK_TEMPLATES = [
 // ─── Component ────────────────────────────────────────────────────────────────
 export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [data, setData] = useState<DraftReviewData | null>(null);
   const [rows, setRows] = useState<ReviewState[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isApproving, setIsApproving] = useState(false);
+  const approveImportMutation = useApproveImportQuestions();
+  const { data: draftData, isLoading: loading, error: queryError } = useDraftQuestions(jobId);
+  const data = draftData as DraftReviewData | null ?? null;
   const [approveResult, setApproveResult] = useState<{ imported_count: number; message: string } | null>(null);
   const [refiningQuestionIndex, setRefiningQuestionIndex] = useState<number | null>(null);
   const [refineError, setRefineError] = useState<string | null>(null);
@@ -148,32 +150,28 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
     setSearchParams(nextParams);
   };
 
-  // ── Load draft questions ──────────────────────────────────────────────────
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const d = await api.recruiter.getDraftQuestions(jobId);
-      setData(d);
-      setRows(
-        d.questions.map((q: DraftQuestion) => ({
-          question: q,
-          selected: !q.needs_review || q.critic_score >= 0.4, // auto-select passing questions
-          expanded: false,
-          editing: false,
-          edited: { ...q },
-          rubricCheckErrors: [],
-          rubricFormError: null,
-        }))
-      );
-    } catch (err: any) {
-      setError(err.message || 'Failed to load draft questions');
-    } finally {
-      setLoading(false);
+  // ── Sync query data into rows state ──────────────────────────────────────
+  useEffect(() => {
+    if (queryError) {
+      setError((queryError as any)?.message || 'Failed to load draft questions');
     }
-  }, [jobId]);
+  }, [queryError]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!draftData) return;
+    const d = draftData as DraftReviewData;
+    setRows(
+      d.questions.map((q: DraftQuestion) => ({
+        question: q,
+        selected: !q.needs_review || q.critic_score >= 0.4,
+        expanded: false,
+        editing: false,
+        edited: { ...q },
+        rubricCheckErrors: [],
+        rubricFormError: null,
+      }))
+    );
+  }, [draftData]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const toggleRow = (i: number) => {
@@ -408,8 +406,8 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
     if (selected.length === 0) return;
     setIsApproving(true);
     try {
-      const result = await api.recruiter.approveImportQuestions(jobId, selected);
-      setApproveResult(result);
+      const result = await approveImportMutation.mutateAsync({ jobId, selected });
+      setApproveResult(result as any);
       setTimeout(() => { onApproved(); }, 2500);
     } catch (err: any) {
       setError(err.message || 'Failed to import questions');

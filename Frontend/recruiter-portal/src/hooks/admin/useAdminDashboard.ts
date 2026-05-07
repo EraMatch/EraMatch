@@ -33,3 +33,77 @@ export function useAdminSubscription() {
         staleTime: 10 * 60 * 1000,
     })
 }
+
+export function useAdminSettings() {
+    return useQuery({
+        queryKey: queryKeys.admin.settings(),
+        queryFn: () => api.admin.getSettings(),
+        staleTime: 5 * 60 * 1000,
+    })
+}
+
+export function useAdminPaymentMethod() {
+    return useQuery({
+        queryKey: queryKeys.admin.paymentMethod(),
+        queryFn: () => api.admin.getPaymentMethod(),
+        staleTime: 10 * 60 * 1000,
+    })
+}
+
+export function useAdminMemberStats() {
+    return useQuery({
+        queryKey: queryKeys.admin.memberStats(),
+        queryFn: () => api.admin.getMemberStats(),
+        staleTime: 5 * 60 * 1000,
+    })
+}
+
+export function useRecruiterDelegation() {
+    return useQuery({
+        queryKey: queryKeys.admin.delegation(),
+        queryFn: () => api.admin.getRecruiterDelegation(),
+        staleTime: 2 * 60 * 1000,
+    })
+}
+
+export function useRecentAssignments() {
+    return useQuery({
+        queryKey: queryKeys.admin.recentAssignments(),
+        queryFn: () => api.admin.getRecentAssignments(),
+        staleTime: 60 * 1000,
+    })
+}
+
+export function useRecruiterWorkload() {
+    return useQuery({
+        queryKey: queryKeys.admin.workload(),
+        queryFn: () => api.admin.getRecruiterWorkloadDistribution(),
+        staleTime: 5 * 60 * 1000,
+    })
+}
+
+export function useArchivedProjects() {
+    return useQuery({
+        queryKey: queryKeys.admin.archivedProjects(),
+        queryFn: () => api.admin.getArchivedProjects(),
+        staleTime: 10 * 60 * 1000,
+    })
+}
+
+export function useArchivedPositions(projectId: string | undefined) {
+    return useQuery({
+        queryKey: queryKeys.admin.archivedPositions(projectId ?? ''),
+        queryFn: () => api.admin.getArchivedPositions(projectId!),
+        enabled: !!projectId,
+        staleTime: 10 * 60 * 1000,
+    })
+}
+
+export function usePositionArchiveDetails(positionId: string | undefined) {
+    return useQuery({
+        queryKey: queryKeys.admin.archiveDetails(positionId ?? ''),
+        queryFn: () => api.admin.getPositionArchiveDetails(positionId!),
+        enabled: !!positionId,
+        staleTime: 10 * 60 * 1000,
+    })
+}

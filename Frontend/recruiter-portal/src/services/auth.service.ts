@@ -1,4 +1,10 @@
 import { API_URL, fetchAPI } from './client';
+import { queryClient } from '../lib/queryClient';
+
+function clearRecruiterCache() {
+    queryClient.clear();
+    localStorage.removeItem('eramatch-recruiter-cache');
+}
 
 export const authService = {
     login: async (email: string, pass: string) => {
@@ -23,6 +29,8 @@ export const authService = {
         // Save to localStorage
         const token = data.access_token || data.token;
         if (token) {
+            const prevId = (() => { try { return JSON.parse(localStorage.getItem('user') || '{}')?.id } catch { return undefined } })()
+            if (prevId !== undefined && prevId !== data.user?.id) clearRecruiterCache();
             localStorage.setItem('token', token);
             localStorage.setItem('user', JSON.stringify(data.user));
         }
@@ -45,6 +53,8 @@ export const authService = {
         // Save to localStorage
         const token = data.access_token || data.token;
         if (token) {
+            const prevId = (() => { try { return JSON.parse(localStorage.getItem('user') || '{}')?.id } catch { return undefined } })()
+            if (prevId !== undefined && prevId !== data.user?.id) clearRecruiterCache();
             localStorage.setItem('token', token);
             localStorage.setItem('user', JSON.stringify(data.user));
         }

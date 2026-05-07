@@ -30,3 +30,58 @@ export function useGroupActivityLog(groupId: string | undefined) {
         enabled: !!groupId,
     })
 }
+
+export function useUpdateGroup() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: ({ groupId, data }: { groupId: string; data: any }) =>
+            api.recruiter.updateGroup(groupId, data),
+        onSuccess: (_res, { groupId }) => {
+            qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) })
+        },
+    })
+}
+
+export function useStartStage() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: ({ groupId, stage }: { groupId: string; stage: string }) =>
+            api.recruiter.startStage(groupId, stage),
+        onSuccess: (_res, { groupId }) => {
+            qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) })
+        },
+    })
+}
+
+export function useCloseStage() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: ({ groupId, stage }: { groupId: string; stage: string }) =>
+            api.recruiter.closeStage(groupId, stage),
+        onSuccess: (_res, { groupId }) => {
+            qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) })
+        },
+    })
+}
+
+export function useSendOffers() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: ({ groupId, payload }: { groupId: string; payload: any }) =>
+            api.recruiter.sendOffers(groupId, payload),
+        onSuccess: (_res, { groupId }) => {
+            qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) })
+        },
+    })
+}
+
+export function useBulkProgressCandidates() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: ({ groupId, payload }: { groupId: string; payload: any }) =>
+            api.recruiter.bulkProgressCandidates(groupId, payload),
+        onSuccess: (_res, { groupId }) => {
+            qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) })
+        },
+    })
+}

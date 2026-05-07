@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { ChevronLeft, Play, Pause, SkipForward, AlertTriangle, Flag, Mail, X, FileText, Clock, User, Video, ChevronDown } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../../../services/api';
 import { API_URL } from '../../../services/client';
+import { useSuspectReview } from '../../../hooks/candidates/useCandidates';
 
 interface FlagEvent {
   id: string;
@@ -56,7 +57,6 @@ export function SuspectReviewPage({
   const [decompressionStatus, setDecompressionStatus] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [flags, setFlags] = useState<FlagEvent[]>([]);
-  const [loading, setLoading] = useState(true);
   const [suspectTimestamps, setSuspectTimestamps] = useState<number[]>([]);
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -66,6 +66,33 @@ export function SuspectReviewPage({
   const [groupName, setGroupName] = useState('Unknown Group');
   const [positionTitle, setPositionTitle] = useState('Unknown Position');
   const [currentModule, setCurrentModule] = useState('Assessment');
+  const [dataInitialized, setDataInitialized] = useState(false);
+
+  const { data: suspectData, isLoading: loading } = useSuspectReview(candidateId, applicationId);
+
+  // Derive local state from query data when it arrives
+  if (suspectData && !dataInitialized) {
+    const data = suspectData as SuspectReviewPayload;
+    setCandidateName(data.candidate_name || 'Unknown Candidate');
+    setGroupName(data.group_name || 'Unknown Group');
+    setPositionTitle(data.position_title || 'Unknown Position');
+    setCurrentModule(data.current_module || 'Assessment');
+    const backendBase = API_URL.replace('/api/v1', '');
+    if (data.recording_url && /^https?:\/\//i.test(data.recording_url)) {
+      setRecordingUrl(data.recording_url);
+    } else if (data.recording_url) {
+      setRecordingUrl(`${backendBase}${data.recording_url}`);
+    } else {
+      setRecordingUrl(null);
+    }
+    setFlags(data.flags || []);
+    setSuspectTimestamps((data.suspicious_timestamps || []).map((v) => Math.max(0, Math.floor(v))));
+    setDuration(Math.max(0, data.duration || 0));
+    setFlagStatuses(
+      (data.flags || []).reduce((acc: Record<string, 'pending' | 'cleared' | 'escalated'>, flag: FlagEvent) => ({ ...acc, [flag.id]: flag.status }), {})
+    );
+    setDataInitialized(true);
+  }
 
   const pendingCount = useMemo(
     () => flags.filter((f) => (flagStatuses[f.id] || f.status) === 'pending').length,
@@ -112,39 +139,6 @@ export function SuspectReviewPage({
     [flags, selectedFlag],
   );
 
-  // Fetch suspect review data from API
-  useEffect(() => {
-    const fetchSuspectReview = async () => {
-      try {
-        setLoading(true);
-        const data = await api.recruiter.getSuspectReview(candidateId, applicationId) as SuspectReviewPayload;
-        setCandidateName(data.candidate_name || 'Unknown Candidate');
-        setGroupName(data.group_name || 'Unknown Group');
-        setPositionTitle(data.position_title || 'Unknown Position');
-        setCurrentModule(data.current_module || 'Assessment');
-        const backendBase = API_URL.replace('/api/v1', '');
-        if (data.recording_url && /^https?:\/\//i.test(data.recording_url)) {
-          setRecordingUrl(data.recording_url);
-        } else if (data.recording_url) {
-          setRecordingUrl(`${backendBase}${data.recording_url}`);
-        } else {
-          setRecordingUrl(null);
-        }
-        setFlags(data.flags || []);
-        setSuspectTimestamps((data.suspicious_timestamps || []).map((v) => Math.max(0, Math.floor(v))));
-        setDuration(Math.max(0, data.duration || 0));
-        setFlagStatuses(
-          (data.flags || []).reduce((acc: Record<string, 'pending' | 'cleared' | 'escalated'>, flag: FlagEvent) => ({ ...acc, [flag.id]: flag.status }), {})
-        );
-      } catch (error) {
-        console.error('Failed to fetch suspect review:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchSuspectReview();
-  }, [candidateId, applicationId]);
 
   const handleSeekToFlag = (timestamp: number) => {
     setCurrentTime(timestamp);

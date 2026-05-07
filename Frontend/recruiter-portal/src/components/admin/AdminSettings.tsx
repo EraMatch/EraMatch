@@ -7,10 +7,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Bell, Mail, Lock, User, Globe, Loader2, Check, CreditCard, Calendar, Users, Zap, ArrowRight } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import { adminService } from '../../services/admin.service';
 import { authService } from '../../services/auth.service';
 import EraMatchLogo from '../../assets/image-eramatch.png';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { useAdminSettings, useAdminSubscription, useAdminPaymentMethod } from '../../hooks/admin/useAdminDashboard';
+import { useUpdateAdminProfile, useUpdateOrganization, useUpdatePreferences, useUpgradeSubscription, useAddPaymentMethod } from '../../hooks/admin/useAdminMutations';
 
 interface AdminSettingsProps {
   onSignOut: () => void;
@@ -18,7 +19,18 @@ interface AdminSettingsProps {
 
 export function AdminSettings({ onSignOut }: AdminSettingsProps) {
   const [activeTab, setActiveTab] = useState<'profile' | 'organization' | 'notifications' | 'security' | 'subscription' | 'workflow'>('profile');
-  const [isLoading, setIsLoading] = useState(true);
+
+  // TanStack Query hooks
+  const { data: settingsData, isLoading: settingsLoading } = useAdminSettings();
+  const { data: subscriptionData, isLoading: subscriptionLoading } = useAdminSubscription();
+  const { data: paymentData, isLoading: paymentLoading } = useAdminPaymentMethod();
+  const updateProfileMutation = useUpdateAdminProfile();
+  const updateOrganizationMutation = useUpdateOrganization();
+  const updatePreferencesMutation = useUpdatePreferences();
+  const upgradeSubscriptionMutation = useUpgradeSubscription();
+  const addPaymentMethodMutation = useAddPaymentMethod();
+
+  const isLoading = settingsLoading || subscriptionLoading || paymentLoading;
 
 
 
@@ -69,60 +81,41 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
   const [cardCVC, setCardCVC] = useState('');
   const [cardName, setCardName] = useState('');
 
+  // Sync settings query data into local form state
   useEffect(() => {
-    loadSettings();
-  }, []);
+    if (!settingsData) return;
+    setFirstName(settingsData.first_name || '');
+    setLastName(settingsData.last_name || '');
+    setEmail(settingsData.email || '');
+    setRole(settingsData.role || 'Admin');
+    setOrgName(settingsData.organization_name || '');
+    setOrgEmail(settingsData.organization_email || '');
+    setTimezone(settingsData.timezone || 'UTC-08:00 (Pacific Time)');
+    setEmailNotifications(settingsData.email_notifications ?? true);
+    setNewMemberRequests(settingsData.new_member_requests ?? true);
+    setProjectUpdates(settingsData.project_updates ?? true);
+    setWeeklySummary(settingsData.weekly_summary ?? false);
+    setTwoFactorAuth(settingsData.two_factor_auth ?? false);
+    setSessionTimeout(settingsData.session_timeout ?? true);
+    setBypassAdminApproval(settingsData.bypass_admin_approval ?? false);
+  }, [settingsData]);
 
-  const loadSettings = async () => {
-    try {
-      setIsLoading(true);
-      const [settingsData, subscriptionData, paymentData] = await Promise.all([
-        adminService.getSettings(),
-        adminService.getSubscriptionPlans().catch(() => null),
-        adminService.getPaymentMethod().catch(() => null)
-      ]);
+  // Sync subscription query data
+  useEffect(() => {
+    if (!subscriptionData) return;
+    setCurrentPlan((subscriptionData as any).currentPlan);
+    setUsage((subscriptionData as any).usage);
+    setAvailablePlans((subscriptionData as any).availablePlans);
+  }, [subscriptionData]);
 
-      // Profile
-      setFirstName(settingsData.first_name || '');
-      setLastName(settingsData.last_name || '');
-      setEmail(settingsData.email || '');
-      setRole(settingsData.role || 'Admin');
-
-      // Organization
-      setOrgName(settingsData.organization_name || '');
-      setOrgEmail(settingsData.organization_email || '');
-      setTimezone(settingsData.timezone || 'UTC-08:00 (Pacific Time)');
-
-      // Preferences (Notifications & Security)
-      setEmailNotifications(settingsData.email_notifications ?? true);
-      setNewMemberRequests(settingsData.new_member_requests ?? true);
-      setProjectUpdates(settingsData.project_updates ?? true);
-      setWeeklySummary(settingsData.weekly_summary ?? false);
-      setTwoFactorAuth(settingsData.two_factor_auth ?? false);
-      setSessionTimeout(settingsData.session_timeout ?? true);
-
-      // Preferences (Workflow)
-      setBypassAdminApproval(settingsData.bypass_admin_approval ?? false);
-
-      // Subscription
-      if (subscriptionData) {
-        setCurrentPlan((subscriptionData as any).currentPlan);
-        setUsage((subscriptionData as any).usage);
-        setAvailablePlans((subscriptionData as any).availablePlans);
-      }
-      setPaymentMethod(paymentData);
-
-    } catch (error) {
-      console.error('Failed to load settings:', error);
-      toast.error('Failed to load settings. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Sync payment method query data
+  useEffect(() => {
+    if (paymentData !== undefined) setPaymentMethod(paymentData);
+  }, [paymentData]);
 
   const handleSaveProfile = async () => {
     try {
-      await adminService.updateProfile({
+      await updateProfileMutation.mutateAsync({
         first_name: firstName,
         last_name: lastName,
         email
@@ -136,7 +129,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
 
   const handleSaveOrganization = async () => {
     try {
-      await adminService.updateOrganization({
+      await updateOrganizationMutation.mutateAsync({
         organization_name: orgName,
         admin_email: orgEmail,
         timezone
@@ -148,20 +141,17 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
     }
   };
 
-  const handleTogglePreference = async (key: string, value: boolean, setter: (val: boolean) => void) => {
+  const handleTogglePreference = (key: string, value: boolean, setter: (val: boolean) => void) => {
     // Optimistic update
     setter(value);
 
-    // In a real implementation with per-user prefs column, we'd send this to API
-    // For now, we mock the persistence success or send to the generic updatePreferences endpoint
-    try {
-      await adminService.updatePreferences({ [key]: value });
-      // Silet success for toggles
-    } catch (error) {
-      // Revert on failure
-      setter(!value);
-      toast.error('Failed to update preference.');
-    }
+    updatePreferencesMutation.mutate({ [key]: value }, {
+      onError: () => {
+        // Revert on failure
+        setter(!value);
+        toast.error('Failed to update preference.');
+      }
+    });
   };
 
   const handleChangePassword = async () => {
@@ -223,10 +213,9 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
     if (selectedPlan) {
       try {
         setIsActionLoading(true);
-        await adminService.upgradeSubscription(selectedPlan.id);
+        await upgradeSubscriptionMutation.mutateAsync(selectedPlan.id);
         toast.success(`Upgraded to ${selectedPlan.name} plan`);
         setIsUpgradeModalOpen(false);
-        await loadSettings();
       } catch (error) {
         console.error('Failed to upgrade plan:', error);
         toast.error('Failed to upgrade plan.');
@@ -245,14 +234,13 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
       setIsActionLoading(true);
       const last4 = cardNumber.slice(-4);
       const brand = cardNumber.startsWith('4') ? 'Visa' : 'Mastercard';
-      await adminService.addPaymentMethod({
+      await addPaymentMethodMutation.mutateAsync({
         brand, last4, expiry: cardExpiry,
         cardNumber, cvc: cardCVC, cardName
       });
       toast.success('Payment method updated successfully');
       setIsCardUpdateModalOpen(false);
       setCardNumber(''); setCardExpiry(''); setCardCVC(''); setCardName('');
-      await loadSettings();
     } catch (error) {
       console.error('Failed to update payment method:', error);
       toast.error('Failed to update payment method.');

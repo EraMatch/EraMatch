@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock, ShieldCheck, Award, Zap, Code2, Cpu, Layers, Globe, Terminal, Briefcase, Users } from 'lucide-react';
 import LoadingSpinner from '../../common/LoadingSpinner';
 import { EnhancedAssessmentReport } from '../assessments/EnhancedAssessmentReport';
@@ -11,6 +11,7 @@ import { API_URL } from '../../../services/client';
 import { LiveInterviewResults } from '../live-interview-v2/LiveInterviewResults';
 import type { ApplicationScoreBreakdown } from '../../../services/types';
 import { useNavigate } from 'react-router-dom';
+import { useCandidateDetail, useCandidateScoreBreakdown } from '../../../hooks/candidates/useCandidates';
 
 interface CandidateProfileProps {
   candidateId: string;
@@ -33,16 +34,22 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [showGithubAssignedQuestions, setShowGithubAssignedQuestions] = useState(false);
   const [githubQuestionTypeFilter, setGithubQuestionTypeFilter] = useState<'all' | 'mcq' | 'essay' | 'coding'>('all');
 
-  const [candidate, setCandidate] = useState<any>(null);
-  const [scoreBreakdown, setScoreBreakdown] = useState<ApplicationScoreBreakdown | null>(null);
-  const [scoreBreakdownLoading, setScoreBreakdownLoading] = useState(false);
   const [assessmentResetLoading, setAssessmentResetLoading] = useState(false);
   const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
   const [assessmentResetError, setAssessmentResetError] = useState<string | null>(null);
   const [githubReanalysisLoading, setGithubReanalysisLoading] = useState(false);
   const [githubReanalysisMessage, setGithubReanalysisMessage] = useState<string | null>(null);
   const [githubReanalysisError, setGithubReanalysisError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+
+  const { data: candidate, isLoading } = useCandidateDetail(candidateId);
+
+  const resolvedApplicationId = applicationId || (candidate as any)?.applicationId || (candidate as any)?.application_id;
+
+  const { data: scoreBreakdownData, isLoading: scoreBreakdownLoading } = useCandidateScoreBreakdown(
+    resolvedApplicationId ? String(resolvedApplicationId) : undefined
+  );
+  const scoreBreakdown = (scoreBreakdownData as ApplicationScoreBreakdown | undefined) ?? null;
+
   const backendOrigin = (() => {
     try {
       return new URL(API_URL).origin;
@@ -58,45 +65,6 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
     return `${backendOrigin}${path}`;
   };
 
-  const resolvedApplicationId = applicationId || candidate?.applicationId || candidate?.application_id;
-
-  useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        setIsLoading(true);
-        const data = await api.recruiter.getCandidate(candidateId);
-        console.log('Fetched candidate data:', data);
-        setCandidate(data);
-      } catch (error) {
-        console.error("Failed to load profile");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchProfile();
-  }, [candidateId]);
-
-  useEffect(() => {
-    if (!resolvedApplicationId) {
-      setScoreBreakdown(null);
-      return;
-    }
-
-    const fetchScoreBreakdown = async () => {
-      try {
-        setScoreBreakdownLoading(true);
-        const data = await api.recruiter.getApplicationScoreBreakdown(String(resolvedApplicationId));
-        setScoreBreakdown(data);
-      } catch (error) {
-        console.error('Failed to load score breakdown', error);
-        setScoreBreakdown(null);
-      } finally {
-        setScoreBreakdownLoading(false);
-      }
-    };
-
-    fetchScoreBreakdown();
-  }, [resolvedApplicationId]);
 
   const handleResetAssessmentTrial = async () => {
     if (!resolvedApplicationId) {

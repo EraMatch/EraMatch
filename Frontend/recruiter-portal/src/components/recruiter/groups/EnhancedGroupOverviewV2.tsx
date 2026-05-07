@@ -23,6 +23,9 @@ import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
 import { useEffect } from 'react';
 import LoadingSpinner from '../../common/LoadingSpinner';
+import { useGroupDetail, useUpdateGroup, useStartStage, useCloseStage, useSendOffers, useBulkProgressCandidates } from '../../../hooks/groups/useGroups';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../../../lib/queryKeys';
 
 interface EnhancedGroupOverviewV2Props {
   groupId: string;
@@ -237,16 +240,23 @@ export function EnhancedGroupOverviewV2({
   const [pipelineSteps, setPipelineSteps] = useState<PipelineStep[]>([]);
   const [candidateStatuses, setCandidateStatuses] = useState<CandidateStatus[]>([]);
   const [activeFlow, setActiveFlow] = useState<string[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [positionId, setPositionId] = useState<string>('');
   const [interviewConfigId, setInterviewConfigId] = useState<string | null>(null);
 
-  // Fetch data on mount
+  const queryClient = useQueryClient();
+  const { data: groupDetailData, isLoading } = useGroupDetail(groupId);
+  const updateGroupMutation = useUpdateGroup();
+  const startStageMutation = useStartStage();
+  const closeStageMutation = useCloseStage();
+  const sendOffersMutation = useSendOffers();
+  const bulkProgressMutation = useBulkProgressCandidates();
+
+  // Sync data from query into local state
   useEffect(() => {
+    if (!groupDetailData) return;
     const fetchData = async () => {
       try {
-        setIsLoading(true);
-        const data = await api.recruiter.getGroupDetails(groupId) as any;
+        const data = groupDetailData as any;
         if (data.position_id) {
           setPositionId(data.position_id);
         }
@@ -393,24 +403,25 @@ export function EnhancedGroupOverviewV2({
         }
 
       } catch (error) {
-        console.error('Failed to fetch enhanced group details:', error);
-      } finally {
-        setIsLoading(false);
+        console.error('Failed to process group details:', error);
       }
     };
 
     fetchData();
-  }, [groupId, refreshKey]);
+  }, [groupDetailData]);
 
   const handleSaveFlow = async (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[], configuredGithubQuestionsCount: number) => {
     try {
-      await api.recruiter.updateGroup(groupId, {
-        filtration_flow: flowConfig,
-        github_questions_count: configuredGithubQuestionsCount,
+      await updateGroupMutation.mutateAsync({
+        groupId,
+        data: {
+          filtration_flow: flowConfig,
+          github_questions_count: configuredGithubQuestionsCount,
+        },
       });
       setGithubQuestionsCount(configuredGithubQuestionsCount);
       setShowFlowConfigModal(false);
-      setRefreshKey(prev => prev + 1); // Trigger refresh
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
       showToast('Filtration flow updated successfully');
     } catch (error) {
       console.error('Failed to save flow:', error);
@@ -442,7 +453,8 @@ export function EnhancedGroupOverviewV2({
     const currentStepIndex = steps.findIndex(s => s.id === currentStage);
     if (currentStepIndex !== -1) {
       try {
-        await api.recruiter.startStage(groupId, currentStage);
+        await startStageMutation.mutateAsync({ groupId, stage: currentStage });
+        queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
       } catch (error) {
         console.error('Failed to start stage on backend:', error);
         showToast('Failed to start stage — please try again');
@@ -470,7 +482,8 @@ export function EnhancedGroupOverviewV2({
     const currentStepIndex = steps.findIndex(s => s.id === currentStage);
     if (currentStepIndex !== -1) {
       try {
-        await api.recruiter.closeStage(groupId, currentStage);
+        await closeStageMutation.mutateAsync({ groupId, stage: currentStage });
+        queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
       } catch (error) {
         console.error('Failed to close stage on backend:', error);
         showToast('Failed to close stage — please try again');
@@ -500,11 +513,15 @@ export function EnhancedGroupOverviewV2({
         });
 
       if (appIds.length > 0) {
-        await api.recruiter.sendOffers(groupId, {
-          application_ids: appIds,
-          email_subject: `Offer for ${description || 'position'}`,
-          email_body: emailContent,
+        await sendOffersMutation.mutateAsync({
+          groupId,
+          payload: {
+            application_ids: appIds,
+            email_subject: `Offer for ${description || 'position'}`,
+            email_body: emailContent,
+          },
         });
+        queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
       }
     } catch (error) {
       console.error('Failed to send offers via backend:', error);
@@ -564,11 +581,15 @@ export function EnhancedGroupOverviewV2({
         });
 
       if (appIds.length > 0) {
-        await api.recruiter.bulkProgressCandidates(groupId, {
-          application_ids: appIds,
-          action,
-          current_stage_type: currentStage
-        } as any);
+        await bulkProgressMutation.mutateAsync({
+          groupId,
+          payload: {
+            application_ids: appIds,
+            action,
+            current_stage_type: currentStage
+          },
+        });
+        queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
       }
     } catch (error) {
       console.error('Failed to bulk progress candidates on backend:', error);

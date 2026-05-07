@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react';
 import { ChevronLeft, Users, Sparkles, Send, Calendar, MoveRight, Download, Edit, UserPlus, UserMinus, TrendingUp, AlertTriangle, Eye } from 'lucide-react';
-import { api } from '../../../services/api';
+import { useGroupDetail } from '../../../hooks/groups/useGroups';
 
 interface GroupOverviewProps {
   groupId: string;
@@ -42,27 +41,9 @@ export function GroupOverview({
   onBack,
   onViewCandidate
 }: GroupOverviewProps) {
-  const [candidates, setCandidates] = useState<GroupCandidate[]>([]);
-  const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Fetch group details from API
-  useEffect(() => {
-    const fetchGroupDetails = async () => {
-      try {
-        setLoading(true);
-        const data: any = await api.recruiter.getGroupDetails(groupId);
-        setCandidates(data.candidates as GroupCandidate[]);
-        setPipelineStages(data.pipelineStages);
-      } catch (error) {
-        console.error('Failed to fetch group details:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchGroupDetails();
-  }, [groupId]);
+  const { data: groupData, isLoading: loading } = useGroupDetail(groupId);
+  const candidates: GroupCandidate[] = (groupData as any)?.candidates ?? [];
+  const pipelineStages: PipelineStage[] = (groupData as any)?.pipelineStages ?? [];
 
   const getStatusColor = (status: string) => {
     switch (status) {

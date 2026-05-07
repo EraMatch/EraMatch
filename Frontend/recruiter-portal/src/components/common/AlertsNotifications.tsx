@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Bell, AlertTriangle, CheckCircle, UserPlus, FileCheck, Video, Github, Clock, ChevronRight, Loader2 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
-import { api } from '../../services/api';
 import EraMatchLogo from '../../assets/image-eramatch.png';
+import { useNotifications } from '../../hooks/dashboard/useDashboardAnalytics';
 
 interface AlertsNotificationsProps {
   onViewCandidate: (candidateId: number) => void;
@@ -20,46 +20,23 @@ interface Notification {
 }
 
 export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProps) {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [localReadIds, setLocalReadIds] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const location = useLocation();
   const isRecruiter = location.pathname.startsWith('/recruiter');
 
-  // Fetch alerts from API
-  useEffect(() => {
-    const fetchAlerts = async () => {
-      try {
-        setIsLoading(true);
-        let data: any[] = [];
+  const { data: rawData = [], isLoading } = useNotifications();
 
-        if (isRecruiter) {
-          data = await api.recruiter.getNotifications() as any[];
-        } else {
-          data = await api.admin.getAlerts() as any[];
-        }
-
-        // Map API data to component format
-        const mappedAlerts: Notification[] = data.map((alert: any) => ({
-          id: String(alert.id),
-          type: (alert.type || 'match') as Notification['type'],
-          title: alert.title,
-          description: alert.message || '',
-          candidateId: alert.data?.candidate_id || 0,
-          candidateName: alert.data?.candidate_name || 'System',
-          timestamp: alert.created_at ? new Date(alert.created_at).toLocaleString() : 'Just now',
-          read: alert.is_read || false
-        }));
-        setNotifications(mappedAlerts);
-      } catch (error) {
-        console.error('Failed to fetch alerts:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchAlerts();
-  }, [isRecruiter]);
+  const notifications: Notification[] = (rawData as any[]).map((alert: any) => ({
+    id: String(alert.id),
+    type: (alert.type || 'match') as Notification['type'],
+    title: alert.title,
+    description: alert.message || '',
+    candidateId: alert.data?.candidate_id || 0,
+    candidateName: alert.data?.candidate_name || 'System',
+    timestamp: alert.created_at ? new Date(alert.created_at).toLocaleString() : 'Just now',
+    read: localReadIds.has(String(alert.id)) || alert.is_read || false,
+  }));
 
   const getIcon = (type: string) => {
     switch (type) {
@@ -96,13 +73,11 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
   };
 
   const markAsRead = (id: string) => {
-    setNotifications(notifications.map(n =>
-      n.id === id ? { ...n, read: true } : n
-    ));
+    setLocalReadIds(prev => new Set(prev).add(id));
   };
 
   const markAllAsRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, read: true })));
+    setLocalReadIds(new Set(notifications.map(n => n.id)));
   };
 
   const filteredNotifications = filter === 'unread'
