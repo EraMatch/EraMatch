@@ -762,6 +762,50 @@ class GroupService:
                         live_flow_config=cfg.scoring_rubric,
                     )
                 )
+
+        # Include LiV2Rubric config when a live_interview stage exists.
+        # ConfigWizardV2 stores its setup in LiV2Rubric/LiV2Bank (not LiveInterviewConfig),
+        # so we must surface it separately.
+        has_live_stage = any(sc.stage_type == "live_interview" for sc in stage_configs)
+        if has_live_stage:
+            liv2_rubric_res = await self.session.execute(
+                select(LiV2Rubric)
+                .where(
+                    LiV2Rubric.group_id == group_id,
+                    LiV2Rubric.organization_id == self.org_id,
+                )
+                .order_by(LiV2Rubric.created_at.desc())
+                .limit(1)
+            )
+            liv2_rubric = liv2_rubric_res.scalar_one_or_none()
+            if liv2_rubric:
+                liv2_bank_res = await self.session.execute(
+                    select(LiV2Bank)
+                    .where(
+                        LiV2Bank.group_id == group_id,
+                        LiV2Bank.organization_id == self.org_id,
+                    )
+                    .order_by(LiV2Bank.created_at.desc())
+                    .limit(1)
+                )
+                liv2_bank = liv2_bank_res.scalar_one_or_none()
+                dim_count = len(liv2_rubric.dimensions) if isinstance(liv2_rubric.dimensions, list) else 0
+                q_count = len(liv2_bank.items) if liv2_bank and isinstance(liv2_bank.items, list) else 0
+                interviews_data.append(
+                    GroupInterviewItem(
+                        id=liv2_rubric.id,
+                        title=f"AI Live Interview V2 – {dim_count} dimension{'s' if dim_count != 1 else ''}",
+                        interview_type="live_ai_v2",
+                        max_retakes=1,
+                        questions_count=q_count,
+                        total_duration_minutes=liv2_rubric.time_budget_minutes,
+                        live_flow_config={
+                            "rubric_state": liv2_rubric.state,
+                            "bank_state": liv2_bank.state if liv2_bank else "none",
+                            "dim_count": dim_count,
+                        },
+                    )
+                )
         return GroupDetailResponse(
             id=group.id,
             name=group.group_name,
