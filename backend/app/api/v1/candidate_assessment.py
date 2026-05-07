@@ -1086,18 +1086,58 @@ async def _start_assessment_session_impl(
                 break
 
         if selected_gh:
+            _gh_diff_map = {"easy": 1, "medium": 2, "hard": 3}
             target_section_id = sections[0]["section_id"] if sections else uuid4()
             for gh_q in selected_gh:
                 display_order += 1
                 assignment_id = uuid4()
                 q_points = int(gh_q.get("points") or 10)
+                gh_question_id = UUID(gh_q["question_id"])
+                gh_q_config = gh_q.get("question_config") or {}
+                gh_correct_answer = gh_q.get("correct_answer") or {}
+                gh_difficulty_str = str(gh_q_config.get("difficulty") or "Medium").strip().lower()
+                gh_difficulty_int = _gh_diff_map.get(gh_difficulty_str, 2)
+
+                # Insert into question_bank so candidate_answers FK is satisfied and
+                # MCQ auto-grading can look up the correct answer at save-answer time.
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO question_bank
+                        (question_id, organization_id, question_type, question_text,
+                         question_config, correct_answer, category, difficulty,
+                         points, usage_count, is_deleted, is_base_question, source)
+                        VALUES (
+                            :question_id, :organization_id, :question_type, :question_text,
+                            :question_config, :correct_answer, 'GitHub Analysis', :difficulty,
+                            :points, 1, false, false, 'github_analysis'
+                        )
+                        ON CONFLICT (question_id) DO NOTHING
+                        """
+                    ).bindparams(
+                        bindparam("question_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("organization_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("question_config", type_=JSONB),
+                        bindparam("correct_answer", type_=JSONB),
+                    ),
+                    {
+                        "question_id": gh_question_id,
+                        "organization_id": org_id,
+                        "question_type": gh_q["question_type"],
+                        "question_text": gh_q["question_text"],
+                        "question_config": gh_q_config,
+                        "correct_answer": gh_correct_answer if gh_correct_answer else None,
+                        "difficulty": gh_difficulty_int,
+                        "points": q_points,
+                    },
+                )
 
                 snapshot = {
                     "question_id": gh_q["question_id"],
                     "question_type": gh_q["question_type"],
                     "question_text": gh_q["question_text"],
-                    "question_config": gh_q.get("question_config") or {},
-                    "correct_answer": gh_q.get("correct_answer") or {},
+                    "question_config": gh_q_config,
+                    "correct_answer": gh_correct_answer,
                     "points": q_points,
                     "assignment_context": {
                         "selection_strategy": "github_analysis",
@@ -1128,8 +1168,6 @@ async def _start_assessment_session_impl(
                         "assignment_id": assignment_id,
                         "session_id": session_id,
                         "section_id": target_section_id,
-                        # GitHub-derived questions are not from the section pool;
-                        # avoid inserting a random UUID that violates the FK.
                         "pool_entry_id": None,
                         "question_snapshot": snapshot,
                         "display_order": display_order,
@@ -1143,7 +1181,7 @@ async def _start_assessment_session_impl(
                         "section_title": "GitHub Profile Questions",
                         "question_type": gh_q["question_type"],
                         "question_text": gh_q["question_text"],
-                        "question_config": gh_q.get("question_config") or {},
+                        "question_config": gh_q_config,
                         "points": q_points,
                         "order": display_order,
                     }

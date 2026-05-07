@@ -521,6 +521,7 @@ class QuestionBank(BaseModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     is_deleted: bool = Field(default=False)
     is_base_question: bool = Field(default=True)
+    source: str | None = Field(default=None, max_length=50)
 
 
 class QuestionBankFavorite(BaseModel, table=True):

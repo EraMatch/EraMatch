@@ -22,12 +22,14 @@ class QuestionService:
         Fetch all available base questions for the organization.
         Filters out soft-deleted and non-base questions.
         """
+        from sqlalchemy import or_
         q = (
             select(QuestionBank)
             .where(
                 QuestionBank.organization_id == self.org_id,
                 QuestionBank.is_base_question == True,
-                QuestionBank.is_deleted == False
+                QuestionBank.is_deleted == False,
+                or_(QuestionBank.source == None, QuestionBank.source != "github_analysis"),
             )
             .order_by(QuestionBank.created_at.desc())
         )
