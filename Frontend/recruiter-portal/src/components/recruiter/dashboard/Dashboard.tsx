@@ -4,8 +4,10 @@ import LoadingSpinner from '../../common/LoadingSpinner';
 import { BarChart3, Users, Briefcase, FolderOpen, TrendingUp, Clock, Loader2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { useState, useEffect } from 'react';
-import { api, Project } from '../../../services/api';
+import { Project } from '../../../services/api';
 import { toast } from 'sonner';
+import { useDashboardAnalytics } from '../../../hooks/dashboard/useDashboardAnalytics';
+import { useProjects } from '../../../hooks/projects/useProjects';
 
 interface DashboardProps {
   onViewAllProjects: () => void;
@@ -15,28 +17,15 @@ interface DashboardProps {
 
 export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'analytics'>('overview');
-  const [isLoading, setIsLoading] = useState(true);
-  const [analytics, setAnalytics] = useState<any>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
+
+  const { data: analytics, isLoading: analyticsLoading, isError } = useDashboardAnalytics();
+  const { data: projectsData = [], isLoading: projectsLoading } = useProjects('active');
+  const projects = projectsData as Project[];
+  const isLoading = analyticsLoading || projectsLoading;
 
   useEffect(() => {
-    const fetchDashboardData = async () => {
-      try {
-        setIsLoading(true);
-        const [analyticsData, projectsData] = await Promise.all([
-          api.recruiter.getDashboardAnalytics(),
-          api.recruiter.getProjects('active')
-        ]);
-        setAnalytics(analyticsData);
-        setProjects(projectsData);
-      } catch (error) {
-        toast.error('Failed to load dashboard data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchDashboardData();
-  }, []);
+    if (isError) toast.error('Failed to load dashboard data');
+  }, [isError]);
 
 
 

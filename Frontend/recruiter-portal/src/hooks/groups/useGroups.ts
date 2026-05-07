@@ -1,0 +1,32 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { queryKeys } from '../../lib/queryKeys'
+import { api } from '../../services/api'
+
+export function useGroupDetail(groupId: string | undefined) {
+    return useQuery({
+        queryKey: queryKeys.groups.detail(groupId ?? ''),
+        queryFn: () => api.recruiter.getGroupDetails(groupId!),
+        enabled: !!groupId,
+    })
+}
+
+export function useGroupAlerts(groupId: string | undefined, enabled = true) {
+    return useQuery({
+        queryKey: queryKeys.groups.alerts(groupId ?? ''),
+        queryFn: () => api.recruiter.getSuspiciousActivity(undefined, 50),
+        enabled: !!groupId && enabled,
+        refetchInterval: enabled ? 10 * 1000 : false,
+        refetchIntervalInBackground: false,
+        refetchOnWindowFocus: false,
+        staleTime: 0,
+        gcTime: 0,
+    })
+}
+
+export function useGroupActivityLog(groupId: string | undefined) {
+    return useQuery({
+        queryKey: queryKeys.groups.activityLog(groupId ?? ''),
+        queryFn: () => api.recruiter.getGroupActivityLog ? api.recruiter.getGroupActivityLog(groupId!) : Promise.resolve([]),
+        enabled: !!groupId,
+    })
+}

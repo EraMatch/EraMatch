@@ -1,8 +1,11 @@
 import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
+import { usePositionDetail, usePositionInsights } from '../../../hooks/positions/usePositions';
+import { queryKeys } from '../../../lib/queryKeys';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../ui/dialog';
 import { Switch } from '../../ui/switch';
 import { Question } from '../assessments/CreateAssessmentPage';
@@ -203,7 +206,11 @@ export function PositionDetailView({
   const [integrityIssues, setIntegrityIssues] = useState<number>(0);
   const [sourceQuality, setSourceQuality] = useState<any[]>([]);
   const [topCompanies, setTopCompanies] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: detailData, isLoading: detailLoading } = usePositionDetail(positionId);
+  const { data: insightsData, isLoading: insightsLoading } = usePositionInsights(positionId);
+  const isLoading = detailLoading || insightsLoading;
+
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editPositionTitle, setEditPositionTitle] = useState(positionTitle);
   const [editPositionDescription, setEditPositionDescription] = useState(description || '');
@@ -345,49 +352,32 @@ export function PositionDetailView({
   const [groupToDelete, setGroupToDelete] = useState<any>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        const [detailsRes, insightsRes] = await Promise.all([
-          api.recruiter.getPositionDetails(positionId),
-          api.recruiter.getPositionInsights(positionId)
-        ]);
-        const details = detailsRes as any;
-        const insights = insightsRes as any;
+    if (!detailData) return;
+    const d = detailData as any;
+    setCandidates(d.candidates || []);
+    setGroups(d.groups || []);
+    const kw = d.jd_keywords && typeof d.jd_keywords === 'object'
+      ? d.jd_keywords as Record<string, string[]>
+      : null;
+    setJdKeywords(kw);
+    setKeywordsVisible(hasAnyKeywords(kw));
+  }, [detailData]);
 
-        setCandidates(details.candidates);
-        setGroups(details.groups);
-        const initialKeywords = details?.jd_keywords && typeof details.jd_keywords === 'object'
-          ? details.jd_keywords as Record<string, string[]>
-          : null;
-        setJdKeywords(initialKeywords);
-        setKeywordsVisible(hasAnyKeywords(initialKeywords));
-
-        // Set metrics individually as setMetrics state object does not exist
-        // Assuming these states exist based on previous code reading, or if not, I should check defaults.
-        // Actually, looking at lines 1-150, I don't see 'setMetrics'. 
-        // I see 'setFittingData', 'setScoreData' etc.
-        // I should just set the insights data as before but safely.
-
-        setFittingData(insights.fittingData || []);
-        setScoreData(insights.scoreData || []);
-        setSkillDistribution(insights.skillDistribution || []);
-        setSeniorityDistribution(insights.seniorityDistribution || []);
-        setUniversityDistribution(insights.universityDistribution || []);
-        setAvailabilityDistribution(insights.availabilityDistribution || []);
-        setConversion(insights.conversion || 0);
-        setQualityScore(insights.qualityScore || 0);
-        setIntegrityIssues(insights.integrityIssues || 0);
-        setSourceQuality(insights.sourceQuality || []);
-        setTopCompanies(insights.topCompanies || []);
-      } catch (error) {
-        console.error('Failed to fetch position details:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    if (positionId) { fetchData(); }
-  }, [positionId]);
+  useEffect(() => {
+    if (!insightsData) return;
+    const i = insightsData as any;
+    setFittingData(i.fittingData || []);
+    setScoreData(i.scoreData || []);
+    setSkillDistribution(i.skillDistribution || []);
+    setSeniorityDistribution(i.seniorityDistribution || []);
+    setUniversityDistribution(i.universityDistribution || []);
+    setAvailabilityDistribution(i.availabilityDistribution || []);
+    setConversion(i.conversion || 0);
+    setQualityScore(i.qualityScore || 0);
+    setIntegrityIssues(i.integrityIssues || 0);
+    setSourceQuality(i.sourceQuality || []);
+    setTopCompanies(i.topCompanies || []);
+  }, [insightsData]);
 
   // Auth / Role Check
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -525,54 +515,13 @@ export function PositionDetailView({
     if (!editGroupName.trim()) return;
     try {
       await api.recruiter.updateGroup(groupId, { name: editGroupName });
-      const updatedGroups = await api.recruiter.getPositionGroups(positionId) as any[];
-      setGroups(updatedGroups);
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
       setEditingGroupId(null);
     } catch (err) {
       console.error('Failed to rename group', err);
     }
   };
 
-  const fetchPositionData = useCallback(async (showPageLoader: boolean = true) => {
-    try {
-      if (showPageLoader) {
-        setIsLoading(true);
-      }
-      const [detailsRes, insightsRes] = await Promise.all([
-        api.recruiter.getPositionDetails(positionId),
-        api.recruiter.getPositionInsights(positionId)
-      ]);
-      const details = detailsRes as any;
-      const insights = insightsRes as any;
-
-      setCandidates(details.candidates || []);
-      setGroups(details.groups || []);
-
-      setFittingData(insights.fittingData || []);
-      setScoreData(insights.scoreData || []);
-      setSkillDistribution(insights.skillDistribution || []);
-      setSeniorityDistribution(insights.seniorityDistribution || []);
-      setUniversityDistribution(insights.universityDistribution || []);
-      setAvailabilityDistribution(insights.availabilityDistribution || []);
-      setConversion(insights.conversion || 0);
-      setQualityScore(insights.qualityScore || 0);
-      setIntegrityIssues(insights.integrityIssues || 0);
-      setSourceQuality(insights.sourceQuality || []);
-      setTopCompanies(insights.topCompanies || []);
-    } catch (error) {
-      console.error('Failed to fetch position details:', error);
-    } finally {
-      if (showPageLoader) {
-        setIsLoading(false);
-      }
-    }
-  }, [positionId]);
-
-  useEffect(() => {
-    if (positionId) {
-      fetchPositionData(true);
-    }
-  }, [positionId, fetchPositionData]);
 
   const handleRecomputeScores = async () => {
     try {
@@ -581,7 +530,8 @@ export function PositionDetailView({
       setRecomputeMessage(null);
 
       const result = await api.recruiter.recomputePositionPrescores(positionId) as any;
-      await fetchPositionData(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.insights(positionId) });
 
       const scored = Number(result?.applications_scored ?? 0);
       setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
@@ -662,7 +612,8 @@ export function PositionDetailView({
       await api.recruiter.updatePositionHDEvalQAG(positionId, qagQuestions);
       await api.recruiter.approvePositionHDEvalQAG(positionId);
       const recomputeResult = await api.recruiter.recomputePositionPrescores(positionId) as any;
-      await fetchPositionData(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.insights(positionId) });
 
       setQagStatus('approved');
       const scored = Number(recomputeResult?.applications_scored ?? 0);
@@ -704,7 +655,7 @@ export function PositionDetailView({
     try {
       await api.recruiter.resetApplicationAssessmentTrial(String(candidate.applicationId));
       setAssessmentResetMessage(`Successfully reset trial for ${candidate.name}.`);
-      await fetchPositionData(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
     } catch (err: any) {
       console.error('Failed to reset assessment trial:', err);
       setAssessmentResetError(err.message || 'Failed to reset assessment trial.');
@@ -2448,23 +2399,10 @@ export function PositionDetailView({
           groupName={groupToDelete.name}
           candidateCount={candidates.filter(c => groups.find(g => g.id === groupToDelete.id)?.candidate_ids?.includes(c.id)).length || groupToDelete.candidate_count || 0}
           availableGroups={groups.filter(g => g.id !== groupToDelete.id)}
-          onConfirm={async () => {
+          onConfirm={() => {
             setIsGroupDeleteModalOpen(false);
             setGroupToDelete(null);
-            // Refresh data
-            try {
-              setIsLoading(true);
-              const [detailsRes] = await Promise.all([
-                api.recruiter.getPositionDetails(positionId)
-              ]);
-              const details = detailsRes as any;
-              setCandidates(details.candidates);
-              setGroups(details.groups);
-            } catch (err) {
-              console.error("Failed to refresh data after group deletion", err);
-            } finally {
-              setIsLoading(false);
-            }
+            queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
           }}
         />
       )}

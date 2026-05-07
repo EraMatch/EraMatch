@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Switch } from '../../ui/switch';
 import { Card } from '../../ui/card';
 import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { PositionDetailView } from '../positions/PositionDetailView';
 import { ArchiveProjectModal } from './ArchiveProjectModal';
 import { ClosePositionModal, type PositionOutcome, type PositionClosureStatus } from './ClosePositionModal';
@@ -12,6 +13,8 @@ import { CompleteProjectModal, type ProjectCompletionData } from './CompleteProj
 import { toast } from 'sonner';
 import { api, JobPosition } from '../../../services/api';
 import { AdminPositionModal } from '../../admin/AdminPositionModal';
+import { useProjectDetail, useProjectPositions } from '../../../hooks/projects/useProjects';
+import { queryKeys } from '../../../lib/queryKeys';
 
 interface Position {
   id: string;
@@ -45,56 +48,30 @@ interface ProjectDetailViewProps {
 }
 
 export function ProjectDetailView({ projectId, projectDescription, projectStatus, completionDate, onBack, backLabel = 'Back', onCreateAssessment, pendingAssessment, onAssessmentConsumed, onViewDashboard, onViewGroup, onViewPosition, returnToGroupsTab, onArchiveProject, onCompleteProject }: ProjectDetailViewProps) {
+  const queryClient = useQueryClient();
+  const { data: detailData, isLoading: detailLoading } = useProjectDetail(projectId);
+  const { data: positionsData, isLoading: positionsLoading } = useProjectPositions(projectId);
+  const isLoading = detailLoading || positionsLoading;
+
+  const projectTitle: string = (detailData as any)?.projectName || (detailData as any)?.name || '';
+
   const [positions, setPositions] = useState<Position[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [projectTitle, setProjectTitle] = useState<string>('');
+
+  const mapPositions = (ps: JobPosition[]): Position[] => ps.map(p => ({
+    id: p.id,
+    title: p.jobTitle,
+    description: `Department: ${p.department}`,
+    screeningConditions: 'Standard screening requirements apply',
+    applicants: p.candidatesCount,
+    status: p.status,
+    isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active',
+  }));
 
   useEffect(() => {
-    const fetchProjectData = async () => {
-      try {
-        setIsLoading(true);
-        // Fetch project details by ID directly
-        const project = await api.recruiter.getProjectDetails(String(projectId)) as any;
+    if (!positionsData) return;
+    setPositions(mapPositions(positionsData as JobPosition[]));
+  }, [positionsData]);
 
-        if (project) {
-          setProjectTitle(project.projectName || project.name || 'Project');
-          setProjectIdState(project.id);
-          // Update internal status based on API status
-          if (project.status === 'pending') {
-            setInternalProjectStatus('Pending');
-          } else if (project.status === 'active') {
-            setInternalProjectStatus('Active');
-          } else if (project.status === 'completed' || project.status === 'closed') {
-            setInternalProjectStatus('Complete');
-          } else if (project.status === 'archived') {
-            setInternalProjectStatus('Archived');
-          }
-          const projectPositions = await api.recruiter.getProjectPositions(project.id);
-          const mappedPositions: Position[] = projectPositions.map(p => ({
-            id: p.id,
-            title: p.jobTitle,
-            description: `Department: ${p.department}`,
-            screeningConditions: 'Standard screening requirements apply',
-            applicants: p.candidatesCount,
-            status: p.status,
-            isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
-          }));
-          setPositions(mappedPositions);
-        } else {
-          toast.error('Project not found');
-        }
-      } catch (error) {
-        console.error('Failed to fetch project positions:', error);
-        toast.error('Failed to load project positions');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchProjectData();
-  }, [projectId]);
-
-  const [projectIdState, setProjectIdState] = useState<number | string | undefined>(projectId);
   const [viewingPosition, setViewingPosition] = useState<Position | null>(null);
   const [activeTab, setActiveTab] = useState<'positions' | 'analytics'>('positions');
 
@@ -118,8 +95,17 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
   // Warning modal for archiving active project
   const [showActiveProjectWarning, setShowActiveProjectWarning] = useState(false);
 
-  // Track internal project status
+  // Track internal project status — kept as state so CompleteProject can optimistically set it
   const [internalProjectStatus, setInternalProjectStatus] = useState<'Draft' | 'Active' | 'Complete' | 'Archived' | 'Pending'>(projectStatus || 'Active');
+
+  useEffect(() => {
+    const s = (detailData as any)?.status;
+    if (!s) return;
+    if (s === 'pending') setInternalProjectStatus('Pending');
+    else if (s === 'active') setInternalProjectStatus('Active');
+    else if (s === 'completed' || s === 'closed') setInternalProjectStatus('Complete');
+    else if (s === 'archived') setInternalProjectStatus('Archived');
+  }, [detailData]);
 
   const userStr = localStorage.getItem('user');
   const userObj = userStr ? JSON.parse(userStr) : null;
@@ -156,20 +142,7 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
           : `Position "${closingPosition.title}" closed as Cancelled`;
         toast.success(message);
 
-        // Refresh
-        if (projectId) {
-          const projectPositions = await api.recruiter.getProjectPositions(Number(projectId));
-          const mappedPositions: Position[] = projectPositions.map(p => ({
-            id: p.id,
-            title: p.jobTitle,
-            description: `Department: ${p.department}`,
-            screeningConditions: 'Standard screening requirements apply',
-            applicants: p.candidatesCount,
-            status: p.status,
-            isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
-          }));
-          setPositions(mappedPositions);
-        }
+        queryClient.invalidateQueries({ queryKey: queryKeys.projects.positions(String(projectId)) });
       } catch (e) {
         toast.error('Failed to close position');
       }
@@ -811,19 +784,7 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
           isOpen={isAddDialogOpen}
           onClose={() => setIsAddDialogOpen(false)}
           onSuccess={() => {
-            // Reload positions
-            api.recruiter.getProjectPositions(Number(projectId)).then(projectPositions => {
-              const mappedPositions: Position[] = projectPositions.map(p => ({
-                id: p.id,
-                title: p.jobTitle,
-                description: `Department: ${p.department}`,
-                screeningConditions: 'Standard screening requirements apply',
-                applicants: p.candidatesCount,
-                status: p.status,
-                isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active'
-              }));
-              setPositions(mappedPositions);
-            });
+            queryClient.invalidateQueries({ queryKey: queryKeys.projects.positions(String(projectId)) });
             setIsAddDialogOpen(false);
           }}
           projectId={String(projectId)}

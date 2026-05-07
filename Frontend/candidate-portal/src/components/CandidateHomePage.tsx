@@ -1,9 +1,9 @@
 import { Bell, CheckCircle2, Clock, FileText, Video, Calendar, ArrowRight, AlertCircle, Wrench, Loader2, Lock } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
-import { api } from '../services/api';
 import logo from '../imports/image-eramatch.png';
+import { useCandidateHome } from '../hooks/candidate/useCandidateHome';
 
 interface CandidateHomePageProps {
   onOpenTestingPage?: () => void;
@@ -53,28 +53,12 @@ export function CandidateHomePage({
   onOpenTestingPage
 }: CandidateHomePageProps) {
   const navigate = useNavigate();
-  const [homeData, setHomeData] = useState<HomeData | null>(null);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        const data = await api.candidate.getHome() as HomeData;
-        setHomeData(data);
-        setNotifications((data.notifications || []).map((n: any) => ({
-          ...n,
-          type: n.type as 'success' | 'info' | 'warning'
-        })));
-      } catch (error) {
-        console.error("Failed to load candidate home data", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchData();
-  }, []);
+  const { data: rawHomeData, isLoading } = useCandidateHome();
+  const homeData = rawHomeData as HomeData | null ?? null;
+  const notifications: Notification[] = (homeData?.notifications || []).map((n: any) => ({
+    ...n,
+    type: n.type as 'success' | 'info' | 'warning',
+  }));
 
   if (isLoading) {
     return (

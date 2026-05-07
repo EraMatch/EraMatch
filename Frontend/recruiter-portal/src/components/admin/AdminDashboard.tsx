@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useAdminDashboard, useAdminPendingRequests } from '../../hooks/admin/useAdminDashboard';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../../lib/queryKeys';
 import {
   Users,
   Briefcase,
@@ -57,16 +60,23 @@ export function AdminDashboard({ onSignOut, initialView = 'dashboard' }: AdminDa
   const [selectedPositionForGroups, setSelectedPositionForGroups] = useState<JobPosition | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<PositionGroup | null>(null);
 
-  // State for data
-  const [isLoading, setIsLoading] = useState(true);
-  const [jobPositions, setJobPositions] = useState<JobPosition[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [positionGroups, setPositionGroups] = useState<PositionGroup[]>([]);
-  const [pipelineData, setPipelineData] = useState<any[]>([]);
-  const [globalStats, setGlobalStats] = useState<any>(null);
+  const queryClient = useQueryClient();
+
+  // Data via TanStack Query
+  const { data: dashboardStats, isLoading: statsLoading } = useAdminDashboard();
+  const { data: pendingRequests = [] } = useAdminPendingRequests();
+
+  const isLoading = statsLoading;
+  const globalStats = dashboardStats ?? null;
+  const projects: Project[] = (dashboardStats?.projects ?? []) as Project[];
+  const jobPositions: JobPosition[] = (dashboardStats?.jobPositions ?? []) as JobPosition[];
+  const positionGroups: PositionGroup[] = (dashboardStats?.positionGroups ?? []) as PositionGroup[];
+  const pipelineData: any[] = dashboardStats?.pipelineData ?? [];
+  const pendingRequestsCount: number = pendingRequests?.length ?? 0;
+
+  // Local state kept for group analytics (conditional, view-dependent)
   const [groupAnalytics, setGroupAnalytics] = useState<any>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
-  const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
 
   // Modal states
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
@@ -74,36 +84,10 @@ export function AdminDashboard({ onSignOut, initialView = 'dashboard' }: AdminDa
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [editingPosition, setEditingPosition] = useState<JobPosition | null>(null);
 
-  const fetchDashboardData = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      const stats = await api.admin.getDashboardStats();
-
-      setGlobalStats(stats);
-      setProjects(stats.projects || []);
-      setPositionGroups(stats.positionGroups || []);
-      setJobPositions(stats.jobPositions || []);
-      setPipelineData(stats.pipelineData || []);
-
-      // Fetch pending requests count
-      const pendingRes = await api.admin.listApprovalRequests('pending');
-      setPendingRequestsCount(pendingRes?.length || 0);
-
-    } catch (error) {
-      toast.error('Failed to load dashboard data');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchDashboardData();
-  }, [fetchDashboardData]);
-
-  useEffect(() => {
-    console.log('🔄 GlobalStats changed:', globalStats);
-    console.log('🔄 Analytics available?', globalStats?.analytics);
-  }, [globalStats]);
+  const fetchDashboardData = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.admin.stats() });
+    queryClient.invalidateQueries({ queryKey: queryKeys.admin.requests() });
+  }, [queryClient]);
 
   useEffect(() => {
     const fetchGroupAnalytics = async () => {

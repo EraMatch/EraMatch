@@ -1,5 +1,7 @@
 const API_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:8000/api/v1`;
 
+let isRedirectingToLogin = false;
+
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const token = localStorage.getItem('access_token');
     const headers: HeadersInit = {
@@ -23,10 +25,13 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
             detail = '';
         }
         if (res.status === 401) {
-            // Token expired or invalid - redirect to login
-            localStorage.removeItem('access_token');
-            localStorage.removeItem('refresh_token');
-            window.location.href = '/login';
+            if (!isRedirectingToLogin) {
+                isRedirectingToLogin = true;
+                localStorage.removeItem('access_token');
+                localStorage.removeItem('refresh_token');
+                window.location.href = '/login';
+            }
+            throw new Error('Unauthorized');
         }
         const suffix = detail ? ` - ${detail}` : '';
         throw new Error(`API Error ${res.status}: ${res.statusText}${suffix}`);

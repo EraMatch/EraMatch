@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { Search, Filter, Archive, BarChart3, Users, Calendar, TrendingUp, ChevronDown, X, Download, Clock, Loader2 } from 'lucide-react';
 import LoadingSpinner from '../../common/LoadingSpinner';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../../../services/api';
+import { useCandidates } from '../../../hooks/candidates/useCandidates';
+import { useBulkArchiveApplications, useBulkDeleteApplications } from '../../../hooks/candidates/useCandidateMutations';
 
 interface Candidate {
   id: string;
@@ -47,8 +48,9 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: rawCandidates = [], isLoading: loading } = useCandidates();
+  const bulkArchiveMutation = useBulkArchiveApplications();
+  const bulkDeleteMutation = useBulkDeleteApplications();
   const [githubFilters, setGithubFilters] = useState<GitHubFilters>({
     minScore: 0,
     minConfidence: 0,
@@ -58,44 +60,28 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
   });
   const navigate = useNavigate();
 
-  // Fetch candidates from API
-  useEffect(() => {
-    const fetchCandidates = async () => {
-      try {
-        setLoading(true);
-        const data = (await api.recruiter.getCandidates()) as any[];
-        // Map API data to include status and additional fields
-        const mappedCandidates: Candidate[] = data.map((c: any) => ({
-          id: c.id,
-          applicationId: c.applicationId || c.application_id,
-          groupId: c.groupId || c.group_id,
-          groupName: c.groupName || c.group_name,
-          name: c.name,
-          email: c.email,
-          position: c.seniority || 'Not specified',
-          project: c.project || 'General Pool',
-          status: 'active',
-          score: c.match,
-          hiringRound: c.hiringRound || 'Q1 2025',
-          source: c.source || 'LinkedIn',
-          seniority: c.seniority,
-          location: c.location,
-          githubOverallScore: c.github_overall_score,
-          githubRepoConfidenceScore: c.github_repo_confidence_score,
-          githubContributionSource: c.github_contribution_source,
-          githubFreshnessHours: c.github_freshness_hours,
-          githubHasFallback: c.github_has_fallback,
-        }));
-        setCandidates(mappedCandidates);
-      } catch (error) {
-        console.error('Failed to fetch candidates:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCandidates();
-  }, []);
+  const candidates = useMemo<Candidate[]>(() =>
+    (rawCandidates as any[]).map((c: any) => ({
+      id: c.id,
+      applicationId: c.applicationId || c.application_id,
+      groupId: c.groupId || c.group_id,
+      groupName: c.groupName || c.group_name,
+      name: c.name,
+      email: c.email,
+      position: c.seniority || 'Not specified',
+      project: c.project || 'General Pool',
+      status: 'active',
+      score: c.match,
+      hiringRound: c.hiringRound || 'Q1 2025',
+      source: c.source || 'LinkedIn',
+      seniority: c.seniority,
+      location: c.location,
+      githubOverallScore: c.github_overall_score,
+      githubRepoConfidenceScore: c.github_repo_confidence_score,
+      githubContributionSource: c.github_contribution_source,
+      githubFreshnessHours: c.github_freshness_hours,
+      githubHasFallback: c.github_has_fallback,
+    })), [rawCandidates]);
 
   const activeCandidates = candidates.filter(c => c.status === 'active');
   const archivedCandidates = candidates.filter(c => c.status === 'archived');
@@ -135,52 +121,40 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
     }
   };
 
-  const handleArchiveSelected = async () => {
-    try {
-      setIsProcessing(true);
-      const applicationIds = candidates
-        .filter(c => selectedCandidates.includes(c.id) && c.applicationId)
-        .map(c => c.applicationId as string);
+  const handleArchiveSelected = () => {
+    const applicationIds = candidates
+      .filter(c => selectedCandidates.includes(c.id) && c.applicationId)
+      .map(c => c.applicationId as string);
 
-      if (applicationIds.length > 0) {
-        await api.recruiter.bulkArchiveApplications(applicationIds);
-      }
+    if (applicationIds.length === 0) return;
 
-      setCandidates(prev =>
-        prev.map(c =>
-          selectedCandidates.includes(c.id)
-            ? { ...c, status: 'archived' as const, archivedDate: new Date() }
-            : c
-        )
-      );
-      setSelectedCandidates([]);
-      setShowArchiveConfirm(false);
-    } catch (error) {
-      console.error('Failed to archive candidates:', error);
-    } finally {
-      setIsProcessing(false);
-    }
+    setIsProcessing(true);
+    bulkArchiveMutation.mutate(applicationIds, {
+      onSuccess: () => {
+        setSelectedCandidates([]);
+        setShowArchiveConfirm(false);
+      },
+      onError: () => console.error('Failed to archive candidates'),
+      onSettled: () => setIsProcessing(false),
+    });
   };
 
-  const handleDeleteSelected = async () => {
-    try {
-      setIsProcessing(true);
-      const applicationIds = candidates
-        .filter(c => selectedCandidates.includes(c.id) && c.applicationId)
-        .map(c => c.applicationId as string);
+  const handleDeleteSelected = () => {
+    const applicationIds = candidates
+      .filter(c => selectedCandidates.includes(c.id) && c.applicationId)
+      .map(c => c.applicationId as string);
 
-      if (applicationIds.length > 0) {
-        await api.recruiter.bulkDeleteApplications(applicationIds);
-      }
+    if (applicationIds.length === 0) return;
 
-      setCandidates(prev => prev.filter(c => !selectedCandidates.includes(c.id)));
-      setSelectedCandidates([]);
-      setShowDeleteConfirm(false);
-    } catch (error) {
-      console.error('Failed to delete candidates:', error);
-    } finally {
-      setIsProcessing(false);
-    }
+    setIsProcessing(true);
+    bulkDeleteMutation.mutate(applicationIds, {
+      onSuccess: () => {
+        setSelectedCandidates([]);
+        setShowDeleteConfirm(false);
+      },
+      onError: () => console.error('Failed to delete candidates'),
+      onSettled: () => setIsProcessing(false),
+    });
   };
 
   // Statistics for archived candidates
