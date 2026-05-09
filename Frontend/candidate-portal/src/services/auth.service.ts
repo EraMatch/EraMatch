@@ -25,13 +25,10 @@ export const authService = {
         if (!res.ok) throw new Error('Invalid username or password');
         const data = await res.json();
         // Clear cache when a different user logs in
-        const prevToken = localStorage.getItem('access_token')
-        const newUserId = getUserIdFromToken(data.access_token)
-        const prevUserId = prevToken ? getUserIdFromToken(prevToken) : null
-        if (prevUserId && prevUserId !== newUserId) {
-            clearCandidateCache();
-        }
-        localStorage.setItem('eramatch-candidate-cache-owner', newUserId || 'guest')
+        const newUserId = getUserIdFromToken(data.access_token) || 'guest'
+        const prevOwner = localStorage.getItem('eramatch-candidate-cache-owner')
+        if (!prevOwner || prevOwner !== newUserId) clearCandidateCache();
+        localStorage.setItem('eramatch-candidate-cache-owner', newUserId)
         localStorage.setItem('access_token', data.access_token);
         if (data.refresh_token) {
             localStorage.setItem('refresh_token', data.refresh_token);
