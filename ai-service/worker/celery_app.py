@@ -1,6 +1,12 @@
+import logging
 import os
 from celery import Celery
 from config import settings
+
+logging.basicConfig(
+    level=logging.DEBUG if settings.DEBUG else logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+)
 
 # Initialize Celery
 # Note: we use broker and result_backend from settings, which point to the AI-service's Redis DB (e.g. DB 1)

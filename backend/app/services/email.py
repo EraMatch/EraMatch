@@ -40,7 +40,7 @@ class EmailService:
             
         message = MessageSchema(
             subject=subject,
-            recipients=[EmailStr(email_to)],
+            recipients=[email_to],
             body=html_content,
             subtype=MessageType.html
         )
