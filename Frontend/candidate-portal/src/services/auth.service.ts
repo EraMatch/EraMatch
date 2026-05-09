@@ -26,9 +26,12 @@ export const authService = {
         const data = await res.json();
         // Clear cache when a different user logs in
         const prevToken = localStorage.getItem('access_token')
-        if (prevToken && getUserIdFromToken(prevToken) !== getUserIdFromToken(data.access_token)) {
+        const newUserId = getUserIdFromToken(data.access_token)
+        const prevUserId = prevToken ? getUserIdFromToken(prevToken) : null
+        if (prevUserId && prevUserId !== newUserId) {
             clearCandidateCache();
         }
+        localStorage.setItem('eramatch-candidate-cache-owner', newUserId || 'guest')
         localStorage.setItem('access_token', data.access_token);
         if (data.refresh_token) {
             localStorage.setItem('refresh_token', data.refresh_token);

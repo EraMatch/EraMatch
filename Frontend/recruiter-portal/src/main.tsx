@@ -8,10 +8,7 @@ import { queryClient } from './lib/queryClient'
 import { router } from './router'
 import './index.css'
 
-const userId = (() => {
-    try { return JSON.parse(localStorage.getItem('user') || '{}')?.id ?? 'guest' }
-    catch { return 'guest' }
-})()
+const cacheOwner = localStorage.getItem('eramatch-recruiter-cache-owner') ?? 'guest'
 
 const persister = createSyncStoragePersister({
     storage: window.localStorage,
@@ -36,7 +33,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             client={queryClient}
             persistOptions={{
                 persister,
-                buster: `v1-${userId}`,
+                buster: `v1-${cacheOwner}`,
                 maxAge: 24 * 60 * 60 * 1000,
                 dehydrateOptions: {
                     shouldDehydrateQuery: (query) => {

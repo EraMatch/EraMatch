@@ -30,7 +30,12 @@ export const authService = {
         const token = data.access_token || data.token;
         if (token) {
             const prevId = (() => { try { return JSON.parse(localStorage.getItem('user') || '{}')?.id } catch { return undefined } })()
-            if (prevId !== undefined && prevId !== data.user?.id) clearRecruiterCache();
+            if (prevId !== undefined && prevId !== data.user?.id) {
+                clearRecruiterCache();
+                localStorage.setItem('eramatch-recruiter-cache-owner', String(data.user?.id ?? 'guest'));
+            } else if (prevId === undefined) {
+                localStorage.setItem('eramatch-recruiter-cache-owner', String(data.user?.id ?? 'guest'));
+            }
             localStorage.setItem('token', token);
             localStorage.setItem('user', JSON.stringify(data.user));
         }
@@ -54,7 +59,12 @@ export const authService = {
         const token = data.access_token || data.token;
         if (token) {
             const prevId = (() => { try { return JSON.parse(localStorage.getItem('user') || '{}')?.id } catch { return undefined } })()
-            if (prevId !== undefined && prevId !== data.user?.id) clearRecruiterCache();
+            if (prevId !== undefined && prevId !== data.user?.id) {
+                clearRecruiterCache();
+                localStorage.setItem('eramatch-recruiter-cache-owner', String(data.user?.id ?? 'guest'));
+            } else if (prevId === undefined) {
+                localStorage.setItem('eramatch-recruiter-cache-owner', String(data.user?.id ?? 'guest'));
+            }
             localStorage.setItem('token', token);
             localStorage.setItem('user', JSON.stringify(data.user));
         }
