@@ -142,6 +142,38 @@ class EmailService:
         await EmailService.send_email_async(subject, email, html)
 
     @staticmethod
+    async def send_rejection_email(email: str, name: str, position_title: str):
+        """Sent when a candidate is formally rejected after the final pipeline stage."""
+        subject = f"Application Update — {position_title}"
+        html = f"""
+        <html>
+            <body>
+                <h2>Dear {name},</h2>
+                <p>Thank you for your time and interest in the <strong>{position_title}</strong> position and for participating in our selection process.</p>
+                <p>After careful consideration, we regret to inform you that we will not be moving forward with your application at this time.</p>
+                <p>We truly appreciate the effort you invested and wish you the very best in your future endeavors.</p>
+                <br>
+                <p>Best regards,<br>The EraMatch Recruiting Team</p>
+            </body>
+        </html>
+        """
+        await EmailService.send_email_async(subject, email, html)
+
+    @staticmethod
+    async def send_custom_offer_email(email: str, name: str, subject: str, raw_body: str):
+        """Send a recruiter-composed offer email with custom subject and body."""
+        html = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; color: #111827;">
+                <p>{raw_body.replace(chr(10), '<br>')}</p>
+                <br>
+                <p style="color: #6b7280; font-size: 12px;">— The EraMatch Recruiting Team</p>
+            </body>
+        </html>
+        """
+        await EmailService.send_email_async(subject, email, html)
+
+    @staticmethod
     async def send_offer_email(email: str, name: str, position_title: str):
         """Sent when a candidate receives a final offer."""
         subject = f"Congratulations! EraMatch Offer for {position_title}"

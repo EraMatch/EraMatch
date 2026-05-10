@@ -215,9 +215,53 @@ def process_video_logic(
             return {"status": "cancelled", "response_id": response_id}
         cursor.close()
         conn.close()
-        
+
         log_debug("database_update_completed", {"response_id": response_id})
-        
+
+        # After each response is processed, check if all responses for this session are done.
+        # If so, aggregate scores into ongoing_interviews and candidate_pipeline_progress.
+        conn2 = _get_db_conn()
+        cur2 = conn2.cursor()
+        cur2.execute(
+            """
+            SELECT ir.session_id,
+                   COUNT(*) FILTER (WHERE ir.processing_status NOT IN ('completed','failed')) AS pending,
+                   AVG(ir.ai_score) AS avg_score
+            FROM interview_responses ir
+            WHERE ir.session_id = (
+                SELECT session_id FROM interview_responses WHERE response_id = %s LIMIT 1
+            )
+            GROUP BY ir.session_id
+            """,
+            (response_id,)
+        )
+        agg = cur2.fetchone()
+        if agg and agg[1] == 0 and agg[2] is not None:
+            session_id_val, _, avg_score = agg
+            cur2.execute(
+                "UPDATE ongoing_interviews SET overall_score = %s WHERE session_id = %s",
+                (float(avg_score), session_id_val)
+            )
+            # Update candidate_pipeline_progress score for the ai_interview stage
+            cur2.execute(
+                """
+                UPDATE candidate_pipeline_progress cpp
+                SET score = %s
+                FROM ongoing_interviews oi
+                JOIN candidate_applications ca ON ca.application_id = oi.application_id
+                JOIN group_pipeline_stages gps
+                  ON gps.group_id = ca.group_id AND gps.stage_type = 'ai_interview'
+                WHERE oi.session_id = %s
+                  AND cpp.application_id = oi.application_id
+                  AND cpp.stage_id = gps.stage_id
+                  AND oi.status = 'completed'
+                """,
+                (float(avg_score), session_id_val)
+            )
+            conn2.commit()
+        cur2.close()
+        conn2.close()
+
         # Build comprehensive assessment report
         result = {
             "status": "completed",

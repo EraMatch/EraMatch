@@ -226,11 +226,14 @@ async def get_position_insights(
 
 @router.get("/positions/{position_id}/groups", response_model=list[PositionGroupResponse])
 async def get_position_groups(
-    position_id: UUID, session: DbSession, current_user: RecruiterUser
+    position_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+    archived: bool = False,
 ):
-    """Get position groups."""
+    """Get active or archived groups for a position."""
     service = RecruiterService(session, current_user)
-    return await service.get_position_groups(position_id)
+    return await service.get_position_groups(position_id, archived=archived)
 
 
 class PositionQAGUpdateRequest(BaseModel):

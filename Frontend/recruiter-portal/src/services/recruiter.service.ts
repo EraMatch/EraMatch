@@ -98,7 +98,7 @@ export const recruiterService = {
 
     getFiltrationFlowConfig: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/filtration-flow`),
 
-    getPositionGroups: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/groups`),
+    getPositionGroups: async (positionId: string, archived = false) => fetchAPI(`/recruiter/positions/${positionId}/groups${archived ? '?archived=true' : ''}`),
 
     getSkillClusters: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/skills`),
 
@@ -444,6 +444,14 @@ export const recruiterService = {
         });
     },
 
+    archiveGroup: async (groupId: string, sendRejections: boolean): Promise<{ rejected_count: number }> => {
+        return fetchAPI(`/recruiter/groups/${groupId}/archive`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ send_rejections: sendRejections })
+        });
+    },
+
     deleteGroup: async (groupId: string, action: 'release' | 'reject' | 'transfer' = 'release', transfer_group_id?: string) => {
         return fetchAPI(`/recruiter/groups/${groupId}`, {
             method: 'DELETE',
@@ -548,6 +556,40 @@ export const recruiterService = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
+        });
+    },
+
+    // Bulk Progress Preview (dry-run)
+    previewBulkProgress: async (groupId: string, data: {
+        application_ids: string[];
+        action: string;
+        current_stage_type?: string;
+    }) => {
+        return fetchAPI<{
+            selected_count: number;
+            auto_hold_count: number;
+            auto_hold_candidates: { application_id: string; name: string; score: number | null }[];
+        }>(`/recruiter/groups/${groupId}/candidates/bulk-progress-preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    // Resolve held candidates (reject or reactivate)
+    resolveHeldCandidates: async (groupId: string, actions: { application_id: string; action: 'reject' | 'reactivate' }[]) => {
+        return fetchAPI<any>(`/recruiter/groups/${groupId}/candidates/held/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ actions })
+        });
+    },
+
+    resetStages: async (groupId: string) => {
+        return fetchAPI<{ reset_stages: boolean; candidates_reset: number }>(`/recruiter/groups/${groupId}/reset-stages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
         });
     },
 

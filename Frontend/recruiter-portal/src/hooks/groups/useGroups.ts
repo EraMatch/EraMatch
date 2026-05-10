@@ -85,3 +85,32 @@ export function useBulkProgressCandidates() {
         },
     })
 }
+
+export function usePreviewBulkProgress() {
+    return useMutation({
+        mutationFn: ({ groupId, payload }: { groupId: string; payload: any }) =>
+            api.recruiter.previewBulkProgress(groupId, payload),
+    })
+}
+
+export function useResetStages() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: ({ groupId }: { groupId: string }) =>
+            api.recruiter.resetStages(groupId),
+        onSuccess: (_res, { groupId }) => {
+            qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) })
+        },
+    })
+}
+
+export function useResolveHeldCandidates() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: ({ groupId, actions }: { groupId: string; actions: any[] }) =>
+            api.recruiter.resolveHeldCandidates(groupId, actions),
+        onSuccess: (_res, { groupId }) => {
+            qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) })
+        },
+    })
+}

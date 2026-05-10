@@ -1746,14 +1746,17 @@ class RecruiterService:
                 integrityIssues=0
             )
 
-    async def get_position_groups(self, position_id: UUID) -> list[PositionGroupResponse]:
-        """List groups for a position."""
+    async def get_position_groups(self, position_id: UUID, archived: bool = False) -> list[PositionGroupResponse]:
+        """List active or archived groups for a position."""
         try:
+            if archived:
+                status_filter = CandidateGroup.status == "archived"
+            else:
+                status_filter = CandidateGroup.status.notin_(["archived", "deleted"])
             res_groups = await self.session.execute(
                 select(CandidateGroup).where(
                     CandidateGroup.position_id == position_id,
-                    CandidateGroup.status != "archived",
-                    CandidateGroup.status != "deleted" # Just in case data exists
+                    status_filter,
                 )
             )
             groups = res_groups.scalars().all()

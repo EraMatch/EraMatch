@@ -88,6 +88,10 @@ from app.schemas.group import (
     ScheduleInterviewRequest,
     GroupUpdateRequest,
     GroupDeleteRequest,
+    BulkProgressPreview,
+    BulkProgressPreviewCandidate,
+    HoldResolveAction,
+    HoldResolveRequest,
 )
 
 
@@ -208,22 +212,26 @@ class GroupService:
             return default_cfg.config_id
 
         if stage == "live_interview":
-            bank_res = await self.session.execute(
-                select(LiV2Bank)
-                .join(LiV2Rubric, LiV2Bank.rubric_id == LiV2Rubric.id)
+            # Prefer a config scoped to this position; fall back to org-level.
+            cfg_res = await self.session.execute(
+                select(LiveInterviewConfig.id)
                 .where(
-                    LiV2Bank.group_id == group.id,
-                    LiV2Bank.organization_id == self.org_id,
-                    LiV2Bank.state == "frozen",
-                    LiV2Rubric.state == "frozen",
+                    LiveInterviewConfig.organization_id == self.org_id,
+                    LiveInterviewConfig.position_id == group.position_id,
                 )
-                .order_by(
-                    LiV2Bank.frozen_at.desc().nullslast(), LiV2Bank.created_at.desc()
-                )
+                .order_by(LiveInterviewConfig.created_at.desc())
                 .limit(1)
             )
-            bank = bank_res.scalars().first()
-            return bank.id if bank else None
+            cfg_id = cfg_res.scalars().first()
+            if cfg_id:
+                return cfg_id
+            cfg_res = await self.session.execute(
+                select(LiveInterviewConfig.id)
+                .where(LiveInterviewConfig.organization_id == self.org_id)
+                .order_by(LiveInterviewConfig.created_at.desc())
+                .limit(1)
+            )
+            return cfg_res.scalars().first()
 
         return None
 
@@ -617,15 +625,20 @@ class GroupService:
             active_candidates = []
             is_first_stage = idx == 0
 
-            # All stages now use the dynamic 'stages' map for statistics
+            # Count a candidate in a stage if they have participated in it (have a
+            # non-locked progress record), regardless of current app status.
+            # Only exclude rejected/holded candidates from stages they never reached.
             active_candidates = [
                 c for c in candidates
-                if is_first_stage or (st_type in c.stages and c.stages[st_type].status != "locked")
+                if (st_type in c.stages and c.stages[st_type].status != "locked")
+                or (is_first_stage and c.status not in ("rejected", "holded") and st_type not in c.stages)
             ]
             completed_statuses = ("completed", "passed", "failed")
             completed_c = sum(
                 1 for c in active_candidates
-                if st_type in c.stages and c.stages[st_type].status in completed_statuses
+                if st_type in c.stages
+                and c.stages[st_type].status in completed_statuses
+                and c.status not in ("rejected", "holded")
             )
             pending_c = len(active_candidates) - completed_c
 
@@ -977,6 +990,39 @@ class GroupService:
                 f"Cannot start '{stage}'. Configure and assign its settings first."
             )
 
+        # Guard 1: No other stage in this group may be active simultaneously
+        active_query = select(GroupStageConfig).where(
+            GroupStageConfig.group_id == group_id,
+            GroupStageConfig.state == "active",
+        )
+        if stage_config is not None:
+            active_query = active_query.where(
+                GroupStageConfig.stage_id != stage_config.stage_id
+            )
+        active_res = await self.session.execute(active_query)
+        if active_res.scalars().first():
+            raise BadRequestException(
+                "Another stage is currently active for this group. Close it before starting a new one."
+            )
+
+        # Guard 2: Previous stage (by order) must be closed before starting this one
+        if stage_config is not None:
+            prev_res = await self.session.execute(
+                select(GroupStageConfig)
+                .where(
+                    GroupStageConfig.group_id == group_id,
+                    GroupStageConfig.stage_order < stage_config.stage_order,
+                    GroupStageConfig.state != "inactive",
+                )
+                .order_by(GroupStageConfig.stage_order.desc())
+                .limit(1)
+            )
+            prev_stage = prev_res.scalars().first()
+            if prev_stage and prev_stage.state != "closed":
+                raise BadRequestException(
+                    f"Stage '{prev_stage.stage_type.replace('_', ' ').title()}' must be closed before starting '{stage}'."
+                )
+
         # Auto-create stage config if it doesn't exist yet
         if stage_config is None:
             # Determine current max stage_order for this group so we don't conflict
@@ -1072,11 +1118,13 @@ class GroupService:
                     self.session.add(prog)
                     invitations_sent += 1
             else:
-                # For non-first stages, never auto-create progress for candidates that didn't
-                # progress from the previous stage.
-                if prev_stage_id is not None and app.id not in progressed_from_prev:
+                # For non-first stages: bulk_progress is the sole gate that creates
+                # progress records for the next stage. If no record exists here the
+                # candidate was not selected, so skip.
+                if prev_stage_id is not None:
                     continue
 
+                # First stage only: auto-create and unlock all eligible candidates.
                 new_prog = CandidateStageProgress(
                     application_id=app.id,
                     stage_id=stage_config.stage_id,
@@ -1247,20 +1295,20 @@ class GroupService:
         stage_config.closed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         self.session.add(stage_config)
 
-        # 3. Identify candidates in this group (not already rejected) for reference
-        apps_res = await self.session.execute(
-            select(CandidateApplication).where(
-                CandidateApplication.group_id == group_id,
-                CandidateApplication.status != "rejected",
+        # 3. Auto-fail all candidates still in_progress or unlocked
+        unresolved_res = await self.session.execute(
+            select(CandidateStageProgress).where(
+                CandidateStageProgress.stage_id == stage_config.stage_id,
+                CandidateStageProgress.status.in_(["in_progress", "unlocked"]),
             )
         )
-        group_apps = apps_res.scalars().all()
-
-        rejected_count = 0
-        # Candidates will remain in their current status (usually 'screening')
-        # until the recruiter explicitly progresses or holds them in the next step.
-        # This prevents everyone from turning 'holded' before the review is even started.
-
+        auto_failed_count = 0
+        for prog in unresolved_res.scalars().all():
+            prog.status = "completed"
+            prog.passed = False
+            prog.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            self.session.add(prog)
+            auto_failed_count += 1
 
         # 4. Count evaluated candidates for the summary log
         count_res = await self.session.execute(
@@ -1279,20 +1327,20 @@ class GroupService:
             entity_type="group",
             entity_id=group_id,
             details={
-                "stage": stage_type, 
+                "stage": stage_type,
                 "candidates_evaluated": candidates_evaluated,
-                "automatic_rejections": rejected_count
+                "auto_failed_count": auto_failed_count,
             },
         )
         self.session.add(log)
-        
+
         await self.session.commit()
 
         return {
             "status": 1,
             "stage": stage_type,
             "candidates_evaluated": candidates_evaluated,
-            "automatic_rejections": rejected_count
+            "auto_failed_count": auto_failed_count,
         }
 
     # ── 5. GET /recruiter/groups/{groupId}/activity ──────────────────────────
@@ -1434,9 +1482,16 @@ class GroupService:
         res = await self.session.execute(query)
         rows = res.all()
 
+        already_offered = [profile.full_name for app, profile in rows if app.status == "offered"]
+        if already_offered:
+            raise BadRequestException(
+                f"Offer already sent to: {', '.join(already_offered)}. "
+                "Remove them from the selection before sending."
+            )
+
         for app, profile in rows:
             # 1. Update application status
-            app.status = "Offered"
+            app.status = "offered"
             self.session.add(app)
 
             # 2. Add an Offer record so it's tracked explicitly
@@ -1450,7 +1505,7 @@ class GroupService:
 
             # 3. Create a system log / activity log
             log = SystemLog(
-                event_type="offer_sent",
+                action="offer_sent",
                 user_id=self.user.id,
                 organization_id=self.user.organization_id,
                 entity_type="candidate_application",
@@ -1583,6 +1638,77 @@ class GroupService:
         self.session.add(log)
 
         await self.session.commit()
+
+    async def archive_group(self, group_id: UUID, send_rejections: bool) -> dict:
+        """Archive a group once all pipeline stages are closed.
+
+        Candidates already marked 'rejected' are skipped — this prevents sending
+        a duplicate final-decision email to anyone who was rejected mid-pipeline.
+        """
+        group = await self._get_group(group_id)
+
+        # Validate every stage is closed
+        stages_res = await self.session.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.state != "inactive",
+            )
+        )
+        stages = stages_res.scalars().all()
+        if stages and any(s.state != "closed" for s in stages):
+            raise BadRequestException(
+                "All pipeline stages must be closed before archiving the group."
+            )
+
+        rejected_count = 0
+        if send_rejections:
+            # Resolve position title for the email
+            pos_res = await self.session.execute(
+                select(Position).where(Position.id == group.position_id)
+            )
+            pos = pos_res.scalars().first()
+            position_title = pos.job_title if pos else "the position"
+
+            # Only candidates not already rejected receive the email
+            apps_res = await self.session.execute(
+                select(CandidateApplication).where(
+                    CandidateApplication.group_id == group_id,
+                    CandidateApplication.is_deleted == False,
+                    CandidateApplication.status.notin_(["rejected", "offered", "hired"]),
+                )
+            )
+            apps = apps_res.scalars().all()
+
+            from app.services.email import EmailService
+
+            for app in apps:
+                profile = await self.session.get(CandidateProfile, app.candidate_id)
+                if profile:
+                    try:
+                        await EmailService.send_rejection_email(
+                            profile.email, profile.full_name, position_title
+                        )
+                    except Exception:
+                        pass
+                app.status = "rejected"
+                self.session.add(app)
+                rejected_count += 1
+
+        group.status = "archived"
+        self.session.add(group)
+
+        log = SystemLog(
+            organization_id=self.org_id,
+            user_id=self.user.id,
+            action="group_archived",
+            entity_type="group",
+            entity_id=group_id,
+            details={"send_rejections": send_rejections, "rejected_count": rejected_count},
+        )
+        self.session.add(log)
+        await self.session.commit()
+
+        return {"rejected_count": rejected_count}
 
     async def rename_group(self, group_id: UUID, new_name: str) -> GroupDetailResponse:
         """Rename a group."""
@@ -3258,6 +3384,223 @@ class GroupService:
                 self.session.add(u_log)
 
         await self.session.commit()
+
+    async def preview_bulk_progress(
+        self,
+        group_id: UUID,
+        application_ids: list[UUID],
+        action: str,
+        current_stage_type: str | None = None,
+    ) -> dict:
+        """Returns a dry-run preview of bulk_progress without committing changes."""
+        from app.schemas.group import BulkProgressPreview, BulkProgressPreviewCandidate
+
+        if action not in ("progress", "passed"):
+            return {"selected_count": len(application_ids), "auto_hold_count": 0, "auto_hold_candidates": []}
+
+        # Resolve source stage
+        source_stage = None
+        if current_stage_type:
+            normalized_type = current_stage_type.lower().replace("-", "_")
+            res = await self.session.execute(
+                select(GroupStageConfig).where(
+                    GroupStageConfig.group_id == group_id,
+                    GroupStageConfig.stage_type == normalized_type,
+                )
+            )
+            source_stage = res.scalars().first()
+        if not source_stage:
+            active_res = await self.session.execute(
+                select(GroupStageConfig).where(
+                    GroupStageConfig.group_id == group_id,
+                    GroupStageConfig.state == "active",
+                )
+            )
+            source_stage = active_res.scalars().first()
+
+        if not source_stage:
+            return {"selected_count": len(application_ids), "auto_hold_count": 0, "auto_hold_candidates": []}
+
+        # Find candidates who would be auto-held (not in selection, have stage progress, not rejected)
+        unselected_res = await self.session.execute(
+            select(CandidateApplication, CandidateProfile)
+            .join(
+                CandidateStageProgress,
+                (CandidateStageProgress.application_id == CandidateApplication.id)
+                & (CandidateStageProgress.stage_id == source_stage.stage_id),
+            )
+            .join(CandidateProfile, CandidateProfile.id == CandidateApplication.candidate_id)
+            .where(
+                CandidateApplication.group_id == group_id,
+                CandidateApplication.id.not_in(application_ids),
+                CandidateApplication.status != "rejected",
+            )
+        )
+        rows = unselected_res.all()
+
+        auto_hold_candidates = []
+        for app, profile in rows:
+            # Get score from stage progress
+            score_res = await self.session.execute(
+                select(CandidateStageProgress.score).where(
+                    CandidateStageProgress.application_id == app.id,
+                    CandidateStageProgress.stage_id == source_stage.stage_id,
+                )
+            )
+            score = score_res.scalars().first()
+            auto_hold_candidates.append(
+                BulkProgressPreviewCandidate(
+                    application_id=app.id,
+                    name=profile.full_name or "Unknown",
+                    score=float(score) if score is not None else None,
+                )
+            )
+
+        return BulkProgressPreview(
+            selected_count=len(application_ids),
+            auto_hold_count=len(auto_hold_candidates),
+            auto_hold_candidates=auto_hold_candidates,
+        )
+
+    async def resolve_held_candidates(
+        self,
+        group_id: UUID,
+        actions: list,
+    ) -> None:
+        """Reject or reactivate candidates currently on hold in a group."""
+        from app.schemas.group import HoldResolveAction
+
+        # Find the currently active stage (needed for reactivation)
+        active_stage_res = await self.session.execute(
+            select(GroupStageConfig).where(
+                GroupStageConfig.group_id == group_id,
+                GroupStageConfig.state == "active",
+            )
+        )
+        active_stage = active_stage_res.scalars().first()
+
+        for item in actions:
+            app = await self.session.get(CandidateApplication, item.application_id)
+            if not app or app.group_id != group_id or app.status != "holded":
+                continue
+
+            old_status = app.status
+
+            if item.action == "reject":
+                app.status = "rejected"
+                self.session.add(app)
+
+                # Send rejection notification
+                profile_res = await self.session.execute(
+                    select(CandidateProfile).where(
+                        CandidateProfile.id == app.candidate_id
+                    )
+                )
+                profile = profile_res.scalars().first()
+                if profile:
+                    self.session.add(
+                        Notification(
+                            organization_id=self.org_id,
+                            recipient_candidate_id=profile.id,
+                            type="application_rejected",
+                            title="Application Update",
+                            message="Thank you for your interest. Unfortunately, your application has not been selected to proceed at this time.",
+                            data={"group_id": str(group_id), "application_id": str(app.id)},
+                        )
+                    )
+
+            elif item.action == "reactivate":
+                if not active_stage:
+                    raise BadRequestException(
+                        "No active stage to reactivate into. Start a stage first."
+                    )
+                app.status = "screening"
+                self.session.add(app)
+
+                # Unlock or create progress record for the active stage
+                prog_res = await self.session.execute(
+                    select(CandidateStageProgress).where(
+                        CandidateStageProgress.application_id == app.id,
+                        CandidateStageProgress.stage_id == active_stage.stage_id,
+                    )
+                )
+                prog = prog_res.scalars().first()
+                if prog:
+                    if prog.status in ("locked",):
+                        prog.status = "unlocked"
+                        prog.unlocked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                        self.session.add(prog)
+                else:
+                    self.session.add(
+                        CandidateStageProgress(
+                            application_id=app.id,
+                            stage_id=active_stage.stage_id,
+                            status="unlocked",
+                            unlocked_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                        )
+                    )
+
+            # Log transition
+            self.session.add(
+                PipelineTransition(
+                    application_id=app.id,
+                    organization_id=self.org_id,
+                    from_status=old_status,
+                    to_status=app.status,
+                    triggered_by_user_id=self.user.id,
+                    reason=f"Held candidate resolved: {item.action}",
+                )
+            )
+            self.session.add(
+                SystemLog(
+                    action=f"held_candidate_{item.action}",
+                    user_id=self.user.id,
+                    organization_id=self.org_id,
+                    entity_type="candidate_application",
+                    entity_id=app.id,
+                    details={"action": item.action, "group_id": str(group_id)},
+                )
+            )
+
+        await self.session.commit()
+
+    async def reset_stages(self, group_id: UUID) -> dict:
+        """DEV ONLY — resets all stage progress for a group back to initial state."""
+        # Reset stage configs
+        stages_res = await self.session.execute(
+            select(GroupStageConfig).where(GroupStageConfig.group_id == group_id)
+        )
+        for stage in stages_res.scalars().all():
+            stage.state = "not_started"
+            self.session.add(stage)
+
+        # Fetch all application IDs for the group
+        apps_res = await self.session.execute(
+            select(CandidateApplication).where(
+                CandidateApplication.group_id == group_id,
+                CandidateApplication.is_deleted == False,
+            )
+        )
+        apps = apps_res.scalars().all()
+        app_ids = [a.id for a in apps]
+
+        # Delete all stage progress records
+        if app_ids:
+            prog_res = await self.session.execute(
+                select(CandidateStageProgress).where(
+                    CandidateStageProgress.application_id.in_(app_ids)
+                )
+            )
+            for prog in prog_res.scalars().all():
+                await self.session.delete(prog)
+
+        # Reset application statuses back to screening
+        for app in apps:
+            app.status = "screening"
+            self.session.add(app)
+
+        await self.session.commit()
+        return {"reset_stages": True, "candidates_reset": len(apps)}
 
     async def schedule_live_interview(
         self, group_id: UUID, data: ScheduleInterviewRequest

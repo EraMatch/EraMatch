@@ -195,6 +195,9 @@ export function PositionDetailView({
 }: PositionDetailViewProps) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
+  const [archivedGroups, setArchivedGroups] = useState<any[]>([]);
+  const [showArchivedGroups, setShowArchivedGroups] = useState(false);
+  const [archivedGroupsLoaded, setArchivedGroupsLoaded] = useState(false);
   const [fittingData, setFittingData] = useState<any[]>([]);
   const [scoreData, setScoreData] = useState<any[]>([]);
   const [skillDistribution, setSkillDistribution] = useState<any[]>([]);
@@ -1005,12 +1008,12 @@ export function PositionDetailView({
                   <div className="w-[8px] h-[8px] rounded-full bg-[#f59e0b]"></div>
                 </div>
                 <p className="font-['Arimo',sans-serif] text-[28px] text-black mb-2">
-                  {candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)}
+                  {(candidates as any[]).filter(c => !c.groupId).length}
                 </p>
                 <div className="w-full h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
                   <div
                     className="h-full bg-[#f59e0b]"
-                    style={{ width: `${((candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)) / (candidates.length || 1)) * 100}%` }}
+                    style={{ width: `${((candidates as any[]).filter(c => !c.groupId).length / (candidates.length || 1)) * 100}%` }}
                   ></div>
                 </div>
               </div>
@@ -1041,20 +1044,20 @@ export function PositionDetailView({
                       </div>
                     </div>
                   ))}
-                  {candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0) > 0 && (
+                  {(candidates as any[]).filter(c => !c.groupId).length > 0 && (
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
                           Unassigned
                         </span>
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                          {candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)} candidates
+                          {(candidates as any[]).filter(c => !c.groupId).length} candidates
                         </span>
                       </div>
                       <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden">
                         <div
                           className="h-full bg-[#f59e0b]"
-                          style={{ width: `${((candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)) / candidates.length) * 100}%` }}
+                          style={{ width: `${((candidates as any[]).filter(c => !c.groupId).length / candidates.length) * 100}%` }}
                         />
                       </div>
                     </div>
@@ -1194,10 +1197,32 @@ export function PositionDetailView({
             ) : (
               <div className="w-full">
                 <div className="flex items-center justify-between mb-6">
-                  <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
-                    Candidate Groups
-                  </h2>
-                  {isHR && (
+                  <div className="flex items-center gap-3">
+                    <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
+                      Candidate Groups
+                    </h2>
+                    {/* Active / Archived toggle */}
+                    <div className="flex items-center bg-[#f3f4f6] rounded-[8px] p-1">
+                      <button
+                        onClick={() => setShowArchivedGroups(false)}
+                        className={`px-3 py-1 rounded-[6px] text-[12px] font-medium transition-colors ${!showArchivedGroups ? 'bg-white text-[#111827] shadow-sm' : 'text-[#6b7280] hover:text-[#374151]'}`}
+                      >
+                        Active
+                      </button>
+                      <button
+                        onClick={async () => {
+                          setShowArchivedGroups(true);
+                          const ag = await api.recruiter.getPositionGroups(positionId, true) as any[];
+                          setArchivedGroups(ag || []);
+                          setArchivedGroupsLoaded(true);
+                        }}
+                        className={`px-3 py-1 rounded-[6px] text-[12px] font-medium transition-colors ${showArchivedGroups ? 'bg-white text-[#111827] shadow-sm' : 'text-[#6b7280] hover:text-[#374151]'}`}
+                      >
+                        Archived
+                      </button>
+                    </div>
+                  </div>
+                  {isHR && !showArchivedGroups && (
                     <button
                       onClick={() => setShowGroupCreationPage(true)}
                       className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] transition-colors"
@@ -1210,7 +1235,47 @@ export function PositionDetailView({
                   )}
                 </div>
 
-                {groups.length === 0 ? (
+                {showArchivedGroups ? (
+                  archivedGroups.length === 0 ? (
+                    <div className="bg-white rounded-[12px] p-12 text-center shadow-sm">
+                      <div className="w-[64px] h-[64px] rounded-full bg-[#f3f4f6] flex items-center justify-center mx-auto mb-4">
+                        <Users size={28} className="text-[#6b7280]" />
+                      </div>
+                      <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-2">No Archived Groups</h3>
+                      <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af]">Archived groups will appear here.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {archivedGroups.map((group) => (
+                        <div key={group.id} className="bg-white rounded-[12px] p-5 shadow-sm border border-[#e5e7eb] opacity-80">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <h3
+                                onClick={() => onViewGroup && onViewGroup(group.id)}
+                                className="font-['Arimo',sans-serif] text-[17px] text-black cursor-pointer hover:text-[#6366f1] hover:underline"
+                              >
+                                {group.name}
+                              </h3>
+                              <span className="px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] bg-[#f3f4f6] text-[#6b7280]">
+                                Archived
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => onViewGroup && onViewGroup(group.id)}
+                              className="flex items-center gap-1.5 h-[34px] px-[14px] rounded-[6px] border border-[#e5e7eb] text-[#374151] text-[13px] hover:bg-[#f9fafb] transition-colors"
+                            >
+                              View
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-4 mt-3 text-[13px] text-[#6b7280] font-['Arimo',sans-serif]">
+                            <span>{group.candidateCount ?? 0} candidates</span>
+                            {group.assigned_hr && <span>HR: {group.assigned_hr.name}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : groups.length === 0 ? (
                   <div className="bg-white rounded-[12px] p-12 text-center shadow-sm">
                     <div className="w-[64px] h-[64px] rounded-full bg-[#f3f4f6] flex items-center justify-center mx-auto mb-4">
                       <Users size={28} className="text-[#6b7280]" />
