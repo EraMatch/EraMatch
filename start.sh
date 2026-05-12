@@ -152,17 +152,29 @@ if [ "$USE_TUNNEL" = true ]; then
         
         # Check if a cloudflared process for this port is ALREADY running
         if pgrep -f "cloudflared tunnel --url http://localhost:$port" > /dev/null; then
+            # If we don't have the URL in env, try to recover it from the log file
+            if [ -z "${!env_var_name:-}" ]; then
+                if [ -f "$LOG_DIR/tunnel-$name.log" ]; then
+                    local existing_url=$(grep -o 'https://[-0-9a-z.]*\.trycloudflare\.com' "$LOG_DIR/tunnel-$name.log" | head -1 || true)
+                    if [ -n "$existing_url" ]; then
+                        eval "${env_var_name}='$existing_url'"
+                        log "${C_GREEN}[RECOVERED]" "Found $name tunnel URL: ${!env_var_name}"
+                    fi
+                fi
+            fi
+            
             if [ -n "${!env_var_name:-}" ]; then
                 log "${C_GREEN}[ACTIVE]" "Reusing $name tunnel: ${!env_var_name}"
                 return 0
             fi
+            
+            log "${C_YELLOW}[WARN]" "$name tunnel process exists but URL is unknown. Restarting..."
+            pkill -f "cloudflared tunnel --url http://localhost:$port" 2>/dev/null || true
+            sleep 1
         fi
 
         local logfile="$LOG_DIR/tunnel-$name.log"
-        rm -f "$logfile"
-        
-        # Kill any orphaned tunnel on this specific port before starting
-        pkill -f "cloudflared tunnel --url http://localhost:$port" 2>/dev/null || true
+        # Don't rm -f "$logfile" yet, we might want to see why it failed
         
         nohup cloudflared tunnel --url "http://localhost:$port" > "$logfile" 2>&1 &
         

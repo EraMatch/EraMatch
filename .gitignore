@@ -120,3 +120,6 @@ LIV2_TEST_CREDENTIALS.md
 backend/check_cv.py
 backend/check_cv2.py
 backend/test_cv_db.py
+
+# EraMatch Tunnel URLs
+.tunnels.env
