@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, Loader2, Download } from 'lucide-react';
-import { api } from '../../../services/api';
 import type { ApplicationScoreBreakdown } from '../../../services/types';
+import { useCandidateScoreBreakdown } from '../../../hooks/candidates/useCandidates';
+import { usePositionHDEvalQAG } from '../../../hooks/positions/usePositions';
 
 interface CandidateQAGAuditPageProps {
   candidateId: string;
@@ -13,50 +14,41 @@ const MUST_HAVE_RE = /(must|required|mandatory|at\s+least|minimum|\bmin\b)/i;
 
 export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQAGAuditPageProps) {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<ApplicationScoreBreakdown | null>(null);
-  const [pendingQuestions, setPendingQuestions] = useState<any[]>([]);
-  const [pendingSourceLabel, setPendingSourceLabel] = useState<string>('');
   const [filter, setFilter] = useState<'all' | 'failed' | 'must-fail'>('all');
 
-  useEffect(() => {
-    const load = async () => {
-      if (!applicationId) {
-        setError('Missing applicationId. Open this page from a candidate/application context.');
-        setLoading(false);
-        return;
-      }
-      try {
-        setLoading(true);
-        const res = await api.recruiter.getApplicationScoreBreakdown(applicationId);
-        setData(res);
+  const {
+    data: scoreData,
+    isLoading: scoreLoading,
+    isError: scoreIsError,
+  } = useCandidateScoreBreakdown(applicationId);
 
-        const hasChecks = Array.isArray(res?.criteria_checks) && res.criteria_checks.length > 0;
-        if (!hasChecks && res?.position_id) {
-          try {
-            const artifact = await api.recruiter.getPositionHDEvalQAG(String(res.position_id));
-            const approved = Array.isArray(artifact?.approved_questions) ? artifact.approved_questions : [];
-            const generated = Array.isArray(artifact?.questions) ? artifact.questions : [];
-            const selected = approved.length > 0 ? approved : generated;
-            setPendingQuestions(selected);
-            setPendingSourceLabel(approved.length > 0 ? 'Approved questions awaiting candidate evaluation' : 'Generated questions awaiting technical approval/evaluation');
-          } catch {
-            setPendingQuestions([]);
-            setPendingSourceLabel('');
-          }
-        } else {
-          setPendingQuestions([]);
-          setPendingSourceLabel('');
-        }
-      } catch (e) {
-        setError('Failed to load QAG audit data.');
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [applicationId]);
+  const data = scoreData as ApplicationScoreBreakdown | undefined;
+  const hasChecks = Array.isArray(data?.criteria_checks) && data!.criteria_checks.length > 0;
+  const positionId = !hasChecks && data?.position_id ? String(data.position_id) : undefined;
+
+  const { data: qagArtifact, isLoading: qagLoading } = usePositionHDEvalQAG(positionId);
+
+  const loading = scoreLoading || (!!positionId && qagLoading);
+  const error = !applicationId
+    ? 'Missing applicationId. Open this page from a candidate/application context.'
+    : scoreIsError
+    ? 'Failed to load QAG audit data.'
+    : null;
+
+  const pendingQuestions = useMemo(() => {
+    if (!qagArtifact) return [];
+    const approved = Array.isArray((qagArtifact as any)?.approved_questions) ? (qagArtifact as any).approved_questions : [];
+    const generated = Array.isArray((qagArtifact as any)?.questions) ? (qagArtifact as any).questions : [];
+    return approved.length > 0 ? approved : generated;
+  }, [qagArtifact]);
+
+  const pendingSourceLabel = useMemo(() => {
+    if (!qagArtifact) return '';
+    const approved = Array.isArray((qagArtifact as any)?.approved_questions) ? (qagArtifact as any).approved_questions : [];
+    return approved.length > 0
+      ? 'Approved questions awaiting candidate evaluation'
+      : 'Generated questions awaiting technical approval/evaluation';
+  }, [qagArtifact]);
 
   const checks = useMemo(() => {
     const items = Array.isArray(data?.criteria_checks) ? data!.criteria_checks : [];

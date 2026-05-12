@@ -4,7 +4,12 @@ Configuration for AI Service.
 Environment variables and settings.
 """
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+_ENV_FILE = Path(__file__).parent / ".env"
+print(_ENV_FILE)
 
 
 class Settings(BaseSettings):
@@ -28,13 +33,13 @@ class Settings(BaseSettings):
     OLLAMA_HOST: str = "https://ollama.com"
     OLLAMA_LOCAL_HOST: str = "http://localhost:11434"
     OLLAMA_API_KEY: str = ""
-    OLLAMA_MODEL: str = "deepseek-v3.1:671b-cloud"
-    OLLAMA_QUESTION_IMPORT_MODEL: str = "deepseek-v3.1:671b-cloud"
-    OLLAMA_CV_PARSING_MODEL: str = "deepseek-v3.1:671b-cloud"
-    OLLAMA_GH_FILTER_MODEL: str = "kimi-k2.5:cloud"
-    OLLAMA_GH_MAP_MODEL: str = "kimi-k2.5:cloud"
-    OLLAMA_GH_AUDIT_MODEL: str = "deepseek-v3.1:671b-cloud"
-    OLLAMA_GH_SYNTH_MODEL: str = "deepseek-v3.1:671b-cloud"
+    OLLAMA_MODEL: str = "gemma3:4b-cloud"
+    OLLAMA_QUESTION_IMPORT_MODEL: str = "gemma3:12b-cloud"
+    OLLAMA_CV_PARSING_MODEL: str = "gemma3:12b-cloud"
+    OLLAMA_GH_FILTER_MODEL: str = "gemma3:12b-cloud"
+    OLLAMA_GH_MAP_MODEL: str = "gemma3:12b-cloud"
+    OLLAMA_GH_AUDIT_MODEL: str = "gemma3:12b-cloud"
+    OLLAMA_GH_SYNTH_MODEL: str = "gemma3:12b-cloud"
     OLLAMA_GH_STAGE_TIMEOUT_SECONDS: int = 180
     OLLAMA_MAX_CONCURRENT_CALLS: int = 4
     OLLAMA_CV_PARSE_TIMEOUT_SECONDS: int = 120
@@ -68,7 +73,7 @@ class Settings(BaseSettings):
     CV_PARSE_ASYNC_MODE: str = "inline"
 
     class Config:
-        env_file = ".env"
+        env_file = str(_ENV_FILE)
         extra = "ignore"
 
     @classmethod

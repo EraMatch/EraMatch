@@ -1,5 +1,7 @@
 const API_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:8000/api/v1`;
 
+let isRedirectingToLogin = false;
+
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const token = localStorage.getItem('token');
     const headers: Record<string, string> = {
@@ -18,10 +20,13 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
     });
 
     if (res.status === 401) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        const path = window.location.pathname;
-        window.location.href = path.startsWith('/admin') ? '/admin/login' : '/recruiter/login';
+        if (!isRedirectingToLogin) {
+            isRedirectingToLogin = true;
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            const path = window.location.pathname;
+            window.location.href = path.startsWith('/admin') ? '/admin/login' : '/recruiter/login';
+        }
         throw new Error('Unauthorized');
     }
     if (!res.ok) {

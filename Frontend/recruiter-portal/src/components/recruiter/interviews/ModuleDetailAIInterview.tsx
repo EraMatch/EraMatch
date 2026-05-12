@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X, ChevronLeft, Download, AlertTriangle, ThumbsUp, ThumbsDown, Flag, MessageCircle, Video } from 'lucide-react';
 import { motion } from 'motion/react';
-import { api } from '../../../services/api';
+import { useAIInterviewResult } from '../../../hooks/interviews/useInterviews';
 
 interface TranscriptSegment {
   id: number;
@@ -39,129 +39,12 @@ export function ModuleDetailAIInterview({
 }: ModuleDetailAIInterviewProps) {
   const [selectedSegment, setSelectedSegment] = useState<number | null>(null);
   const [showRequestReview, setShowRequestReview] = useState(false);
-  const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
-  const [integrityFlags, setIntegrityFlags] = useState<IntegrityFlag[]>([]);
-  const [performanceMetrics, setPerformanceMetrics] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        const data: any = await api.recruiter.getAIInterviewResult(candidateId);
-        if (data) {
-          setTranscript(data.transcript || []);
-          setIntegrityFlags(data.integrityFlags || []);
-          setPerformanceMetrics(data.performanceMetrics || []);
-        } else {
-          // Fallback for dev/mock if API is missing
-          setTranscript([
-            {
-              id: 1,
-              timestamp: '00:00:05',
-              speaker: 'AI',
-              text: 'Hello! Thank you for joining today. Can you start by telling me about your experience with React and modern frontend development?',
-              sentiment: 'neutral',
-              flagged: false
-            },
-            // ... (truncated for brevity, normally would put full mock here if needed, or empty)
-          ]);
-          // For now, I'll just set empty or maybe keep the hardcoded as fallback if I want to display something.
-          // But the goal is to refactor. I'll rely on API returning data or empty.
-          // If I want to keep the "demo" feel, I should put the hardcoded data into a separate mock file or just inline it as fallback.
-          // I'll assume the API (or my mock server) returns this.
-          // I will put the hardcoded data back as fallback for now to ensure UI doesn't break if API is 404.
-          // Re-inserting the hardcoded data as default state or fallback:
-        }
-      } catch (error) {
-        console.error("Failed to fetch AI interview results", error);
-        // Fallback to hardcoded mock data for demonstration purposes if API fails
-        setTranscript([
-          {
-            id: 1,
-            timestamp: '00:00:05',
-            speaker: 'AI',
-            text: 'Hello! Thank you for joining today. Can you start by telling me about your experience with React and modern frontend development?',
-            sentiment: 'neutral',
-            flagged: false
-          },
-          {
-            id: 2,
-            timestamp: '00:00:15',
-            speaker: 'Candidate',
-            text: 'Sure! I\'ve been working with React for about 4 years now. I\'ve built several large-scale applications using React, Redux, and TypeScript. Most recently, I led the frontend development for a fintech platform that handles over 100,000 daily active users.',
-            sentiment: 'positive',
-            flagged: false
-          },
-          {
-            id: 3,
-            timestamp: '00:00:45',
-            speaker: 'AI',
-            text: 'That\'s impressive. Can you walk me through a challenging technical problem you faced in that project and how you solved it?',
-            sentiment: 'neutral',
-            flagged: false
-          },
-          {
-            id: 4,
-            timestamp: '00:00:55',
-            speaker: 'Candidate',
-            text: 'Well... um... there was this performance issue... let me think...',
-            sentiment: 'negative',
-            flagged: true
-          },
-          {
-            id: 5,
-            timestamp: '00:01:25',
-            speaker: 'Candidate',
-            text: 'We had a problem with rendering large data tables. I implemented virtualization using react-window to only render visible rows. This reduced our initial render time from 3 seconds to under 500ms.',
-            sentiment: 'positive',
-            flagged: false
-          },
-          {
-            id: 6,
-            timestamp: '00:02:00',
-            speaker: 'AI',
-            text: 'Excellent solution. How do you approach state management in complex React applications?',
-            sentiment: 'neutral',
-            flagged: false
-          },
-          {
-            id: 7,
-            timestamp: '00:02:10',
-            speaker: 'Candidate',
-            text: 'I believe in choosing the right tool for the job. For global state, I typically use Redux Toolkit or Zustand. For server state, React Query is my go-to. And for component-local state, I stick with useState and useReducer hooks.',
-            sentiment: 'positive',
-            flagged: false
-          }
-        ]);
-        setIntegrityFlags([
-          {
-            id: 1,
-            timestamp: '00:00:55',
-            type: 'suspicious-pause',
-            severity: 'medium',
-            description: 'Unusual 30-second pause before answering technical question'
-          },
-          {
-            id: 2,
-            timestamp: '00:01:00',
-            type: 'evasive-response',
-            severity: 'low',
-            description: 'Initial response appeared hesitant and vague'
-          }
-        ]);
-        setPerformanceMetrics([
-          { label: 'Technical Knowledge', value: 90, color: 'bg-[#10b981]' },
-          { label: 'Communication', value: 85, color: 'bg-[#3b82f6]' },
-          { label: 'Problem Solving', value: 82, color: 'bg-[#6366f1]' },
-          { label: 'Culture Fit', value: 88, color: 'bg-[#8b5cf6]' }
-        ]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchData();
-  }, [candidateId]);
+  const { data: interviewResult, isLoading } = useAIInterviewResult(String(candidateId));
+
+  const transcript: TranscriptSegment[] = (interviewResult as any)?.transcript || [];
+  const integrityFlags: IntegrityFlag[] = (interviewResult as any)?.integrityFlags || [];
+  const performanceMetrics: any[] = (interviewResult as any)?.performanceMetrics || [];
 
   const getSentimentColor = (sentiment: string) => {
     switch (sentiment) {

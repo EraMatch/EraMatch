@@ -23,9 +23,15 @@ async def generate_bank_service(
     if not rubric:
         raise HTTPException(status_code=404, detail="Rubric not found")
     
-    if rubric.state != LiV2State.FROZEN:
-        raise HTTPException(status_code=400, detail="Rubric must be frozen before generating bank")
-        
+    # Validate anchors are filled before generating
+    for dim in rubric.dimensions:
+        anchors = dim.get('anchors') or {}
+        if not anchors.get('substandard') or not anchors.get('proficient') or not anchors.get('excellent'):
+            raise HTTPException(
+                status_code=400,
+                detail=f"All anchors must be filled for dimension \"{dim.get('name', '')}\" before generating the question bank"
+            )
+
     # Fetch job context
     query = (
         select(CandidateGroup, Position)

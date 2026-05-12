@@ -20,6 +20,19 @@ import {
 import { useLocation, useNavigate } from 'react-router-dom';
 import LoadingSpinner from '../../common/LoadingSpinner';
 import { api } from '../../../services/api';
+import {
+    useBackgroundTasksPolling,
+    useSloHealth,
+    useTaskLogs,
+    useStopVideoTask,
+    useStopGithubAnalysisTask,
+    useStopQagTask,
+    useStopCvIngestionTask,
+    useStopQuestionImportTask,
+    useStopAllVideoTasks,
+    useStopAllGithubAnalysisTasks,
+    useDeleteBackgroundTask,
+} from '../../../hooks/backgroundTasks/useBackgroundTasks';
 
 interface TaskRecord {
     id: string;
@@ -322,12 +335,9 @@ export function BackgroundTasks() {
     const activeView: PageView = isPageView(rawView) ? rawView : 'dashboard';
 
     const [activeCategory, setActiveCategory] = useState<CategoryId>('video-processing');
-    const [tasks, setTasks] = useState<TaskRecord[]>([]);
-    const [loading, setLoading] = useState(true);
     const [autoRefresh, setAutoRefresh] = useState(true);
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
     const [taskLogs, setTaskLogs] = useState<Record<string, LogEntry[]>>({});
-    const [sloHealth, setSloHealth] = useState<SloHealthResponse | null>(null);
 
     const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
     const [deletingTaskIds, setDeletingTaskIds] = useState<string[]>([]);
@@ -337,45 +347,33 @@ export function BackgroundTasks() {
     const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
     const [filtersByTable, setFiltersByTable] = useState<Record<string, TableFilters>>({});
 
+    const { data: rawTasks = [], isLoading: loading, refetch: refetchTasks } = useBackgroundTasksPolling(autoRefresh);
+    const fetchTasks = refetchTasks;
+    const { data: sloHealth = null } = useSloHealth();
+    const { data: logsData } = useTaskLogs(expandedTaskId ?? undefined);
+
+    const tasks = rawTasks as TaskRecord[];
+    const sloHealthData = sloHealth as SloHealthResponse | null;
+
+    // Sync expanded task logs from TanStack Query result
+    React.useEffect(() => {
+        if (expandedTaskId && logsData) {
+            setTaskLogs((prev) => ({ ...prev, [expandedTaskId]: (logsData as any).logs }));
+        }
+    }, [expandedTaskId, logsData]);
+
+    const stopVideoTaskMutation = useStopVideoTask();
+    const stopGithubMutation = useStopGithubAnalysisTask();
+    const stopQagMutation = useStopQagTask();
+    const stopCvMutation = useStopCvIngestionTask();
+    const stopQuestionImportMutation = useStopQuestionImportTask();
+    const stopAllVideoMutation = useStopAllVideoTasks();
+    const stopAllGithubMutation = useStopAllGithubAnalysisTasks();
+    const deleteTaskMutation = useDeleteBackgroundTask();
+
     const isDeleteInFlight = deletingTaskIds.length > 0 || isBulkDeleting;
     const isStopInFlight = stoppingTaskIds.length > 0 || isStoppingAllTasks;
     const isActionInFlight = isDeleteInFlight || isStopInFlight;
-
-    const fetchTasks = async () => {
-        try {
-            const [data, slo] = await Promise.all([
-                api.recruiter.getBackgroundTasks(),
-                api.recruiter.getBackgroundTaskSloHealth(),
-            ]);
-            setTasks(data);
-            setSloHealth(slo);
-            setSelectedTaskIds((prev) => prev.filter((id) => data.some((item) => item.id === id)));
-        } catch (error) {
-            console.error('Failed to fetch tasks:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const fetchLogs = async (taskId: string) => {
-        try {
-            const data = await api.recruiter.getTaskLogs(taskId);
-            setTaskLogs((prev) => ({ ...prev, [taskId]: data.logs }));
-        } catch (error) {
-            console.error(`Failed to fetch logs for task ${taskId}:`, error);
-        }
-    };
-
-    useEffect(() => {
-        fetchTasks();
-        let timer: any;
-        if (autoRefresh) {
-            timer = setInterval(fetchTasks, 5000);
-        }
-        return () => {
-            if (timer) clearInterval(timer);
-        };
-    }, [autoRefresh]);
 
     const videoTasks = useMemo(() => tasks.filter((task) => task.task_category === 'video'), [tasks]);
     const questionImportTasks = useMemo(
@@ -543,12 +541,7 @@ export function BackgroundTasks() {
     const maxRecent = Math.max(1, ...overview.recent.map((_, idx, arr) => arr.length - idx));
 
     const toggleExpand = (taskId: string) => {
-        if (expandedTaskId === taskId) {
-            setExpandedTaskId(null);
-            return;
-        }
-        setExpandedTaskId(taskId);
-        fetchLogs(taskId);
+        setExpandedTaskId(expandedTaskId === taskId ? null : taskId);
     };
 
     const updateFilters = (tableId: string, patch: Partial<TableFilters>) => {
@@ -592,7 +585,7 @@ export function BackgroundTasks() {
             setDeletingTaskIds((prev) => [...prev, task.id]);
             await api.recruiter.deleteBackgroundTask(task.id, task.task_category);
 
-            setTasks((prev) => prev.filter((item) => item.id !== task.id));
+            refetchTasks();
             setSelectedTaskIds((prev) => prev.filter((id) => id !== task.id));
             setTaskLogs((prev) => {
                 const next = { ...prev };
@@ -633,7 +626,7 @@ export function BackgroundTasks() {
             .filter((_, idx) => results[idx].status === 'fulfilled')
             .map((task) => task.id);
 
-        setTasks((prev) => prev.filter((task) => !successIds.includes(task.id)));
+        if (successIds.length > 0) refetchTasks();
         setSelectedTaskIds((prev) => prev.filter((id) => !successIds.includes(id)));
         setDeletingTaskIds([]);
         setIsBulkDeleting(false);
@@ -669,10 +662,7 @@ export function BackgroundTasks() {
             .filter((_, idx) => results[idx].status === 'fulfilled')
             .map((task) => task.id);
 
-        if (successIds.length > 0) {
-            setTasks((prev) => prev.map((task) => (successIds.includes(task.id) ? { ...task, status: 'cancelled' } : task)));
-        }
-
+        if (successIds.length > 0) refetchTasks();
         setStoppingTaskIds([]);
     };
 
@@ -717,11 +707,7 @@ export function BackgroundTasks() {
                 runningCvIngestionCount > 0 ? api.recruiter.stopAllCvIngestionTasks() : Promise.resolve(null),
             ]);
 
-            setTasks((prev) =>
-                prev.map((task) =>
-                    ['pending', 'processing'].includes(task.status.toLowerCase()) ? { ...task, status: 'cancelled' } : task
-                )
-            );
+            refetchTasks();
         } catch (error) {
             console.error('Failed to stop running tasks:', error);
             window.alert('Failed to stop one or more running tasks. Please try again.');

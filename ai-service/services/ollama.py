@@ -49,6 +49,8 @@ async def chat_completion(
     """
     client = get_client(host=host)
     model_name = model or settings.OLLAMA_MODEL
+    effective_host = host or settings.OLLAMA_HOST
+    logger.debug("[Ollama] chat_completion — model=%s host=%s stream=%s", model_name, effective_host, stream)
 
     chat_kwargs = {
         "model": model_name,
@@ -87,19 +89,29 @@ async def chat_completion(
                         "model": model_name,
                     }
             except ResponseError as e:
+                logger.error(
+                    "[Ollama] ResponseError — model=%s host=%s status=%s body=%s",
+                    model_name, effective_host, e.status_code, str(e)[:300],
+                )
                 if e.status_code == 429 and attempt < max_retries - 1:
                     delay = base_delay * (2**attempt)
                     logger.warning(
-                        f"Ollama rate limit reached (429). Retrying in {delay} seconds (attempt {attempt + 1}/{max_retries - 1})..."
+                        "[Ollama] Rate limit (429). Retrying in %.1fs (attempt %d/%d)...",
+                        delay, attempt + 1, max_retries - 1,
                     )
                     await asyncio.sleep(delay)
                 else:
                     raise
             except Exception as e:
+                logger.error(
+                    "[Ollama] Exception — model=%s host=%s type=%s msg=%s",
+                    model_name, effective_host, type(e).__name__, str(e)[:300],
+                )
                 if "429" in str(e) and attempt < max_retries - 1:
                     delay = base_delay * (2**attempt)
                     logger.warning(
-                        f"Ollama rate limit reached (429). Retrying in {delay} seconds (attempt {attempt + 1}/{max_retries - 1})..."
+                        "[Ollama] Rate limit (429). Retrying in %.1fs (attempt %d/%d)...",
+                        delay, attempt + 1, max_retries - 1,
                     )
                     await asyncio.sleep(delay)
                 else:

@@ -357,134 +357,157 @@ class RecruiterService:
             if not projects:
                 return []
 
-            # 2. Enrich with counts
+            # 2. Enrich with counts (batch approach — replaces N+1 per-project queries)
+            from collections import defaultdict
+            project_ids = [p.id for p in projects]
+
+            # Batch fetch all positions for all projects at once
+            q_all_positions = select(
+                Position.project_id,
+                Position.id.label("position_id"),
+            ).where(
+                Position.project_id.in_(project_ids),
+                Position.is_deleted == False,
+            )
+            if self.current_user.role == "technical":
+                q_all_positions = q_all_positions.where(Position.assigned_tech_id == self.current_user.id)
+            elif self.current_user.role == "hr":
+                q_all_positions = q_all_positions.where(Position.assigned_hr_id == self.current_user.id)
+
+            res_all_pos = await self.session.execute(q_all_positions)
+            project_to_pos_ids: dict = defaultdict(list)
+            for proj_id, pos_id in res_all_pos.all():
+                project_to_pos_ids[proj_id].append(pos_id)
+
+            all_pos_ids = [pos_id for ids in project_to_pos_ids.values() for pos_id in ids]
+            project_pos_count = {proj_id: len(ids) for proj_id, ids in project_to_pos_ids.items()}
+
+            app_count_by_pos: dict = {}
+            group_count_by_pos: dict = {}
+            hire_count_by_pos: dict = {}
+            hire_timing_by_pos: dict = defaultdict(list)
+            scores_by_pos: dict = defaultdict(list)
+            stage_timing_by_pos: dict = defaultdict(dict)
+
+            if all_pos_ids:
+                # Batch query 1: app counts by position
+                res_app_counts = await self.session.execute(
+                    select(CandidateApplication.position_id, func.count(CandidateApplication.id).label("cnt"))
+                    .where(CandidateApplication.position_id.in_(all_pos_ids), CandidateApplication.is_deleted == False)
+                    .group_by(CandidateApplication.position_id)
+                )
+                app_count_by_pos = {r.position_id: r.cnt for r in res_app_counts.all()}
+
+                # Batch query 2: group counts by position
+                res_group_counts = await self.session.execute(
+                    select(CandidateGroup.position_id, func.count(CandidateGroup.id).label("cnt"))
+                    .where(CandidateGroup.position_id.in_(all_pos_ids), func.lower(CandidateGroup.status) == "active")
+                    .group_by(CandidateGroup.position_id)
+                )
+                group_count_by_pos = {r.position_id: r.cnt for r in res_group_counts.all()}
+
+                # Batch query 3: hire timing data
+                res_hire_timing = await self.session.execute(
+                    select(Hire.position_id, Hire.hired_at, CandidateApplication.applied_at)
+                    .join(CandidateApplication, Hire.application_id == CandidateApplication.id)
+                    .where(Hire.position_id.in_(all_pos_ids))
+                )
+                for pos_id, hired_at, applied_at in res_hire_timing.all():
+                    hire_timing_by_pos[pos_id].append((hired_at, applied_at))
+
+                # Batch query 4: hire counts by position
+                res_hire_counts = await self.session.execute(
+                    select(Hire.position_id, func.count(Hire.id).label("cnt"))
+                    .where(Hire.position_id.in_(all_pos_ids))
+                    .group_by(Hire.position_id)
+                )
+                hire_count_by_pos = {r.position_id: r.cnt for r in res_hire_counts.all()}
+
+                # Batch query 5: quality scores by position
+                res_scores = await self.session.execute(
+                    select(CandidateApplication.position_id, CandidateStageProgress.score)
+                    .join(CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id)
+                    .join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id)
+                    .where(
+                        CandidateApplication.position_id.in_(all_pos_ids),
+                        GroupStageConfig.stage_type.in_(["assessment", "interview"]),
+                        CandidateStageProgress.score.isnot(None),
+                    )
+                )
+                for pos_id, score in res_scores.all():
+                    scores_by_pos[pos_id].append(float(score))
+
+                # Batch query 6: stage timing by position and stage type
+                res_stage_timing = await self.session.execute(
+                    select(
+                        CandidateApplication.position_id,
+                        GroupStageConfig.stage_type,
+                        func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at).label("avg_dur"),
+                    )
+                    .join(CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id)
+                    .join(GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id)
+                    .where(
+                        CandidateApplication.position_id.in_(all_pos_ids),
+                        CandidateStageProgress.completed_at.isnot(None),
+                        CandidateStageProgress.started_at.isnot(None),
+                    )
+                    .group_by(CandidateApplication.position_id, GroupStageConfig.stage_type)
+                )
+                for pos_id, stage_type, avg_dur in res_stage_timing.all():
+                    days = round(float(avg_dur.total_seconds() / 86400.0), 1) if avg_dur else 0.0
+                    stage_timing_by_pos[pos_id][str(stage_type).lower()] = days
+
+            # Build enriched response from pre-fetched data (pure dict lookups, no more DB calls)
+            targets = {"screening": 3, "assessment": 5, "interview": 7, "offer": 5}
             enriched_projects = []
             for p in projects:
                 pid = p.id
-                
-                # Count positions
-                q_pos = select(func.count()).where(
-                    Position.project_id == pid,
-                    Position.is_deleted == False
-                )
-                
-                # Fetch position IDs for this project to query applicants and groups
-                q_pos_ids = select(Position.id).where(
-                    Position.project_id == pid,
-                    Position.is_deleted == False
-                )
+                pos_ids = project_to_pos_ids.get(pid, [])
+                pos_count = project_pos_count.get(pid, 0)
 
-                if self.current_user.role == "technical":
-                    q_pos = q_pos.where(Position.assigned_tech_id == self.current_user.id)
-                    q_pos_ids = q_pos_ids.where(Position.assigned_tech_id == self.current_user.id)
-                elif self.current_user.role == "hr":
-                    q_pos = q_pos.where(Position.assigned_hr_id == self.current_user.id)
-                    q_pos_ids = q_pos_ids.where(Position.assigned_hr_id == self.current_user.id)
-                    
-                res_pos = await self.session.execute(q_pos)
-                pos_count = res_pos.scalar() or 0
-                
-                res_pos_ids = await self.session.execute(q_pos_ids)
-                pos_ids = res_pos_ids.scalars().all()
-                
-                app_count = 0
-                group_count = 0
-                avg_time = 0.0
-                
                 if pos_ids:
-                    # Parallel fetch
-                    q_apps = select(func.count()).where(
-                        CandidateApplication.position_id.in_(pos_ids),
-                        CandidateApplication.is_deleted == False
-                    )
-                    q_groups = select(func.count()).where(
-                        CandidateGroup.position_id.in_(pos_ids),
-                        func.lower(CandidateGroup.status) == "active"
-                    )
-                    q_hires = select(Hire.hired_at, CandidateApplication.applied_at).join(
-                        CandidateApplication, Hire.application_id == CandidateApplication.id
-                    ).where(
-                        Hire.position_id.in_(pos_ids)
-                    )
-                    
-                    # 4. Conversion Rate: Hires / Total Apps
-                    # We need total hires count explicitly
-                    q_hire_count = select(func.count(Hire.id)).where(
-                        Hire.position_id.in_(pos_ids)
-                    )
+                    app_count = sum(app_count_by_pos.get(pos_id, 0) for pos_id in pos_ids)
+                    group_count = sum(group_count_by_pos.get(pos_id, 0) for pos_id in pos_ids)
+                    hire_count = sum(hire_count_by_pos.get(pos_id, 0) for pos_id in pos_ids)
 
-                    # 5. Quality Score: Avg of assessment & interview scores
-                    q_scores = select(CandidateStageProgress.score).join(
-                        CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
-                    ).join(
-                        GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
-                    ).where(
-                        CandidateApplication.position_id.in_(pos_ids),
-                        GroupStageConfig.stage_type.in_(["assessment", "interview"]),
-                        CandidateStageProgress.score.isnot(None)
-                    )
+                    all_diffs = []
+                    for pos_id in pos_ids:
+                        for hired_at, applied_at in hire_timing_by_pos.get(pos_id, []):
+                            if hired_at and applied_at:
+                                all_diffs.append((hired_at - applied_at).days)
+                    avg_time = sum(all_diffs) / len(all_diffs) if all_diffs else 0.0
 
-                    # 6. Stage Timing
-                    q_stages = select(
-                        GroupStageConfig.stage_type,
-                        func.avg(CandidateStageProgress.completed_at - CandidateStageProgress.started_at)
-                    ).join(
-                        CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id
-                    ).join(
-                        GroupStageConfig, CandidateStageProgress.stage_id == GroupStageConfig.stage_id
-                    ).where(
-                        CandidateApplication.position_id.in_(pos_ids),
-                        CandidateStageProgress.completed_at.isnot(None),
-                        CandidateStageProgress.started_at.isnot(None)
-                    ).group_by(GroupStageConfig.stage_type)
-
-
-                    res_apps = await self.session.execute(q_apps)
-                    res_groups = await self.session.execute(q_groups)
-                    res_hires = await self.session.execute(q_hires)
-                    res_hire_count = await self.session.execute(q_hire_count)
-                    res_scores = await self.session.execute(q_scores)
-                    res_stages = await self.session.execute(q_stages)
-                    
-                    app_count = res_apps.scalar() or 0
-                    group_count = res_groups.scalar() or 0
-                    hire_count = res_hire_count.scalar() or 0
-                    
-                    hire_data = res_hires.all()
-                    if hire_data:
-                        diffs = [(h - a).days for h, a in hire_data if h and a]
-                        if diffs:
-                            avg_time = sum(diffs) / len(diffs)
-                            
-                    # Conversion
                     conversion = (hire_count / app_count * 100) if app_count > 0 else 0.0
-                    
-                    # Quality
-                    scores = [float(s) for s in res_scores.scalars().all()]
-                    quality_score = (sum(scores) / len(scores)) if scores else 0.0
 
-                    # Stage Timing
-                    stage_data = res_stages.all()
-                    stage_map = {str(s).lower(): round(float(d.total_seconds() / 86400.0), 1) if d else 0 for s, d in stage_data}
-                    
-                    # Targets
-                    targets = {"screening": 3, "assessment": 5, "interview": 7, "offer": 5}
+                    all_scores = []
+                    for pos_id in pos_ids:
+                        all_scores.extend(scores_by_pos.get(pos_id, []))
+                    quality_score = (sum(all_scores) / len(all_scores)) if all_scores else 0.0
+
+                    merged_stage_days: dict = defaultdict(list)
+                    for pos_id in pos_ids:
+                        for stype, days in stage_timing_by_pos.get(pos_id, {}).items():
+                            if days > 0:
+                                merged_stage_days[stype].append(days)
+                    stage_map = {
+                        stype: round(sum(days_list) / len(days_list), 1)
+                        for stype, days_list in merged_stage_days.items()
+                    }
+
                     stage_timing = []
                     for s_type, target in targets.items():
                         days = stage_map.get(s_type, 0)
                         stage_timing.append({
-                            "stage": s_type.replace('_', ' ').title(),
+                            "stage": s_type.replace("_", " ").title(),
                             "days": int(days) if days > 0 else 0,
                             "target": target,
-                            "status": "good" if (days <= target or days == 0) else "slow"
+                            "status": "good" if (days <= target or days == 0) else "slow",
                         })
-
                 else:
-                    # Defaults if no positions
-                    conversion = 0.0
-                    quality_score = 0.0
+                    app_count = group_count = 0
+                    avg_time = conversion = quality_score = 0.0
                     stage_timing = []
-                
+
                 enriched_projects.append({
                     "project_id": str(p.id),
                     "name": p.name,
@@ -501,9 +524,9 @@ class RecruiterService:
                     "openDate": p.created_at.isoformat(),
                     "conversion_rate": round(conversion, 1),
                     "quality_score": round(quality_score, 1),
-                    "stage_timing": stage_timing
+                    "stage_timing": stage_timing,
                 })
-            
+
             return enriched_projects
         except Exception as e:
             print(f"Error listing projects via DB: {e}")
@@ -644,24 +667,36 @@ class RecruiterService:
 
     async def list_all_candidates(self) -> list[PositionCandidateResponse]:
         """List all candidates in the organization (for manual adding)."""
-        # Join Profile -> Application -> CVAnalysis -> GitHubAnalysis
-        # Start from CandidateProfile to get all profiles, then left join apps and cvs
+        # Select only specific columns + JSONB sub-key extraction to avoid loading full blobs
         stmt = (
-            select(CandidateProfile, CandidateApplication, CVAnalysis, GitHubAnalysis)
+            select(
+                CandidateProfile.id,
+                CandidateProfile.full_name,
+                CandidateProfile.email,
+                CandidateProfile.location,
+                CandidateApplication.id.label("app_id"),
+                CandidateApplication.group_id,
+                CVAnalysis.match_score,
+                CVAnalysis.experience_years,
+                CVAnalysis.skills,
+                CVAnalysis.parsed_data["work_experience"].label("work_experience"),
+                CVAnalysis.parsed_data["education"].label("education"),
+                CVAnalysis.parsed_data["prescore_v2"].label("prescore_v2"),
+                GitHubAnalysis.analysis_data["overall_github_score"].label("gh_overall_score"),
+                GitHubAnalysis.analysis_data["repo_confidence"].label("gh_repo_confidence"),
+                GitHubAnalysis.analysis_data["data_freshness"].label("gh_data_freshness"),
+            )
             .outerjoin(CandidateApplication, CandidateProfile.id == CandidateApplication.candidate_id)
             .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
             .outerjoin(GitHubAnalysis, CandidateProfile.id == GitHubAnalysis.candidate_id)
             .where(
                 CandidateProfile.organization_id == self.organization_id,
-                CandidateProfile.is_deleted == False
+                CandidateProfile.is_deleted == False,
             )
         )
         res = await self.session.execute(stmt)
         rows = res.all()
-        
-        # Deduplicate profiles, keeping the one with best match score or latest
-        candidates_map = {}
-        
+
         def _to_float(value, default: float | None = None) -> float | None:
             if value is None:
                 return default
@@ -670,70 +705,87 @@ class RecruiterService:
             except (TypeError, ValueError):
                 return default
 
-        for p, app, cv, gh in rows:
-            if p.id in candidates_map:
-                # Logic: If current CV has higher match score than stored one, replace
-                current_best_cv = candidates_map[p.id]['cv']
-                new_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
-                old_score = float(current_best_cv.match_score) if current_best_cv and current_best_cv.match_score is not None else 0.0
-                
-                if new_score > old_score:
-                    candidates_map[p.id] = {
-                        'profile': p,
-                        'app': app,
-                        'cv': cv,
-                        'gh': gh if gh is not None else candidates_map[p.id].get('gh')
+        # Deduplicate profiles, keeping entry with best match score
+        candidates_map: dict = {}
+        for row in rows:
+            cid = row.id
+            new_score = _to_float(row.match_score, 0.0)
+            if cid in candidates_map:
+                old = candidates_map[cid]
+                if new_score > old["match_score"]:
+                    candidates_map[cid] = {
+                        "id": row.id,
+                        "full_name": row.full_name,
+                        "email": row.email,
+                        "location": row.location,
+                        "app_id": row.app_id,
+                        "group_id": row.group_id,
+                        "match_score": new_score,
+                        "experience_years": row.experience_years,
+                        "skills": row.skills,
+                        "work_experience": row.work_experience,
+                        "education": row.education,
+                        "prescore_v2": row.prescore_v2,
+                        "gh_overall_score": row.gh_overall_score,
+                        "gh_repo_confidence": row.gh_repo_confidence,
+                        "gh_data_freshness": row.gh_data_freshness,
                     }
-                if candidates_map[p.id].get('gh') is None and gh is not None:
-                    candidates_map[p.id]['gh'] = gh
-                if candidates_map[p.id].get('app') is None and app is not None:
-                    candidates_map[p.id]['app'] = app
-                # Else keep existing
+                else:
+                    if old["app_id"] is None and row.app_id is not None:
+                        old["app_id"] = row.app_id
+                        old["group_id"] = row.group_id
+                    if old["gh_overall_score"] is None and row.gh_overall_score is not None:
+                        old["gh_overall_score"] = row.gh_overall_score
+                        old["gh_repo_confidence"] = row.gh_repo_confidence
+                        old["gh_data_freshness"] = row.gh_data_freshness
             else:
-                candidates_map[p.id] = {'profile': p, 'app': app, 'cv': cv, 'gh': gh}
-        
+                candidates_map[cid] = {
+                    "id": row.id,
+                    "full_name": row.full_name,
+                    "email": row.email,
+                    "location": row.location,
+                    "app_id": row.app_id,
+                    "group_id": row.group_id,
+                    "match_score": new_score,
+                    "experience_years": row.experience_years,
+                    "skills": row.skills,
+                    "work_experience": row.work_experience,
+                    "education": row.education,
+                    "prescore_v2": row.prescore_v2,
+                    "gh_overall_score": row.gh_overall_score,
+                    "gh_repo_confidence": row.gh_repo_confidence,
+                    "gh_data_freshness": row.gh_data_freshness,
+                }
+
         candidates = []
         for item in candidates_map.values():
-            p = item['profile']
-            app = item.get('app')
-            cv = item['cv']
-            gh = item.get('gh')
-            
-            # Extract skills and experience if available
-            skills = cv.skills if cv and cv.skills else []
-            experience = float(cv.experience_years) if cv and cv.experience_years is not None else 0.0
-            location = p.location if p.location else "Unknown"
-            match_score = float(cv.match_score) if cv and cv.match_score is not None else 0.0
+            match_score = item["match_score"] or 0.0
+            experience = float(item["experience_years"]) if item["experience_years"] is not None else 0.0
+            location = item["location"] or "Unknown"
+            skills = item["skills"] or []
 
-            # Extract detailed fields from parsed_data
-            parsed = cv.parsed_data if cv and isinstance(cv.parsed_data, dict) else {}
-            prescore = parsed.get("prescore_v2") if isinstance(parsed.get("prescore_v2"), dict) else {}
-            
+            # JSONB sub-fields are already deserialized Python objects from Postgres extraction
+            prescore = item["prescore_v2"] if isinstance(item["prescore_v2"], dict) else {}
+
             companies = []
             job_titles = []
-            # Check for work_experience being a list
-            work_exp = parsed.get("work_experience", [])
+            work_exp = item["work_experience"]
             if isinstance(work_exp, list):
                 for job in work_exp:
                     if isinstance(job, dict):
-                        # Try common keys
                         comp = job.get("company") or job.get("organization")
                         if comp: companies.append(str(comp))
-                        
                         title = job.get("job_title") or job.get("title") or job.get("position")
                         if title: job_titles.append(str(title))
-            
+
             universities = []
             degrees = []
-            # Check for education being a list
-            education = parsed.get("education", [])
+            education = item["education"]
             if isinstance(education, list):
                 for edu in education:
                     if isinstance(edu, dict):
-                        # Try common keys
                         uni = edu.get("institution") or edu.get("university") or edu.get("school")
                         if uni: universities.append(str(uni))
-                        
                         deg = edu.get("degree") or edu.get("qualification")
                         if deg: degrees.append(str(deg))
 
@@ -744,27 +796,26 @@ class RecruiterService:
             github_has_fallback = False
             github_fallback_reason = None
 
-            if gh and isinstance(gh.analysis_data, dict):
-                analysis_data = gh.analysis_data
-                repo_confidence = analysis_data.get("repo_confidence")
-                data_freshness = analysis_data.get("data_freshness")
+            repo_confidence = item["gh_repo_confidence"]
+            data_freshness = item["gh_data_freshness"]
 
-                github_overall_score = _to_float(analysis_data.get("overall_github_score"))
-                if isinstance(repo_confidence, dict):
-                    github_repo_confidence_score = _to_float(repo_confidence.get("selected_repo_confidence"))
-                if isinstance(data_freshness, dict):
-                    github_contribution_source = data_freshness.get("contribution_source")
-                    github_freshness_hours = _to_float(data_freshness.get("source_freshness_hours"))
-                    github_fallback_reason = data_freshness.get("fallback_reason")
-                    github_has_fallback = bool(github_fallback_reason)
+            if item["gh_overall_score"] is not None:
+                github_overall_score = _to_float(item["gh_overall_score"])
+            if isinstance(repo_confidence, dict):
+                github_repo_confidence_score = _to_float(repo_confidence.get("selected_repo_confidence"))
+            if isinstance(data_freshness, dict):
+                github_contribution_source = data_freshness.get("contribution_source")
+                github_freshness_hours = _to_float(data_freshness.get("source_freshness_hours"))
+                github_fallback_reason = data_freshness.get("fallback_reason")
+                github_has_fallback = bool(github_fallback_reason)
 
             candidates.append(PositionCandidateResponse(
-                id=p.id, # Profile ID
-                applicationId=(app.id if app else None),
-                groupId=(app.group_id if app else None),
-                name=p.full_name,
-                email=p.email,
-                score=match_score, 
+                id=item["id"],
+                applicationId=item["app_id"],
+                groupId=item["group_id"],
+                name=item["full_name"],
+                email=item["email"],
+                score=match_score,
                 match=match_score,
                 color="#9ca3af" if match_score < 50 else ("#10b981" if match_score >= 80 else "#f59e0b"),
                 starred=False,
@@ -792,7 +843,7 @@ class RecruiterService:
                 jd_quality_cap_applied=bool(prescore.get("jd_quality_cap_applied")) if "jd_quality_cap_applied" in prescore else None,
                 score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
             ))
-            
+
         return candidates
 
     async def get_position(self, position_id: UUID) -> Position:
@@ -1695,14 +1746,17 @@ class RecruiterService:
                 integrityIssues=0
             )
 
-    async def get_position_groups(self, position_id: UUID) -> list[PositionGroupResponse]:
-        """List groups for a position."""
+    async def get_position_groups(self, position_id: UUID, archived: bool = False) -> list[PositionGroupResponse]:
+        """List active or archived groups for a position."""
         try:
+            if archived:
+                status_filter = CandidateGroup.status == "archived"
+            else:
+                status_filter = CandidateGroup.status.notin_(["archived", "deleted"])
             res_groups = await self.session.execute(
                 select(CandidateGroup).where(
                     CandidateGroup.position_id == position_id,
-                    CandidateGroup.status != "archived",
-                    CandidateGroup.status != "deleted" # Just in case data exists
+                    status_filter,
                 )
             )
             groups = res_groups.scalars().all()

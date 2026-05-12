@@ -21,6 +21,11 @@ engine = create_async_engine(
     pool_size=5,
     max_overflow=10,
     pool_timeout=30,
+    # Discard stale connections before handing them to the app.
+    # Prevents ConnectionDoesNotExistError when pgbouncer drops idle connections.
+    pool_pre_ping=True,
+    # Recycle connections after 4 minutes — before Supabase's idle timeout fires.
+    pool_recycle=240,
     connect_args={
         "statement_cache_size": 0,  # Required for pgbouncer transaction mode
         "prepared_statement_cache_size": 0,
@@ -42,6 +47,8 @@ sync_engine = create_engine(
     echo=False,
     pool_size=5,
     max_overflow=10,
+    pool_pre_ping=True,
+    pool_recycle=240,
     connect_args={
         "options": "-c statement_timeout=30000" # Optional: 30s timeout
     }

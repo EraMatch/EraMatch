@@ -122,6 +122,11 @@ async def generate_anchors_service(
                 cleaned = cleaned[:-3].strip()
         
         parsed = json.loads(cleaned)
+        # AI returns weight=0 as placeholder; distribute equally so validation passes
+        if parsed and all(d.get("weight", 0) == 0 for d in parsed):
+            equal = max(1, 100 // len(parsed))
+            for i, d in enumerate(parsed):
+                d["weight"] = equal if i < len(parsed) - 1 else 100 - equal * (len(parsed) - 1)
         return [RubricDimension(**d) for d in parsed]
     except Exception as e:
         raise HTTPException(

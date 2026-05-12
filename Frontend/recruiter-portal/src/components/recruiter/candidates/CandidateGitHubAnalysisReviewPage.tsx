@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Download, Edit3, Loader2, Save, Shield, Sparkles, Copy, CheckCircle2 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Textarea } from '../../ui/textarea';
-import { api } from '../../../services/api';
+import { useCandidateDetail } from '../../../hooks/candidates/useCandidates';
 
 type ReviewPage = 'all' | 'mcq' | 'essay' | 'coding';
 
@@ -123,14 +123,21 @@ export function CandidateGitHubAnalysisReviewPage({ candidateId: routedCandidate
   const navigate = useNavigate();
   const { candidateId: paramCandidateId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [candidate, setCandidate] = useState<any>(null);
   const [rows, setRows] = useState<ReviewQuestion[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [rowsInitialized, setRowsInitialized] = useState(false);
   const [savingMessage, setSavingMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [reviewSortMode, setReviewSortMode] = useState<'risk' | 'chronological'>('risk');
   const candidateId = routedCandidateId || paramCandidateId || '';
   const resolvedApplicationId = applicationId || searchParams.get('applicationId') || undefined;
+
+  const { data: candidate, isLoading: loading, error: queryError } = useCandidateDetail(candidateId || undefined);
+  const error = queryError ? (queryError as any)?.message || 'Failed to load GitHub analysis review data.' : null;
+
+  // Build rows from candidate data when it first arrives
+  if (candidate && !rowsInitialized) {
+    setRows(buildQuestions(candidate));
+    setRowsInitialized(true);
+  }
 
   const reviewPage = useMemo<ReviewPage>(() => {
     const value = String(searchParams.get('reviewType') || '').toLowerCase();
@@ -148,28 +155,6 @@ export function CandidateGitHubAnalysisReviewPage({ candidateId: routedCandidate
     setSearchParams(nextParams);
   };
 
-  useEffect(() => {
-    const load = async () => {
-      if (!candidateId) {
-        setError('Missing candidate id.');
-        setLoading(false);
-        return;
-      }
-
-      try {
-        setLoading(true);
-        const data = await api.recruiter.getCandidate(candidateId);
-        setCandidate(data);
-        setRows(buildQuestions(data));
-      } catch (err: any) {
-        setError(err?.message || 'Failed to load GitHub analysis review data.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    load();
-  }, [candidateId]);
 
   const updateRow = (rowId: string, patch: Partial<ReviewQuestion> & { edited?: Partial<ReviewQuestion['edited']> }) => {
     setRows((prev) => prev.map((row) => {
@@ -306,6 +291,25 @@ export function CandidateGitHubAnalysisReviewPage({ candidateId: routedCandidate
     setSavingMessage('Copied review payload to clipboard.');
     window.setTimeout(() => setSavingMessage(null), 2200);
   };
+
+  if (!candidateId && !loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="w-full max-w-2xl rounded-2xl border border-rose-200 bg-white p-8 text-center shadow-sm">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+            <Shield size={24} />
+          </div>
+          <h1 className="text-2xl font-semibold text-slate-900">Missing candidate id.</h1>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <Button variant="outline" onClick={() => navigate(-1)}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

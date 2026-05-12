@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Users, FileText, Briefcase, Search, Filter, ChevronDown, UserPlus, Loader2, Trash2, GitPullRequest, XCircle, RotateCcw, BarChart3 } from 'lucide-react';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
@@ -12,6 +12,9 @@ import { toast } from 'sonner';
 import { api, Member } from '../../services/api';
 import EraMatchLogo from '../../assets/image-eramatch.png';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { useQueryClient } from '@tanstack/react-query';
+import { useAdminMembers, useAdminMemberStats } from '../../hooks/admin/useAdminDashboard';
+import { useRemoveMember, useSuspendMember, useActivateMember, useBackfillPositions } from '../../hooks/admin/useAdminMutations';
 
 interface AdminOrganizationMembersProps {
   onSignOut: () => void;
@@ -38,33 +41,21 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
   const [employeeFirstName, setEmployeeFirstName] = useState('');
   const [employeeLastName, setEmployeeLastName] = useState('');
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [members, setMembers] = useState<Member[]>([]);
+  const queryClient = useQueryClient();
 
-  const [recruitersCount, setRecruitersCount] = useState(0);
-  const [totalActiveCount, setTotalActiveCount] = useState(0);
-  const [adminsCount, setAdminsCount] = useState(0);
+  const { data: membersData, isLoading: membersLoading } = useAdminMembers();
+  const { data: statsData, isLoading: statsLoading } = useAdminMemberStats();
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        const [membersData, statsData] = await Promise.all([
-          api.admin.getMembers(),
-          api.admin.getMemberStats()
-        ]);
-        setMembers(membersData);
-        setRecruitersCount(statsData.recruitersCount || 0);
-        setTotalActiveCount(statsData.totalActive || 0);
-        setAdminsCount(statsData.adminsCount || 0);
-      } catch (error) {
-        toast.error('Failed to load organization data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchData();
-  }, []);
+  const isLoading = membersLoading || statsLoading;
+  const members: Member[] = membersData ?? [];
+  const recruitersCount = statsData?.recruitersCount ?? 0;
+  const totalActiveCount = statsData?.totalActive ?? 0;
+  const adminsCount = statsData?.adminsCount ?? 0;
+
+  const removeMemberMutation = useRemoveMember();
+  const suspendMemberMutation = useSuspendMember();
+  const activateMemberMutation = useActivateMember();
+  const backfillPositionsMutation = useBackfillPositions();
 
 
 
@@ -80,12 +71,8 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
 
     try {
       setIsActing(true);
-      // Action 3: Delete member (soft delete)
-      await api.admin.deleteMember(userId);
+      await removeMemberMutation.mutateAsync(userId);
       toast.success('Member removed successfully');
-      // Refresh members list
-      const updatedMembers = await api.admin.getMembers();
-      setMembers(updatedMembers);
     } catch (error) {
       toast.error('Failed to remove member');
     } finally {
@@ -107,7 +94,7 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
 
     try {
       setIsActing(true);
-      const result = await api.admin.backfillPositionAssignments();
+      const result = await backfillPositionsMutation.mutateAsync();
       toast.success(`✓ Positions restored: ${result.updated_positions || 0} positions reassigned`);
       setShowReturnConfirm(false);
     } catch (error: any) {
@@ -119,7 +106,6 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
 
   const handleToggleStatus = async (member: Member) => {
     const isSuspended = member.status?.toLowerCase() === 'suspended';
-    const newStatus = isSuspended ? 'active' : 'suspended';
 
     if (!window.confirm(`Are you sure you want to ${isSuspended ? 'activate' : 'suspend'} this member?`)) {
       return;
@@ -129,26 +115,12 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
       setIsActing(true);
       if (isSuspended) {
         // Action 2: Activate member
-        await api.admin.activateMember(member.id);
+        await activateMemberMutation.mutateAsync(member.id);
         toast.success('Member activated successfully');
       } else {
         // Action 1: Suspend member (auto-redistributes positions)
-        await api.admin.suspendMember(member.id);
+        await suspendMemberMutation.mutateAsync(member.id);
         toast.success('Member suspended successfully. Open positions have been redistributed.');
-      }
-
-      // Refresh members list and stats
-      const [updatedMembers, updatedStats] = await Promise.all([
-        api.admin.getMembers(),
-        api.admin.getMemberStats()
-      ]);
-
-      setMembers(updatedMembers);
-
-      if (updatedStats) {
-        setRecruitersCount(updatedStats.recruitersCount || 0);
-        setTotalActiveCount(updatedStats.totalActive || 0);
-        setAdminsCount(updatedStats.adminsCount || 0);
       }
     } catch (error: any) {
       toast.error(error?.detail || `Failed to ${isSuspended ? 'activate' : 'suspend'} member`);
@@ -164,7 +136,6 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
     }
 
     try {
-      setIsLoading(true);
       await api.admin.registerEmployee({
         email: employeeEmail,
         firstName: employeeFirstName,
@@ -179,15 +150,12 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
       setEmployeeLastName('');
       setEmployeeTitle('hr');
 
-      // Refresh members list and switch back to list view
-      const updatedMembers = await api.admin.getMembers();
-      setMembers(updatedMembers);
+      // Invalidate members list and switch back to list view
+      queryClient.invalidateQueries({ queryKey: ['members'] });
       setActiveTab('members');
 
     } catch (error) {
       toast.error('Failed to register employee');
-    } finally {
-      setIsLoading(false);
     }
   };
 

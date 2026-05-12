@@ -1,4 +1,10 @@
 import { API_URL, fetchAPI } from './client';
+import { queryClient } from '../lib/queryClient';
+
+function clearRecruiterCache() {
+    queryClient.clear();
+    localStorage.removeItem('eramatch-recruiter-cache');
+}
 
 export const authService = {
     login: async (email: string, pass: string) => {
@@ -23,6 +29,10 @@ export const authService = {
         // Save to localStorage
         const token = data.access_token || data.token;
         if (token) {
+            const prevOwner = localStorage.getItem('eramatch-recruiter-cache-owner')
+            const newOwner = String(data.user?.user_id ?? 'guest')
+            if (!prevOwner || prevOwner !== newOwner) clearRecruiterCache();
+            localStorage.setItem('eramatch-recruiter-cache-owner', newOwner);
             localStorage.setItem('token', token);
             localStorage.setItem('user', JSON.stringify(data.user));
         }
@@ -45,6 +55,10 @@ export const authService = {
         // Save to localStorage
         const token = data.access_token || data.token;
         if (token) {
+            const prevOwner = localStorage.getItem('eramatch-recruiter-cache-owner')
+            const newOwner = String(data.user?.user_id ?? 'guest')
+            if (!prevOwner || prevOwner !== newOwner) clearRecruiterCache();
+            localStorage.setItem('eramatch-recruiter-cache-owner', newOwner);
             localStorage.setItem('token', token);
             localStorage.setItem('user', JSON.stringify(data.user));
         }

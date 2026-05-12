@@ -30,6 +30,10 @@ async def async_parse_cv_and_webhook(cv_text: str, tenant_id: str, job_id: str, 
             webhook_payload["status"] = "success"
             webhook_payload["parsed_data"] = mock_resp.model_dump()
         else:
+            logger.debug(
+                "[CVParsing] LLM call — model=%s host=%s timeout=%ss",
+                CV_PARSING_MODEL, settings.OLLAMA_LOCAL_HOST, settings.OLLAMA_CV_PARSE_TIMEOUT_SECONDS,
+            )
             prompt = _load_prompt("parse", CV_TEXT=cv_text[:30000])
             max_json_retries = 3
             last_json_error = None
@@ -57,9 +61,9 @@ async def async_parse_cv_and_webhook(cv_text: str, tenant_id: str, job_id: str, 
             normalized = _normalize_parsed(parsed)
             webhook_payload["status"] = "success"
             webhook_payload["parsed_data"] = normalized
-            
+
     except Exception as exc:
-        logger.error(f"Async CV parsing failed for {file_path}: {exc}")
+        logger.exception("[CVParsing] Async CV parsing failed for %s", file_path)
         webhook_payload["status"] = "failed"
         webhook_payload["error"] = str(exc)
 

@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { X, Users, CheckCircle, ArrowRight, Filter, TrendingUp, AlertTriangle, Ban, Award, Flag, Search } from 'lucide-react';
+import { X, Users, CheckCircle, ArrowRight, Filter, TrendingUp, AlertTriangle, Ban, Award, Flag, Search, Loader2 } from 'lucide-react';
 import { Button } from '../../ui/button';
+import { usePreviewBulkProgress } from '../../../hooks/groups/useGroups';
 
 interface Candidate {
   id: number;
+  applicationId: string;
   name: string;
   avatar: string;
   score: number;
@@ -12,7 +14,9 @@ interface Candidate {
 }
 
 interface BulkProgressionModalProps {
+  groupId: string;
   currentStage: string;
+  currentStageType?: string;
   nextStage: string;
   candidates: Candidate[];
   onConfirm: (selectedIds: number[], action: 'progress' | 'reject') => void;
@@ -20,7 +24,9 @@ interface BulkProgressionModalProps {
 }
 
 export function BulkProgressionModal({
+  groupId,
   currentStage,
+  currentStageType,
   nextStage,
   candidates,
   onConfirm,
@@ -29,8 +35,15 @@ export function BulkProgressionModal({
   const [selectedCandidates, setSelectedCandidates] = useState<Set<number>>(new Set());
   const [action, setAction] = useState<'progress' | 'reject'>('progress');
   const [searchQuery, setSearchQuery] = useState('');
+  const [step, setStep] = useState<'select' | 'preview'>('select');
+  const [previewData, setPreviewData] = useState<{
+    selected_count: number;
+    auto_hold_count: number;
+    auto_hold_candidates: { application_id: string; name: string; score: number | null }[];
+  } | null>(null);
 
-  // Smart selection filters
+  const previewMutation = usePreviewBulkProgress();
+
   const selectNoFlags = () => {
     const ids = candidates.filter(c => c.flags.length === 0).map(c => c.id);
     setSelectedCandidates(new Set(ids));
@@ -78,9 +91,120 @@ export function BulkProgressionModal({
     c.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const handleProceed = async () => {
+    if (action === 'progress') {
+      // Show preview before confirming
+      const selectedAppIds = Array.from(selectedCandidates).map(id => {
+        const c = candidates.find(c => c.id === id);
+        return c?.applicationId || String(id);
+      });
+      const result = await previewMutation.mutateAsync({
+        groupId,
+        payload: {
+          application_ids: selectedAppIds,
+          action,
+          current_stage_type: currentStageType,
+        },
+      });
+      setPreviewData(result);
+      setStep('preview');
+    } else {
+      // Reject: no auto-hold preview needed
+      onConfirm(Array.from(selectedCandidates), action);
+    }
+  };
+
   const handleConfirm = () => {
     onConfirm(Array.from(selectedCandidates), action);
   };
+
+  if (step === 'preview' && previewData) {
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+        <div className="bg-white rounded-[16px] shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col">
+          {/* Header */}
+          <div className="px-8 py-6 border-b border-[#e5e7eb] bg-gradient-to-r from-emerald-50 to-teal-50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-[#10b981] flex items-center justify-center">
+                  <AlertTriangle size={20} className="text-white" />
+                </div>
+                <div>
+                  <h2 className="text-[#111827]">Confirm Progression</h2>
+                  <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] mt-0.5">
+                    Review the impact before confirming
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={onCancel}
+                className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-white/50 transition-colors"
+              >
+                <X size={20} className="text-[#6b7280]" />
+              </button>
+            </div>
+          </div>
+
+          {/* Summary */}
+          <div className="px-8 py-6 space-y-4">
+            <div className="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-[10px]">
+              <CheckCircle size={20} className="text-emerald-600 flex-shrink-0" />
+              <div>
+                <p className="font-['Arimo',sans-serif] text-[14px] font-semibold text-emerald-800">
+                  {previewData.selected_count} candidate{previewData.selected_count !== 1 ? 's' : ''} will advance to {nextStage}
+                </p>
+              </div>
+            </div>
+
+            {previewData.auto_hold_count > 0 && (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-[10px]">
+                <div className="flex items-center gap-3 mb-3">
+                  <AlertTriangle size={20} className="text-amber-600 flex-shrink-0" />
+                  <p className="font-['Arimo',sans-serif] text-[14px] font-semibold text-amber-800">
+                    {previewData.auto_hold_count} candidate{previewData.auto_hold_count !== 1 ? 's' : ''} not selected will be automatically put on hold
+                  </p>
+                </div>
+                {previewData.auto_hold_candidates.length > 0 && (
+                  <div className="ml-8 space-y-1 max-h-40 overflow-y-auto">
+                    {previewData.auto_hold_candidates.map(c => (
+                      <div key={c.application_id} className="flex items-center justify-between py-1 border-b border-amber-100 last:border-0">
+                        <span className="font-['Arimo',sans-serif] text-[13px] text-amber-900">{c.name}</span>
+                        {c.score !== null && (
+                          <span className="font-['Arimo',sans-serif] text-[12px] text-amber-700">
+                            Score: {Math.round(c.score)}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="ml-8 mt-2 font-['Arimo',sans-serif] text-[12px] text-amber-700">
+                  You can reject or reactivate held candidates later from the group page.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-8 py-4 border-t border-[#e5e7eb] bg-gray-50 flex items-center justify-between gap-3">
+            <Button
+              onClick={() => setStep('select')}
+              variant="outline"
+              className="h-11 px-6"
+            >
+              ← Back
+            </Button>
+            <Button
+              onClick={handleConfirm}
+              className="h-11 px-6 bg-[#10b981] hover:bg-[#059669]"
+            >
+              Confirm & Progress {previewData.selected_count} Candidate{previewData.selected_count !== 1 ? 's' : ''}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
@@ -311,16 +435,21 @@ export function BulkProgressionModal({
                 Cancel
               </Button>
               <Button
-                onClick={handleConfirm}
-                disabled={selectedCandidates.size === 0}
+                onClick={handleProceed}
+                disabled={selectedCandidates.size === 0 || previewMutation.isPending}
                 className={`h-11 px-6 ${
                   action === 'progress'
                     ? 'bg-[#10b981] hover:bg-[#059669]'
                     : 'bg-red-500 hover:bg-red-600'
                 }`}
               >
-                {action === 'progress' && `Move ${selectedCandidates.size} to ${nextStage}`}
-                {action === 'reject' && `Reject ${selectedCandidates.size} Candidate${selectedCandidates.size > 1 ? 's' : ''}`}
+                {previewMutation.isPending ? (
+                  <><Loader2 size={16} className="inline mr-2 animate-spin" />Loading...</>
+                ) : action === 'progress' ? (
+                  `Review & Move ${selectedCandidates.size} to ${nextStage}`
+                ) : (
+                  `Reject ${selectedCandidates.size} Candidate${selectedCandidates.size > 1 ? 's' : ''}`
+                )}
               </Button>
             </div>
           </div>

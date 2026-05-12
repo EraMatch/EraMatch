@@ -6,10 +6,18 @@ Generic AI service supporting multiple providers:
 - Whisper for transcription (faster-whisper)
 - HuggingFace models (custom)
 """
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from config import settings
 from routers import llm, custom, transcribe, evaluate, question_import, anomaly_detection, github_analysis, proctoring, cv_parsing
+
+logging.basicConfig(
+    level=logging.DEBUG if settings.DEBUG else logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+)
 
 app = FastAPI(
     title="EraMatch AI Service",

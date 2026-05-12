@@ -49,7 +49,11 @@ from app.schemas.group import (
     GroupIntegrityDecisionsResponse,
     SendOffersRequest,
     BulkProgressRequest,
+    BulkProgressPreview,
+    HoldResolveRequest,
     ScheduleInterviewRequest,
+    ArchiveGroupRequest,
+    ArchiveGroupResponse,
 )
 
 router = APIRouter(tags=["Groups"])
@@ -109,6 +113,23 @@ async def update_group(
     """Update group details (name, status)."""
     svc = GroupService(session, current_user)
     return await svc.update_group(group_id, body)
+
+
+@router.post(
+    "/recruiter/groups/{group_id}/archive",
+    response_model=ArchiveGroupResponse,
+)
+async def archive_group(
+    group_id: UUID,
+    body: ArchiveGroupRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Archive a group after all stages are closed. Optionally send rejection emails
+    to non-rejected candidates — guarded by application.status so each candidate
+    receives at most one final-decision email."""
+    svc = GroupService(session, current_user)
+    return await svc.archive_group(group_id, body.send_rejections)
 
 
 @router.delete(
@@ -567,6 +588,47 @@ async def bulk_progress_candidates(
     svc = GroupService(session, current_user)
     await svc.bulk_progress(group_id, request.application_ids, request.action, request.current_stage_type, request.reason)
     return {"message": f"Successfully processed {len(request.application_ids)} candidates"}
+
+
+@router.post(
+    "/recruiter/groups/{group_id}/candidates/bulk-progress-preview",
+    response_model=BulkProgressPreview,
+)
+async def preview_bulk_progress(
+    group_id: UUID,
+    request: BulkProgressRequest,
+    session: DbSession = ...,
+    current_user: RecruiterUser = ...,
+):
+    """Dry-run preview of bulk_progress: returns how many candidates will be auto-held."""
+    svc = GroupService(session, current_user)
+    return await svc.preview_bulk_progress(
+        group_id, request.application_ids, request.action, request.current_stage_type
+    )
+
+
+@router.post("/recruiter/groups/{group_id}/candidates/held/resolve")
+async def resolve_held_candidates(
+    group_id: UUID,
+    request: HoldResolveRequest,
+    session: DbSession = ...,
+    current_user: RecruiterUser = ...,
+):
+    """Reject or reactivate held candidates in a group."""
+    svc = GroupService(session, current_user)
+    await svc.resolve_held_candidates(group_id, request.actions)
+    return {"message": f"Resolved {len(request.actions)} held candidates"}
+
+
+@router.post("/recruiter/groups/{group_id}/reset-stages")
+async def reset_stages(
+    group_id: UUID,
+    session: DbSession = ...,
+    current_user: RecruiterUser = ...,
+):
+    """DEV ONLY — resets all candidate stage progress for a group."""
+    svc = GroupService(session, current_user)
+    return await svc.reset_stages(group_id)
 
 
 # ─── Schedule Live Interview ──────────────────────────────────────────────────

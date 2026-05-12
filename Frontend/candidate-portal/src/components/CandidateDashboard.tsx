@@ -1,9 +1,8 @@
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { FileText, Layers, Clock, CheckCircle2, ArrowLeft, Loader2 } from 'lucide-react';
-import { useState, useEffect } from 'react';
-import { api } from '../services/api';
 import logo from '../imports/image-eramatch.png';
+import { useCandidateAssessments } from '../hooks/candidate/useCandidateAssessments';
 
 interface CandidateDashboardProps {
   onSignOut: () => void;
@@ -31,31 +30,11 @@ export function CandidateDashboard({
   onStartTechnicalAssessment,
   onBack,
 }: CandidateDashboardProps) {
-  const [stages, setStages] = useState<StageInfo[]>([]);
-  const [assessments, setAssessments] = useState<StageInfo[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        // Fetch real stage/completion status from backend.
-        // API returns array of {id, type, stage_order, status, title, description, expectedTime}
-        const stageData = await api.candidate.getAssessments() as any;
-        const stageList: StageInfo[] = Array.isArray(stageData) ? stageData : (stageData.stages || []);
-        setStages(stageList);
-        setAssessments(stageList); // stageList IS the cards — shapes already match
-      } catch (err) {
-        console.error('Failed to fetch assessments', err);
-        setError('Failed to load your assessments. Please refresh.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchData();
-  }, []);
+  const { data: rawAssessments, isLoading, isError } = useCandidateAssessments();
+  const stageData = rawAssessments as any;
+  const stages: StageInfo[] = Array.isArray(stageData) ? stageData : (stageData?.stages || []);
+  const assessments = stages;
+  const error = isError ? 'Failed to load your assessments. Please refresh.' : null;
 
   const getStartHandler = (card: StageInfo) => {
     if (card.type === 'assessment') return onStartTechnicalAssessment;

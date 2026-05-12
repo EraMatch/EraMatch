@@ -1,8 +1,11 @@
 import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
+import { usePositionDetail, usePositionInsights } from '../../../hooks/positions/usePositions';
+import { queryKeys } from '../../../lib/queryKeys';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../ui/dialog';
 import { Switch } from '../../ui/switch';
 import { Question } from '../assessments/CreateAssessmentPage';
@@ -192,6 +195,9 @@ export function PositionDetailView({
 }: PositionDetailViewProps) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
+  const [archivedGroups, setArchivedGroups] = useState<any[]>([]);
+  const [showArchivedGroups, setShowArchivedGroups] = useState(false);
+  const [archivedGroupsLoaded, setArchivedGroupsLoaded] = useState(false);
   const [fittingData, setFittingData] = useState<any[]>([]);
   const [scoreData, setScoreData] = useState<any[]>([]);
   const [skillDistribution, setSkillDistribution] = useState<any[]>([]);
@@ -203,7 +209,11 @@ export function PositionDetailView({
   const [integrityIssues, setIntegrityIssues] = useState<number>(0);
   const [sourceQuality, setSourceQuality] = useState<any[]>([]);
   const [topCompanies, setTopCompanies] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: detailData, isLoading: detailLoading } = usePositionDetail(positionId);
+  const { data: insightsData, isLoading: insightsLoading } = usePositionInsights(positionId);
+  const isLoading = detailLoading || insightsLoading;
+
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editPositionTitle, setEditPositionTitle] = useState(positionTitle);
   const [editPositionDescription, setEditPositionDescription] = useState(description || '');
@@ -345,49 +355,32 @@ export function PositionDetailView({
   const [groupToDelete, setGroupToDelete] = useState<any>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        const [detailsRes, insightsRes] = await Promise.all([
-          api.recruiter.getPositionDetails(positionId),
-          api.recruiter.getPositionInsights(positionId)
-        ]);
-        const details = detailsRes as any;
-        const insights = insightsRes as any;
+    if (!detailData) return;
+    const d = detailData as any;
+    setCandidates(d.candidates || []);
+    setGroups(d.groups || []);
+    const kw = d.jd_keywords && typeof d.jd_keywords === 'object'
+      ? d.jd_keywords as Record<string, string[]>
+      : null;
+    setJdKeywords(kw);
+    setKeywordsVisible(hasAnyKeywords(kw));
+  }, [detailData]);
 
-        setCandidates(details.candidates);
-        setGroups(details.groups);
-        const initialKeywords = details?.jd_keywords && typeof details.jd_keywords === 'object'
-          ? details.jd_keywords as Record<string, string[]>
-          : null;
-        setJdKeywords(initialKeywords);
-        setKeywordsVisible(hasAnyKeywords(initialKeywords));
-
-        // Set metrics individually as setMetrics state object does not exist
-        // Assuming these states exist based on previous code reading, or if not, I should check defaults.
-        // Actually, looking at lines 1-150, I don't see 'setMetrics'. 
-        // I see 'setFittingData', 'setScoreData' etc.
-        // I should just set the insights data as before but safely.
-
-        setFittingData(insights.fittingData || []);
-        setScoreData(insights.scoreData || []);
-        setSkillDistribution(insights.skillDistribution || []);
-        setSeniorityDistribution(insights.seniorityDistribution || []);
-        setUniversityDistribution(insights.universityDistribution || []);
-        setAvailabilityDistribution(insights.availabilityDistribution || []);
-        setConversion(insights.conversion || 0);
-        setQualityScore(insights.qualityScore || 0);
-        setIntegrityIssues(insights.integrityIssues || 0);
-        setSourceQuality(insights.sourceQuality || []);
-        setTopCompanies(insights.topCompanies || []);
-      } catch (error) {
-        console.error('Failed to fetch position details:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    if (positionId) { fetchData(); }
-  }, [positionId]);
+  useEffect(() => {
+    if (!insightsData) return;
+    const i = insightsData as any;
+    setFittingData(i.fittingData || []);
+    setScoreData(i.scoreData || []);
+    setSkillDistribution(i.skillDistribution || []);
+    setSeniorityDistribution(i.seniorityDistribution || []);
+    setUniversityDistribution(i.universityDistribution || []);
+    setAvailabilityDistribution(i.availabilityDistribution || []);
+    setConversion(i.conversion || 0);
+    setQualityScore(i.qualityScore || 0);
+    setIntegrityIssues(i.integrityIssues || 0);
+    setSourceQuality(i.sourceQuality || []);
+    setTopCompanies(i.topCompanies || []);
+  }, [insightsData]);
 
   // Auth / Role Check
   const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -525,54 +518,13 @@ export function PositionDetailView({
     if (!editGroupName.trim()) return;
     try {
       await api.recruiter.updateGroup(groupId, { name: editGroupName });
-      const updatedGroups = await api.recruiter.getPositionGroups(positionId) as any[];
-      setGroups(updatedGroups);
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
       setEditingGroupId(null);
     } catch (err) {
       console.error('Failed to rename group', err);
     }
   };
 
-  const fetchPositionData = useCallback(async (showPageLoader: boolean = true) => {
-    try {
-      if (showPageLoader) {
-        setIsLoading(true);
-      }
-      const [detailsRes, insightsRes] = await Promise.all([
-        api.recruiter.getPositionDetails(positionId),
-        api.recruiter.getPositionInsights(positionId)
-      ]);
-      const details = detailsRes as any;
-      const insights = insightsRes as any;
-
-      setCandidates(details.candidates || []);
-      setGroups(details.groups || []);
-
-      setFittingData(insights.fittingData || []);
-      setScoreData(insights.scoreData || []);
-      setSkillDistribution(insights.skillDistribution || []);
-      setSeniorityDistribution(insights.seniorityDistribution || []);
-      setUniversityDistribution(insights.universityDistribution || []);
-      setAvailabilityDistribution(insights.availabilityDistribution || []);
-      setConversion(insights.conversion || 0);
-      setQualityScore(insights.qualityScore || 0);
-      setIntegrityIssues(insights.integrityIssues || 0);
-      setSourceQuality(insights.sourceQuality || []);
-      setTopCompanies(insights.topCompanies || []);
-    } catch (error) {
-      console.error('Failed to fetch position details:', error);
-    } finally {
-      if (showPageLoader) {
-        setIsLoading(false);
-      }
-    }
-  }, [positionId]);
-
-  useEffect(() => {
-    if (positionId) {
-      fetchPositionData(true);
-    }
-  }, [positionId, fetchPositionData]);
 
   const handleRecomputeScores = async () => {
     try {
@@ -581,7 +533,8 @@ export function PositionDetailView({
       setRecomputeMessage(null);
 
       const result = await api.recruiter.recomputePositionPrescores(positionId) as any;
-      await fetchPositionData(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.insights(positionId) });
 
       const scored = Number(result?.applications_scored ?? 0);
       setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
@@ -662,7 +615,8 @@ export function PositionDetailView({
       await api.recruiter.updatePositionHDEvalQAG(positionId, qagQuestions);
       await api.recruiter.approvePositionHDEvalQAG(positionId);
       const recomputeResult = await api.recruiter.recomputePositionPrescores(positionId) as any;
-      await fetchPositionData(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.insights(positionId) });
 
       setQagStatus('approved');
       const scored = Number(recomputeResult?.applications_scored ?? 0);
@@ -704,7 +658,7 @@ export function PositionDetailView({
     try {
       await api.recruiter.resetApplicationAssessmentTrial(String(candidate.applicationId));
       setAssessmentResetMessage(`Successfully reset trial for ${candidate.name}.`);
-      await fetchPositionData(false);
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
     } catch (err: any) {
       console.error('Failed to reset assessment trial:', err);
       setAssessmentResetError(err.message || 'Failed to reset assessment trial.');
@@ -1054,12 +1008,12 @@ export function PositionDetailView({
                   <div className="w-[8px] h-[8px] rounded-full bg-[#f59e0b]"></div>
                 </div>
                 <p className="font-['Arimo',sans-serif] text-[28px] text-black mb-2">
-                  {candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)}
+                  {(candidates as any[]).filter(c => !c.groupId).length}
                 </p>
                 <div className="w-full h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
                   <div
                     className="h-full bg-[#f59e0b]"
-                    style={{ width: `${((candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)) / (candidates.length || 1)) * 100}%` }}
+                    style={{ width: `${((candidates as any[]).filter(c => !c.groupId).length / (candidates.length || 1)) * 100}%` }}
                   ></div>
                 </div>
               </div>
@@ -1090,20 +1044,20 @@ export function PositionDetailView({
                       </div>
                     </div>
                   ))}
-                  {candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0) > 0 && (
+                  {(candidates as any[]).filter(c => !c.groupId).length > 0 && (
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
                           Unassigned
                         </span>
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                          {candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)} candidates
+                          {(candidates as any[]).filter(c => !c.groupId).length} candidates
                         </span>
                       </div>
                       <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden">
                         <div
                           className="h-full bg-[#f59e0b]"
-                          style={{ width: `${((candidates.length - groups.reduce((sum, g) => sum + g.candidateCount, 0)) / candidates.length) * 100}%` }}
+                          style={{ width: `${((candidates as any[]).filter(c => !c.groupId).length / candidates.length) * 100}%` }}
                         />
                       </div>
                     </div>
@@ -1243,10 +1197,32 @@ export function PositionDetailView({
             ) : (
               <div className="w-full">
                 <div className="flex items-center justify-between mb-6">
-                  <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
-                    Candidate Groups
-                  </h2>
-                  {isHR && (
+                  <div className="flex items-center gap-3">
+                    <h2 className="font-['Arimo',sans-serif] text-[20px] text-black">
+                      Candidate Groups
+                    </h2>
+                    {/* Active / Archived toggle */}
+                    <div className="flex items-center bg-[#f3f4f6] rounded-[8px] p-1">
+                      <button
+                        onClick={() => setShowArchivedGroups(false)}
+                        className={`px-3 py-1 rounded-[6px] text-[12px] font-medium transition-colors ${!showArchivedGroups ? 'bg-white text-[#111827] shadow-sm' : 'text-[#6b7280] hover:text-[#374151]'}`}
+                      >
+                        Active
+                      </button>
+                      <button
+                        onClick={async () => {
+                          setShowArchivedGroups(true);
+                          const ag = await api.recruiter.getPositionGroups(positionId, true) as any[];
+                          setArchivedGroups(ag || []);
+                          setArchivedGroupsLoaded(true);
+                        }}
+                        className={`px-3 py-1 rounded-[6px] text-[12px] font-medium transition-colors ${showArchivedGroups ? 'bg-white text-[#111827] shadow-sm' : 'text-[#6b7280] hover:text-[#374151]'}`}
+                      >
+                        Archived
+                      </button>
+                    </div>
+                  </div>
+                  {isHR && !showArchivedGroups && (
                     <button
                       onClick={() => setShowGroupCreationPage(true)}
                       className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] transition-colors"
@@ -1259,7 +1235,47 @@ export function PositionDetailView({
                   )}
                 </div>
 
-                {groups.length === 0 ? (
+                {showArchivedGroups ? (
+                  archivedGroups.length === 0 ? (
+                    <div className="bg-white rounded-[12px] p-12 text-center shadow-sm">
+                      <div className="w-[64px] h-[64px] rounded-full bg-[#f3f4f6] flex items-center justify-center mx-auto mb-4">
+                        <Users size={28} className="text-[#6b7280]" />
+                      </div>
+                      <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-2">No Archived Groups</h3>
+                      <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af]">Archived groups will appear here.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {archivedGroups.map((group) => (
+                        <div key={group.id} className="bg-white rounded-[12px] p-5 shadow-sm border border-[#e5e7eb] opacity-80">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <h3
+                                onClick={() => onViewGroup && onViewGroup(group.id)}
+                                className="font-['Arimo',sans-serif] text-[17px] text-black cursor-pointer hover:text-[#6366f1] hover:underline"
+                              >
+                                {group.name}
+                              </h3>
+                              <span className="px-[10px] py-[4px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] bg-[#f3f4f6] text-[#6b7280]">
+                                Archived
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => onViewGroup && onViewGroup(group.id)}
+                              className="flex items-center gap-1.5 h-[34px] px-[14px] rounded-[6px] border border-[#e5e7eb] text-[#374151] text-[13px] hover:bg-[#f9fafb] transition-colors"
+                            >
+                              View
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-4 mt-3 text-[13px] text-[#6b7280] font-['Arimo',sans-serif]">
+                            <span>{group.candidateCount ?? 0} candidates</span>
+                            {group.assigned_hr && <span>HR: {group.assigned_hr.name}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : groups.length === 0 ? (
                   <div className="bg-white rounded-[12px] p-12 text-center shadow-sm">
                     <div className="w-[64px] h-[64px] rounded-full bg-[#f3f4f6] flex items-center justify-center mx-auto mb-4">
                       <Users size={28} className="text-[#6b7280]" />
@@ -2448,23 +2464,10 @@ export function PositionDetailView({
           groupName={groupToDelete.name}
           candidateCount={candidates.filter(c => groups.find(g => g.id === groupToDelete.id)?.candidate_ids?.includes(c.id)).length || groupToDelete.candidate_count || 0}
           availableGroups={groups.filter(g => g.id !== groupToDelete.id)}
-          onConfirm={async () => {
+          onConfirm={() => {
             setIsGroupDeleteModalOpen(false);
             setGroupToDelete(null);
-            // Refresh data
-            try {
-              setIsLoading(true);
-              const [detailsRes] = await Promise.all([
-                api.recruiter.getPositionDetails(positionId)
-              ]);
-              const details = detailsRes as any;
-              setCandidates(details.candidates);
-              setGroups(details.groups);
-            } catch (err) {
-              console.error("Failed to refresh data after group deletion", err);
-            } finally {
-              setIsLoading(false);
-            }
+            queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
           }}
         />
       )}

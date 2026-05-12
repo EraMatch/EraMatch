@@ -265,16 +265,27 @@ echo "   PID: $CANDIDATE_PID → $LOG_DIR/candidate.log"
 
 # ── 6. CELERY WORKERS ─────────────────────────────────────────────────────────
 log "${C_MAGENTA}[START]" "Starting Celery Workers..."
+
+CELERY_WORKER_POOL_ARGS=()
+case "$(uname -s 2>/dev/null || echo "")" in
+    MINGW*|MSYS*|CYGWIN*|Windows_NT)
+        CELERY_WORKER_POOL_ARGS+=(--pool=solo)
+        ;;
+esac
 (
     cd "$BACKEND_DIR"
-    exec uv run celery -A worker.celery_app worker --loglevel=info
+    CELERY_BROKER_URL="redis://localhost:6379/0" \
+    CELERY_RESULT_BACKEND="redis://localhost:6379/0" \
+    exec uv run celery -A worker.celery_app worker --loglevel=info "${CELERY_WORKER_POOL_ARGS[@]}"
 ) > "$LOG_DIR/celery-backend.log" 2>&1 &
 CELERY_BACKEND_PID=$!
 stream_log "celery-be" "$C_MAGENTA" "$LOG_DIR/celery-backend.log"
 
 (
     cd "$AI_DIR"
-    exec uv run celery -A worker.celery_app worker --loglevel=info
+    CELERY_BROKER_URL="redis://localhost:6379/1" \
+    CELERY_RESULT_BACKEND="redis://localhost:6379/1" \
+    exec uv run celery -A worker.celery_app worker --loglevel=info "${CELERY_WORKER_POOL_ARGS[@]}"
 ) > "$LOG_DIR/celery-ai.log" 2>&1 &
 CELERY_AI_PID=$!
 stream_log "celery-ai" "$C_CYAN" "$LOG_DIR/celery-ai.log"

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock, ShieldCheck, Award, Zap, Code2, Cpu, Layers, Globe, Terminal, Briefcase, Users } from 'lucide-react';
 import LoadingSpinner from '../../common/LoadingSpinner';
 import { EnhancedAssessmentReport } from '../assessments/EnhancedAssessmentReport';
@@ -11,6 +11,7 @@ import { API_URL } from '../../../services/client';
 import { LiveInterviewResults } from '../live-interview-v2/LiveInterviewResults';
 import type { ApplicationScoreBreakdown } from '../../../services/types';
 import { useNavigate } from 'react-router-dom';
+import { useCandidateDetail, useCandidateScoreBreakdown } from '../../../hooks/candidates/useCandidates';
 
 interface CandidateProfileProps {
   candidateId: string;
@@ -33,16 +34,22 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [showGithubAssignedQuestions, setShowGithubAssignedQuestions] = useState(false);
   const [githubQuestionTypeFilter, setGithubQuestionTypeFilter] = useState<'all' | 'mcq' | 'essay' | 'coding'>('all');
 
-  const [candidate, setCandidate] = useState<any>(null);
-  const [scoreBreakdown, setScoreBreakdown] = useState<ApplicationScoreBreakdown | null>(null);
-  const [scoreBreakdownLoading, setScoreBreakdownLoading] = useState(false);
   const [assessmentResetLoading, setAssessmentResetLoading] = useState(false);
   const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
   const [assessmentResetError, setAssessmentResetError] = useState<string | null>(null);
   const [githubReanalysisLoading, setGithubReanalysisLoading] = useState(false);
   const [githubReanalysisMessage, setGithubReanalysisMessage] = useState<string | null>(null);
   const [githubReanalysisError, setGithubReanalysisError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+
+  const { data: candidate, isLoading } = useCandidateDetail(candidateId);
+
+  const resolvedApplicationId = applicationId || (candidate as any)?.applicationId || (candidate as any)?.application_id;
+
+  const { data: scoreBreakdownData, isLoading: scoreBreakdownLoading } = useCandidateScoreBreakdown(
+    resolvedApplicationId ? String(resolvedApplicationId) : undefined
+  );
+  const scoreBreakdown = (scoreBreakdownData as ApplicationScoreBreakdown | undefined) ?? null;
+
   const backendOrigin = (() => {
     try {
       return new URL(API_URL).origin;
@@ -58,45 +65,6 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
     return `${backendOrigin}${path}`;
   };
 
-  const resolvedApplicationId = applicationId || candidate?.applicationId || candidate?.application_id;
-
-  useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        setIsLoading(true);
-        const data = await api.recruiter.getCandidate(candidateId);
-        console.log('Fetched candidate data:', data);
-        setCandidate(data);
-      } catch (error) {
-        console.error("Failed to load profile");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchProfile();
-  }, [candidateId]);
-
-  useEffect(() => {
-    if (!resolvedApplicationId) {
-      setScoreBreakdown(null);
-      return;
-    }
-
-    const fetchScoreBreakdown = async () => {
-      try {
-        setScoreBreakdownLoading(true);
-        const data = await api.recruiter.getApplicationScoreBreakdown(String(resolvedApplicationId));
-        setScoreBreakdown(data);
-      } catch (error) {
-        console.error('Failed to load score breakdown', error);
-        setScoreBreakdown(null);
-      } finally {
-        setScoreBreakdownLoading(false);
-      }
-    };
-
-    fetchScoreBreakdown();
-  }, [resolvedApplicationId]);
 
   const handleResetAssessmentTrial = async () => {
     if (!resolvedApplicationId) {
@@ -1880,38 +1848,115 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                       </div>
                       <h4 className="text-lg font-medium text-gray-900 mb-3">{q.question}</h4>
                     </div>
-                    {q.isCorrect ? (
+                    {q.isCorrect === true ? (
                       <CheckCircle size={24} className="text-emerald-600 flex-shrink-0" />
-                    ) : (
+                    ) : q.isCorrect === false && (q.questionType || '').toLowerCase() !== 'essay' ? (
                       <XCircle size={24} className="text-red-600 flex-shrink-0" />
-                    )}
+                    ) : null}
                   </div>
 
-                  <div className="space-y-4">
-                    <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
-                      <div className="text-sm font-medium text-blue-900 mb-1">Candidate's Answer</div>
-                      <div className="text-sm text-blue-800">
-                        {(() => {
-                          const ans = typeof q.candidateAnswer !== 'undefined' ? q.candidateAnswer : q.answer;
-                          if (typeof ans === 'undefined' || ans === null) return 'N/A';
-                          if (typeof ans === 'object') return JSON.stringify(ans, null, 2);
-                          return String(ans);
-                        })()}
-                      </div>
-                    </div>
+                  {(() => {
+                    const qType = (q.questionType || '').toLowerCase();
+                    const raw = q.answer;
 
-                    <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded">
-                      <div className="text-sm font-medium text-emerald-900 mb-1">Correct Answer</div>
-                      <div className="text-sm text-emerald-800">
-                        {(() => {
-                          const ans = q.correctAnswer ?? q.referenceAnswer;
-                          if (ans === null || ans === undefined) return 'N/A';
-                          if (typeof ans === 'object') return JSON.stringify(ans, null, 2);
-                          return String(ans);
-                        })()}
+                    // Render simple markdown: **bold**, \n\n paragraphs
+                    const renderMarkdown = (text: string) => {
+                      const paragraphs = text.split(/\n\n+/);
+                      return (
+                        <div className="space-y-2">
+                          {paragraphs.map((para, pi) => {
+                            const parts = para.split(/\*\*([^*]+)\*\*/g);
+                            return (
+                              <p key={pi} className="text-sm leading-relaxed">
+                                {parts.map((part, ji) =>
+                                  ji % 2 === 1 ? <strong key={ji}>{part}</strong> : part
+                                )}
+                              </p>
+                            );
+                          })}
+                        </div>
+                      );
+                    };
+
+                    // Resolve selected index (MCQ)
+                    const selectedIdx = raw != null && typeof raw === 'object'
+                      ? (raw.selected_index ?? raw.selected_option ?? raw.selected_value ?? null)
+                      : (q.selected ?? null);
+
+                    // Resolve option text — options are plain strings or objects
+                    const resolveOption = (opts: any[], idx: number): string => {
+                      const opt = opts[idx];
+                      if (opt == null) return `Option ${idx + 1}`;
+                      return typeof opt === 'object' ? (opt.text || opt.label || String(idx + 1)) : String(opt);
+                    };
+
+                    // Candidate answer
+                    let candidateAnswerText = '';
+                    let aiScore: number | null = null;
+                    let aiFeedback: string | null = null;
+                    if (raw === null || raw === undefined) {
+                      candidateAnswerText = 'No answer submitted';
+                    } else if (qType === 'mcq') {
+                      if (selectedIdx !== null && Array.isArray(q.options) && q.options[selectedIdx] != null) {
+                        candidateAnswerText = resolveOption(q.options, Number(selectedIdx));
+                      } else if (selectedIdx !== null) {
+                        candidateAnswerText = `Option ${Number(selectedIdx) + 1}`;
+                      } else {
+                        candidateAnswerText = 'N/A';
+                      }
+                    } else if (typeof raw === 'object') {
+                      candidateAnswerText = raw.text || raw.answer || raw.response || '';
+                      if (raw.ai_score != null) aiScore = raw.ai_score;
+                      if (raw.ai_feedback) aiFeedback = raw.ai_feedback;
+                    } else {
+                      candidateAnswerText = String(raw);
+                    }
+
+                    // Correct answer
+                    let correctAnswerText = '';
+                    if (q.referenceAnswer) {
+                      correctAnswerText = q.referenceAnswer;
+                    } else if (q.correctIndex != null && Array.isArray(q.options) && q.options[q.correctIndex] != null) {
+                      correctAnswerText = resolveOption(q.options, Number(q.correctIndex));
+                    } else {
+                      correctAnswerText = qType === 'essay' ? 'Open-ended — evaluated by AI rubric' : 'N/A';
+                    }
+
+                    return (
+                      <div className="space-y-3">
+                        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+                          <div className="text-sm font-medium text-blue-900 mb-2">Candidate's Answer</div>
+                          <div className="text-sm text-blue-800 whitespace-pre-wrap">{candidateAnswerText}</div>
+                        </div>
+
+                        <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded">
+                          <div className="text-sm font-medium text-emerald-900 mb-2">Correct Answer</div>
+                          <div className="text-sm text-emerald-800">{correctAnswerText}</div>
+                        </div>
+
+                        {aiFeedback && (
+                          <div className="bg-violet-50 border-l-4 border-violet-400 p-4 rounded">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="text-sm font-medium text-violet-900">AI Feedback</div>
+                              {aiScore !== null && (
+                                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-200 text-violet-800">
+                                  Score: {aiScore}/100
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-violet-800">{renderMarkdown(aiFeedback)}</div>
+                          </div>
+                        )}
+
+                        {q.rubric && (
+                          <div className="bg-gray-50 border-l-4 border-gray-300 p-4 rounded">
+                            <div className="text-sm font-medium text-gray-700 mb-1">Rubric</div>
+                            <div className="text-sm text-gray-600 whitespace-pre-wrap">{q.rubric}</div>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>

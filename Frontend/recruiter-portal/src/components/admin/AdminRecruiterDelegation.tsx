@@ -6,6 +6,8 @@ import { toast } from 'sonner';
 import { api, JobPosition, Project } from '../../services/api';
 import EraMatchLogo from '../../assets/image-eramatch.png';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { useRecruiterDelegation, useRecentAssignments } from '../../hooks/admin/useAdminDashboard';
+import { useReassignRecruiter } from '../../hooks/admin/useAdminMutations';
 
 interface AdminRecruiterDelegationProps {
   onSignOut: () => void;
@@ -22,38 +24,28 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
   const [sortField, setSortField] = useState<string>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [hrRecruiters, setHrRecruiters] = useState<{ id: string; name: string }[]>([]);
-  const [technicalRecruiters, setTechnicalRecruiters] = useState<{ id: string; name: string }[]>([]);
+  const { data: delegationData, isLoading: delegationLoading } = useRecruiterDelegation();
+  const { data: recentAssignmentsData, isLoading: recentLoading } = useRecentAssignments();
+  const reassignRecruiterMutation = useReassignRecruiter();
+
+  const isLoading = delegationLoading || recentLoading;
+  const hrRecruiters: { id: string; name: string }[] = delegationData?.hrRecruiters ?? [];
+  const technicalRecruiters: { id: string; name: string }[] = delegationData?.technicalRecruiters ?? [];
+  const projects: Project[] = delegationData?.projects ?? [];
+  const recentAssignments: any[] = recentAssignmentsData ?? [];
+
   const [jobPositions, setJobPositions] = useState<JobPosition[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [recentAssignments, setRecentAssignments] = useState<any[]>([]);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        const data = await api.admin.getRecruiterDelegation();
-        setHrRecruiters(data.hrRecruiters);
-        setTechnicalRecruiters(data.technicalRecruiters);
-        setJobPositions(data.positions);
-        setProjects(data.projects);
-
-        const recent = await api.admin.getRecentAssignments();
-        setRecentAssignments(recent || []);
-      } catch (error) {
-        toast.error('Failed to load delegation data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchData();
-  }, []);
+    if (delegationData?.positions) {
+      setJobPositions(delegationData.positions);
+    }
+  }, [delegationData?.positions]);
 
   const handleAssignHR = async (positionId: any, recruiter: { id: string, name: string }) => {
     try {
       const posIdStr = positionId.toString();
-      await api.admin.reassignRecruiter(posIdStr, recruiter.id, 'HR');
+      // Optimistic local update for instant UI feedback
       setJobPositions(prev =>
         prev.map(pos =>
           pos.id === posIdStr ? { ...pos, assignedHR: recruiter.name } : pos
@@ -63,10 +55,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
         setSelectedPosition({ ...selectedPosition, assignedHR: recruiter.name });
       }
 
-      // Refresh logs
-      const recent = await api.admin.getRecentAssignments();
-      setRecentAssignments(recent || []);
-
+      await reassignRecruiterMutation.mutateAsync({ positionId: posIdStr, recruiterId: recruiter.id, type: 'HR' });
       toast.success(`HR Recruiter assigned: ${recruiter.name}`);
     } catch (error) {
       toast.error('Failed to reassign HR Recruiter');
@@ -78,7 +67,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
   const handleAssignTechnical = async (positionId: any, recruiter: { id: string, name: string }) => {
     try {
       const posIdStr = positionId.toString();
-      await api.admin.reassignRecruiter(posIdStr, recruiter.id, 'Technical');
+      // Optimistic local update for instant UI feedback
       setJobPositions(prev =>
         prev.map(pos =>
           pos.id === posIdStr ? { ...pos, assignedTechnicalRecruiter: recruiter.name } : pos
@@ -88,10 +77,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
         setSelectedPosition({ ...selectedPosition, assignedTechnicalRecruiter: recruiter.name });
       }
 
-      // Refresh logs
-      const recent = await api.admin.getRecentAssignments();
-      setRecentAssignments(recent || []);
-
+      await reassignRecruiterMutation.mutateAsync({ positionId: posIdStr, recruiterId: recruiter.id, type: 'Technical' });
       toast.success(`Technical Recruiter assigned: ${recruiter.name}`);
     } catch (error) {
       toast.error('Failed to reassign Technical Recruiter');

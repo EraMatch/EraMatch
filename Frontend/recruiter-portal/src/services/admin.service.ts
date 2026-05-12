@@ -272,12 +272,11 @@ export const adminService = {
     },
 
     getRecruiterDelegation: async () => {
-        const cacheBuster = `cb=${Date.now()}`;
         const [hr, tech, positions, projects] = await Promise.all([
-            fetchAPI<any[]>(`/delegation/hr?${cacheBuster}`),
-            fetchAPI<any[]>(`/delegation/technical?${cacheBuster}`),
-            fetchAPI<JobPosition[]>(`/recruiter/positions?status=open&${cacheBuster}`),
-            fetchAPI<Project[]>(`/recruiter/projects?status=active&${cacheBuster}`)
+            fetchAPI<any[]>('/delegation/hr'),
+            fetchAPI<any[]>('/delegation/technical'),
+            fetchAPI<JobPosition[]>('/recruiter/positions?status=open'),
+            fetchAPI<Project[]>('/recruiter/projects?status=active')
         ]);
 
         const transformedPositions = (positions || []).map((p: any) => {

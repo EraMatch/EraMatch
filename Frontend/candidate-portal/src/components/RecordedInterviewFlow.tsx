@@ -139,6 +139,10 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
         if (startRes.ok) {
           const sessionData = await startRes.json();
           setSessionId(sessionData.session_id);
+          if (sessionData.already_completed) {
+            setInterviewComplete(true);
+            return;
+          }
           console.log('Started session:', sessionData.session_id);
         }
       } catch (error) {

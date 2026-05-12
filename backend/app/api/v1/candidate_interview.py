@@ -126,6 +126,7 @@ class StartSessionResponse(BaseModel):
     """Response after starting session."""
     session_id: str
     message: str
+    already_completed: bool = False
 
 
 class SubmitResponseRequest(BaseModel):
@@ -581,11 +582,11 @@ async def start_interview_session(
 
     existing_result = await session.execute(
         text("""
-            SELECT session_id
+            SELECT session_id, status
             FROM ongoing_interviews
             WHERE application_id = :app_id
                 AND config_id = :config_id
-              AND status IN ('in_progress', 'not_started')
+            ORDER BY started_at DESC
             LIMIT 1
         """).bindparams(
             bindparam("app_id", type_=pgUUID(as_uuid=True)),
@@ -594,7 +595,13 @@ async def start_interview_session(
         {"app_id": UUID(application_id), "config_id": UUID(str(resolved_config_id))}
     )
     existing_session = existing_result.fetchone()
-    if existing_session:
+    if existing_session and existing_session[1] == 'completed':
+        return StartSessionResponse(
+            session_id=str(existing_session[0]),
+            message="Interview already completed.",
+            already_completed=True,
+        )
+    if existing_session and existing_session[1] in ('in_progress', 'not_started'):
         # Update session status to in_progress if it's not_started
         await session.execute(
             text("""
@@ -1281,7 +1288,7 @@ async def complete_interview_session(
                 session_type = :session_type
             WHERE application_id = :application_id
               AND stage_id IN (
-                  SELECT gps.stage_id 
+                  SELECT gps.stage_id
                   FROM group_pipeline_stages gps
                   WHERE gps.group_id = :group_id
                     AND gps.stage_type = :stage_type
@@ -1301,6 +1308,39 @@ async def complete_interview_session(
             "stage_type": stage_type
         }
     )
+
+    # Sync score: read avg ai_score already processed (may be partial if worker is still running)
+    score_res = await session.execute(
+        text("SELECT AVG(ai_score) FROM interview_responses WHERE session_id = :sid"),
+        {"sid": request.session_id}
+    )
+    avg_score = score_res.scalar()
+    if avg_score is not None:
+        await session.execute(
+            text("UPDATE ongoing_interviews SET overall_score = :s WHERE session_id = :sid"),
+            {"s": float(avg_score), "sid": request.session_id}
+        )
+        await session.execute(
+            text("""
+                UPDATE candidate_pipeline_progress
+                SET score = :s
+                WHERE application_id = :application_id
+                  AND stage_id IN (
+                      SELECT stage_id FROM group_pipeline_stages
+                      WHERE group_id = :group_id AND stage_type = :stage_type
+                  )
+            """).bindparams(
+                bindparam("application_id", type_=pgUUID(as_uuid=True)),
+                bindparam("group_id", type_=pgUUID(as_uuid=True)),
+                bindparam("stage_type", type_=String),
+            ),
+            {
+                "s": float(avg_score),
+                "application_id": application_id,
+                "group_id": group_id,
+                "stage_type": stage_type,
+            }
+        )
     
     # --- Trigger Recruiter Notification ---
     # Fetch recruiter ID and candidate info

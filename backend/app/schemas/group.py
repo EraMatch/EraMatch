@@ -243,6 +243,15 @@ class CloseStageResponse(BaseModel):
     status: int
     stage: str
     candidates_evaluated: int
+    auto_failed_count: int = 0
+
+
+class ArchiveGroupRequest(BaseModel):
+    send_rejections: bool = False
+
+
+class ArchiveGroupResponse(BaseModel):
+    rejected_count: int
 
 
 # ─── Activity Log ────────────────────────────────────────────────────────────
@@ -419,3 +428,30 @@ class GroupIntegrityDecisionsResponse(BaseModel):
 # ─── Export (CSV is handled at the route level, this schema is for request) ─
 class ExportGroupRequest(BaseModel):
     id: UUID
+
+
+# ─── Bulk Progress Preview ────────────────────────────────────────────────────
+
+
+class BulkProgressPreviewCandidate(BaseModel):
+    application_id: UUID
+    name: str
+    score: float | None = None
+
+
+class BulkProgressPreview(BaseModel):
+    selected_count: int
+    auto_hold_count: int
+    auto_hold_candidates: list[BulkProgressPreviewCandidate]
+
+
+# ─── Hold Review ──────────────────────────────────────────────────────────────
+
+
+class HoldResolveAction(BaseModel):
+    application_id: UUID
+    action: str  # "reject" | "reactivate"
+
+
+class HoldResolveRequest(BaseModel):
+    actions: list[HoldResolveAction]

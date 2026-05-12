@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Sparkles, Trash2, Plus, ChevronLeft, X, Edit2, Loader2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { recruiterService } from '../../../services/recruiter.service';
+import { queryKeys } from '../../../lib/queryKeys';
 
 export interface Question {
   id: string;
@@ -26,9 +28,19 @@ export function CreateAssessmentPage({
   initialQuestions
 }: CreateAssessmentPageProps) {
   const [title, setTitle] = useState(initialTitle || 'Technical Assessment');
-  const [questions, setQuestions] = useState<Question[]>(initialQuestions || []);
-  const [isLoading, setIsLoading] = useState(!initialQuestions);
   const [showAddQuestion, setShowAddQuestion] = useState(false);
+
+  const { data: templates = [], isLoading } = useQuery({
+    queryKey: queryKeys.assessments.templates(),
+    queryFn: () => api.recruiter.getAssessmentTemplates(),
+    staleTime: 10 * 60 * 1000,
+    enabled: !initialQuestions,
+  });
+
+  const [questions, setQuestions] = useState<Question[]>(() => {
+    if (initialQuestions) return initialQuestions;
+    return [];
+  });
   const [newQuestionType, setNewQuestionType] = useState<Question['type']>('Multiple Choice');
   const [newQuestionText, setNewQuestionText] = useState('');
   const [newQuestionOptions, setNewQuestionOptions] = useState(['Option 1', 'Option 2', 'Option 3', 'Option 4']);
@@ -37,32 +49,19 @@ export function CreateAssessmentPage({
   const [editQuestionOptions, setEditQuestionOptions] = useState<string[]>([]);
   const [enhancingQuestionId, setEnhancingQuestionId] = useState<string | null>(null);
 
-  // Fetch assessment templates from API
+  // Sync fetched templates into questions state (only when not using initialQuestions)
   useEffect(() => {
-    if (!initialQuestions) {
-      const fetchTemplates = async () => {
-        try {
-          setIsLoading(true);
-          const templates = (await api.recruiter.getAssessmentTemplates()) as any[];
-          // Map API templates to Question format
-          const mappedQuestions: Question[] = templates.map((template: any) => ({
-            id: template.id,
-            type: template.type as Question['type'],
-            question: template.question,
-            options: template.options,
-            correctAnswer: template.correctAnswer
-          }));
-          setQuestions(mappedQuestions);
-        } catch (error) {
-          console.error('Failed to fetch assessment templates:', error);
-          setQuestions([]);
-        } finally {
-          setIsLoading(false);
-        }
-      };
-      fetchTemplates();
+    if (!initialQuestions && templates.length > 0) {
+      const mappedQuestions: Question[] = (templates as any[]).map((template: any) => ({
+        id: template.id,
+        type: template.type as Question['type'],
+        question: template.question,
+        options: template.options,
+        correctAnswer: template.correctAnswer
+      }));
+      setQuestions(mappedQuestions);
     }
-  }, [initialQuestions]);
+  }, [templates, initialQuestions]);
 
   const handleDeleteQuestion = (id: string) => {
     setQuestions(questions.filter(q => q.id !== id));

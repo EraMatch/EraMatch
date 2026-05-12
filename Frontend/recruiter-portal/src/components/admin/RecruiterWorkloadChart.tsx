@@ -1,67 +1,36 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 import { Card } from '../ui/card';
 import { Loader2, Users } from 'lucide-react';
-import { api } from '../../services/api';
-import { toast } from 'sonner';
+import { useRecruiterWorkload } from '../../hooks/admin/useAdminDashboard';
 
 interface RecruiterWorkloadChartProps {
   onDataUpdate?: (data: any) => void;
 }
 
 export function RecruiterWorkloadChart({ onDataUpdate }: RecruiterWorkloadChartProps) {
-  const [isLoading, setIsLoading] = useState(true);
-  const [chartData, setChartData] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any>(null);
   const [viewMode, setViewMode] = useState<'combined' | 'separated'>('combined');
 
-  useEffect(() => {
-    const fetchWorkloadData = async () => {
-      try {
-        setIsLoading(true);
-        const data = await api.admin.getRecruiterWorkloadDistribution();
-        
-        if (!data || !data.allRecruiters) {
-          setChartData([]);
-          setSummary(data?.summary || {});
-          return;
-        }
+  const { data: workloadData, isLoading } = useRecruiterWorkload();
 
-        // Format data for chart
-        const formatted = data.allRecruiters
-          .sort((a: any, b: any) => {
-            // Sort by type first (HR first), then by positions count descending
-            if (a.type !== b.type) return a.type === 'HR' ? -1 : 1;
-            return b.positionsCount - a.positionsCount;
-          })
-          .map((recruiter: any, index: number) => ({
-            name: recruiter.name.split(' ')[0], // Use first name for chart readability
-            fullName: recruiter.name,
-            positionsCount: recruiter.positionsCount,
-            type: recruiter.type,
-            color: recruiter.type === 'HR' ? '#6366F1' : '#10B981',
-            index
-          }));
+  const chartData: any[] = workloadData?.allRecruiters
+    ? workloadData.allRecruiters
+        .sort((a: any, b: any) => {
+          // Sort by type first (HR first), then by positions count descending
+          if (a.type !== b.type) return a.type === 'HR' ? -1 : 1;
+          return b.positionsCount - a.positionsCount;
+        })
+        .map((recruiter: any, index: number) => ({
+          name: recruiter.name.split(' ')[0], // Use first name for chart readability
+          fullName: recruiter.name,
+          positionsCount: recruiter.positionsCount,
+          type: recruiter.type,
+          color: recruiter.type === 'HR' ? '#6366F1' : '#10B981',
+          index
+        }))
+    : [];
 
-        setChartData(formatted);
-        setSummary(data.summary);
-        
-        if (onDataUpdate) {
-          onDataUpdate({
-            recruiters: formatted,
-            summary: data.summary
-          });
-        }
-      } catch (error) {
-        console.error('Error loading workload data:', error);
-        toast.error('Failed to load workload distribution');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchWorkloadData();
-  }, [onDataUpdate]);
+  const summary: any = workloadData?.summary ?? {};
 
   if (isLoading) {
     return (

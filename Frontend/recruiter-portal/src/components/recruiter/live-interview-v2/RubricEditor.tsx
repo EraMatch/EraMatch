@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Sparkles, Loader2, ChevronLeft, ChevronRight, AlertCircle, RefreshCw } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Sparkles, Loader2, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
 import { fetchAPI } from '../../../services/client';
 
 interface Dimension {
@@ -101,15 +101,13 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
     try {
       setIsSaving(true);
       setError(null);
-      
+
       await fetchAPI(`/live-interview-v2/rubric/${rubricId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dimensions
-        }),
+        body: JSON.stringify({ dimensions }),
       });
-      
+
       onSave(); // Proceed to next step
     } catch (e: any) {
       setError(e instanceof Error ? e.message : 'Failed to save anchors');
@@ -227,8 +225,8 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
         </button>
         
         <button
-          onClick={handleSave}
-          disabled={isSaving || isFrozen}
+          onClick={isFrozen ? onSave : handleSave}
+          disabled={isSaving}
           className="flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-colors"
         >
           {isSaving ? (

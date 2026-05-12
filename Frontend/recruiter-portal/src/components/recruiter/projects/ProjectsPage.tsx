@@ -7,12 +7,15 @@ import { Checkbox } from '../../ui/checkbox';
 import { Slider } from '../../ui/slider';
 import { Switch } from '../../ui/switch';
 import { Button } from '../../ui/button';
-import { useState, useEffect } from 'react';
-import { api } from '../../../services/api';
+import { useState } from 'react';
 import { toast } from 'sonner';
 import { AdminProjectModal } from '../../admin/AdminProjectModal';
-
-// ... existing imports ...
+import { useProjects } from '../../../hooks/projects/useProjects';
+import { usePositions } from '../../../hooks/positions/usePositions';
+import { useCreateProject, useUpdateProject, useDeleteProject } from '../../../hooks/projects/useProjectMutations';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../../../lib/queryKeys';
+import { api } from '../../../services/api';
 
 interface Project {
   id: number | string;
@@ -44,41 +47,32 @@ interface ProjectsPageProps {
 }
 
 export function ProjectsPage({ onViewProject, onViewPosition, onCreateAssessment }: ProjectsPageProps) {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [positions, setPositions] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const queryClient = useQueryClient();
 
-  const fetchProjects = async () => {
-    try {
-      setIsLoading(true);
-      const [allProjects, allPositions] = await Promise.all([
-        api.recruiter.getProjects(),
-        api.recruiter.getPositions()
-      ]);
+  const { data: rawProjects = [], isLoading: projectsLoading, isError: projectsError } = useProjects();
+  const { data: positions = [], isLoading: positionsLoading } = usePositions();
+  const createProjectMutation = useCreateProject();
+  const updateProjectMutation = useUpdateProject();
+  const deleteProjectMutation = useDeleteProject();
 
-      const mappedProjects = allProjects.map(p => ({
-        id: p.id,
-        title: p.projectName,
-        roles: p.positionsCount,
-        applicants: p.applicantsCount,
-        isOpen: p.status?.toLowerCase() === 'active',
-        description: p.description || '',
-        status: p.status
-      }));
+  const projects: Project[] = (rawProjects as any[]).map((p: any) => ({
+    id: p.id,
+    title: p.projectName,
+    roles: p.positionsCount,
+    applicants: p.applicantsCount,
+    isOpen: p.status?.toLowerCase() === 'active',
+    description: p.description || '',
+    status: p.status,
+  }));
 
-      setProjects(mappedProjects);
-      setPositions(allPositions);
-    } catch (error) {
-      toast.error('Failed to load projects');
-    } finally {
-      setIsLoading(false);
-    }
+  const isLoading = projectsLoading || positionsLoading;
+
+  if (projectsError) toast.error('Failed to load projects');
+
+  const fetchProjects = () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
   };
-
-  useEffect(() => {
-    fetchProjects();
-  }, []);
 
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -200,8 +194,10 @@ export function ProjectsPage({ onViewProject, onViewPosition, onCreateAssessment
 
   const handleEditClick = async (project: Project) => {
     try {
-      // 1. Pre-fetch details
-      const details = await api.recruiter.getProjectDetails(String(project.id));
+      const details = await queryClient.ensureQueryData({
+        queryKey: queryKeys.projects.detail(String(project.id)),
+        queryFn: () => api.recruiter.getProjectDetails(String(project.id)),
+      }) as any;
       if (!details) return;
 
       setEditingProject(project);
@@ -217,17 +213,20 @@ export function ProjectsPage({ onViewProject, onViewPosition, onCreateAssessment
 
   const handleSaveChanges = async () => {
     if (editingProject && editProjectName.trim()) {
-      try {
-        await api.recruiter.updateProject(editingProject.id, {
-          projectName: editProjectName,
-          description: editProjectDescription,
-          status: editProjectIsOpen ? 'active' : 'closed'
-        });
-        toast.success('Project updated successfully');
-        fetchProjects();
-      } catch (error) {
-        toast.error('Failed to update project');
-      }
+      updateProjectMutation.mutate(
+        {
+          id: editingProject.id,
+          data: {
+            projectName: editProjectName,
+            description: editProjectDescription,
+            status: editProjectIsOpen ? 'active' : 'closed',
+          },
+        },
+        {
+          onSuccess: () => toast.success('Project updated successfully'),
+          onError: () => toast.error('Failed to update project'),
+        }
+      );
       setIsEditDialogOpen(false);
       setEditingProject(null);
     }

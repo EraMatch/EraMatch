@@ -674,138 +674,142 @@ class CandidateService:
                 elif latest_assessment_session.status == "in_progress":
                     pipeline_status["assessment"]["status"] = "in-progress"
                 
-                # Fetch assessment answers with question snapshots
-                answers_query = await self.session.execute(
-                    select(CandidateAnswer, CandidateAssignedQuestion)
-                    .outerjoin(
-                        CandidateAssignedQuestion,
-                        CandidateAnswer.assignment_id == CandidateAssignedQuestion.id
-                    )
-                    .where(CandidateAnswer.session_id == latest_assessment_session.id)
-                    .order_by(CandidateAnswer.question_order)
+                # Fetch ALL assigned questions for the session (ordered)
+                all_assigned_res = await self.session.execute(
+                    select(CandidateAssignedQuestion)
+                    .where(CandidateAssignedQuestion.session_id == latest_assessment_session.id)
+                    .order_by(CandidateAssignedQuestion.display_order)
                 )
-                answer_rows = answers_query.all()
-                
+                all_assigned = all_assigned_res.scalars().all()
+
+                # Fetch answers and build lookup by assignment_id
+                answers_query = await self.session.execute(
+                    select(CandidateAnswer)
+                    .where(CandidateAnswer.session_id == latest_assessment_session.id)
+                )
+                answer_rows = answers_query.scalars().all()
+                answer_by_assignment: dict = {a.assignment_id: a for a in answer_rows}
+
+                def _extract_q_meta(snapshot: dict) -> tuple:
+                    """Returns (question_text, question_type, options, reference, correct_index, rubric, points_max)."""
+                    qcfg = snapshot.get("question_config") if isinstance(snapshot.get("question_config"), dict) else {}
+                    question_text = str(snapshot.get("question_text") or snapshot.get("question") or "").strip()
+                    question_type = str(snapshot.get("question_type") or qcfg.get("question_type") or "essay").lower()
+                    options = qcfg.get("options") if isinstance(qcfg.get("options"), list) else None
+                    reference = None
+                    correct_index = None
+                    ca = snapshot.get("correct_answer")
+                    if isinstance(ca, dict):
+                        reference = ca.get("option_text") or ca.get("correct_text") or None
+                        for _k in ("correct_index", "option_index", "answer"):
+                            if ca.get(_k) is not None:
+                                correct_index = ca[_k]
+                                break
+                    elif isinstance(ca, str) and ca:
+                        reference = ca
+                    if not reference and isinstance(qcfg.get("correct_text"), str):
+                        reference = qcfg["correct_text"]
+                    if correct_index is None:
+                        for _k in ("correct_answer_index", "correct_index"):
+                            if isinstance(qcfg.get(_k), int):
+                                correct_index = qcfg[_k]
+                                break
+                    rubric = qcfg.get("rubric") if isinstance(qcfg.get("rubric"), str) else None
+                    points_max = int(snapshot.get("points") or snapshot.get("points_max") or qcfg.get("points") or 10)
+                    return question_text, question_type, options, reference, correct_index, rubric, points_max
+
                 assessment_questions = []
                 total_points = 0
                 earned_points = 0
                 correct_count = 0
-                for answer, assigned in answer_rows:
-                    snapshot = assigned.question_snapshot if assigned and isinstance(assigned.question_snapshot, dict) else {}
-                    question_text = str(snapshot.get("question_text") or "").strip()
-                    if not question_text:
-                        question_text = str(snapshot.get("question") or "").strip()
 
-                    # Fallback to answer payload if snapshot lacks text
-                    if not question_text and isinstance(answer.answer_data, dict):
-                        question_text = str(answer.answer_data.get("question_text") or answer.answer_data.get("question") or answer.answer_data.get("text") or "").strip()
+                for assigned in all_assigned:
+                    snapshot = assigned.question_snapshot if isinstance(assigned.question_snapshot, dict) else {}
+                    q_text, q_type, options, reference, correct_index, rubric, points_max = _extract_q_meta(snapshot)
 
-                    # Extract question config details (options, rubric, reference answers)
-                    qcfg = snapshot.get("question_config") if isinstance(snapshot.get("question_config"), dict) else {}
-                    options = qcfg.get("options") if isinstance(qcfg.get("options"), list) else None
-                    reference = None
-                    correct_index = None
-                    if isinstance(snapshot.get("correct_answer"), (dict, str)):
-                        if isinstance(snapshot.get("correct_answer"), dict):
-                            reference = snapshot.get("correct_answer").get("correct_text") or None
-                            correct_index = snapshot.get("correct_answer").get("correct_index")
-                        else:
-                            reference = str(snapshot.get("correct_answer"))
-                    # Fallback to qcfg / answer payload
-                    if not reference and isinstance(qcfg.get("correct_text"), str):
-                        reference = qcfg.get("correct_text")
-                    if not correct_index and isinstance(qcfg.get("correct_index"), int):
-                        correct_index = qcfg.get("correct_index")
-
-                    rubric = None
-                    if isinstance(qcfg.get("rubric"), str):
-                        rubric = qcfg.get("rubric")
-
-                    # If answer payload encodes selected index/value, expose it for frontend
-                    selected = None
-                    try:
-                        if isinstance(answer.answer_data, dict):
-                            selected = answer.answer_data.get("selected_index") if answer.answer_data.get("selected_index") is not None else answer.answer_data.get("selected_value")
-                    except Exception:
+                    answer = answer_by_assignment.get(assigned.id)
+                    if answer:
+                        # Extract selected index from answer payload
                         selected = None
+                        if isinstance(answer.answer_data, dict):
+                            for _k in ("selected_index", "selected_option", "selected_value"):
+                                if answer.answer_data.get(_k) is not None:
+                                    selected = answer.answer_data[_k]
+                                    break
 
-                    assessment_questions.append({
-                        "id": str(answer.question_id),
-                        "order": answer.question_order,
-                        "question": question_text,
-                        "questionType": str(snapshot.get("question_type") or qcfg.get("question_type") or "essay"),
-                        "options": options,
-                        "referenceAnswer": reference,
-                        "correctIndex": correct_index,
-                        "answer": answer.answer_data,
-                        "selected": selected,
-                        "isCorrect": answer.is_correct,
-                        "pointsEarned": float(answer.points_earned or 0),
-                        "pointsMax": answer.points_max,
-                        "rubric": rubric,
-                        "duration": f"{answer.time_spent_seconds}s" if answer.time_spent_seconds else "N/A"
-                    })
-                    
-                    total_points += answer.points_max
-                    earned_points += float(answer.points_earned or 0)
-                    if answer.is_correct:
-                        correct_count += 1
-                
-                # If no answers found, try to populate from assigned questions (preview/invited)
-                if not assessment_questions:
-                    assigned_q_res = await self.session.execute(
-                        select(CandidateAssignedQuestion).where(CandidateAssignedQuestion.session_id == latest_assessment_session.id).order_by(CandidateAssignedQuestion.display_order)
-                    )
-                    assigned_rows = assigned_q_res.scalars().all()
-                    for idx, assigned in enumerate(assigned_rows, start=1):
-                        snapshot = assigned.question_snapshot if isinstance(assigned.question_snapshot, dict) else {}
-                        question_text = str(snapshot.get("question_text") or snapshot.get("question") or "").strip()
-                        question_type = str(snapshot.get("question_type") or "essay").strip().lower() or "essay"
-                        # include options/rubric/reference for assigned questions so UI can render MCQ and rubrics
-                        qcfg = snapshot.get("question_config") if isinstance(snapshot.get("question_config"), dict) else {}
-                        options = qcfg.get("options") if isinstance(qcfg.get("options"), list) else None
-                        reference = None
-                        correct_index = None
-                        if isinstance(snapshot.get("correct_answer"), dict):
-                            reference = snapshot.get("correct_answer").get("correct_text")
-                            correct_index = snapshot.get("correct_answer").get("correct_index")
-                        elif isinstance(snapshot.get("correct_answer"), str):
-                            reference = snapshot.get("correct_answer")
+                        # Compute is_correct for MCQ when DB didn't grade it
+                        is_correct = answer.is_correct
+                        if is_correct is None and q_type == "mcq" and selected is not None and correct_index is not None:
+                            is_correct = (int(selected) == int(correct_index))
 
-                        if not reference and isinstance(qcfg.get("correct_text"), str):
-                            reference = qcfg.get("correct_text")
-                        if not correct_index and isinstance(qcfg.get("correct_index"), int):
-                            correct_index = qcfg.get("correct_index")
+                        points_earned = float(answer.points_earned or 0)
+                        # Auto-award points for MCQ if computed correct and no points recorded
+                        if is_correct and points_earned == 0.0 and q_type == "mcq":
+                            points_earned = float(points_max)
 
-                        rubric = qcfg.get("rubric") if isinstance(qcfg.get("rubric"), str) else None
+                        if is_correct:
+                            correct_count += 1
+
+                        # Fallback question text from answer payload
+                        if not q_text and isinstance(answer.answer_data, dict):
+                            q_text = str(answer.answer_data.get("question_text") or answer.answer_data.get("question") or "").strip()
 
                         assessment_questions.append({
-                            "id": str(snapshot.get("question_id") or f"assigned-{idx}"),
-                            "order": int(assigned.display_order or idx),
-                            "question": question_text,
-                            "questionType": question_type,
+                            "id": str(answer.question_id),
+                            "order": int(answer.question_order or assigned.display_order or 0),
+                            "question": q_text,
+                            "questionType": q_type,
+                            "options": options,
+                            "referenceAnswer": reference,
+                            "correctIndex": correct_index,
+                            "answer": answer.answer_data,
+                            "selected": selected,
+                            "isCorrect": is_correct,
+                            "pointsEarned": points_earned,
+                            "pointsMax": points_max,
+                            "rubric": rubric,
+                            "duration": f"{answer.time_spent_seconds}s" if answer.time_spent_seconds else "N/A",
+                        })
+                        total_points += points_max
+                        earned_points += points_earned
+                    else:
+                        # Unanswered question — include it with no answer
+                        assessment_questions.append({
+                            "id": str(snapshot.get("question_id") or f"assigned-{assigned.id}"),
+                            "order": int(assigned.display_order or 0),
+                            "question": q_text,
+                            "questionType": q_type,
                             "options": options,
                             "referenceAnswer": reference,
                             "correctIndex": correct_index,
                             "answer": None,
+                            "selected": None,
                             "isCorrect": None,
                             "pointsEarned": 0.0,
-                            "pointsMax": int(snapshot.get("points") or snapshot.get("points_max") or 10),
+                            "pointsMax": points_max,
                             "rubric": rubric,
-                            "duration": "N/A"
+                            "duration": "N/A",
                         })
+                        total_points += points_max
 
+                # Sort by display order
+                assessment_questions.sort(key=lambda x: x["order"])
                 response.assessmentQuestions = assessment_questions
                 
                 # Populate assessment_data from actual answers and session
-                if answer_rows or latest_assessment_session:
+                if all_assigned or latest_assessment_session:
                     time_spent = latest_assessment_session.time_spent_seconds or 0
                     duration_str = f"{time_spent // 60}m {time_spent % 60}s" if time_spent > 0 else "N/A"
-                    percentage_score = (earned_points / total_points * 100) if total_points > 0 else 0
-                    
+                    # Prefer session-level total_score (set at grading time), fall back to computed
+                    session_score = latest_assessment_session.total_score
+                    if session_score is not None:
+                        percentage_score = float(session_score)
+                    else:
+                        percentage_score = (earned_points / total_points * 100) if total_points > 0 else 0
+
                     assessment_data = {
                         "questionsCorrect": correct_count,
-                        "questionsTotal": len(answer_rows),
+                        "questionsTotal": len(all_assigned),
                         "completedAt": latest_assessment_session.submitted_at.isoformat() if latest_assessment_session.submitted_at else "N/A",
                         "duration": duration_str,
                         "topicScores": [],
@@ -813,7 +817,6 @@ class CandidateService:
                         "maxPoints": total_points,
                         "percentageScore": round(percentage_score, 1)
                     }
-                    # Always update scores from actual data
                     scores["assessment"] = round(percentage_score, 1)
 
             
