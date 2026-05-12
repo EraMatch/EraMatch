@@ -212,7 +212,22 @@ class GroupService:
             return default_cfg.config_id
 
         if stage == "live_interview":
-            # Prefer a config scoped to this position; fall back to org-level.
+            # 1) Try V2 Rubric first (ConfigWizardV2)
+            rubric_res = await self.session.execute(
+                select(LiV2Rubric.id)
+                .where(
+                    LiV2Rubric.group_id == group.id,
+                    LiV2Rubric.organization_id == self.org_id,
+                    LiV2Rubric.state == "frozen",
+                )
+                .order_by(LiV2Rubric.created_at.desc())
+                .limit(1)
+            )
+            rubric_id = rubric_res.scalars().first()
+            if rubric_id:
+                return rubric_id
+
+            # 2) Fallback to legacy LiveInterviewConfig
             cfg_res = await self.session.execute(
                 select(LiveInterviewConfig.id)
                 .where(
@@ -1048,7 +1063,7 @@ class GroupService:
             await self.session.flush()
         else:
             # Update existing stage state
-            if resolved_config_id and not stage_config.config_id:
+            if resolved_config_id and stage_config.config_id != resolved_config_id:
                 stage_config.config_id = resolved_config_id
             stage_config.state = "active"
             stage_config.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
