@@ -12,8 +12,12 @@ jobs:
       - name: Update Code and Restart
         env:
           RUNNER_TRACKING_ID: ""
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd ~/EraMatch
+          # Authenticate git with the temporary workflow token
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+          
           # Update to latest version
           git fetch origin dev-release-2.0
           git reset --hard origin/dev-release-2.0
