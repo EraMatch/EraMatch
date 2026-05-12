@@ -62,7 +62,6 @@ class PillarState:
     covered: set[str] = field(default_factory=set)
     partial: set[str] = field(default_factory=set)
     probe_count: int = 0
-    is_complete: bool = False
 
     @property
     def missing(self) -> list[str]:
@@ -72,6 +71,10 @@ class PillarState:
             if s not in self.covered and s not in self.partial
         ]
 
+    @property
+    def is_complete(self) -> bool:
+        return all(s in self.covered for s in self.sub_criteria)
+
 
 def _build_pillars_from_bank(bank_items: list[dict]) -> list[PillarState]:
     pillars = []
@@ -79,7 +82,10 @@ def _build_pillars_from_bank(bank_items: list[dict]) -> list[PillarState]:
         rubric = item.get("question_rubric", {})
         sub_criteria = []
         for sc in rubric.get("sub_criteria", []):
-            name = sc.get("name", "")
+            if isinstance(sc, dict):
+                name = sc.get("name") or sc.get("text") or ""
+            else:
+                name = str(sc)
             if name:
                 sub_criteria.append(name)
         if not sub_criteria:
@@ -88,7 +94,9 @@ def _build_pillars_from_bank(bank_items: list[dict]) -> list[PillarState]:
             PillarState(
                 bank_item_id=item.get("bank_item_id", ""),
                 question_text=item.get("text", ""),
-                dimension_name=item.get("dimension_name", "General"),
+                dimension_name=item.get("dimension_name")
+                or item.get("primary_dimension_id")
+                or "General",
                 sub_criteria=sub_criteria,
             )
         )
@@ -395,16 +403,17 @@ class InterviewerAgent(Agent):
             return
 
         # Record transcript
-        self.transcript.append(
-            {
-                "role": "candidate",
-                "text": candidate_utterance,
-                "pillar_idx": self.current_pillar_idx,
-                "phase": self.phase,
-                "elapsed_seconds": round(self._elapsed()),
-                **({"flagged": True, "flags": flags} if flags else {}),
-            }
-        )
+        pillar_idx = self._active_pillar_idx_for_transcript(candidate_utterance)
+        transcript_turn = {
+            "role": "candidate",
+            "text": candidate_utterance,
+            "phase": self.phase,
+            "elapsed_seconds": round(self._elapsed()),
+            **({"flagged": True, "flags": flags} if flags else {}),
+        }
+        if pillar_idx is not None:
+            transcript_turn["pillar_idx"] = pillar_idx
+        self.transcript.append(transcript_turn)
         self._persist_transcript()
 
         # Close intent detection
@@ -414,8 +423,8 @@ class InterviewerAgent(Agent):
             return
 
         # Background coverage check (for judge pipeline)
-        if self.pillars and self.current_pillar_idx < len(self.pillars):
-            pillar = self.pillars[self.current_pillar_idx]
+        if pillar_idx is not None:
+            pillar = self.pillars[pillar_idx]
             coverage_task = asyncio.create_task(
                 self._apply_coverage_async(pillar, candidate_utterance)
             )
@@ -423,12 +432,15 @@ class InterviewerAgent(Agent):
 
         # Track pillar interactions for judge
         self._record_control(
-            action="candidate_response",
-            pillar=self.pillars[self.current_pillar_idx]
-            if self.current_pillar_idx < len(self.pillars)
-            else None,
+            action=self._control_action_for_turn(pillar_idx),
+            pillar=self.pillars[pillar_idx] if pillar_idx is not None else None,
             reason=f"words={len(candidate_utterance.split())}",
         )
+
+        if self.phase == "welcome":
+            self._mark_welcome_answer_recorded()
+        elif pillar_idx is not None:
+            self._advance_after_rubric_answer()
 
         # Note: We do NOT call generate_reply() here.
         # The LiveKit framework auto-replies based on the system prompt + chat context.
@@ -452,6 +464,61 @@ class InterviewerAgent(Agent):
             self.session_start_time + self.current_pillar_idx * self.time_per_pillar
         )
         return time.time() - pillar_start > self.time_per_pillar
+
+    def _active_pillar_idx_for_transcript(self, candidate_utterance: str = "") -> int | None:
+        if self.phase == "welcome" or not self.pillars:
+            return None
+        if not self._should_score_candidate_turn(candidate_utterance):
+            return None
+        if self.current_pillar_idx >= len(self.pillars):
+            return len(self.pillars) - 1
+        return self.current_pillar_idx
+
+    def _should_score_candidate_turn(self, candidate_utterance: str) -> bool:
+        normalized = " ".join(candidate_utterance.lower().strip().split())
+        if not normalized:
+            return False
+        if normalized in {
+            "yes",
+            "yeah",
+            "yep",
+            "sure",
+            "ok",
+            "okay",
+            "ready",
+            "i am ready",
+            "yes i am ready",
+            "go ahead",
+            "please go ahead",
+        }:
+            return False
+        clarification_markers = (
+            "repeat the question",
+            "can you repeat",
+            "could you repeat",
+            "clarify",
+            "what do you mean",
+            "i don't understand",
+            "i do not understand",
+        )
+        return not any(marker in normalized for marker in clarification_markers)
+
+    def _control_action_for_turn(self, pillar_idx: int | None) -> str:
+        if self.phase == "welcome":
+            return "candidate_intro"
+        if pillar_idx is None:
+            return "candidate_control"
+        return "candidate_response"
+
+    def _mark_welcome_answer_recorded(self) -> None:
+        if self.phase == "welcome":
+            self.phase = "rubric"
+
+    def _advance_after_rubric_answer(self) -> None:
+        if self.phase != "rubric" or not self.pillars:
+            return
+        if self.current_pillar_idx < len(self.pillars) - 1:
+            self.current_pillar_idx += 1
 
     async def _time_limit_watcher(self) -> None:
         check_interval = 10
