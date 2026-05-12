@@ -186,12 +186,20 @@ if [ "$USE_TUNNEL" = true ]; then
     start_tunnel "recruiter" 5173
     start_tunnel "candidate" 5174
 
-    # Inject into environment for frontends and backend
+fi
+echo ""
+
+# ── INJECT TUNNEL URLS ───────────────────────────────────────────────────────
+# Even if we didn't start tunnels just now, if they were loaded from .tunnels.env,
+# we must inject them into the environment for the services.
+if [ -n "${BACKEND_URL:-}" ]; then
     export VITE_API_URL="${BACKEND_URL}/api/v1"
+    log "${C_GREEN}[ENV]" "VITE_API_URL set to $VITE_API_URL"
+fi
+if [ -n "${RECRUITER_URL:-}" ] && [ -n "${CANDIDATE_URL:-}" ]; then
     # Ensure local dev ports are always allowed as fallback
     export BACKEND_CORS_ORIGINS="[\"$RECRUITER_URL\", \"$CANDIDATE_URL\", \"http://localhost:5173\", \"http://localhost:5174\"]"
-    
-    echo ""
+    log "${C_GREEN}[ENV]" "BACKEND_CORS_ORIGINS set with tunnel URLs"
 fi
 echo ""
 

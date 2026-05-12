@@ -25,6 +25,6 @@ jobs:
           # Restart services
           ./start.sh stop || true
           mkdir -p .logs
-          nohup ./start.sh > .logs/deploy.log 2>&1 &
+          nohup ./start.sh --tunnel > .logs/deploy.log 2>&1 &
           
           echo "Deployment complete on VM."
