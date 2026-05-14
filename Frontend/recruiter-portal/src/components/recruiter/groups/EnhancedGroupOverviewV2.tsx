@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, Clock, Eye, Trash2, UserPlus, UserMinus, Activity, MoreVertical, Flag, Filter, X, ChevronDown, Plus, UserCog, Shield, Lock, MessageSquare, FileText, CheckSquare, Ban, Archive, AlertTriangle, BarChart3, Target, Video, Loader2, RotateCcw } from 'lucide-react';
+import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, Clock, Eye, Trash2, UserPlus, UserMinus, Activity, MoreVertical, Flag, Filter, X, ChevronDown, Plus, UserCog, Shield, Lock, MessageSquare, FileText, CheckSquare, Ban, Archive, AlertTriangle, BarChart3, Target, Video, Loader2, RotateCcw, Mic } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SuspectReviewPage } from '../candidates/SuspectReviewPage';
 import { CreateAdvancedAssessment } from '../assessments/CreateAdvancedAssessment';
-import { UnifiedAIInterviewSetup } from '../interviews/UnifiedAIInterviewSetup';
+import { RecordedInterviewSetup } from '../interviews/RecordedInterviewSetup';
 import { RecordedInterviewQuestionSetup } from '../interviews/RecordedInterviewQuestionSetup';
-import { LiveInterviewFlowSetup } from '../interviews/LiveInterviewFlowSetup';
+
 import { StageResultsDashboard } from './StageResultsDashboard';
 import { ModuleMonitoringDashboard } from './ModuleMonitoringDashboard';
 import { StartStageModal } from './StartStageModal';
@@ -176,9 +176,9 @@ export function EnhancedGroupOverviewV2({
   const [showAssessmentCreation, setShowAssessmentCreation] = useState(false);
   const [editingAssessmentData, setEditingAssessmentData] = useState<any>(null);
   const [showCreateAIInterview, setShowCreateAIInterview] = useState(false);
-  const [showUnifiedAIInterviewSetup, setShowUnifiedAIInterviewSetup] = useState(false);
+  const [showRecordedInterviewSetup, setShowRecordedInterviewSetup] = useState(false);
   const [showRecordedQuestionSetup, setShowRecordedQuestionSetup] = useState(false);
-  const [showLiveFlowSetup, setShowLiveFlowSetup] = useState(false);
+
   const [pendingAISettings, setPendingAISettings] = useState<any>(null);
   const [groupAssessments, setGroupAssessments] = useState<any[]>([]);
   const [groupInterviews, setGroupInterviews] = useState<any[]>([]);
@@ -188,7 +188,7 @@ export function EnhancedGroupOverviewV2({
   const [showLiveInterviewV2Setup, setShowLiveInterviewV2Setup] = useState(false);
   const [showLiveMonitor, setShowLiveMonitor] = useState(false);
   const [liv2ResultSessionId, setLiv2ResultSessionId] = useState<string | null>(null);
-  const [showInterviewTypeChoice, setShowInterviewTypeChoice] = useState(false);
+
 
   // NEW: Stage-gated state
   const [currentStage, setCurrentStage] = useState<string>(filtrationFlow[0] || 'assessment');
@@ -1481,61 +1481,74 @@ export function EnhancedGroupOverviewV2({
               </div>
             )}
 
-            {/* Configuration Buttons - Technical Recruiter Only */}
+            {/* Configuration Buttons - Technical Recruiter Only, ordered by pipeline stage */}
             {userRole === 'technical' && (
               <div className="space-y-3">
                 <div className="flex gap-3">
-                  {activeFlow.includes('assessment') && (
-                    <button
-                      onClick={() => {
-                        if (stageConfigLocked) {
-                          showToast('Cannot modify configuration - stage is active');
-                          return;
-                        }
-                        setShowAssessmentCreation(true);
-                      }}
-                      disabled={stageConfigLocked}
-                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Plus size={16} />
-                      <span className="font-['Arimo',sans-serif] text-[14px]">
-                        Add Tech Assessment
-                      </span>
-                    </button>
-                  )}
-                  {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
-                    <button
-                      onClick={() => {
-                        if (stageConfigLocked) {
-                          showToast('Cannot modify configuration - stage is active');
-                          return;
-                        }
-                        const hasLive = activeFlow.includes('live-interview') || activeFlow.includes('live_interview');
-                        const hasRecorded = activeFlow.includes('ai-interview') || activeFlow.includes('ai_interview');
-                        if (hasLive && hasRecorded) {
-                          setShowInterviewTypeChoice(true);
-                        } else if (hasLive) {
-                          setShowLiveInterviewV2Setup(true);
-                        } else {
-                          setShowUnifiedAIInterviewSetup(true);
-                        }
-                      }}
-                      disabled={stageConfigLocked}
-                      className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {activeFlow.includes('live-interview') ? <Sparkles size={16} /> : <Activity size={16} />}
-                      <span className="font-['Arimo',sans-serif] text-[14px]">
-                        {activeFlow.includes('live-interview') && !activeFlow.includes('ai-interview')
-                          ? 'AI Interview V2 Settings'
-                          : interviewConfigId
-                            ? 'Edit AI Interview Settings'
-                            : 'AI Interview Settings'}
-                      </span>
-                      {(!activeFlow.includes('live-interview') && interviewConfigId) && <CheckCircle size={16} className="text-white ml-1" />}
-                    </button>
-                  )}
+                  {activeFlow.map((stage) => {
+                    if (stage === 'assessment') {
+                      const locked = stageConfigLocked || groupAssessments.length > 0;
+                      return (
+                        <button
+                          key="assessment"
+                          onClick={() => {
+                            if (locked) {
+                              showToast(stageConfigLocked ? 'Cannot modify configuration - stage is active' : 'Delete the existing assessment first');
+                              return;
+                            }
+                            setShowAssessmentCreation(true);
+                          }}
+                          disabled={locked}
+                          className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <FileText size={16} />
+                          <span className="font-['Arimo',sans-serif] text-[14px]">Add Tech Assessment</span>
+                        </button>
+                      );
+                    }
+                    if (stage === 'live-interview' || stage === 'live_interview') {
+                      const locked = stageConfigLocked || groupInterviews.some(i => i.interview_type === 'live_ai_v2');
+                      return (
+                        <button
+                          key="live-interview"
+                          onClick={() => {
+                            if (locked) {
+                              showToast(stageConfigLocked ? 'Cannot modify configuration - stage is active' : 'Delete the existing live interview config first');
+                              return;
+                            }
+                            setShowLiveInterviewV2Setup(true);
+                          }}
+                          disabled={locked}
+                          className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Video size={16} />
+                          <span className="font-['Arimo',sans-serif] text-[14px]">Add Live Interview</span>
+                        </button>
+                      );
+                    }
+                    if (stage === 'ai-interview' || stage === 'ai_interview') {
+                      const locked = stageConfigLocked || groupInterviews.some(i => i.interview_type === 'recorded') || !!interviewConfigId;
+                      return (
+                        <button
+                          key="ai-interview"
+                          onClick={() => {
+                            if (locked) {
+                              showToast(stageConfigLocked ? 'Cannot modify configuration - stage is active' : 'Delete the existing recorded interview first');
+                              return;
+                            }
+                            setShowRecordedInterviewSetup(true);
+                          }}
+                          disabled={locked}
+                          className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Mic size={16} />
+                          <span className="font-['Arimo',sans-serif] text-[14px]">Add Recorded Interview</span>
+                        </button>
+                      );
+                    }
+                    return null;
+                  })}
                 </div>
-
               </div>
             )}
 
@@ -1693,7 +1706,7 @@ export function EnhancedGroupOverviewV2({
                                 setShowLiveInterviewV2Setup(true);
                               } else {
                                 setEditingInterviewData(interview);
-                                setShowUnifiedAIInterviewSetup(true);
+                                setShowRecordedInterviewSetup(true);
                               }
                             }}
                             disabled={stageConfigLocked}
@@ -1701,23 +1714,21 @@ export function EnhancedGroupOverviewV2({
                           >
                             Edit
                           </button>
+                          <button
+                            onClick={() => handleDeleteAIInterview(interview.id)}
+                            disabled={stageConfigLocked}
+                            className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280] disabled:opacity-50"
+                            title="Delete Interview"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                           {!isLiV2 && (
-                            <>
-                              <button
-                                onClick={() => handleDeleteAIInterview(interview.id)}
-                                disabled={stageConfigLocked}
-                                className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280] disabled:opacity-50"
-                                title="Delete Interview"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                              <button
-                                onClick={() => showToast('AI Interview ready to be sent to candidates')}
-                                className="h-[28px] px-[12px] rounded-[6px] bg-[#1b2559] hover:bg-[#2c3a7c] text-white transition-colors text-[12px]"
-                              >
-                                Send
-                              </button>
-                            </>
+                            <button
+                              onClick={() => showToast('AI Interview ready to be sent to candidates')}
+                              className="h-[28px] px-[12px] rounded-[6px] bg-[#1b2559] hover:bg-[#2c3a7c] text-white transition-colors text-[12px]"
+                            >
+                              Send
+                            </button>
                           )}
                         </div>
                       </div>
@@ -2408,63 +2419,20 @@ export function EnhancedGroupOverviewV2({
         />
       )}
 
-      {showUnifiedAIInterviewSetup && (
+      {showRecordedInterviewSetup && (
         <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
-          <UnifiedAIInterviewSetup
+          <RecordedInterviewSetup
             groupName={groupName}
             activeFlow={activeFlow}
             initialData={editingInterviewData}
             onBack={() => {
-              setShowUnifiedAIInterviewSetup(false);
+              setShowRecordedInterviewSetup(false);
               setEditingInterviewData(null);
             }}
             onSetupQuestions={(settings) => {
               setPendingAISettings(settings);
-              setShowUnifiedAIInterviewSetup(false);
+              setShowRecordedInterviewSetup(false);
               setShowRecordedQuestionSetup(true);
-            }}
-            onSetupLiveFlow={(settings) => {
-              setPendingAISettings(settings);
-              setShowUnifiedAIInterviewSetup(false);
-              setShowLiveFlowSetup(true);
-            }}
-          />
-        </div>
-      )}
-
-      {showLiveFlowSetup && (
-        <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
-          <LiveInterviewFlowSetup
-            groupName={groupName}
-            initialSettings={editingInterviewData?.questions?.extended_config?.live_flow_config
-              ?? editingInterviewData?.questions?.live_flow_config
-              ?? undefined}
-            onBack={() => {
-              setShowLiveFlowSetup(false);
-              setShowUnifiedAIInterviewSetup(true);
-            }}
-            onSave={async (flowSettings) => {
-              try {
-                const mergedConfig = {
-                  ...pendingAISettings,
-                  live_flow_config: flowSettings
-                };
-
-                await api.recruiter.assignInterview(groupId, {
-                  interview_type: 'live',
-                  config: mergedConfig,
-                  id: editingInterviewData?.id,
-                  sections: []
-                });
-                showToast('Live AI Interview configured successfully');
-                setShowLiveFlowSetup(false);
-                setPendingAISettings(null);
-                setEditingInterviewData(null);
-                setRefreshKey(prev => prev + 1);
-              } catch (error) {
-                console.error('Failed to assign live interview:', error);
-                showToast('Failed to save AI Interview');
-              }
             }}
           />
         </div>
@@ -2488,7 +2456,7 @@ export function EnhancedGroupOverviewV2({
             })()}
             onBack={() => {
               setShowRecordedQuestionSetup(false);
-              setShowUnifiedAIInterviewSetup(true);
+              setShowRecordedInterviewSetup(true);
             }}
             onSave={async (questions) => {
               try {
@@ -2654,58 +2622,6 @@ export function EnhancedGroupOverviewV2({
           onClose={() => setShowLiveMonitor(false)}
           onViewResults={(sessionId) => setLiv2ResultSessionId(sessionId)}
         />
-      )}
-
-      {/* Interview Type Choice Modal — shown when flow has both live-interview and ai-interview */}
-      {showInterviewTypeChoice && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-[16px] w-full max-w-[480px] p-8">
-            <h3 className="font-['Arimo',sans-serif] text-[18px] text-[#111827] mb-2">
-              Configure Interview Stage
-            </h3>
-            <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280] mb-6">
-              This group's pipeline includes both interview types. Choose which to configure.
-            </p>
-            <div className="space-y-3">
-              <button
-                onClick={() => {
-                  setShowInterviewTypeChoice(false);
-                  setShowLiveInterviewV2Setup(true);
-                }}
-                className="w-full flex items-start gap-4 p-4 rounded-[12px] border-2 border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f5f3ff] transition-all text-left"
-              >
-                <div className="w-10 h-10 rounded-[8px] bg-indigo-100 flex items-center justify-center flex-shrink-0">
-                  <Sparkles size={20} className="text-indigo-600" />
-                </div>
-                <div>
-                  <p className="font-['Arimo',sans-serif] text-[15px] text-[#111827] font-semibold">AI Live Interview V2</p>
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mt-0.5">Rubric-guided real-time AI interview with behavioral anchors and question bank</p>
-                </div>
-              </button>
-              <button
-                onClick={() => {
-                  setShowInterviewTypeChoice(false);
-                  setShowUnifiedAIInterviewSetup(true);
-                }}
-                className="w-full flex items-start gap-4 p-4 rounded-[12px] border-2 border-[#e5e7eb] hover:border-[#10b981] hover:bg-emerald-50 transition-all text-left"
-              >
-                <div className="w-10 h-10 rounded-[8px] bg-emerald-100 flex items-center justify-center flex-shrink-0">
-                  <Video size={20} className="text-emerald-600" />
-                </div>
-                <div>
-                  <p className="font-['Arimo',sans-serif] text-[15px] text-[#111827] font-semibold">Recorded AI Interview</p>
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mt-0.5">Async video interview with AI-evaluated questions for soft skills & communication</p>
-                </div>
-              </button>
-            </div>
-            <button
-              onClick={() => setShowInterviewTypeChoice(false)}
-              className="mt-4 w-full h-[40px] rounded-[8px] border border-[#e5e7eb] text-[14px] text-[#374151] hover:bg-[#f9fafb] transition-colors font-['Arimo',sans-serif]"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
       )}
 
       {/* Live Interview V2 Config Wizard Overlay */}
