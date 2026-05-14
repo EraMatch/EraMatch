@@ -103,7 +103,10 @@ export const recruiterService = {
     getSkillClusters: async (positionId: string) => fetchAPI(`/recruiter/positions/${positionId}/skills`),
 
     // Candidate Management
-    getCandidates: async () => fetchAPI<any[]>('/recruiter/candidates'),
+    getCandidates: async (status?: string) => {
+        const query = status ? `?status=${encodeURIComponent(status)}` : '';
+        return fetchAPI<any[]>(`/recruiter/candidates${query}`);
+    },
 
     getGroupCandidates: async () => fetchAPI('/groups/candidates/all'),
 

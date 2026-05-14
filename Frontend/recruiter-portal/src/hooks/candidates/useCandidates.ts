@@ -2,10 +2,10 @@ import { useQuery } from '@tanstack/react-query'
 import { queryKeys } from '../../lib/queryKeys'
 import { api } from '../../services/api'
 
-export function useCandidates() {
+export function useCandidates(status?: string) {
     return useQuery({
-        queryKey: queryKeys.candidates.list(),
-        queryFn: () => api.recruiter.getCandidates(),
+        queryKey: queryKeys.candidates.list(status),
+        queryFn: () => api.recruiter.getCandidates(status),
         staleTime: 2 * 60 * 1000,
     })
 }

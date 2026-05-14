@@ -6,10 +6,11 @@ interface StatCardProps {
   subtitle: string;
   trend?: 'up' | 'down';
   hasLink?: boolean;
+  ctaLabel?: string;
   onCheckClick?: () => void;
 }
 
-export function StatCard({ value, title, subtitle, trend, hasLink, onCheckClick }: StatCardProps) {
+export function StatCard({ value, title, subtitle, trend, hasLink, ctaLabel = 'Check >>', onCheckClick }: StatCardProps) {
   return (
     <div className="bg-[#fefefe] rounded-[16px] shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1),0px_1px_2px_-1px_rgba(0,0,0,0.1)] relative">
       <div className="flex flex-col justify-center size-full">
@@ -53,7 +54,7 @@ export function StatCard({ value, title, subtitle, trend, hasLink, onCheckClick 
                 className="font-['Arimo',sans-serif] leading-[24px] text-[#9f9f9f] text-[16px] hover:text-[#7f7f7f] transition-colors"
                 onClick={onCheckClick}
               >
-                Check &gt;&gt;
+                {ctaLabel}
               </button>
             </div>
           )}

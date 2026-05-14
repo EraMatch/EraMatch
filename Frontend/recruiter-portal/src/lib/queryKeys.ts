@@ -23,7 +23,7 @@ export const queryKeys = {
     },
     candidates: {
         all:            ()   => ['candidates'] as const,
-        list:           ()   => ['candidates', 'list'] as const,
+        list:           (status?: string) => ['candidates', 'list', { status: status ?? '' }] as const,
         detail:         (id: string) => ['candidates', 'detail', id] as const,
         scoreBreakdown: (appId: string) => ['candidates', appId, 'scoreBreakdown'] as const,
         suspectReview:  (cid: string, appId?: string) => ['candidates', cid, 'suspectReview', appId ?? ''] as const,

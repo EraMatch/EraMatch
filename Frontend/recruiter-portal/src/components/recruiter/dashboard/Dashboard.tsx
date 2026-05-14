@@ -13,9 +13,11 @@ interface DashboardProps {
   onViewAllProjects: () => void;
   onViewProject: (projectId: string | number) => void;
   onViewSuspicious?: () => void;
+  onViewRequests?: () => void;
+  onViewHeldCandidates?: () => void;
 }
 
-export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }: DashboardProps) {
+export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious, onViewRequests, onViewHeldCandidates }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'analytics'>('overview');
 
   const { data: analytics, isLoading: analyticsLoading, isError } = useDashboardAnalytics();
@@ -79,22 +81,27 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious }
             {/* Stats Grid */}
             <div className="gap-[24px] grid grid-cols-[repeat(3,_minmax(0px,_1fr))] grid-rows-[repeat(1,_minmax(0px,_1fr))] h-[172px] w-full">
               <StatCard
-                value={analytics.topStats?.applicantsCount || 0}
-                title="Applicants"
-                subtitle="in the last 30 days"
-                trend="down"
+                value={analytics.topStats?.pendingReviewCount ?? 0}
+                title="Pending Reviews"
+                subtitle="approval requests"
+                hasLink
+                ctaLabel="Review >>"
+                onCheckClick={onViewRequests}
               />
               <StatCard
-                value={analytics.topStats?.perfectMatchCount || 0}
-                title="Perfect Match"
-                subtitle="on the last 24 hours"
-                trend="up"
+                value={analytics.topStats?.heldCandidatesCount ?? 0}
+                title="Candidates On Hold"
+                subtitle="need a decision"
+                hasLink
+                ctaLabel="Resolve >>"
+                onCheckClick={onViewHeldCandidates}
               />
               <StatCard
-                value={analytics.topStats?.suspiciousCount || 0}
-                title="Suspicious assessment"
+                value={analytics.topStats?.suspiciousCount ?? 0}
+                title="Suspicious Assessments"
                 subtitle="awaiting review"
                 hasLink
+                ctaLabel="Check >>"
                 onCheckClick={onViewSuspicious}
               />
             </div>

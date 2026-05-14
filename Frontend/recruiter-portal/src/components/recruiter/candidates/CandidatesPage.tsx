@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Search, Filter, Archive, BarChart3, Users, Calendar, TrendingUp, ChevronDown, X, Download, Clock, Loader2 } from 'lucide-react';
 import LoadingSpinner from '../../common/LoadingSpinner';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useCandidates } from '../../../hooks/candidates/useCandidates';
 import { useBulkArchiveApplications, useBulkDeleteApplications } from '../../../hooks/candidates/useCandidateMutations';
 
@@ -41,6 +41,9 @@ interface CandidatesPageProps {
 }
 
 export function CandidatesPage({ onBack }: CandidatesPageProps) {
+  const [searchParams] = useSearchParams();
+  const statusFilter = searchParams.get('status') ?? undefined;
+
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [activeView, setActiveView] = useState<'active' | 'archived'>('active');
@@ -48,7 +51,7 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const { data: rawCandidates = [], isLoading: loading } = useCandidates();
+  const { data: rawCandidates = [], isLoading: loading } = useCandidates(statusFilter);
   const bulkArchiveMutation = useBulkArchiveApplications();
   const bulkDeleteMutation = useBulkDeleteApplications();
   const [githubFilters, setGithubFilters] = useState<GitHubFilters>({

@@ -177,6 +177,9 @@ class PositionCandidateResponse(BaseModel):
     # Keyword match score (0-100, computed from position jd_keywords vs parsed CV)
     keyword_match_score: float | None = None
 
+    # Application-level status (applied, screening, holded, rejected, offered, hired, withdrawn)
+    application_status: str | None = None
+
 class PositionGroupResponse(BaseModel):
     id: UUID = Field(alias="id")
     name: str = Field(alias="name")

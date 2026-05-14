@@ -676,6 +676,7 @@ class RecruiterService:
                 CandidateProfile.location,
                 CandidateApplication.id.label("app_id"),
                 CandidateApplication.group_id,
+                CandidateApplication.status.label("application_status"),
                 CVAnalysis.match_score,
                 CVAnalysis.experience_years,
                 CVAnalysis.skills,
@@ -720,6 +721,7 @@ class RecruiterService:
                         "location": row.location,
                         "app_id": row.app_id,
                         "group_id": row.group_id,
+                        "application_status": row.application_status,
                         "match_score": new_score,
                         "experience_years": row.experience_years,
                         "skills": row.skills,
@@ -734,6 +736,7 @@ class RecruiterService:
                     if old["app_id"] is None and row.app_id is not None:
                         old["app_id"] = row.app_id
                         old["group_id"] = row.group_id
+                        old["application_status"] = row.application_status
                     if old["gh_overall_score"] is None and row.gh_overall_score is not None:
                         old["gh_overall_score"] = row.gh_overall_score
                         old["gh_repo_confidence"] = row.gh_repo_confidence
@@ -746,6 +749,7 @@ class RecruiterService:
                     "location": row.location,
                     "app_id": row.app_id,
                     "group_id": row.group_id,
+                    "application_status": row.application_status,
                     "match_score": new_score,
                     "experience_years": row.experience_years,
                     "skills": row.skills,
@@ -813,6 +817,7 @@ class RecruiterService:
                 id=item["id"],
                 applicationId=item["app_id"],
                 groupId=item["group_id"],
+                application_status=item.get("application_status"),
                 name=item["full_name"],
                 email=item["email"],
                 score=match_score,
@@ -2256,7 +2261,68 @@ class RecruiterService:
             day_name = days[d.weekday()]
             weekly_trend.append(WeeklyTrend(day=day_name, candidates=cnt))
             
+        # 7. Top Stats: three CTA card counts
+
+        # 7a. Pending approval requests assigned to this technical recruiter
+        if self.current_user.role == "technical":
+            from app.models import ApprovalRequest
+            q_pending_review = select(func.count()).where(
+                ApprovalRequest.organization_id == self.organization_id,
+                ApprovalRequest.assigned_tech_id == self.current_user.id,
+                ApprovalRequest.status == "technical_review",
+            )
+            res_pending = await self.session.execute(q_pending_review)
+            pending_review_count = res_pending.scalar() or 0
+        else:
+            pending_review_count = 0
+
+        # 7b. Candidates on hold accessible to this recruiter
+        q_held = select(func.count()).select_from(ProjectAccess).join(
+            Project, ProjectAccess.project_id == Project.id
+        ).join(
+            Position, Project.id == Position.project_id
+        ).join(
+            CandidateApplication, Position.id == CandidateApplication.position_id
+        ).where(
+            ProjectAccess.user_id == user_id,
+            CandidateApplication.status == "holded",
+        )
+        if self.current_user.role == "technical":
+            q_held = q_held.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_held = q_held.where(Position.assigned_hr_id == self.current_user.id)
+        res_held = await self.session.execute(q_held)
+        held_candidates_count = res_held.scalar() or 0
+
+        # 7c. Pending proctoring flags accessible to this recruiter
+        q_suspicious = select(func.count()).select_from(ProjectAccess).join(
+            Project, ProjectAccess.project_id == Project.id
+        ).join(
+            Position, Project.id == Position.project_id
+        ).join(
+            CandidateApplication, Position.id == CandidateApplication.position_id
+        ).join(
+            ProctoringFlag, CandidateApplication.id == ProctoringFlag.application_id
+        ).where(
+            ProjectAccess.user_id == user_id,
+            ProctoringFlag.status == "pending",
+        )
+        if self.current_user.role == "technical":
+            q_suspicious = q_suspicious.where(Position.assigned_tech_id == self.current_user.id)
+        elif self.current_user.role == "hr":
+            q_suspicious = q_suspicious.where(Position.assigned_hr_id == self.current_user.id)
+        res_suspicious = await self.session.execute(q_suspicious)
+        suspicious_count = res_suspicious.scalar() or 0
+
+        from app.schemas.analytics import DashboardTopStats
+        top_stats = DashboardTopStats(
+            pendingReviewCount=pending_review_count,
+            heldCandidatesCount=held_candidates_count,
+            suspiciousCount=suspicious_count,
+        )
+
         return RecruiterAnalyticsResponse(
+            topStats=top_stats,
             overview=overview,
             groupsByStatus=groups_by_status,
             candidatesByStage=candidates_by_stage,

@@ -67,6 +67,7 @@ from app.schemas.analytics import (
     ProjectPerformance,
     RecentActivity,
     WeeklyTrend,
+    DashboardTopStats,
     RecruiterAnalyticsResponse,
 )
 

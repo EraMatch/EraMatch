@@ -120,6 +120,8 @@ const DashboardWrapper = () => {
             onViewAllProjects={() => navigate('/recruiter/projects')}
             onViewProject={(projectId) => navigateWithStack(`/recruiter/project/${projectId}`)}
             onViewSuspicious={() => navigate('/recruiter/suspicious-activity')}
+            onViewRequests={() => navigate('/recruiter/reviews')}
+            onViewHeldCandidates={() => navigate('/recruiter/candidates?status=holded')}
         />
     );
 };

@@ -33,7 +33,13 @@ class WeeklyTrend(BaseModel):
     day: str
     candidates: int
 
+class DashboardTopStats(BaseModel):
+    pendingReviewCount: int
+    heldCandidatesCount: int
+    suspiciousCount: int
+
 class RecruiterAnalyticsResponse(BaseModel):
+    topStats: DashboardTopStats
     overview: OverviewStats
     groupsByStatus: list[GroupStatusCount]
     candidatesByStage: list[StageCount]

@@ -72,10 +72,14 @@ from app.schemas import PositionCandidateResponse
 async def list_all_candidates(
     session: DbSession,
     current_user: RecruiterUser,
+    status: str | None = None,
 ):
-    """List all candidate profiles in the organization."""
+    """List all candidate profiles in the organization. Optional ?status= filter (e.g. holded)."""
     service = RecruiterService(session, current_user)
-    return await service.list_all_candidates()
+    candidates = await service.list_all_candidates()
+    if status:
+        candidates = [c for c in candidates if c.application_status == status]
+    return candidates
 
 
 @router.post("/projects", response_model=ProjectResponse, status_code=201)
