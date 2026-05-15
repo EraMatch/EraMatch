@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel, Relationship, Column
 from sqlalchemy import Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB, BYTEA, ARRAY, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB, BYTEA, ARRAY, UUID as PG_UUID, INET
 from sqlalchemy import String
 
 
@@ -751,7 +751,7 @@ class OngoingAssessment(BaseModel, table=True):
     flag_count: int = Field(default=0)
     recording_url: str | None = Field(default=None, max_length=500)
     browser_info: dict | None = Field(default=None, sa_column=Column(JSONB))
-    ip_address: str | None = Field(default=None, max_length=45)
+    ip_address: str | None = Field(default=None, sa_column=Column(INET(), nullable=True))
 
 
 class CandidateAssignedQuestion(BaseModel, table=True):
@@ -1235,7 +1235,7 @@ class SystemLog(BaseModel, table=True):
     entity_type: str | None = Field(default=None, max_length=50)
     entity_id: UUID | None = Field(default=None)
     details: dict | None = Field(default=None, sa_column=Column(JSONB))
-    ip_address: str | None = Field(default=None, max_length=45)
+    ip_address: str | None = Field(default=None, sa_column=Column(INET(), nullable=True))
     user_agent: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

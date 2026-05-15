@@ -25,6 +25,7 @@ interface Project {
   isOpen: boolean;
   description?: string;
   status?: string;
+  openDate?: string;
 }
 
 type SortOption =
@@ -64,6 +65,7 @@ export function ProjectsPage({ onViewProject, onViewPosition, onCreateAssessment
     isOpen: p.status?.toLowerCase() === 'active',
     description: p.description || '',
     status: p.status,
+    openDate: p.openDate,
   }));
 
   const isLoading = projectsLoading || positionsLoading;
@@ -129,10 +131,7 @@ export function ProjectsPage({ onViewProject, onViewPosition, onCreateAssessment
   const sortedProjects = [...filteredProjects].sort((a, b) => {
     switch (sortOption) {
       case 'default':
-        // Open projects first
-        if (a.isOpen && !b.isOpen) return -1;
-        if (!a.isOpen && b.isOpen) return 1;
-        return 0;
+        return new Date(b.openDate ?? 0).getTime() - new Date(a.openDate ?? 0).getTime();
 
       case 'a-z':
         return a.title.localeCompare(b.title);

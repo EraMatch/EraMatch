@@ -299,12 +299,10 @@ export const recruiterService = {
     getQuestionBankVariants: async (type: string) => fetchAPI(`/questions/variants?type=${type}`),
 
     generateQuestionVariants: async (baseVariant: any, numVariants: number = 3) => {
-        const res = await fetch(`${API_URL}/questions/generate-variants?numVariants=${numVariants}`, {
+        return fetchAPI<any[]>(`/questions/generate-variants?numVariants=${numVariants}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(baseVariant)
+            body: JSON.stringify(baseVariant),
         });
-        return res.json();
     },
 
     // Interview Management

@@ -21,7 +21,7 @@ const ErrorPage = () => (
 // Wrapper Components for Navigation
 const CandidateLoginWrapper = () => {
     const navigate = useNavigate();
-    
+
     return (
         <CandidateLoginPage
             onBack={() => window.location.href = 'http://localhost:5173'}

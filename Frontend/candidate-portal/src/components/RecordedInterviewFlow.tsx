@@ -45,8 +45,6 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   const [totalTargets] = useState(5);
   const calibrationRef = useRef<HTMLDivElement>(null);
   const [copyPasteUnderstood, setCopyPasteUnderstood] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [hasRecorded, setHasRecorded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const RECORDING_TIMEOUT_SECONDS = 60;
 

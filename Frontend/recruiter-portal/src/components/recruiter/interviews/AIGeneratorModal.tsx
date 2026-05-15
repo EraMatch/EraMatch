@@ -43,7 +43,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
   const canGenerate = !!topic.trim() && !isGenerating;
 
   const metadataLabel = useMemo(
-    () => `Using Ollama | Type: ${effectiveType.toUpperCase()} | Difficulty: ${difficulty} | Variants: ${variantCount}`,
+    () => `Using AI | Type: ${effectiveType.toUpperCase()} | Difficulty: ${difficulty} | Variants: ${variantCount}`,
     [effectiveType, difficulty, variantCount]
   );
 
@@ -150,7 +150,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
 
     setIsGenerating(true);
     setGenerationError(null);
-    setGenerationStatus('Generating question(s) with Ollama...');
+    setGenerationStatus('Generating question(s) with AI...');
     setNormalizationWarnings([]);
     setGeneratedVariants([]);
 
@@ -297,9 +297,9 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" aria-busy={isGenerating}>
-      <div className="bg-white rounded-[16px] shadow-2xl max-w-2xl w-full">
+      <div className="bg-white rounded-[16px] shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="px-8 py-6 border-b border-[#e5e7eb]">
+        <div className="px-8 py-6 border-b border-[#e5e7eb] flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center">
@@ -324,7 +324,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
         </div>
 
         {/* Content */}
-        <div className="p-8">
+        <div className="p-8 overflow-y-auto flex-1">
           <div className="space-y-6">
             {/* Topic */}
             <div>
@@ -463,7 +463,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
                 <div className="flex items-center gap-3">
                   <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
                   <p className="font-['Arimo',sans-serif] text-[13px] text-indigo-900">
-                    Generating question with Ollama. This may take a few seconds.
+                    Generating question with AI. This may take a few seconds.
                   </p>
                 </div>
               </div>
@@ -533,7 +533,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
         </div>
 
         {/* Footer */}
-        <div className="px-8 py-4 border-t border-[#e5e7eb]">
+        <div className="px-8 py-4 border-t border-[#e5e7eb] flex-shrink-0">
           <div className="flex items-center justify-end gap-3">
             <Button
               variant="outline"

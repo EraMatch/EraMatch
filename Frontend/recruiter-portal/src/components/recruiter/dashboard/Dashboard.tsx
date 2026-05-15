@@ -22,7 +22,9 @@ export function Dashboard({ onViewAllProjects, onViewProject, onViewSuspicious, 
 
   const { data: analytics, isLoading: analyticsLoading, isError } = useDashboardAnalytics();
   const { data: projectsData = [], isLoading: projectsLoading } = useProjects('active');
-  const projects = projectsData as Project[];
+  const projects = [...(projectsData as Project[])].sort(
+    (a, b) => new Date(b.openDate ?? 0).getTime() - new Date(a.openDate ?? 0).getTime()
+  );
   const isLoading = analyticsLoading || projectsLoading;
 
   useEffect(() => {

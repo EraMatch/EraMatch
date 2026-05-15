@@ -7,6 +7,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from app.core.exceptions import NotFoundException, UnauthorizedException
+from app.core.config import settings
 from pathlib import Path
 
 from app.models import (
@@ -348,8 +349,8 @@ class RecruiterService:
             
             if status:
                 query = query.where(Project.status == status)
-                
-            query = query.offset(skip).limit(limit)
+
+            query = query.order_by(Project.created_at.desc()).offset(skip).limit(limit)
             
             result = await self.session.execute(query)
             projects = result.scalars().all()
@@ -880,8 +881,9 @@ class RecruiterService:
     async def update_position_hdeval_qag(self, position_id: UUID, questions: list[dict]) -> dict:
         """Edit generated 50 yes/no questions before approval."""
         position = await self.get_position(position_id)
-        if self.current_user.role != "technical" or position.assigned_tech_id != self.current_user.id:
-            raise UnauthorizedException("Only assigned technical recruiter can edit QAG questions")
+        if self.current_user.role != "admin":
+            if self.current_user.role != "technical" or position.assigned_tech_id != self.current_user.id:
+                raise UnauthorizedException("Only assigned technical recruiter or admin can edit QAG questions")
 
         scorer = PreScoreService()
         artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
@@ -907,8 +909,9 @@ class RecruiterService:
     async def approve_position_hdeval_qag(self, position_id: UUID) -> dict:
         """Approve question set and recompute candidates against approved yes/no questions."""
         position = await self.get_position(position_id)
-        if self.current_user.role != "technical" or position.assigned_tech_id != self.current_user.id:
-            raise UnauthorizedException("Only assigned technical recruiter can approve QAG questions")
+        if self.current_user.role != "admin":
+            if self.current_user.role != "technical" or position.assigned_tech_id != self.current_user.id:
+                raise UnauthorizedException("Only assigned technical recruiter or admin can approve QAG questions")
 
         with self.session.no_autoflush:
             artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
@@ -2785,8 +2788,8 @@ class RecruiterService:
         use_case: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> dict:
-        """Generate a technical or interview question using Ollama."""
-        llm = get_llm("ollama")
+        """Generate a technical or interview question using the configured LLM provider."""
+        llm = get_llm(settings.DEFAULT_LLM_PROVIDER)
         metadata = metadata if isinstance(metadata, dict) else {}
         use_case = (use_case or "").strip().lower()
 
@@ -2992,7 +2995,7 @@ class RecruiterService:
 
             return payload
         except Exception as e:
-            print(f"Ollama generation failed: {e}")
+            print(f"LLM generation failed ({settings.DEFAULT_LLM_PROVIDER}): {e}")
             if use_case == "recorded_interview_suggest":
                 return {
                     "questions": [

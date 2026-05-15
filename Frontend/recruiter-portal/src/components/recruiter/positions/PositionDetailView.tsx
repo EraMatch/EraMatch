@@ -385,6 +385,7 @@ export function PositionDetailView({
   // Auth / Role Check
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const isHR = user.role === 'hr' || user.role === 'admin';
+  const canManageQAG = user.role === 'technical' || user.role === 'admin';
   const navigate = useNavigate();
 
   // Upload Logic
@@ -804,14 +805,16 @@ export function PositionDetailView({
                     {keywordsVisible ? 'JD Keywords Visible' : 'Show JD Keywords'}
                   </span>
                 </button>
-                <button
-                  onClick={openQagManager}
-                  className="inline-flex h-[40px] items-center justify-center px-[14px] rounded-[10px] border border-[#ddd6fe] bg-[#f5f3ff] hover:bg-[#ede9fe] transition-colors"
-                >
-                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#5b21b6]">
-                    Manage QAG Questions
-                  </span>
-                </button>
+                {canManageQAG && (
+                  <button
+                    onClick={openQagManager}
+                    className="inline-flex h-[40px] items-center justify-center px-[14px] rounded-[10px] border border-[#ddd6fe] bg-[#f5f3ff] hover:bg-[#ede9fe] transition-colors"
+                  >
+                    <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#5b21b6]">
+                      Manage QAG Questions
+                    </span>
+                  </button>
+                )}
                 <button
                   onClick={handleRecomputeScores}
                   disabled={isRecomputingScores}

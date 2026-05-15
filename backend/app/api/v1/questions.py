@@ -1080,6 +1080,59 @@ async def approve_import_questions(
     )
 
 
+class GenerateVariantsRequest(BaseModel):
+    questionText: str
+    type: str = "essay"
+    difficulty: str = "Medium"
+
+    model_config = {"extra": "allow"}
+
+
+@router.post("/generate-variants")
+async def generate_question_variants(
+    request: GenerateVariantsRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+    numVariants: int = 3,
+):
+    """Generate AI variants of a base question with equal difficulty and different wording."""
+    import asyncio
+    from uuid import uuid4
+    from app.services.recruiter import RecruiterService
+
+    question_type = request.type.lower()
+    question_text = request.questionText.strip()
+    difficulty = request.difficulty
+
+    if not question_text:
+        raise HTTPException(status_code=422, detail="questionText is required")
+
+    num = max(1, min(10, numVariants))
+    svc = RecruiterService(session, current_user)
+    context = f"Generate a variant with different wording but the same difficulty and structure as this question: {question_text}"
+
+    tasks = [
+        svc.generate_ai_question(
+            question_type=question_type,
+            topic=question_text,
+            difficulty=difficulty,
+            context=context,
+        )
+        for _ in range(num)
+    ]
+    results = await asyncio.gather(*tasks)
+
+    variants = []
+    for result in results:
+        if isinstance(result, dict):
+            result.setdefault("id", str(uuid4()))
+            result.setdefault("type", question_type)
+            result.setdefault("difficulty", difficulty)
+            variants.append(result)
+
+    return variants
+
+
 @router.get("/import/jobs/{job_id}/row-errors-report")
 async def download_import_row_errors_report(
     job_id: UUID,

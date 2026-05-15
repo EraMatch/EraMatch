@@ -2969,19 +2969,29 @@ class GroupService:
         )
         self.session.add(log)
 
+        # Commit all DB work before sending notifications so a notification
+        # failure cannot roll back the group creation.
+        await self.session.commit()
+
         # 5. Send Notification to Technical Recruiter
         if group.assigned_tech_id:
             from app.services.notification import NotificationService
+            import logging as _logging
 
             notif_service = NotificationService(self.session)
-            await notif_service.create_notification(
-                organization_id=self.org_id,
-                recipient_user_id=group.assigned_tech_id,
-                title="New Candidate Group Created",
-                message=f"A new group '{group.group_name}' requires flow configuration.",
-                notification_type="group_assignment",
-                data={"group_id": str(group.id), "position_id": str(group.position_id)},
-            )
+            try:
+                await notif_service.create_notification(
+                    organization_id=self.org_id,
+                    recipient_user_id=group.assigned_tech_id,
+                    title="New Candidate Group Created",
+                    message=f"A new group '{group.group_name}' requires flow configuration.",
+                    notification_type="group_assignment",
+                    data={"group_id": str(group.id), "position_id": str(group.position_id)},
+                )
+            except Exception as _e:
+                _logging.getLogger(__name__).warning(
+                    "Failed to send group-created notification: %s", _e
+                )
 
         return group
 
