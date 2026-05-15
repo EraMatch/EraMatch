@@ -3002,6 +3002,8 @@ class GroupService:
             await self._sync_stage_configs(
                 group, data.filtration_flow, github_questions_count
             )
+            # Keep the denormalized cache on the group row in sync
+            group.filtration_flow = data.filtration_flow
 
         self.session.add(group)
         await self.session.commit()

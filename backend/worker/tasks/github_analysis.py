@@ -24,7 +24,7 @@ from worker.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = settings.DATABASE_URL or os.environ.get("DATABASE_URL", "")
-AI_SERVICE_URL = settings.AI_SERVICE_URL or os.environ.get("AI_SERVICE_URL", "http://localhost:8001")
+AI_SERVICE_URL = settings.AI_SERVICE_URL
 DEBUG_LOG_PATH = Path("logs/github_analysis_debug.json")
 DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -128,42 +128,74 @@ def _upsert_github_analysis(conn, candidate_id: str, org_id: str, github_url: st
             if isinstance(item, dict) and item.get("name"):
                 top_languages[str(item.get("name"))] = float(item.get("percentage") or 0)
 
+    profile = payload.get("profile") or {}
     stats = payload.get("stats") or {}
     analysis_data = payload.get("analysis_data") or {}
 
+    github_username = str(profile.get("login") or profile.get("username") or "").strip() or None
     repo_count = int(stats.get("public_repos") or 0)
-    contribution_score = float(stats.get("contributions_last_year") or 0)
+    total_stars = int(stats.get("total_stars") or stats.get("star_count") or 0)
+    total_forks = int(stats.get("total_forks") or stats.get("fork_count") or 0)
+    contribution_score = float(stats.get("contributions_last_year") or stats.get("total_contributions") or 0)
+    activity_score = float(
+        stats.get("activity_score")
+        or stats.get("commit_count")
+        or stats.get("contributions_last_year")
+        or 0
+    )
 
     assessment = (analysis_data.get("synthesis") or {}).get("assessment") or {}
-    code_quality_score = float(assessment.get("correctness") or 0)
+    code_quality_score = float(assessment.get("correctness") or assessment.get("code_quality") or 0)
+    documentation_score = float(assessment.get("documentation") or assessment.get("doc_score") or 0)
+
+    notable_repos = payload.get("top_repos") or []
+    if not isinstance(notable_repos, list):
+        notable_repos = []
 
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO github_analysis
-                (analysis_id, candidate_id, organization_id, github_url, top_languages, repo_count,
-                 contribution_score, code_quality_score, analysis_data, analyzed_at)
+                (analysis_id, candidate_id, organization_id, github_url, github_username,
+                 top_languages, repo_count, total_stars, total_forks,
+                 contribution_score, code_quality_score, documentation_score, activity_score,
+                 analysis_data, notable_repos, analyzed_at)
             VALUES
-                (gen_random_uuid(), %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, NOW())
+                (gen_random_uuid(), %s, %s, %s, %s,
+                 %s::jsonb, %s, %s, %s,
+                 %s, %s, %s, %s,
+                 %s::jsonb, %s::jsonb, NOW())
             ON CONFLICT (candidate_id)
             DO UPDATE SET
                 github_url = EXCLUDED.github_url,
+                github_username = EXCLUDED.github_username,
                 top_languages = EXCLUDED.top_languages,
                 repo_count = EXCLUDED.repo_count,
+                total_stars = EXCLUDED.total_stars,
+                total_forks = EXCLUDED.total_forks,
                 contribution_score = EXCLUDED.contribution_score,
                 code_quality_score = EXCLUDED.code_quality_score,
+                documentation_score = EXCLUDED.documentation_score,
+                activity_score = EXCLUDED.activity_score,
                 analysis_data = EXCLUDED.analysis_data,
+                notable_repos = EXCLUDED.notable_repos,
                 analyzed_at = NOW()
             """,
             (
                 candidate_id,
                 org_id,
                 github_url,
+                github_username,
                 json.dumps(top_languages),
                 repo_count,
+                total_stars,
+                total_forks,
                 contribution_score,
                 code_quality_score,
+                documentation_score,
+                activity_score,
                 json.dumps(analysis_data),
+                json.dumps(notable_repos),
             ),
         )
     conn.commit()

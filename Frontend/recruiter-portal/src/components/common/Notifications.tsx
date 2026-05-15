@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Bell, X, CheckCheck, Loader2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../services/api';
 
 interface Notification {
@@ -10,11 +11,14 @@ interface Notification {
   time: string;
   type: 'info' | 'success' | 'warning' | 'alert';
   read: boolean;
+  action_url?: string | null;
+  read_at?: string | null;
 }
 
 export function Notifications() {
   const [showDropdown, setShowDropdown] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<Record<number, boolean>>({});
+  const navigate = useNavigate();
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -36,6 +40,8 @@ export function Notifications() {
       time: n.timestamp,
       type: n.type as 'info' | 'success' | 'warning' | 'alert',
       read: localOverrides[n.id] !== undefined ? localOverrides[n.id] : n.read,
+      action_url: n.action_url ?? null,
+      read_at: n.read_at ?? null,
     }));
 
   const unreadCount = notifications.filter(n => !n.read).length;
@@ -142,7 +148,13 @@ export function Notifications() {
                   key={notification.id}
                   className={`p-4 border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer ${!notification.read ? 'bg-indigo-50/30' : ''
                     }`}
-                  onClick={() => markAsRead(notification.id)}
+                  onClick={() => {
+                    markAsRead(notification.id);
+                    if (notification.action_url) {
+                      setShowDropdown(false);
+                      navigate(notification.action_url);
+                    }
+                  }}
                 >
                   <div className="flex items-start gap-3">
                     <div

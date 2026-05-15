@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Bell, AlertTriangle, CheckCircle, UserPlus, FileCheck, Video, Github, Clock, ChevronRight, Loader2 } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import EraMatchLogo from '../../assets/image-eramatch.png';
 import { useNotifications } from '../../hooks/dashboard/useDashboardAnalytics';
 
@@ -17,12 +17,15 @@ interface Notification {
   candidateName: string;
   timestamp: string;
   read: boolean;
+  action_url?: string | null;
+  read_at?: string | null;
 }
 
 export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProps) {
   const [localReadIds, setLocalReadIds] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const location = useLocation();
+  const navigate = useNavigate();
   const isRecruiter = location.pathname.startsWith('/recruiter');
 
   const { data: rawData = [], isLoading } = useNotifications();
@@ -36,6 +39,8 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
     candidateName: alert.data?.candidate_name || 'System',
     timestamp: alert.created_at ? new Date(alert.created_at).toLocaleString() : 'Just now',
     read: localReadIds.has(String(alert.id)) || alert.is_read || false,
+    action_url: alert.action_url ?? null,
+    read_at: alert.read_at ?? null,
   }));
 
   const getIcon = (type: string) => {
@@ -158,7 +163,11 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
                     }`}
                   onClick={() => {
                     markAsRead(notification.id);
-                    onViewCandidate(notification.candidateId);
+                    if (notification.action_url) {
+                      navigate(notification.action_url);
+                    } else {
+                      onViewCandidate(notification.candidateId);
+                    }
                   }}
                 >
                   <div className="p-6">

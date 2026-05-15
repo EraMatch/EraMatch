@@ -147,9 +147,19 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         setInitialTimer(durationSeconds);
 
         // Step 2: Start assessment session (or resume existing)
+        const browserInfo = {
+          user_agent: navigator.userAgent,
+          screen_width: window.screen.width,
+          screen_height: window.screen.height,
+          viewport_width: window.innerWidth,
+          viewport_height: window.innerHeight,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          language: navigator.language,
+        };
         const session = await api.candidate.startAssessment({
           assessment_id: config.assessment_id,
           stage_id: config.stage_id,
+          browser_info: browserInfo,
         }) as any;
         setSessionId(session.session_id);
 
@@ -791,7 +801,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
 
   // Local timer countdown (supplements heartbeat for smooth display)
   useEffect(() => {
-    if (assessmentComplete || assessmentTimer <= 0) return;
+    if (assessmentComplete || assessmentTimerRef.current <= 0) return;
 
     const timer = setInterval(() => {
       setAssessmentTimer((prev) => {
@@ -801,7 +811,6 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
           if (sessionId) {
             api.candidate.submitAssessment({ session_id: sessionId })
               .then(() => {
-                console.log('Assessment auto-submitted on time expiry');
                 setAssessmentComplete(true);
               })
               .catch((err: unknown) => {
@@ -818,7 +827,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [onComplete, assessmentComplete, sessionId, assessmentTimer]);
+  }, [assessmentComplete, sessionId]);
 
   // Inactivity detection
   useEffect(() => {

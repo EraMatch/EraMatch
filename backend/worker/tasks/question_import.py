@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ─── Configuration ────────────────────────────────────────────────────────────
 # Prefer shared settings so worker and API read the same .env values.
 DATABASE_URL = settings.DATABASE_URL or os.environ.get("DATABASE_URL", "")
-AI_SERVICE_URL = settings.AI_SERVICE_URL or os.environ.get("AI_SERVICE_URL", "http://localhost:8001")
+AI_SERVICE_URL = settings.AI_SERVICE_URL
 
 # File extraction limits
 MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024   # 5 MB

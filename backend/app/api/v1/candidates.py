@@ -10,7 +10,7 @@ from sqlmodel import select
 
 from app.api.deps import DbSession, CurrentUser
 from app.services import CandidateService
-from app.models import CandidateProfile, CandidateApplication, Position, CVAnalysis, GitHubAnalysis, GitHubAnalysisJob
+from app.models import CandidateProfile, CandidateApplication, Position, CVAnalysis, GitHubAnalysis, GitHubAnalysisJob, GroupStageConfig
 from app.schemas import (
     CandidateCreate,
     CandidateUpdate,
@@ -53,7 +53,7 @@ async def _queue_github_analysis_job(
     session: DbSession,
     current_user: CurrentUser,
     candidate_id: UUID,
-    questions_to_generate: int = 10,
+    questions_to_generate: int | None = None,
 ):
     profile_result = await session.execute(
         select(CandidateProfile).where(
@@ -116,6 +116,23 @@ async def _queue_github_analysis_job(
 
     if not github_url:
         raise HTTPException(status_code=422, detail="Candidate has no GitHub URL to analyze")
+
+    # If no count was explicitly provided, look it up from the group's assessment stage config
+    if questions_to_generate is None and latest_app and latest_app.group_id:
+        try:
+            stage_result = await session.execute(
+                select(GroupStageConfig).where(
+                    GroupStageConfig.group_id == latest_app.group_id,
+                    GroupStageConfig.stage_type == "assessment",
+                )
+            )
+            stage_cfg = stage_result.scalar_one_or_none()
+            if stage_cfg and isinstance(stage_cfg.acceptance_criteria, dict):
+                questions_to_generate = int(
+                    stage_cfg.acceptance_criteria.get("github_questions_count") or 10
+                )
+        except Exception:
+            pass
 
     questions_to_generate = max(1, min(int(questions_to_generate or 10), 30))
 
@@ -421,7 +438,6 @@ async def start_github_analysis(
         session=session,
         current_user=current_user,
         candidate_id=candidate_id,
-        questions_to_generate=10,
     )
 
 @router.post("/{candidate_id}/github-analysis/reanalyze")
@@ -435,5 +451,4 @@ async def reanalyze_github_profile(
         session=session,
         current_user=current_user,
         candidate_id=candidate_id,
-        questions_to_generate=10,
     )

@@ -149,7 +149,7 @@ class AuthService:
         )
 
         # 3. "Send" Email
-        reset_link = f"http://localhost:5173/admin/reset-password?token={token}"
+        reset_link = f"{settings.RECRUITER_URL}/admin/reset-password?token={token}"
         
         logger.info("\n" + "="*50)
         logger.info(f"PASSWORD RESET REQUEST FOR: {email}")
@@ -233,7 +233,7 @@ class AuthService:
         )
 
         # 3. "Send" Email
-        reset_link = f"http://localhost:5173/recruiter/reset-password?token={token}"
+        reset_link = f"{settings.RECRUITER_URL}/recruiter/reset-password?token={token}"
         
         logger.info("\n" + "="*50)
         logger.info(f"PASSWORD RESET REQUEST FOR ORGANIZATION USER: {email}")

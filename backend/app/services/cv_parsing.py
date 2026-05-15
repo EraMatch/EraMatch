@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import CVAnalysis, CandidateApplication, CandidateProfile
+from app.models import CVAnalysis, CandidateApplication, CandidateProfile, Position
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,9 @@ class CVParsingWorkerService:
             except (TypeError, ValueError):
                 match_score = None
 
+        education_list = parsed_data.get("education") if isinstance(parsed_data, dict) else None
+        work_history_list = parsed_data.get("work_experience") if isinstance(parsed_data, dict) else None
+
         stmt = select(CVAnalysis).where(CVAnalysis.application_id == application_id)
         analysis = self.session.execute(stmt).scalars().first()
 
@@ -45,6 +48,10 @@ class CVParsingWorkerService:
                 analysis.experience_years = experience_years
             if match_score is not None:
                 analysis.match_score = match_score
+            if education_list is not None:
+                analysis.education = education_list
+            if work_history_list is not None:
+                analysis.work_history = work_history_list
             analysis.cv_file_url = file_path
             analysis.analyzed_at = datetime.utcnow()
             logger.info(f"[CVParsing] Updated existing CVAnalysis for application {application_id}")
@@ -57,12 +64,42 @@ class CVParsingWorkerService:
                 skills=skills_list if skills_list else None,
                 experience_years=experience_years if experience_years is not None else None,
                 match_score=match_score if match_score is not None else 0.0,
+                education=education_list,
+                work_history=work_history_list,
                 analyzed_at=datetime.utcnow()
             )
             self.session.add(analysis)
             logger.info(f"[CVParsing] Created new CVAnalysis for application {application_id}")
 
         self.session.commit()
+
+        # Back-populate resume_url on the application and compute keyword_match_score if possible
+        try:
+            app_stmt = select(CandidateApplication).where(CandidateApplication.id == application_id)
+            application = self.session.execute(app_stmt).scalars().first()
+            if application:
+                if not application.resume_url:
+                    application.resume_url = file_path
+                    self.session.add(application)
+                    self.session.commit()
+
+                # Compute keyword_match_score eagerly if position already has jd_keywords
+                if analysis.keyword_match_score is None:
+                    pos_stmt = select(Position).where(Position.id == application.position_id)
+                    position = self.session.execute(pos_stmt).scalars().first()
+                    if position and isinstance(position.jd_keywords, dict) and position.jd_keywords:
+                        from app.services.prescore import PreScoreService
+                        scorer = PreScoreService()
+                        kw_score = scorer.compute_keyword_match_score(
+                            jd_keywords=position.jd_keywords,
+                            candidate_parsed_data=parsed_data,
+                            candidate_skills=skills_list or [],
+                        )
+                        analysis.keyword_match_score = kw_score
+                        self.session.add(analysis)
+                        self.session.commit()
+        except Exception as e:
+            logger.warning(f"[CVParsing] Post-persist enrichment failed for app {application_id}: {e}")
 
     def backfill_candidate_profile(self, application_id: UUID, parsed_data: dict):
         """

@@ -128,7 +128,6 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             group_id: groupId,
-            organization_id: '00000000-0000-0000-0000-000000000000', // filled by backend CurrentUser
             dimensions,
             time_budget_minutes: timeBudget,
             language: 'en',

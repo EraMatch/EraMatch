@@ -2883,7 +2883,7 @@ class RecruiterService:
             payload = self._extract_json_payload(getattr(response, "content", ""))
 
             if not isinstance(payload, dict):
-                return {"questionText": f"Stub: {topic} ({difficulty})", "type": question_type, "difficulty": difficulty}
+                return {"questionText": f"[Fallback] {topic} ({difficulty})", "type": question_type, "difficulty": difficulty}
 
             if use_case == "recorded_interview_suggest":
                 items = payload.get("questions") if isinstance(payload.get("questions"), list) else []
@@ -3016,7 +3016,7 @@ class RecruiterService:
                 }
             # Fallback mock for safety
             fallback: dict = {
-                "questionText": f"Stub: {topic} ({difficulty})",
+                "questionText": f"[Fallback] {topic} ({difficulty})",
                 "type": question_type,
                 "difficulty": difficulty,
                 "evidence": "",

@@ -7,7 +7,7 @@ export const candidateService = {
 
     // Assessment endpoints
     getAssessmentConfig: async () => fetchAPI('/assessment/config'),
-    startAssessment: async (data: { assessment_id: string; stage_id: string }) =>
+    startAssessment: async (data: { assessment_id: string; stage_id: string; browser_info?: Record<string, unknown> }) =>
         fetchAPI('/assessment/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

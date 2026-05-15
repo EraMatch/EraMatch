@@ -37,23 +37,17 @@ from sqlalchemy import text, bindparam
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import UUID as pgUUID, JSONB
 from app.api.deps import CurrentCandidate, DbSession
+from app.core.config import settings
 from app.core.integrity_metrics import integrity_metrics
 
 
 logger = logging.getLogger(__name__)
-
-AI_SERVICE_URL = "http://localhost:8001"
-INTEGRITY_EVENT_MAX_PER_MINUTE = 45
-INTEGRITY_DUP_WINDOW_SECONDS = 8
-INTEGRITY_ENFORCEMENT_WINDOW_SECONDS = 120
-INTEGRITY_ENFORCEMENT_CRITICAL_EVENTS = {
-    "paste_attempt",
-    "paste_shortcut",
-    "multi_face_detected",
-    "voice_mismatch",
-    "speaker_mismatch",
-    "fusion_high_confidence_risk",
-}
+from app.core.integrity import (
+    INTEGRITY_EVENT_MAX_PER_MINUTE,
+    INTEGRITY_DUP_WINDOW_SECONDS,
+    INTEGRITY_ENFORCEMENT_WINDOW_SECONDS,
+    INTEGRITY_ENFORCEMENT_CRITICAL_EVENTS,
+)
 
 router = APIRouter(prefix="/assessment", tags=["Candidate Assessment"])
 
@@ -77,6 +71,7 @@ class StartAssessmentRequest(BaseModel):
     """Request to start assessment session."""
     assessment_id: str
     stage_id: str          # group_pipeline_stages.stage_id
+    browser_info: dict | None = None
 
 
 class StartAssessmentResponse(BaseModel):
@@ -890,6 +885,19 @@ async def _start_assessment_session_impl(
                     "attempt_count": ad.get("attempt_count", 0) if isinstance(ad, dict) else 0,
                 }
 
+            if request.browser_info:
+                await session.execute(
+                    text("""
+                        UPDATE ongoing_assessments
+                        SET browser_info = :browser_info
+                        WHERE session_id = :session_id
+                    """).bindparams(
+                        bindparam("session_id", type_=pgUUID(as_uuid=True)),
+                        bindparam("browser_info", type_=JSONB),
+                    ),
+                    {"session_id": existing_sid, "browser_info": request.browser_info},
+                )
+
             return StartAssessmentResponse(
                 session_id=str(existing_sid),
                 questions=aq.get("questions", []),
@@ -1193,10 +1201,10 @@ async def _start_assessment_session_impl(
         text("""
             INSERT INTO ongoing_assessments
             (session_id, assessment_id, application_id, organization_id,
-             assigned_questions, status, started_at, max_points)
+             assigned_questions, status, started_at, max_points, browser_info)
             VALUES (
                 :session_id, :assessment_id, :application_id, :organization_id,
-                :assigned_questions, :status, NOW(), :max_points
+                :assigned_questions, :status, NOW(), :max_points, :browser_info
             )
         """).bindparams(
             bindparam("session_id", type_=pgUUID(as_uuid=True)),
@@ -1204,6 +1212,7 @@ async def _start_assessment_session_impl(
             bindparam("application_id", type_=pgUUID(as_uuid=True)),
             bindparam("organization_id", type_=pgUUID(as_uuid=True)),
             bindparam("assigned_questions", type_=JSONB),
+            bindparam("browser_info", type_=JSONB),
         ),
         {
             "session_id": session_id,
@@ -1213,6 +1222,7 @@ async def _start_assessment_session_impl(
             "assigned_questions": {"questions": assigned_questions},
             "status": "in_progress",
             "max_points": max_points,
+            "browser_info": request.browser_info,
         }
     )
 
@@ -2796,7 +2806,7 @@ async def auto_grade_answers(session_id: UUID, db_session):
                 try:
                     async with httpx.AsyncClient(timeout=30) as client:
                         resp = await client.post(
-                            f"{AI_SERVICE_URL}/evaluate/grade-essay",
+                            f"{settings.AI_SERVICE_URL}/evaluate/grade-essay",
                             json={
                                 "question_text": q_text,
                                 "essay_response": essay_text,

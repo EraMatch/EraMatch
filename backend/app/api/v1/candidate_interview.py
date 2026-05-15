@@ -17,23 +17,23 @@ from sqlalchemy import text, bindparam, String
 from sqlalchemy.dialects.postgresql import UUID as pgUUID, JSONB
 
 from app.api.deps import CurrentCandidate, DbSession
+from app.core.config import settings
 from app.core.integrity_metrics import integrity_metrics
 
 
 router = APIRouter(prefix="/interview", tags=["Candidate Interview"])
 logger = logging.getLogger(__name__)
 
-INTERVIEW_INTEGRITY_EVENT_MAX_PER_MINUTE = 45
-INTERVIEW_INTEGRITY_DUP_WINDOW_SECONDS = 8
-INTERVIEW_ENFORCEMENT_WINDOW_SECONDS = 120
-INTERVIEW_ENFORCEMENT_CRITICAL_EVENTS = {
-    "paste_attempt",
-    "paste_shortcut",
-    "multi_face_detected",
-    "voice_mismatch",
-    "speaker_mismatch",
-    "fusion_high_confidence_risk",
-}
+from app.core.integrity import (
+    INTEGRITY_EVENT_MAX_PER_MINUTE,
+    INTEGRITY_DUP_WINDOW_SECONDS,
+    INTEGRITY_ENFORCEMENT_WINDOW_SECONDS,
+    INTEGRITY_ENFORCEMENT_CRITICAL_EVENTS,
+)
+INTERVIEW_INTEGRITY_EVENT_MAX_PER_MINUTE = INTEGRITY_EVENT_MAX_PER_MINUTE
+INTERVIEW_INTEGRITY_DUP_WINDOW_SECONDS = INTEGRITY_DUP_WINDOW_SECONDS
+INTERVIEW_ENFORCEMENT_WINDOW_SECONDS = INTEGRITY_ENFORCEMENT_WINDOW_SECONDS
+INTERVIEW_ENFORCEMENT_CRITICAL_EVENTS = INTEGRITY_ENFORCEMENT_CRITICAL_EVENTS
 
 
 def _normalize_questions(questions_data) -> list[dict]:
@@ -758,7 +758,7 @@ async def submit_video_response(
     # URL for access (relative to backend base)
     video_url_db = f"/static/uploads/{filename}"
     # Absolute URL for worker
-    video_url_full = f"http://localhost:8000/static/uploads/{filename}"
+    video_url_full = f"{settings.BACKEND_URL}/static/uploads/{filename}"
 
     # Determine question_order atomically — MAX+1 inside the INSERT avoids
     # the read-then-write race that COUNT(*) has under concurrent uploads.

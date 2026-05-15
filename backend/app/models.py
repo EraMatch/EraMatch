@@ -314,8 +314,10 @@ class Position(SQLModel, table=True):
     required_skills: dict = Field(default_factory=list, sa_column=Column(JSONB))
     experience_level: str | None = Field(default=None, max_length=20)
     work_type: str | None = Field(default=None, max_length=20)
+    location: str | None = Field(default=None, max_length=255)
     salary_min: Decimal | None = Field(default=None)
     salary_max: Decimal | None = Field(default=None)
+    salary_currency: str | None = Field(default="USD", max_length=3)
     employment_type: str = Field(
         default="full-time", max_length=30
     )  # full-time, part-time, contract, internship
@@ -372,6 +374,7 @@ class CandidateGroup(SQLModel, table=True):
         default=None, foreign_key="organization_users.user_id"
     )
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    filtration_flow: list | None = Field(default=None, sa_column=Column(JSONB))
 
 
 class GroupStageConfig(SQLModel, table=True):
@@ -488,6 +491,7 @@ class RecruiterNote(BaseModel, table=True):
     application_id: UUID = Field(foreign_key="candidate_applications.application_id")
     author_id: UUID = Field(foreign_key="organization_users.user_id")
     content: str = Field(sa_column=Column(Text))
+    tags: list | None = Field(default=None, sa_column=Column(ARRAY(String)))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -519,8 +523,11 @@ class QuestionBank(BaseModel, table=True):
     )
     usage_count: int = Field(default=0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime | None = Field(default=None)
     is_deleted: bool = Field(default=False)
     is_base_question: bool = Field(default=True)
+    parent_question_id: UUID | None = Field(default=None)
+    quality_score: int | None = Field(default=None)
     source: str | None = Field(default=None, max_length=50)
 
 
@@ -743,6 +750,8 @@ class OngoingAssessment(BaseModel, table=True):
     max_points: int | None = Field(default=None)
     flag_count: int = Field(default=0)
     recording_url: str | None = Field(default=None, max_length=500)
+    browser_info: dict | None = Field(default=None, sa_column=Column(JSONB))
+    ip_address: str | None = Field(default=None, max_length=45)
 
 
 class CandidateAssignedQuestion(BaseModel, table=True):
@@ -795,8 +804,12 @@ class StageOnboarding(BaseModel, table=True):
     stage_type: str = Field(max_length=30)
     session_id: UUID | None = Field(default=None)
     device_test_passed: bool = Field(default=False)
+    camera_test_passed: bool = Field(default=False)
+    microphone_test_passed: bool = Field(default=False)
     face_calibration_passed: bool = Field(default=False)
     face_embedding: bytes | None = Field(default=None, sa_column=Column(BYTEA))
+    face_mesh_data: dict | None = Field(default=None, sa_column=Column(JSONB))
+    voice_calibration_passed: bool = Field(default=False)
     instructions_accepted: bool = Field(default=False)
     completed_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -894,9 +907,13 @@ class AIInterviewTurn(BaseModel, table=True):
     turn_number: int
     speaker: str = Field(max_length=20)  # ai, candidate
     content: str | None = Field(default=None, sa_column=Column(Text))
+    transcript: str | None = Field(default=None, sa_column=Column(Text))
+    transcript_confidence: Decimal | None = Field(default=None)
+    ai_model_used: str | None = Field(default=None, max_length=100)
     audio_url: str | None = Field(default=None, max_length=500)
     duration_seconds: int | None = Field(default=None)
     analysis: dict | None = Field(default=None, sa_column=Column(JSONB))
+    emotion_analysis: dict | None = Field(default=None, sa_column=Column(JSONB))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -916,11 +933,13 @@ class LiveInterviewConfig(BaseModel, table=True):
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID | None = Field(default=None, foreign_key="positions.position_id")
     title: str = Field(max_length=255)
+    interview_type: str | None = Field(default="technical", max_length=50)
     duration_minutes: int = Field(default=60)
     instructions: str | None = Field(default=None, sa_column=Column(Text))
     suggested_questions: dict | None = Field(default=None, sa_column=Column(JSONB))
     scoring_rubric: dict | None = Field(default=None, sa_column=Column(JSONB))
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    is_deleted: bool = Field(default=False)
 
 
 class LiveInterviewSession(BaseModel, table=True):
@@ -939,13 +958,17 @@ class LiveInterviewSession(BaseModel, table=True):
     )
     scheduled_at: datetime | None = Field(default=None)
     meeting_link: str | None = Field(default=None, max_length=500)
+    meeting_provider: str | None = Field(default=None, max_length=50)
     status: str = Field(default="scheduled", max_length=20)
     started_at: datetime | None = Field(default=None)
     ended_at: datetime | None = Field(default=None)
     recording_url: str | None = Field(default=None, max_length=500)
+    transcript: str | None = Field(default=None, sa_column=Column(Text))
+    ai_analysis: dict | None = Field(default=None, sa_column=Column(JSONB))
     interviewer_notes: str | None = Field(default=None, sa_column=Column(Text))
     interviewer_rating: Decimal | None = Field(default=None)
     interviewer_decision: str | None = Field(default=None, max_length=20)
+    feedback_submitted_at: datetime | None = Field(default=None)
 
 
 # =============================================================================
@@ -967,6 +990,9 @@ class CVAnalysis(BaseModel, table=True):
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     cv_file_url: str | None = Field(default=None, max_length=500)
     parsed_data: dict | None = Field(default=None, sa_column=Column(JSONB))
+    education: list | None = Field(default=None, sa_column=Column(JSONB))
+    work_history: list | None = Field(default=None, sa_column=Column(JSONB))
+    skill_gap_analysis: str | None = Field(default=None, sa_column=Column(Text))
     github_profile: dict | None = Field(default=None, sa_column=Column(JSONB))
     skills: list | None = Field(default=None, sa_column=Column(ARRAY(String)))
     experience_years: Decimal | None = Field(default=None)
@@ -990,11 +1016,17 @@ class GitHubAnalysis(BaseModel, table=True):
     )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     github_url: str | None = Field(default=None, max_length=500)
+    github_username: str | None = Field(default=None, max_length=100)
     top_languages: dict | None = Field(default=None, sa_column=Column(JSONB))
     repo_count: int | None = Field(default=None)
+    total_stars: int | None = Field(default=None)
+    total_forks: int | None = Field(default=None)
     contribution_score: Decimal | None = Field(default=None)
     code_quality_score: Decimal | None = Field(default=None)
+    documentation_score: Decimal | None = Field(default=None)
+    activity_score: Decimal | None = Field(default=None)
     analysis_data: dict | None = Field(default=None, sa_column=Column(JSONB))
+    notable_repos: list | None = Field(default=None, sa_column=Column(JSONB))
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -1045,10 +1077,14 @@ class PipelineTransition(BaseModel, table=True):
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     from_status: str | None = Field(default=None, max_length=30)
     to_status: str = Field(max_length=30)
+    from_stage: str | None = Field(default=None, max_length=50)
+    to_stage: str | None = Field(default=None, max_length=50)
     triggered_by_user_id: UUID | None = Field(
         default=None, foreign_key="organization_users.user_id"
     )
+    trigger_type: str | None = Field(default="manual", max_length=20)
     reason: str | None = Field(default=None, sa_column=Column(Text))
+    transition_metadata: dict | None = Field(default=None, sa_column=Column("metadata", JSONB))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -1065,6 +1101,9 @@ class RecruiterAssignmentLog(BaseModel, table=True):
     group_id: UUID | None = Field(default=None, foreign_key="candidate_groups.group_id")
     user_id: UUID = Field(foreign_key="organization_users.user_id")
     action: str = Field(max_length=20)  # assigned, unassigned
+    assigned_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -1085,11 +1124,20 @@ class Offer(BaseModel, table=True):
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     position_id: UUID = Field(foreign_key="positions.position_id")
     salary_offered: Decimal | None = Field(default=None)
+    salary_currency: str | None = Field(default="USD", max_length=3)
+    bonus_offered: Decimal | None = Field(default=None)
+    equity_offered: str | None = Field(default=None, max_length=100)
+    start_date: date | None = Field(default=None)
     offer_details: dict | None = Field(default=None, sa_column=Column(JSONB))
+    offer_letter_url: str | None = Field(default=None, max_length=500)
     status: str = Field(default="pending", max_length=20)
+    created_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     offered_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: datetime | None = Field(default=None)
     responded_at: datetime | None = Field(default=None)
+    decline_reason: str | None = Field(default=None, sa_column=Column(Text))
 
 
 class Hire(BaseModel, table=True):
@@ -1109,6 +1157,11 @@ class Hire(BaseModel, table=True):
     final_salary: Decimal | None = Field(default=None)
     salary_currency: str | None = Field(default="USD", max_length=3)
     start_date: date | None = Field(default=None)
+    employee_id: str | None = Field(default=None, max_length=50)
+    onboarding_status: str | None = Field(default="pending", max_length=20)
+    hired_by_user_id: UUID | None = Field(
+        default=None, foreign_key="organization_users.user_id"
+    )
     hired_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -1136,7 +1189,9 @@ class Notification(BaseModel, table=True):
     title: str = Field(max_length=255)
     message: str | None = Field(default=None, sa_column=Column(Text))
     data: dict | None = Field(default=None, sa_column=Column(JSONB))
+    action_url: str | None = Field(default=None, max_length=500)
     is_read: bool = Field(default=False)
+    read_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -1150,9 +1205,13 @@ class EmailLog(BaseModel, table=True):
     )
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     recipient_email: str = Field(max_length=255)
+    recipient_name: str | None = Field(default=None, max_length=255)
     subject: str = Field(max_length=255)
     template_type: str | None = Field(default=None, max_length=50)
+    template_data: dict | None = Field(default=None, sa_column=Column(JSONB))
     status: str | None = Field(default=None, max_length=20)
+    provider_message_id: str | None = Field(default=None, max_length=255)
+    error_message: str | None = Field(default=None, sa_column=Column(Text))
     sent_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -1169,10 +1228,15 @@ class SystemLog(BaseModel, table=True):
         default=None, foreign_key="organizations.organization_id"
     )
     user_id: UUID | None = Field(default=None, foreign_key="organization_users.user_id")
+    candidate_id: UUID | None = Field(
+        default=None, foreign_key="candidate_profiles.candidate_id"
+    )
     action: str = Field(max_length=100)
     entity_type: str | None = Field(default=None, max_length=50)
     entity_id: UUID | None = Field(default=None)
     details: dict | None = Field(default=None, sa_column=Column(JSONB))
+    ip_address: str | None = Field(default=None, max_length=45)
+    user_agent: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

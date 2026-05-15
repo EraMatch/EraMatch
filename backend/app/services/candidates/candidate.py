@@ -5,6 +5,7 @@ import io
 import os
 import json
 from datetime import datetime, timezone
+from fastapi import HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 from sqlalchemy import text
@@ -1377,10 +1378,10 @@ class CandidateService:
 
     # Bulk Upload
     async def process_zip_upload(self, file_content: bytes, position_id: UUID) -> CandidateUploadResponse:
-        """
-        Process a zip file containing CVs.
-        Creates candidates (if new) and applications for the given position.
-        """
+        raise HTTPException(
+            status_code=501,
+            detail="Zip import file storage is not implemented. Upload candidates individually."
+        )
         success_count = 0
         failed_count = 0
         errors = []
@@ -1414,20 +1415,14 @@ class CandidateService:
                         )
                         
                         candidate = await self.create_profile(profile_data)
-                        
-                        # Create Application
-                        # We might want to store the file content somewhere (S3/Blob).
-                        # For now, we'll just mark it as uploaded. 
-                        # In a real implementation, we would upload `z.read(filename)` to S3 and get a URL.
-                        fake_resume_url = f"s3://bucket/{filename}" 
-                        
+
                         app_data = ApplicationCreate(
                             position_id=position_id,
-                            resume_url=fake_resume_url,
+                            resume_url=None,
                             source="zip_import"
                         )
                         await self.create_application(candidate.id, app_data)
-                        
+
                         created_candidates.append(CandidateResponse.model_validate(candidate))
                         success_count += 1
                         

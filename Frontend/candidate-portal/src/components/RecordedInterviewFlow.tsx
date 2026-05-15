@@ -45,9 +45,10 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   const [totalTargets] = useState(5);
   const calibrationRef = useRef<HTMLDivElement>(null);
   const [copyPasteUnderstood, setCopyPasteUnderstood] = useState(false);
-  const [mockRecording, setMockRecording] = useState(false);
-  const [mockRecorded, setMockRecorded] = useState(false);
-  const [mockTimer, setMockTimer] = useState(60);
+  const [isRecording, setIsRecording] = useState(false);
+  const [hasRecorded, setHasRecorded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const RECORDING_TIMEOUT_SECONDS = 60;
 
   // Camera handling
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -111,48 +112,21 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     const fetchQuestions = async () => {
       try {
         setIsLoading(true);
-        // Fetch from /interview/config endpoint
-        const response = await fetch('/api/v1/interview/config', {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-          }
-        });
-
-        if (!response.ok) throw new Error('Failed to fetch config');
-
-        const data = await response.json();
-        // Store config ID and questions with IDs
+        setLoadError(null);
+        const data = await api.candidate.getInterviewConfig() as any;
         setConfigId(data.config_id);
         setQuestionsData(data.questions);
         setQuestions(data.questions.map((q: any) => q.text));
-        console.log('Loaded questions from API:', data.questions.length);
 
-        // Start interview session
-        const startRes = await fetch('/api/v1/interview/start', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ config_id: data.config_id })
-        });
-        if (startRes.ok) {
-          const sessionData = await startRes.json();
-          setSessionId(sessionData.session_id);
-          if (sessionData.already_completed) {
-            setInterviewComplete(true);
-            return;
-          }
-          console.log('Started session:', sessionData.session_id);
+        const sessionData = await api.candidate.startInterview({ config_id: data.config_id }) as any;
+        setSessionId(sessionData.session_id);
+        if (sessionData.already_completed) {
+          setInterviewComplete(true);
+          return;
         }
       } catch (error) {
         console.error('Failed to fetch interview config:', error);
-        // Fallback to default questions if API fails
-        setQuestions([
-          "Describe your most challenging project and how you overcame the obstacles you faced.",
-          "Tell us about a time when you had to work with a difficult team member. How did you handle the situation?",
-          "What motivates you in your professional career, and how do you stay productive during challenging times?"
-        ]);
+        setLoadError('Failed to load interview questions. Please refresh the page and try again.');
       } finally {
         setIsLoading(false);
       }
@@ -167,11 +141,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
 
     const pollStatus = async () => {
       try {
-        const response = await fetch(`/api/v1/interview/status/${sessionId}`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
+        const data = await api.candidate.getInterviewStatus(sessionId) as any;
+        if (data) {
           const newStatuses: Record<string, string> = {};
           let allComplete = true;
           
@@ -2097,59 +2068,58 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
               {/* Timer */}
               <div className="text-center">
                 <p className="text-3xl text-gray-700" style={{ fontFamily: 'monospace' }}>
-                  {String(Math.floor(mockTimer / 60)).padStart(2, '0')}:{String(mockTimer % 60).padStart(2, '0')}
+                  {String(Math.floor(RECORDING_TIMEOUT_SECONDS / 60)).padStart(2, '0')}:{String(RECORDING_TIMEOUT_SECONDS % 60).padStart(2, '0')}
                 </p>
               </div>
 
               {/* Recording Controls */}
               <div className="flex flex-col items-center gap-3">
-                {!mockRecorded ? (
+                {!hasRecorded ? (
                   <Button
                     className="text-white rounded-full px-8"
-                    style={{ backgroundColor: mockRecording ? '#EF4444' : '#6366F1' }}
+                    style={{ backgroundColor: isRecording ? '#EF4444' : '#6366F1' }}
                     onClick={() => {
-                      if (!mockRecording) {
+                      if (!isRecording) {
                         // Start recording
                         if (!stream) {
                           setCameraError('No camera stream. Please check device setup.');
                           return;
                         }
-                        setMockRecording(true);
-                        setMockRecorded(false);
+                        setIsRecording(true);
+                        setHasRecorded(false);
                         chunksRef.current = [];
-                        
+
                         const recorder = new MediaRecorder(stream, {
                           mimeType: 'video/webm;codecs=vp8,opus',
                           videoBitsPerSecond: 250000
                         });
                         mediaRecorderRef.current = recorder;
-                        
+
                         recorder.ondataavailable = (e) => {
                           if (e.data.size > 0) {
                             chunksRef.current.push(e.data);
                           }
                         };
-                        
+
                         recorder.onstop = () => {
                           const blob = new Blob(chunksRef.current, { type: 'video/webm' });
                           const url = URL.createObjectURL(blob);
                           setRecordedUrl(url);
-                          setMockRecorded(true);
-                          setMockRecording(false);
+                          setHasRecorded(true);
+                          setIsRecording(false);
                         };
-                        
+
                         recorder.start(1000);
-                        
-                        // Auto-stop after mockTimer seconds (default 60s)
+
                         setTimeout(() => {
                           if (recorder.state === 'recording') {
                             recorder.stop();
                           }
-                        }, mockTimer * 1000);
+                        }, RECORDING_TIMEOUT_SECONDS * 1000);
                       }
                     }}
                   >
-                    {mockRecording ? (
+                    {isRecording ? (
                       <>
                         <div className="w-2 h-2 bg-white rounded-full mr-2 animate-pulse" />
                         Recording... Click to Stop
@@ -2164,8 +2134,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                       variant="outline"
                       className="rounded-full"
                       onClick={() => {
-                        setMockRecording(false);
-                        setMockRecorded(false);
+                        setIsRecording(false);
+                        setHasRecorded(false);
                         setRecordedUrl(null);
                         chunksRef.current = [];
                       }}
@@ -2176,7 +2146,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                       variant="outline"
                       className="rounded-full"
                       onClick={() => {
-                        setMockRecording(false);
+                        setIsRecording(false);
                       }}
                     >
                       Keep Recording

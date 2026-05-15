@@ -46,10 +46,6 @@ export function TechnicalAssessmentFlow({ onSignOut, onExit, onCompletion }: Tec
   // Copy/Paste states
   const [copyPasteUnderstood, setCopyPasteUnderstood] = useState(false);
 
-  // Mock Question states
-  const [mockRecording, setMockRecording] = useState(false);
-  const [mockRecorded, setMockRecorded] = useState(false);
-
   // Start camera
   const startCamera = async () => {
     try {
@@ -92,7 +88,6 @@ export function TechnicalAssessmentFlow({ onSignOut, onExit, onCompletion }: Tec
       stopCamera();
     }
   }, [currentStep]);
-  const [mockTimer, setMockTimer] = useState(60);
 
   // Assessment session states — restore from sessionStorage to skip pre-checks on reload
   const [inAssessmentSession, setInAssessmentSession] = useState(() => {

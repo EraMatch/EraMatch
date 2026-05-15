@@ -18,8 +18,7 @@ from worker.celery_app import celery_app
 from app.core.config import settings
 
 
-# AI Service URL (local or containerized)
-AI_SERVICE_URL = "http://localhost:8001"
+AI_SERVICE_URL = settings.AI_SERVICE_URL
 
 # Debug log file for developer monitoring
 DEBUG_LOG_PATH = Path("logs/video_processing_debug.json")

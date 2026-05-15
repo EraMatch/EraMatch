@@ -20,7 +20,7 @@ from worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-AI_SERVICE_URL = settings.AI_SERVICE_URL or os.environ.get("AI_SERVICE_URL", "http://127.0.0.1:8001")
+AI_SERVICE_URL = settings.AI_SERVICE_URL
 
 
 # =============================================================================

@@ -462,34 +462,60 @@ CandidateStageProgress.completed_at.isnot(None),
             res = await self.session.execute(query)
             rows = res.all()
             
-            # Initialize counts
-            counts = {
-                "applied": 0,
-                "screening": 0,
-                "assessment": 0,
-                "interview": 0,
-                "offer": 0
-            }
-            
+            # Count by application status (applied, screening, offer)
+            counts = {"applied": 0, "screening": 0, "offer": 0}
+
             for status, count in rows:
                 s = str(status).lower()
-                # All candidates are counted in 'Applied'
                 counts["applied"] += count
-                
                 if s == "screening":
                     counts["screening"] += count
-                elif s == "assessment":
-                    counts["assessment"] += count
                 elif s in ["offer", "offered", "hired", "accepted"]:
                     counts["offer"] += count
-            
-            # Funnel Logic (Non-cumulative in DB, we make it cumulative here)
-            # A candidate in 'Offer' has passed all previous stages.
+
+            # Count candidates who have entered assessment / interview stages
+            # via CandidateStageProgress (application.status doesn't track these)
+            stage_progress_filter = [
+                CandidateApplication.organization_id == org_id,
+                CandidateApplication.is_deleted == False,
+                Position.is_deleted == False,
+                Project.is_deleted == False,
+            ]
+            if position_id:
+                stage_progress_filter.append(CandidateApplication.position_id == position_id)
+            elif project_id:
+                stage_progress_filter.append(Position.project_id == project_id)
+
+            q_stage_progress = (
+                select(
+                    GroupStageConfig.stage_type,
+                    func.count(func.distinct(CandidateStageProgress.application_id)).label("cnt"),
+                )
+                .join(CandidateStageProgress, GroupStageConfig.stage_id == CandidateStageProgress.stage_id)
+                .join(CandidateApplication, CandidateStageProgress.application_id == CandidateApplication.id)
+                .join(Position, CandidateApplication.position_id == Position.id)
+                .join(Project, Position.project_id == Project.id)
+                .where(*stage_progress_filter)
+                .group_by(GroupStageConfig.stage_type)
+            )
+            res_sp = await self.session.execute(q_stage_progress)
+            stage_counts = {"assessment": 0, "interview": 0}
+            for stage_type, cnt in res_sp.all():
+                st = str(stage_type).lower()
+                if st == "assessment":
+                    stage_counts["assessment"] += cnt
+                elif st in ("ai_interview", "live_interview"):
+                    stage_counts["interview"] += cnt
+
+            # Funnel: each stage count is the number of candidates who have
+            # reached that stage OR any later stage (cumulative from bottom up).
             offer_total = counts["offer"]
-            interview_total = counts["interview"] + offer_total
-            assessment_total = counts["assessment"] + interview_total
-            screening_total = counts["screening"] + assessment_total
-            # Applied is ALREADY the total count because we summed all statuses into it above
+            # Interview = candidates actively in interview + those who already got offers
+            interview_total = max(stage_counts["interview"], offer_total)
+            # Assessment = candidates in assessment + those who progressed further
+            assessment_total = max(stage_counts["assessment"], interview_total)
+            # Screening = candidates in screening + those who progressed further
+            screening_total = max(counts["screening"], assessment_total)
             applied_total = counts["applied"]
             
             total_base = applied_total if applied_total > 0 else 1
@@ -695,9 +721,9 @@ CandidateStageProgress.completed_at.isnot(None),
             payment_method = next((pm for pm in pms if pm.is_default), pms[0])
             
             return {
-                "brand": payment_method.card_brand or "Visa",
-                "last4": payment_method.last4 or "4242",
-                "expiry": payment_method.expiry_date or "12/2026"
+                "brand": payment_method.card_brand or None,
+                "last4": payment_method.last4 or None,
+                "expiry": payment_method.expiry_date or None
             }
             
         except Exception as e:
@@ -1158,8 +1184,8 @@ CandidateStageProgress.completed_at.isnot(None),
                 transformed.append({
                     "id": str(p.id),
                     "projectName": p.name,
-                    "openDate": p.created_at.isoformat() if p.created_at else "2026-02-01T00:00:00Z",
-                    "closedDate": p.closed_at.isoformat() if p.closed_at else (p.created_at.isoformat() if p.created_at else "2026-02-05T00:00:00Z"),
+                    "openDate": p.created_at.isoformat() if p.created_at else None,
+                    "closedDate": p.closed_at.isoformat() if p.closed_at else None,
                     "positionsCount": pos_count or 0,
                     "totalCandidates": total_cand or 0
                 })
@@ -1214,7 +1240,7 @@ CandidateStageProgress.completed_at.isnot(None),
                     "closureStatus": status,
                     "candidatesCount": cand_count or 0,
                     "groupsCreated": group_count or 0,
-                    "closedDate": "2026-02-05", # Default
+                    "closedDate": None,
                     "closureReason": "Project Closed"
                 })
             return transformed
@@ -1302,7 +1328,7 @@ CandidateStageProgress.completed_at.isnot(None),
                 "aiInterviewsPassed": ai_interviews_passed,
                 "liveInterviewsPassed": live_interviews_passed,
                 "hiredCandidate": hired_cand,
-                "closedDate": hired_at_iso or "2026-02-05"
+                "closedDate": hired_at_iso or None
             }
 
         except Exception as e:
@@ -1635,30 +1661,18 @@ CandidateStageProgress.completed_at.isnot(None),
         """Fetch subscription plans from DB and calculate current usage with safe fallbacks."""
         org_id = self.organization_id
 
-        fallback_plans = [
-            {
-                "id": "professional",
-                "name": "Professional",
-                "price": 299.0,
-                "features": ["Unlimited Positions", "Advanced Analytics", "Priority Support"],
-                "limits": {},
-                "recommended": True
-            }
-        ]
-
-        
         default_usage = {
             "activePositions": 0,
-            "maxPositions": 50,
+            "maxPositions": None,
             "candidatesProcessed": 0,
-            "maxCandidates": 1000,
-            "storageUsed": 15,
-            "maxStorage": 100
+            "maxCandidates": None,
+            "storageUsed": 0,
+            "maxStorage": None
         }
-        
+
         current_plan = {
-            "name": "Professional",
-            "price": 299,
+            "name": None,
+            "price": None,
             "billingCycle": "Monthly",
             "nextBillingDate": "N/A"
         }
@@ -1736,7 +1750,7 @@ CandidateStageProgress.completed_at.isnot(None),
             return {
                 "currentPlan": current_plan,
                 "usage": default_usage,
-                "availablePlans": available_plans if available_plans else fallback_plans
+                "availablePlans": available_plans
             }
         except Exception as e:
             print(f"Error fetching subscription plans: {e}")
@@ -1745,7 +1759,7 @@ CandidateStageProgress.completed_at.isnot(None),
             return {
                 "currentPlan": current_plan,
                 "usage": default_usage,
-                "availablePlans": fallback_plans
+                "availablePlans": []
             }
 
     async def get_recent_assignments(self, limit: int = 5) -> list[dict]:
