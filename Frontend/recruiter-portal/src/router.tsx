@@ -1,5 +1,5 @@
 // @refresh reset
-import { createBrowserRouter, useNavigate, useSearchParams, useParams, Navigate, useLocation } from 'react-router-dom';
+import { createBrowserRouter, useNavigate, useSearchParams, useParams, Navigate, useLocation, Outlet } from 'react-router-dom';
 import React from 'react';
 import { Toaster } from 'sonner';
 import { AdminLoginPage } from './components/admin/AdminLoginPage';
@@ -62,25 +62,6 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
     );
 };
 
-const RecruiterLayoutInner = ({ children }: { children: React.ReactNode }) => {
-    return (
-        <div className="min-h-screen bg-[#edf0f8]">
-            <Sidebar />
-            <div className="ml-[96px] transition-all duration-300">
-                <main>{children}</main>
-                <Toaster richColors position="top-right" />
-            </div>
-        </div>
-    );
-};
-
-const RecruiterLayout = ({ children }: { children: React.ReactNode }) => {
-    return (
-        <NavigationStackProvider>
-            <RecruiterLayoutInner>{children}</RecruiterLayoutInner>
-        </NavigationStackProvider>
-    );
-};
 
 // Protected Route Guards
 const AdminProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -92,13 +73,31 @@ const AdminProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     return <>{children}</>;
 };
 
-const RecruiterProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+// Nested layout route for all recruiter pages.
+// Using <Outlet /> instead of {children} ensures React Router provides the
+// current matched route's element directly — no prop-threading, no stale
+// children across reconciled wrappers. The key on <main> still forces a
+// full remount whenever the pathname changes.
+const RecruiterLayoutRoute = () => {
+    const location = useLocation();
     const token = localStorage.getItem('token');
     const user = localStorage.getItem('user');
     if (!token || !user) {
         return <Navigate to="/recruiter/login" replace />;
     }
-    return <>{children}</>;
+    return (
+        <NavigationStackProvider>
+            <div className="min-h-screen bg-[#edf0f8]">
+                <Sidebar />
+                <div className="ml-[96px] transition-all duration-300">
+                    <main key={location.pathname}>
+                        <Outlet />
+                    </main>
+                    <Toaster richColors position="top-right" />
+                </div>
+            </div>
+        </NavigationStackProvider>
+    );
 };
 
 // Landing Page Wrapper - Simplified with 2 buttons
@@ -434,7 +433,7 @@ export const router = createBrowserRouter([
         ),
     },
 
-    // Recruiter Routes
+    // Recruiter auth routes (no layout)
     {
         path: "/recruiter/login",
         element: (
@@ -456,190 +455,43 @@ export const router = createBrowserRouter([
         element: <RecruiterResetPasswordPage onBack={() => window.location.href = '/recruiter/login'} />,
         errorElement: <ErrorPage />,
     },
+
+    // Recruiter app routes — all share RecruiterLayoutRoute (nested)
+    // React Router renders each child via <Outlet />, so navigating between
+    // children always gives the layout a fresh element from the router context
+    // rather than a prop that might be stale. The key on <main> in the layout
+    // still forces remount on every pathname change.
     {
-        path: "/recruiter/dashboard",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <DashboardWrapper />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        ),
+        path: "/recruiter",
+        element: <RecruiterLayoutRoute />,
         errorElement: <ErrorPage />,
-    },
-    {
-        path: "/recruiter/projects",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <ProjectsPageWrapper />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        ),
-    },
-    {
-        path: "/recruiter/project/:projectId",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <ProjectDetailWrapper />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        ),
-    },
-    {
-        path: "/recruiter/position/:positionId",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <PositionDetailWrapper />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        ),
-    },
-    {
-        path: "/recruiter/group/:groupId",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <GroupOverviewWrapper />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        ),
-    },
-    {
-        path: "/recruiter/alerts",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        )
-    },
-    {
-        path: "/recruiter/suspect-review",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <SuspectReviewWrapper />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        )
-    },
-    {
-        path: "/recruiter/reviews",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <ReviewRequests />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        )
-    },
-    {
-        path: "/recruiter/reviews/:requestId/pre-matching",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <PositionPreMatchingReviewPage />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        )
-    },
-    {
-        path: "/recruiter/candidates",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <CandidatesPage onBack={() => { }} />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        ),
-    },
-    {
-        path: "/recruiter/question-bank",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <QuestionBankPage onBack={() => window.history.back()} />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        )
-    },
-    {
-        path: "/recruiter/settings",
-        element: (() => {
-            const userStr = localStorage.getItem('user');
-            const userObj = userStr ? JSON.parse(userStr) : null;
-            const userRole: string = (userObj?.role || '').toLowerCase();
-            return (
-                <RecruiterProtectedRoute>
-                    <RecruiterLayout>
-                        <RecruiterSettings userRole={userRole} />
-                    </RecruiterLayout>
-                </RecruiterProtectedRoute>
-            );
-        })()
-    },
-    {
-        path: "/recruiter/suspicious-activity",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <SuspiciousActivityLog onBack={() => window.history.back()} />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        )
-    },
-    {
-        path: "/recruiter/candidates/:candidateId",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <CandidateProfileWrapper />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        ),
-    },
-    {
-        path: "/recruiter/candidates/:candidateId/qag-audit",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <CandidateQAGAuditWrapper />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        ),
-    },
-    {
-        path: "/recruiter/candidates/:candidateId/github-analysis-review",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <CandidateGitHubAnalysisReviewWrapper />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        )
-    },
-    {
-        path: "/recruiter/background-tasks",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <Navigate to="/recruiter/background-tasks/dashboard" replace />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        )
-    },
-    {
-        path: "/recruiter/background-tasks/:view",
-        element: (
-            <RecruiterProtectedRoute>
-                <RecruiterLayout>
-                    <BackgroundTasks />
-                </RecruiterLayout>
-            </RecruiterProtectedRoute>
-        )
+        children: [
+            { path: "dashboard", element: <DashboardWrapper />, errorElement: <ErrorPage /> },
+            { path: "projects", element: <ProjectsPageWrapper /> },
+            { path: "project/:projectId", element: <ProjectDetailWrapper /> },
+            { path: "position/:positionId", element: <PositionDetailWrapper /> },
+            { path: "group/:groupId", element: <GroupOverviewWrapper /> },
+            { path: "alerts", element: <AlertsNotifications onViewCandidate={(id) => console.log('View candidate', id)} /> },
+            { path: "suspect-review", element: <SuspectReviewWrapper /> },
+            { path: "reviews", element: <ReviewRequests /> },
+            { path: "reviews/:requestId/pre-matching", element: <PositionPreMatchingReviewPage /> },
+            { path: "candidates", element: <CandidatesPage onBack={() => { }} /> },
+            { path: "question-bank", element: <QuestionBankPage onBack={() => window.history.back()} /> },
+            {
+                path: "settings",
+                element: (() => {
+                    const userStr = localStorage.getItem('user');
+                    const userObj = userStr ? JSON.parse(userStr) : null;
+                    const userRole: string = (userObj?.role || '').toLowerCase();
+                    return <RecruiterSettings userRole={userRole} />;
+                })(),
+            },
+            { path: "suspicious-activity", element: <SuspiciousActivityLog onBack={() => window.history.back()} /> },
+            { path: "candidates/:candidateId", element: <CandidateProfileWrapper /> },
+            { path: "candidates/:candidateId/qag-audit", element: <CandidateQAGAuditWrapper /> },
+            { path: "candidates/:candidateId/github-analysis-review", element: <CandidateGitHubAnalysisReviewWrapper /> },
+            { path: "background-tasks", element: <Navigate to="/recruiter/background-tasks/dashboard" replace /> },
+            { path: "background-tasks/:view", element: <BackgroundTasks /> },
+        ],
     },
 ]);

@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle, Sparkles, Inbox } from 'lucide-react';
 import { api } from '../../../services/api';
@@ -138,16 +138,23 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   };
 
   // --- Derived data ---
-  const questions: Question[] = (rawQuestions as any[]).map(q => ({
-    ...q,
-    options: q.options || [],
-    tags: q.tags || [],
-    usageCount: q.usageCount || 0,
-    avgScore: q.avgScore || 0,
-    createdAt: q.createdAt || new Date().toISOString().split('T')[0],
-    createdBy: q.createdBy || 'System',
-    isFavorite: q.isFavorite || false
-  }));
+  // Memoized so the array reference is stable between renders when data hasn't
+  // changed. Without this, .map() creates a new reference every render, which
+  // causes the selectedQuestionIds cleanup effect to fire on every render and
+  // triggers an infinite re-render loop.
+  const questions: Question[] = useMemo(() =>
+    (rawQuestions as any[]).map(q => ({
+      ...q,
+      options: q.options || [],
+      tags: q.tags || [],
+      usageCount: q.usageCount || 0,
+      avgScore: q.avgScore || 0,
+      createdAt: q.createdAt || new Date().toISOString().split('T')[0],
+      createdBy: q.createdBy || 'System',
+      isFavorite: q.isFavorite || false
+    })),
+    [rawQuestions]
+  );
   const importJobs: any[] = filterPendingReviewJobs(rawImportJobs as any[]);
 
   // Auto-open review when arriving from Background Tasks link.
@@ -169,7 +176,11 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
 
   useEffect(() => {
     const validIds = new Set(questions.map(q => q.id));
-    setSelectedQuestionIds(prev => prev.filter(id => validIds.has(id)));
+    setSelectedQuestionIds(prev => {
+      const next = prev.filter(id => validIds.has(id));
+      // Return same reference if nothing was removed — avoids a spurious re-render
+      return next.length === prev.length ? prev : next;
+    });
   }, [questions]);
 
   // --- Data Conversion Helpers ---
