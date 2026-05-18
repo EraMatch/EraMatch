@@ -559,10 +559,27 @@ async def _execute_pipeline(db, session_id: str):
     # --- Phase B: Per-question segmentation via pillar_idx ---
     question_evidence = _extract_question_evidence(transcript, bank_items)
     per_question_results = []
+
+    # Detect pillar_idx stall: all non-None pillar_idx values are 0 but the bank has
+    # multiple questions. This happens when advance_to_next_question was never called
+    # (e.g. older sessions, agent tool failure). Discard per-question path and fall back
+    # to dimension-level scoring so the whole transcript is evaluated.
+    _pillar_indices = {t.get("pillar_idx") for t in transcript if t.get("pillar_idx") is not None}
+    _all_stalled = len(bank_items) > 1 and _pillar_indices == {0}
+    if _all_stalled:
+        logger.warning(
+            "[JUDGE-P2-Q] session=%s pillar_idx stall detected (all turns tagged 0, bank=%d) "
+            "— falling back to dimension-level scoring",
+            session_id,
+            len(bank_items),
+        )
+        question_evidence = []
+
     logger.info(
-        "[JUDGE-P2-Q] session=%s question_segments=%d",
+        "[JUDGE-P2-Q] session=%s question_segments=%d stalled=%s",
         session_id,
         len(question_evidence),
+        _all_stalled,
     )
 
     # --- Phase C: Per-question scoring ---

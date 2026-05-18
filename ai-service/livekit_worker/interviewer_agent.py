@@ -164,12 +164,18 @@ Ask these 3 questions in order. Let the candidate answer naturally. Don't rush t
 
 {interview_plan}
 
+=== TRACKING TOOL (MANDATORY) ===
+You have one tool: `advance_to_next_question`.
+Call it ONCE, silently, immediately BEFORE you speak each new numbered question (questions 2, 3, etc.).
+Do NOT call it before question 1 — you start on question 1 automatically.
+Do NOT call it more than once per transition. Do NOT mention the tool to the candidate.
+
 === HOW TO CONDUCT THE INTERVIEW ===
 1. GREET: "Hi {candidate_name}, welcome to your EraMatch interview! I'm excited to chat with you. Tell me a bit about yourself and your background."
 2. LISTEN: Let the candidate speak. Don't interrupt. Let them finish their thoughts.
-3. TRANSITION: When they're done, acknowledge their answer warmly (1-2 sentences), then ask: "Thanks for sharing that. Ready for the next question?" 
-4. ASK: Present the next question naturally, like you're chatting with a colleague.
-5. HANDLE "I DON'T KNOW": If they say "I don't know", "I'm not sure", or "I have no experience with this" — acknowledge it and move on. Say something like "No worries, let's try something else" and ask the next question. NEVER press them or ask follow-ups when they clearly don't know.
+3. TRANSITION: When they're done, acknowledge their answer warmly (1-2 sentences), then ask: "Thanks for sharing that. Ready for the next question?"
+4. ADVANCE: Call `advance_to_next_question` (silently), then ask the next question naturally.
+5. HANDLE "I DON'T KNOW": If they say "I don't know", "I'm not sure", or "I have no experience with this" — acknowledge it and move on. Say something like "No worries, let's try something else" and call `advance_to_next_question` then ask the next question. NEVER press them or ask follow-ups when they clearly don't know.
 6. HANDLE CONFUSION: If they ask you to clarify, rephrase the question simply. Don't give them the answer.
 7. HANDLE GOOD ANSWERS: If they give a thorough answer, acknowledge it with genuine interest: "That's a solid approach — thanks for walking me through that."
 8. SILENCE: If they stop talking and seem done, gently ask: "Would you like to add anything, or shall we move on?"
@@ -373,7 +379,14 @@ class InterviewerAgent(Agent):
             await self._close(forced=True, remaining_pillars=remaining)
             return
 
-        candidate_utterance = str(new_message.content or "")
+        raw_content = new_message.content or ""
+        if isinstance(raw_content, list):
+            candidate_utterance = " ".join(
+                item if isinstance(item, str) else getattr(item, "text", str(item))
+                for item in raw_content
+            ).strip()
+        else:
+            candidate_utterance = str(raw_content).strip()
 
         # Prompt injection firewall
         candidate_utterance, risk_score, flags = self.firewall.process(
@@ -498,6 +511,25 @@ class InterviewerAgent(Agent):
             logger.warning("[%s] session.userdata not set", self.session_id)
 
         self.phase = "done"
+
+    # ------------------------------------------------------------------
+    # Function tool — called by LLM to advance pillar tracking
+    # ------------------------------------------------------------------
+    @function_tool
+    async def advance_to_next_question(self) -> str:
+        """Advance the interview to the next question. Call this silently before asking each new question."""
+        if self.current_pillar_idx < len(self.pillars) - 1:
+            self.current_pillar_idx += 1
+            pillar = self.pillars[self.current_pillar_idx]
+            logger.info(
+                "[%s] Pillar advanced → %d: %s",
+                self.session_id,
+                self.current_pillar_idx,
+                pillar.question_text[:60],
+            )
+            return f"Now on question {self.current_pillar_idx + 1} of {len(self.pillars)}"
+        logger.info("[%s] advance_to_next_question called at last pillar — ignored", self.session_id)
+        return "Already at the last question"
 
     # ------------------------------------------------------------------
     # Helpers

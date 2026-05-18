@@ -183,7 +183,7 @@ function DimensionCard({ dimId, result }: { dimId: string; result: DimensionScor
                     </div>
                     <div className="text-left">
                         <p className="font-medium text-gray-800 text-sm">{result.dimension_name || dimId}</p>
-                        <p className="text-xs text-gray-500">Weight: {Math.round(result.weight * 100)}%</p>
+                        <p className="text-xs text-gray-500">Weight: {Math.round(result.weight)}%</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-3">

@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Sparkles, Video, Clock, User, Camera, Mic, Play, Square, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload } from '../utils/proctoringPayload';
+import { queryKeys } from '../lib/queryKeys';
 
 const AI_SERVICE_BASE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 const ENABLE_BIOMETRIC_BETA = ((import.meta as any).env?.VITE_ENABLE_BIOMETRIC_BETA ?? 'true') !== 'false';
@@ -31,6 +33,7 @@ interface RecordedInterviewFlowProps {
 }
 
 export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: RecordedInterviewFlowProps) {
+  const queryClient = useQueryClient();
   const [currentStep, setCurrentStep] = useState(1);
   const [isRecording, setIsRecording] = useState(false);
   const [hasRecorded, setHasRecorded] = useState(false);
@@ -119,7 +122,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
         const sessionData = await api.candidate.startInterview({ config_id: data.config_id }) as any;
         setSessionId(sessionData.session_id);
         if (sessionData.already_completed) {
-          setInterviewComplete(true);
+          queryClient.invalidateQueries({ queryKey: queryKeys.candidate.home() });
+          onCompletion();
           return;
         }
       } catch (error) {
@@ -1141,9 +1145,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
         } else {
           // Interview complete - mark session as completed and show thank you page
           stopCamera();
-          setInterviewComplete(true);
 
-          // Mark session as completed in backend
+          // Mark session as completed in backend first
           if (sessionId) {
             try {
               await fetch('/api/v1/interview/complete', {
@@ -1159,6 +1162,10 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
               console.error('Failed to mark session complete:', err);
             }
           }
+
+          // Invalidate home cache so the portal reflects the completed state immediately
+          queryClient.invalidateQueries({ queryKey: queryKeys.candidate.home() });
+          setInterviewComplete(true);
         }
       }, 500);
     } catch (error) {

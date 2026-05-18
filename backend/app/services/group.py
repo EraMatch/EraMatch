@@ -212,26 +212,15 @@ class GroupService:
             return default_cfg.config_id
 
         if stage == "live_interview":
-            # Prefer a config scoped to this position; fall back to org-level.
-            cfg_res = await self.session.execute(
-                select(LiveInterviewConfig.id)
-                .where(
-                    LiveInterviewConfig.organization_id == self.org_id,
-                    LiveInterviewConfig.position_id == group.position_id,
-                )
-                .order_by(LiveInterviewConfig.created_at.desc())
-                .limit(1)
-            )
-            cfg_id = cfg_res.scalars().first()
-            if cfg_id:
-                return cfg_id
-            cfg_res = await self.session.execute(
-                select(LiveInterviewConfig.id)
-                .where(LiveInterviewConfig.organization_id == self.org_id)
-                .order_by(LiveInterviewConfig.created_at.desc())
-                .limit(1)
-            )
-            return cfg_res.scalars().first()
+            # V2 flow: rubric is tracked via acceptance_criteria['liv2_rubric_id'], not config_id.
+            # Skip the legacy LiveInterviewConfig lookup entirely — it would surface unrelated
+            # configs from the org and pollute the group's interview list.
+            if criteria.get("liv2_rubric_id"):
+                return None
+
+            # Legacy flow only: look for an explicitly linked LiveInterviewConfig.
+            if stage_config and stage_config.config_id:
+                return stage_config.config_id
 
         return None
 
@@ -776,27 +765,29 @@ class GroupService:
                     )
                 )
 
-        # Include LiV2Rubric config when a live_interview stage exists.
-        # ConfigWizardV2 stores its setup in LiV2Rubric/LiV2Bank (not LiveInterviewConfig),
-        # so we must surface it separately.
-        has_live_stage = any(sc.stage_type == "live_interview" for sc in stage_configs)
-        if has_live_stage:
+        # Include LiV2Rubric config only when the live_interview stage's acceptance_criteria
+        # contains 'liv2_rubric_id' (set by create_rubric_service on save).
+        # config_id cannot hold rubric IDs — a DB trigger enforces it references live_interview_configs.
+        live_stage = next((sc for sc in stage_configs if sc.stage_type == "live_interview"), None)
+        liv2_rubric_id = (
+            live_stage.acceptance_criteria.get("liv2_rubric_id")
+            if live_stage and isinstance(live_stage.acceptance_criteria, dict)
+            else None
+        )
+        if liv2_rubric_id:
             liv2_rubric_res = await self.session.execute(
                 select(LiV2Rubric)
                 .where(
-                    LiV2Rubric.group_id == group_id,
+                    LiV2Rubric.id == UUID(liv2_rubric_id),
                     LiV2Rubric.organization_id == self.org_id,
                 )
-                .order_by(LiV2Rubric.created_at.desc())
-                .limit(1)
             )
             liv2_rubric = liv2_rubric_res.scalar_one_or_none()
             if liv2_rubric:
                 liv2_bank_res = await self.session.execute(
                     select(LiV2Bank)
                     .where(
-                        LiV2Bank.group_id == group_id,
-                        LiV2Bank.organization_id == self.org_id,
+                        LiV2Bank.rubric_id == liv2_rubric.id,
                     )
                     .order_by(LiV2Bank.created_at.desc())
                     .limit(1)
@@ -985,7 +976,30 @@ class GroupService:
         resolved_config_id = await self._resolve_stage_config_id(
             group, stage, stage_config
         )
-        if stage in required_config_stages and not resolved_config_id:
+        # V2 live interview: rubric is in acceptance_criteria, not config_id.
+        # Validate the rubric actually exists — a stale ID (e.g. after delete) must not pass.
+        is_live_v2 = False
+        if (
+            stage == "live_interview"
+            and stage_config is not None
+            and isinstance(stage_config.acceptance_criteria, dict)
+        ):
+            rubric_id_str = stage_config.acceptance_criteria.get("liv2_rubric_id")
+            if rubric_id_str:
+                try:
+                    from app.models import LiV2Rubric as _LiV2Rubric
+                    rubric_check = await self.session.execute(
+                        select(_LiV2Rubric).where(
+                            _LiV2Rubric.id == UUID(str(rubric_id_str)),
+                            _LiV2Rubric.organization_id == self.org_id,
+                            _LiV2Rubric.state == "frozen",
+                        )
+                    )
+                    is_live_v2 = rubric_check.scalar_one_or_none() is not None
+                except Exception:
+                    is_live_v2 = False
+
+        if stage in required_config_stages and not resolved_config_id and not is_live_v2:
             raise BadRequestException(
                 f"Cannot start '{stage}'. Configure and assign its settings first."
             )
@@ -2109,6 +2123,39 @@ class GroupService:
 
     async def delete_interview(self, group_id: UUID, interview_id: UUID) -> dict:
         """Removes interview ID from stage config and soft-deletes the config itself."""
+        # Handle LiV2Rubric (live_ai_v2) — rubric ID is used as the interview ID in groupInterviews
+        rubric_res = await self.session.execute(
+            select(LiV2Rubric).where(
+                LiV2Rubric.id == interview_id,
+                LiV2Rubric.group_id == group_id,
+                LiV2Rubric.organization_id == self.org_id,
+            )
+        )
+        rubric = rubric_res.scalar_one_or_none()
+        if rubric:
+            bank_res = await self.session.execute(
+                select(LiV2Bank).where(LiV2Bank.rubric_id == rubric.id)
+            )
+            bank = bank_res.scalar_one_or_none()
+            if bank:
+                await self.session.delete(bank)
+            await self.session.delete(rubric)
+            # Clear the liv2_rubric_id from the stage's acceptance_criteria
+            stage_res = await self.session.execute(
+                select(GroupStageConfig).where(
+                    GroupStageConfig.group_id == group_id,
+                    GroupStageConfig.stage_type == "live_interview",
+                )
+            )
+            stage = stage_res.scalar_one_or_none()
+            if stage and isinstance(stage.acceptance_criteria, dict):
+                criteria = dict(stage.acceptance_criteria)
+                criteria.pop("liv2_rubric_id", None)
+                stage.acceptance_criteria = criteria
+                self.session.add(stage)
+            await self.session.commit()
+            return {"status": 1, "message": "Live interview V2 configuration deleted successfully"}
+
         # 1. Find the stage config referencing this interview
         sc_res = await self.session.execute(
             select(GroupStageConfig).where(
@@ -2163,7 +2210,7 @@ class GroupService:
             if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
                 if str(sc.acceptance_criteria.get("interview_config_id")) == str(interview_id) or str(sc.config_id) == str(interview_id):
                     criteria = sc.acceptance_criteria.copy()
-                    del criteria["interview_config_id"]
+                    criteria.pop("interview_config_id", None)
                     criteria.pop("candidate_interview_config_id", None)
                     sc.acceptance_criteria = criteria
                     sc.config_id = None

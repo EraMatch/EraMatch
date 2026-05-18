@@ -6,6 +6,7 @@ export function useCandidateHome() {
     return useQuery({
         queryKey: queryKeys.candidate.home(),
         queryFn: () => api.candidate.getHome(),
-        staleTime: 2 * 60 * 1000,
+        staleTime: 30 * 1000,
+        refetchOnMount: true,
     })
 }

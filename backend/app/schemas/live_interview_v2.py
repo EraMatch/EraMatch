@@ -29,7 +29,7 @@ class RubricDimension(BaseModel):
 
 class RubricCreate(BaseModel):
     group_id: UUID
-    organization_id: UUID
+    organization_id: Optional[UUID] = None
     dimensions: List[RubricDimension]
     time_budget_minutes: Optional[int] = Field(default=30, ge=5, le=60)
     language: Optional[str] = Field(default="en")
@@ -92,7 +92,7 @@ class BankItem(BaseModel):
 
 class BankCreate(BaseModel):
     group_id: UUID
-    organization_id: UUID
+    organization_id: Optional[UUID] = None
     items: List[BankItem]
 
 

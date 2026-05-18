@@ -6,7 +6,7 @@ from sqlmodel import select
 from fastapi import HTTPException, status
 
 from app.api.deps import DbSession
-from app.models import LiV2Rubric, CandidateGroup, Position
+from app.models import LiV2Rubric, CandidateGroup, Position, GroupStageConfig
 from app.schemas.live_interview_v2 import (
     RubricDimension, RubricCreate, RubricUpdate, 
     DimensionSuggestionResponse, LiV2State
@@ -134,11 +134,31 @@ async def generate_anchors_service(
             detail=f"Failed to parse AI rubric anchors: {str(e)}"
         )
 
+async def _link_rubric_to_stage(db: DbSession, group_id: UUID, rubric_id: UUID) -> None:
+    """Store the rubric ID in the live_interview stage's acceptance_criteria JSONB.
+    Uses raw SQL to avoid SQLAlchemy JSONB mutation-detection issues with the ORM.
+    Cannot use config_id — a DB trigger enforces it references live_interview_configs."""
+    from sqlalchemy import text
+    await db.execute(
+        text("""
+            UPDATE group_pipeline_stages
+            SET acceptance_criteria = jsonb_set(
+                COALESCE(acceptance_criteria, '{}'),
+                '{liv2_rubric_id}',
+                to_jsonb(:rubric_id::text)
+            )
+            WHERE group_id = :group_id AND stage_type = 'live_interview'
+        """),
+        {"rubric_id": str(rubric_id), "group_id": str(group_id)},
+    )
+    await db.commit()
+
+
 async def create_rubric_service(
     db: DbSession,
     rubric_in: RubricCreate
 ) -> LiV2Rubric:
-    """Create or overwrite a draft rubric."""
+    """Create or overwrite a draft rubric, then link it to the live_interview stage."""
     # Check if a rubric already exists for this group
     query = select(LiV2Rubric).where(
         LiV2Rubric.group_id == rubric_in.group_id,
@@ -146,11 +166,11 @@ async def create_rubric_service(
     )
     result = await db.execute(query)
     existing = result.scalar_one_or_none()
-    
+
     if existing:
         if existing.state == LiV2State.FROZEN:
             raise HTTPException(status_code=400, detail="Cannot update a frozen rubric")
-        
+
         # Update existing — preserve config fields if not provided
         existing.dimensions = [d.model_dump() for d in rubric_in.dimensions]
         if rubric_in.time_budget_minutes is not None:
@@ -161,8 +181,9 @@ async def create_rubric_service(
             existing.include_weak_topics = rubric_in.include_weak_topics
         await db.commit()
         await db.refresh(existing)
+        await _link_rubric_to_stage(db, existing.group_id, existing.id)
         return existing
-    
+
     # Create new
     new_rubric = LiV2Rubric(
         group_id=rubric_in.group_id,
@@ -176,6 +197,7 @@ async def create_rubric_service(
     db.add(new_rubric)
     await db.commit()
     await db.refresh(new_rubric)
+    await _link_rubric_to_stage(db, new_rubric.group_id, new_rubric.id)
     return new_rubric
 
 async def get_rubric_service(

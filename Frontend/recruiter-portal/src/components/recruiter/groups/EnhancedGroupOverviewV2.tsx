@@ -380,9 +380,9 @@ export function EnhancedGroupOverviewV2({
           email: c.email,
           phone: c.phone || `+1-555-${String(c.candidate_id).slice(-4)}`,
           avatar: c.name.split(' ').map((n: string) => n[0]).join(''),
-          assessment: (c.assessment?.status as any) || 'not-started',
-          aiInterview: (c.ai_interview?.status as any) || 'not-started',
-          liveInterview: (c.live_interview?.status as any) || 'pending',
+          assessment: c.assessment?.status === 'completed' && c.assessment?.passed === false ? 'failed' : (c.assessment?.status as any) || 'not-started',
+          aiInterview: c.ai_interview?.status === 'completed' && c.ai_interview?.passed === false ? 'failed' : (c.ai_interview?.status as any) || 'not-started',
+          liveInterview: c.live_interview?.status === 'completed' && c.live_interview?.passed === false ? 'failed' : (c.live_interview?.status as any) || 'pending',
           review: 'not-started',
           offer: 'not-started',
           assessmentScore: c.assessment?.score || 0,
@@ -605,7 +605,7 @@ export function EnhancedGroupOverviewV2({
           payload: {
             application_ids: appIds,
             action,
-            current_stage_type: currentStage
+            current_stage_type: bulkProgressFromStage || currentStage
           },
         });
         queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
@@ -1715,9 +1715,14 @@ export function EnhancedGroupOverviewV2({
                             Edit
                           </button>
                           <button
-                            onClick={() => handleDeleteAIInterview(interview.id)}
-                            disabled={stageConfigLocked}
-                            className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280] disabled:opacity-50"
+                            onClick={() => {
+                              if (stageConfigLocked) {
+                                showToast('Cannot delete — stage is currently active. Close the stage first.');
+                                return;
+                              }
+                              handleDeleteAIInterview(interview.id);
+                            }}
+                            className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280]"
                             title="Delete Interview"
                           >
                             <Trash2 size={14} />
