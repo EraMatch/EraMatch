@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Video, Clock, User, Info, AlertCircle, FileText, Laptop, Network, Globe, Layers, Activity, Camera, Mic, Scan, CheckCircle2, Sparkles, Target, Copy, X, AlertTriangle, Users, Monitor } from 'lucide-react';
-import logo from '../imports/image-eramatch.png';
+import { Logo } from './ui/Logo';
 import { AssessmentSession } from './AssessmentSession';
 
 interface TechnicalAssessmentFlowProps {
@@ -1141,7 +1141,7 @@ export function TechnicalAssessmentFlow({ onSignOut, onExit, onCompletion }: Tec
           <header className="px-12 py-6">
             <div className="flex items-center justify-between">
               <div>
-                <img src={logo} alt="ERAMATCH - A Smarter Recruitment System" className="h-12" />
+                <Logo size="md" />
               </div>
               <div className="flex items-center gap-4">
                 <Button

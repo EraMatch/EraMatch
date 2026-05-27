@@ -2,7 +2,7 @@ import { Bell, CheckCircle2, Clock, FileText, Video, Calendar, ArrowRight, Alert
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
-import logo from '../imports/image-eramatch.png';
+import { Logo } from './ui/Logo';
 import { useCandidateHome } from '../hooks/candidate/useCandidateHome';
 
 interface CandidateHomePageProps {
@@ -117,11 +117,7 @@ export function CandidateHomePage({
       <div className="bg-white border-b border-[#e5e7eb]">
         <div className="max-w-[1200px] mx-auto px-[48px] py-[20px] flex items-center justify-between">
           <div className="flex items-center gap-[12px]">
-            <img
-              src={logo}
-              alt="ERAMATCH - A Smarter Recruitment System"
-              className="h-[40px] w-[201.188px] object-cover"
-            />
+            <Logo size={40} />
           </div>
 
           {/* Notifications Bell */}

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Sparkles, Video, Clock, User, Camera, Mic, Play, Square, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw } from 'lucide-react';
-import logo from '../imports/image-eramatch.png';
+import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload } from '../utils/proctoringPayload';
 import { queryKeys } from '../lib/queryKeys';
@@ -2304,7 +2304,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
           <header className="px-12 py-6">
             <div className="flex items-center justify-between">
               <div>
-                <img src={logo} alt="ERAMATCH - A Smarter Recruitment System" className="h-12" />
+                <Logo size="md" />
               </div>
               <div>
                 <Button

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { AlertCircle, ChevronLeft, ChevronRight, Clock, CheckCircle2, Code2, Flag, Play, Loader2, Send } from 'lucide-react';
-import logo from '../imports/image-eramatch.png';
+import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload, quantizeWaveform, quantizeTimestampBucket } from '../utils/proctoringPayload';
 
@@ -1312,7 +1312,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       <header className="px-12 py-6">
         <div className="flex items-center justify-between">
           <div>
-            <img src={logo} alt="ERAMATCH - A Smarter Recruitment System" className="h-12" />
+            <Logo size="md" />
           </div>
           <div className="flex items-center gap-6">
             {/* Timer */}

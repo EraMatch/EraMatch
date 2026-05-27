@@ -3,7 +3,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { ArrowLeft, Loader2 } from 'lucide-react';
-import logo from '../imports/image-eramatch.png';
+import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 
 interface CandidateLoginPageProps {
@@ -48,7 +48,7 @@ export function CandidateLoginPage({ onBack, onSignIn }: CandidateLoginPageProps
       <div className="w-full max-w-lg px-6">
         {/* Logo */}
         <div className="text-center mb-8">
-          <img src={logo} alt="ERAMATCH - A Smarter Recruitment System" className="h-14 mx-auto" />
+          <Logo size="lg" className="justify-center" />
         </div>
 
         {/* Login Card */}

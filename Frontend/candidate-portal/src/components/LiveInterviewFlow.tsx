@@ -19,7 +19,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Sparkles, Camera, Mic, Play, AlertCircle, Loader2, PhoneOff } from 'lucide-react';
-import logo from '../imports/image-eramatch.png';
+import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { liveInterviewService } from '../services/live-interview.service';
 import { LiveInterviewRoom } from './live-interview-v2/LiveInterviewRoom';
@@ -342,7 +342,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
         <div className="min-h-screen bg-[#EDF0F8] flex flex-col">
             {/* Header */}
             <header className="bg-white border-b border-gray-100 px-12 py-4 flex items-center justify-between">
-                <img src={logo} alt="EraMatch" className="h-8" />
+                <Logo size={32} />
                 <Button
                     variant="outline"
                     size="sm"
