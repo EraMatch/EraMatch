@@ -51,12 +51,13 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
-start_service "backend-api" "source '$VENV_ACTIVATE' && cd '$ROOT_DIR/backend' && uvicorn app.main:app --reload --port 8000"
+start_service "backend-api"      "source '$VENV_ACTIVATE' && cd '$ROOT_DIR/backend' && uvicorn app.main:app --reload --port 8000"
+start_service "celery-worker"    "source '$VENV_ACTIVATE' && cd '$ROOT_DIR/backend' && celery -A worker.celery_app worker --loglevel=info"
+start_service "ai-service"       "cd '$ROOT_DIR/ai-service' && uv run uvicorn main:app --reload --port 8001"
+start_service "ai-celery-worker" "cd '$ROOT_DIR/ai-service' && uv run celery -A worker.celery_app worker --loglevel=info"
+start_service "livekit-worker"   "cd '$ROOT_DIR/ai-service' && uv run python livekit_worker/agent_server.py dev"
 start_service "recruiter-portal" "cd '$ROOT_DIR/Frontend/recruiter-portal' && npm run dev"
 start_service "candidate-portal" "cd '$ROOT_DIR/Frontend/candidate-portal' && npm run dev"
-start_service "ai-service" "source '$VENV_ACTIVATE' && cd '$ROOT_DIR/ai-service' && uvicorn main:app --reload --port 8001"
-start_service "celery-worker" "source '$VENV_ACTIVATE' && cd '$ROOT_DIR/backend' && celery -A worker.celery_app worker --loglevel=info"
-start_service "ai-celery-worker" "source '$VENV_ACTIVATE' && cd '$ROOT_DIR/ai-service' && celery -A worker.celery_app worker --loglevel=info"
 
 echo
 echo "All services started. Press Ctrl+C to stop all."

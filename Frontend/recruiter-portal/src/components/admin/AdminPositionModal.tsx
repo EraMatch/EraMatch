@@ -298,6 +298,37 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                     </div>
 
                     <div className="space-y-2">
+                        <Label className="text-sm font-semibold text-gray-700">Required Skills</Label>
+                        <div className="flex gap-2">
+                            <Input
+                                placeholder="Add a skill (e.g., React)"
+                                value={newSkill}
+                                onChange={(e) => setNewSkill(e.target.value)}
+                                onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddSkill())}
+                                className="bg-white/50 border-gray-200 rounded-xl"
+                            />
+                            <Button
+                                type="button"
+                                onClick={handleAddSkill}
+                                size="icon"
+                                className="rounded-xl shrink-0 border border-gray-200 bg-white/50 text-indigo-600 hover:bg-white"
+                            >
+                                <Plus className="w-4 h-4" />
+                            </Button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                            {requiredSkills.map(skill => (
+                                <Badge key={skill} variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-100 py-1 px-3 rounded-lg flex items-center gap-1">
+                                    {skill}
+                                    <button type="button" onClick={() => handleRemoveSkill(skill)}>
+                                        <X className="w-3 h-3 hover:text-red-500" />
+                                    </button>
+                                </Badge>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
                         <Label className="text-sm font-semibold text-gray-700">Benefits</Label>
                         <div className="flex gap-2">
                             <Input placeholder="Add a benefit (e.g., Health Insurance)" value={newBenefit} onChange={(e) => setNewBenefit(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddBenefit())} className="bg-white/50 border-gray-200 rounded-xl" />

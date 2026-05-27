@@ -66,8 +66,16 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
 // Protected Route Guards
 const AdminProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     const token = localStorage.getItem('token');
-    const user = localStorage.getItem('user');
-    if (!token || !user) {
+    const userStr = localStorage.getItem('user');
+    if (!token || !userStr) {
+        return <Navigate to="/admin/login" replace />;
+    }
+    try {
+        const user = JSON.parse(userStr);
+        if (user.role?.toLowerCase() !== 'admin') {
+            return <Navigate to="/recruiter/dashboard" replace />;
+        }
+    } catch (e) {
         return <Navigate to="/admin/login" replace />;
     }
     return <>{children}</>;
