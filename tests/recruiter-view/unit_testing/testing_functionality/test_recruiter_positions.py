@@ -245,6 +245,11 @@ class TestUpdatePosition:
         resp = client.get("/recruiter/positions")
         if resp.status_code != 200 or not resp.json():
             return None
+        # Try to find an editable position (status not pending or rejected)
+        for pos in resp.json():
+            status = pos.get("status")
+            if status not in ("pending", "rejected"):
+                return str(pos.get("id") or pos.get("position_id"))
         return str(resp.json()[0].get("id") or resp.json()[0].get("position_id"))
 
     def test_update_position_returns_200(self, client):
