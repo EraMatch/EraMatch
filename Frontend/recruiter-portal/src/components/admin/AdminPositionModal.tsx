@@ -7,7 +7,7 @@ import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { api } from '../../services/api';
 import { toast } from 'sonner';
-import { Loader2, Briefcase, MapPin, DollarSign, Users, Info, Plus, X } from 'lucide-react';
+import { Loader2, Briefcase, MapPin, GraduationCap, School, Users, Info, Plus, X } from 'lucide-react';
 import { Badge } from '../ui/badge';
 
 const getErrorMessage = (error: unknown, fallback: string): string => {
@@ -40,7 +40,10 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
     const [locationType, setLocationType] = useState('remote');
     const [officeLocation, setOfficeLocation] = useState('');
     const [yearsOfExperience, setYearsOfExperience] = useState<number>(0);
-    const [educationLevel, setEducationLevel] = useState('');
+    const [educationLevel, setEducationLevel] = useState('Bachelor');
+    const [minGpa, setMinGpa] = useState<number>(0);
+    const [targetUniversities, setTargetUniversities] = useState<string[]>([]);
+    const [newUniversity, setNewUniversity] = useState('');
     const [assignedTechId, setAssignedTechId] = useState<string>('');
     const [assignedHRId, setAssignedHRId] = useState<string>('');
 
@@ -102,9 +105,11 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
             setSalaryMax(position.salaryMax || position.salary_max || 0);
             setEmploymentType(position.employmentType || position.employment_type || 'full-time');
             setLocationType(position.locationType || position.location_type || 'remote');
-            setOfficeLocation(position.locationData?.office_location || '');
+            setOfficeLocation(position.locationData?.office_location || position.location_data?.office_location || '');
             setYearsOfExperience(position.yearsOfExperience || position.years_of_experience || 0);
-            setEducationLevel(position.educationLevel || position.education_level || '');
+            setEducationLevel(position.educationLevel || position.education_level || 'Bachelor');
+            setMinGpa(position.locationData?.min_gpa || position.location_data?.min_gpa || 0);
+            setTargetUniversities(position.locationData?.target_universities || position.location_data?.target_universities || []);
             setAssignedTechId(position.assigned_tech_id || position.assignedTechnicalRecruiterId || '');
             setAssignedHRId(position.assigned_hr_id || position.assignedHRId || '');
         } else {
@@ -119,7 +124,9 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
             setLocationType('remote');
             setOfficeLocation('');
             setYearsOfExperience(0);
-            setEducationLevel('');
+            setEducationLevel('Bachelor');
+            setMinGpa(0);
+            setTargetUniversities([]);
             setAssignedTechId('');
             setAssignedHRId('');
         }
@@ -135,6 +142,15 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
     const handleRemoveSkill = (skill: string) => { setRequiredSkills(requiredSkills.filter(s => s !== skill)); };
     const handleAddBenefit = () => { if (newBenefit.trim() && !benefits.includes(newBenefit.trim())) { setBenefits([...benefits, newBenefit.trim()]); setNewBenefit(''); } };
     const handleRemoveBenefit = (benefit: string) => { setBenefits(benefits.filter(b => b !== benefit)); };
+    const handleAddUniversity = () => {
+        if (newUniversity.trim() && !targetUniversities.includes(newUniversity.trim())) {
+            setTargetUniversities([...targetUniversities, newUniversity.trim()]);
+            setNewUniversity('');
+        }
+    };
+    const handleRemoveUniversity = (univ: string) => {
+        setTargetUniversities(targetUniversities.filter(u => u !== univ));
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -155,11 +171,15 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                 required_skills: requiredSkills,
                 experience_level: experienceLevel,
                 work_type: workType,
-                salary_min: salaryMin,
-                salary_max: salaryMax,
+                salary_min: null,
+                salary_max: null,
                 employment_type: employmentType,
                 location_type: locationType,
-                location_data: { office_location: officeLocation },
+                location_data: { 
+                    office_location: officeLocation,
+                    min_gpa: minGpa,
+                    target_universities: targetUniversities
+                },
                 years_of_experience: yearsOfExperience,
                 education_level: educationLevel,
                 benefits: benefits,
@@ -276,23 +296,26 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                         </div>
 
                         <div className="space-y-2">
-                            <Label className="text-sm font-semibold text-gray-700">Education Level</Label>
-                            <Input placeholder="e.g., Bachelor in CS" value={educationLevel} onChange={(e) => setEducationLevel(e.target.value)} className="bg-white/50 border-gray-200 rounded-xl" />
+                            <Label className="text-sm font-semibold text-gray-700">Minimum Degree Level</Label>
+                            <Select value={educationLevel} onValueChange={setEducationLevel}>
+                                <SelectTrigger className="bg-white/50 border-gray-200 rounded-xl">
+                                    <SelectValue placeholder="Select degree" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="Any">Any Degree</SelectItem>
+                                    <SelectItem value="Associate">Associate Degree</SelectItem>
+                                    <SelectItem value="Bachelor">Bachelor's Degree</SelectItem>
+                                    <SelectItem value="Master">Master's Degree</SelectItem>
+                                    <SelectItem value="PhD">PhD / Doctorate</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label className="text-sm font-semibold text-gray-700">Salary Range (Minimum)</Label>
+                        <div className="col-span-2 space-y-2">
+                            <Label className="text-sm font-semibold text-gray-700">Minimum GPA Target</Label>
                             <div className="relative">
-                                <Input type="number" value={salaryMin} onChange={(e) => setSalaryMin(parseInt(e.target.value))} className="bg-white/50 border-gray-200 pl-10 rounded-xl" />
-                                <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                            </div>
-                        </div>
-
-                        <div className="space-y-2">
-                            <Label className="text-sm font-semibold text-gray-700">Salary Range (Maximum)</Label>
-                            <div className="relative">
-                                <Input type="number" value={salaryMax} onChange={(e) => setSalaryMax(parseInt(e.target.value))} className="bg-white/50 border-gray-200 pl-10 rounded-xl" />
-                                <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                <Input type="number" step="0.1" min={0} max={5.0} value={minGpa} onChange={(e) => setMinGpa(parseFloat(e.target.value) || 0)} className="bg-white/50 border-gray-200 pl-10 rounded-xl" />
+                                <GraduationCap className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                             </div>
                         </div>
                     </div>
@@ -321,6 +344,37 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
                                 <Badge key={skill} variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-100 py-1 px-3 rounded-lg flex items-center gap-1">
                                     {skill}
                                     <button type="button" onClick={() => handleRemoveSkill(skill)}>
+                                        <X className="w-3 h-3 hover:text-red-500" />
+                                    </button>
+                                </Badge>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label className="text-sm font-semibold text-gray-700">Target Institutions</Label>
+                        <div className="flex gap-2">
+                            <Input
+                                placeholder="Add a preferred university (e.g., King Saud University)"
+                                value={newUniversity}
+                                onChange={(e) => setNewUniversity(e.target.value)}
+                                onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddUniversity())}
+                                className="bg-white/50 border-gray-200 rounded-xl"
+                            />
+                            <Button
+                                type="button"
+                                onClick={handleAddUniversity}
+                                size="icon"
+                                className="rounded-xl shrink-0 border border-gray-200 bg-white/50 text-indigo-600 hover:bg-white"
+                            >
+                                <Plus className="w-4 h-4" />
+                            </Button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                            {targetUniversities.map(univ => (
+                                <Badge key={univ} variant="secondary" className="bg-purple-50 text-purple-700 border-purple-100 py-1 px-3 rounded-lg flex items-center gap-1">
+                                    {univ}
+                                    <button type="button" onClick={() => handleRemoveUniversity(univ)}>
                                         <X className="w-3 h-3 hover:text-red-500" />
                                     </button>
                                 </Badge>
