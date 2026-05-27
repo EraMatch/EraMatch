@@ -135,6 +135,30 @@ class TestPositionDetails:
             f"Unexpected status for fake position details: {resp.status_code}"
         )
 
+    def test_position_details_filters(self, client):
+        """Test school, degree, and gpa filter query params on position details."""
+        position_id = self._get_position_id(client)
+        if not position_id:
+            pytest.skip("No positions available")
+        
+        # Test school filter
+        resp_school = client.get(f"/recruiter/positions/{position_id}/details", params={"school": "King Saud"})
+        assert resp_school.status_code == 200, f"Expected 200, got {resp_school.status_code}"
+        data_school = resp_school.json()
+        assert "candidates" in data_school, "Missing candidates in response"
+        
+        # Test degree filter
+        resp_degree = client.get(f"/recruiter/positions/{position_id}/details", params={"degree": "Bachelor"})
+        assert resp_degree.status_code == 200, f"Expected 200, got {resp_degree.status_code}"
+        data_degree = resp_degree.json()
+        assert "candidates" in data_degree, "Missing candidates in response"
+        
+        # Test gpa filter
+        resp_gpa = client.get(f"/recruiter/positions/{position_id}/details", params={"gpa": 3.0})
+        assert resp_gpa.status_code == 200, f"Expected 200, got {resp_gpa.status_code}"
+        data_gpa = resp_gpa.json()
+        assert "candidates" in data_gpa, "Missing candidates in response"
+
 
 class TestPositionInsights:
     """Tests for position insights/metrics."""

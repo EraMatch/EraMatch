@@ -212,11 +212,16 @@ async def delete_position(
 
 @router.get("/positions/{position_id}/details", response_model=PositionDetailsResponse)
 async def get_position_details(
-    position_id: UUID, session: DbSession, current_user: RecruiterUser
+    position_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+    school: str | None = None,
+    degree: str | None = None,
+    gpa: float | None = None,
 ):
     """Get position details (candidates and groups)."""
     service = RecruiterService(session, current_user)
-    return await service.get_position_details(position_id)
+    return await service.get_position_details(position_id, school=school, degree=degree, gpa=gpa)
 
 
 @router.get("/positions/{position_id}/insights", response_model=PositionInsightsResponse)

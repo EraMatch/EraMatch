@@ -10,7 +10,7 @@ import httpx
 # ─────────────────────────────────────────────
 BASE_URL = "http://localhost:8000/api/v1"
 RECRUITER_EMAIL = "hr@eramatch.com"
-RECRUITER_PASSWORD = "1234567890"
+RECRUITER_PASSWORD = "admin12345"
 
 
 # ─────────────────────────────────────────────

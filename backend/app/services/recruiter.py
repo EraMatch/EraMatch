@@ -991,7 +991,13 @@ class RecruiterService:
             "message": "Recompute started successfully in the background",
         }
 
-    async def get_position_details(self, position_id: UUID) -> PositionDetailsResponse:
+    async def get_position_details(
+        self,
+        position_id: UUID,
+        school: str | None = None,
+        degree: str | None = None,
+        gpa: float | None = None,
+    ) -> PositionDetailsResponse:
         """Aggregate candidates and groups for a position."""
         # 1. Verify existence
         await self.get_position(position_id)
@@ -1056,8 +1062,37 @@ class RecruiterService:
                     if isinstance(edu, dict):
                         uni = edu.get("institution") or edu.get("university") or edu.get("school")
                         if uni: universities.append(str(uni))
-                        deg = edu.get("degree") or edu.get("qualification")
-                        if deg: degrees.append(str(deg))
+            # Filter by university/school (case-insensitive fuzzy substring)
+            if school:
+                school_lower = school.strip().lower()
+                if not any(school_lower in uni.lower() for uni in universities):
+                    continue
+
+            # Filter by degree (case-insensitive fuzzy substring)
+            if degree:
+                degree_lower = degree.strip().lower()
+                if not any(degree_lower in deg.lower() for deg in degrees):
+                    continue
+
+            # Filter by GPA threshold
+            if gpa is not None:
+                has_passing_gpa = False
+                for edu in education:
+                    if isinstance(edu, dict):
+                        gpa_val = edu.get("gpa")
+                        if gpa_val is not None:
+                            try:
+                                import re
+                                match = re.search(r"(\d+(\.\d+)?)", str(gpa_val))
+                                if match:
+                                    gpa_float = float(match.group(1))
+                                    if gpa_float >= gpa:
+                                        has_passing_gpa = True
+                                        break
+                            except Exception:
+                                pass
+                if not has_passing_gpa:
+                    continue
 
             # Map to response (simulating match score for now)
             # Map to response (simulating match score for now)
