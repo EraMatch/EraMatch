@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Bell, AlertTriangle, CheckCircle, UserPlus, FileCheck, Video, Github, Clock, ChevronRight, Loader2 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import EraMatchLogo from '../../assets/image-eramatch.png';
+import { Logo } from './Logo';
 import { useNotifications } from '../../hooks/dashboard/useDashboardAnalytics';
 
 interface AlertsNotificationsProps {
@@ -102,7 +102,7 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
               Stay updated on candidate activities and important events
             </p>
           </div>
-          <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
+          <Logo size="md" className="mt-1 mr-6" />
         </div>
 
         {/* Centered Content */}

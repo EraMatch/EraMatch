@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Eye, ArrowUpDown, Calendar, Users, FileText, CheckCircle, XCircle, Clock, Briefcase, Award, TrendingUp, Loader2 } from 'lucide-react';
 import { Card } from '../ui/card';
 import { api, ClosedProject, ClosedPosition } from '../../services/api';
-import EraMatchLogo from '../../assets/image-eramatch.png';
+import { Logo } from '../common/Logo';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { useArchivedProjects, useArchivedPositions, usePositionArchiveDetails } from '../../hooks/admin/useAdminDashboard';
 
@@ -86,7 +86,7 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                 Browse closed projects and view position archives
               </p>
             </div>
-            <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
+            <Logo size="md" className="mt-1 mr-6" />
           </div>
 
           {isLoading ? (
@@ -228,7 +228,7 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                 <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Select a position to view detailed archive data</p>
               </div>
             </div>
-            <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
+            <Logo size="md" className="mt-1 mr-6" />
           </div>
 
           {isLoading ? (
@@ -374,7 +374,7 @@ export function AdminClosedPositions({ onSignOut }: AdminClosedPositionsProps) {
                 <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Detailed closure information and statistics</p>
               </div>
             </div>
-            <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
+            <Logo size="md" className="mt-1 mr-6" />
           </div>
 
           {isLoading ? (

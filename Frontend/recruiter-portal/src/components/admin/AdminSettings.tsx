@@ -8,7 +8,7 @@ import { Bell, Mail, Lock, User, Globe, Loader2, Check, CreditCard, Calendar, Us
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { authService } from '../../services/auth.service';
-import EraMatchLogo from '../../assets/image-eramatch.png';
+import { Logo } from '../common/Logo';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { useAdminSettings, useAdminSubscription, useAdminPaymentMethod } from '../../hooks/admin/useAdminDashboard';
 import { useUpdateAdminProfile, useUpdateOrganization, useUpdatePreferences, useUpgradeSubscription, useAddPaymentMethod } from '../../hooks/admin/useAdminMutations';
@@ -271,7 +271,7 @@ export function AdminSettings({ onSignOut }: AdminSettingsProps) {
           <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Settings</h1>
           <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your account, organization, and subscription</p>
         </div>
-        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
+        <Logo size="md" className="mt-1 mr-6" />
       </div>
 
       {isLoading ? (
