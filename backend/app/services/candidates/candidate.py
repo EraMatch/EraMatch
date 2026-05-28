@@ -860,6 +860,15 @@ class CandidateService:
                     if resp.duration_seconds:
                         total_duration += resp.duration_seconds
                     
+                    ai_feedback_raw = resp.ai_feedback
+                    feedback_text = None
+                    criteria_scores = None
+                    if isinstance(ai_feedback_raw, dict):
+                        feedback_text = ai_feedback_raw.get("feedback")
+                        criteria_scores = ai_feedback_raw.get("criteria_scores")
+                    elif isinstance(ai_feedback_raw, str):
+                        feedback_text = ai_feedback_raw
+
                     video_interview_questions.append({
                         "id": str(resp.response_id),
                         "order": resp.question_order,
@@ -867,10 +876,11 @@ class CandidateService:
                         "videoUrl": resp.video_url,
                         "transcript": resp.transcript,
                         "score": score_out_of_10,
-                        "feedback": resp.ai_feedback,
+                        "feedback": feedback_text,
+                        "criteriaScores": criteria_scores,
                         "duration": f"{resp.duration_seconds}s" if resp.duration_seconds else "N/A",
                         "emotionAnalysis": resp.emotion_analysis,
-                        "processingStatus": resp.processing_status
+                        "processingStatus": resp.processing_status,
                     })
                 
                 response.videoInterviewQuestions = video_interview_questions
