@@ -9,6 +9,13 @@ interface RecordedInterviewQuestionSetupProps {
   onBack: () => void;
   onSave: (questions: any[]) => void;
   initialQuestions?: { id: string; text: string; duration: number }[];
+  positionContext?: {
+    positionTitle?: string;
+    jobDescription?: string;
+    requiredSkills?: string[];
+    experienceLevel?: string;
+    yearsOfExperience?: number;
+  };
 }
 
 interface Question {
@@ -21,7 +28,8 @@ export function RecordedInterviewQuestionSetup({
   groupName,
   onBack,
   onSave,
-  initialQuestions
+  initialQuestions,
+  positionContext
 }: RecordedInterviewQuestionSetupProps) {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [showPreview, setShowPreview] = useState(false);
@@ -41,15 +49,33 @@ export function RecordedInterviewQuestionSetup({
   const generateSuggestedQuestions = async () => {
     setIsSuggesting(true);
     try {
+      const contextParts = [
+        `Group: ${groupName}`,
+        positionContext?.positionTitle ? `Position title: ${positionContext.positionTitle}` : '',
+        positionContext?.experienceLevel ? `Experience level: ${positionContext.experienceLevel}` : '',
+        typeof positionContext?.yearsOfExperience === 'number' ? `Years of experience: ${positionContext.yearsOfExperience}` : '',
+        positionContext?.requiredSkills?.length ? `Required skills: ${positionContext.requiredSkills.join(', ')}` : '',
+        positionContext?.jobDescription ? `Job description:\n${positionContext.jobDescription}` : '',
+        'Generate concise, role-relevant open-ended screening questions for a recorded video interview.',
+      ].filter(Boolean).join('\n\n');
+
       const responses = await Promise.all(
         Array.from({ length: 4 }, () =>
           recruiterService.generateAIQuestion({
             question_type: 'interview',
-            topic: groupName,
+            topic: positionContext?.positionTitle || groupName,
             difficulty: 'Medium',
-            context: 'Recorded interview setup. Generate concise, role-relevant open-ended screening questions.',
+            context: contextParts,
             use_case: 'recorded_interview_suggest',
-            metadata: { group_name: groupName, desired_count: 8 },
+            metadata: {
+              group_name: groupName,
+              position_title: positionContext?.positionTitle,
+              job_description: positionContext?.jobDescription,
+              required_skills: positionContext?.requiredSkills || [],
+              experience_level: positionContext?.experienceLevel,
+              years_of_experience: positionContext?.yearsOfExperience,
+              desired_count: 8,
+            },
           })
         )
       );
