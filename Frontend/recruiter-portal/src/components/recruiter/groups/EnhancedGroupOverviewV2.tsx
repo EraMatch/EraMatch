@@ -2009,6 +2009,7 @@ export function EnhancedGroupOverviewV2({
                                   if (currentStageId === 'assessment') {
                                     setShowAssessmentCreation(true);
                                   } else if (currentStageId === 'ai-interview' || currentStageId === 'ai_interview') {
+                                    setEditingInterviewData(null);
                                     setShowRecordedInterviewSetup(true);
                                   } else if (currentStageId === 'live-interview' || currentStageId === 'live_interview') {
                                     setShowLiveInterviewV2Setup(true);
@@ -2726,6 +2727,7 @@ export function EnhancedGroupOverviewV2({
       {showRecordedInterviewSetup && (
         <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
           <RecordedInterviewSetup
+            key={editingInterviewData?.id || 'new'}
             groupName={groupName}
             activeFlow={activeFlow}
             initialData={editingInterviewData}
@@ -2745,6 +2747,7 @@ export function EnhancedGroupOverviewV2({
       {showRecordedQuestionSetup && (
         <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
           <RecordedInterviewQuestionSetup
+            key={editingInterviewData?.id || 'new'}
             groupName={groupName}
             positionContext={{
               positionTitle: (groupDetailData as any)?.position_title || description,
@@ -2756,16 +2759,21 @@ export function EnhancedGroupOverviewV2({
               yearsOfExperience: (groupDetailData as any)?.years_of_experience,
             }}
             initialQuestions={(() => {
-              // Extract saved questions from the interview being edited
-              const items = editingInterviewData?.questions?.items;
-              if (Array.isArray(items) && items.length > 0) {
-                return items.map((q: any, i: number) => ({
-                  id: q.id || String(i + 1),
-                  text: q.text || q.question || '',
-                  duration: q.duration || q.recordingTime || 120
-                }));
-              }
-              return undefined;
+              const q = editingInterviewData?.questions;
+              if (!q) return undefined;
+              // Support both storage formats: {items:[]} and {questions:[]}
+              const items: any[] = Array.isArray(q.items)
+                ? q.items
+                : Array.isArray(q.questions)
+                  ? q.questions
+                  : [];
+              if (items.length === 0) return undefined;
+              return items.map((item: any, i: number) => ({
+                id: item.id || String(i + 1),
+                text: item.text || item.question || '',
+                duration: item.duration || item.recordingTime || 120,
+                rubricYesNoChecks: Array.isArray(item.rubricYesNoChecks) ? item.rubricYesNoChecks : [],
+              }));
             })()}
             onBack={() => {
               setShowRecordedQuestionSetup(false);
