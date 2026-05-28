@@ -413,7 +413,7 @@ export function BackgroundTasks() {
                 },
                 {
                     id: 'live-video',
-                    title: 'Live Video Interview',
+                    title: 'Live Interview',
                     description: 'Real-time interview processing pipeline',
                     tasks: live,
                 },

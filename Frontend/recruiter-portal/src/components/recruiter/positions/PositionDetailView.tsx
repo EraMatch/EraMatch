@@ -407,8 +407,9 @@ export function PositionDetailView({
 
   // Auth / Role Check
   const user = JSON.parse(localStorage.getItem('user') || '{}');
-  const isHR = user.role === 'hr' || user.role === 'admin';
-  const canManageQAG = user.role === 'technical' || user.role === 'admin';
+  const userRole = String(user.role || '').toLowerCase();
+  const isHR = userRole === 'hr' || userRole === 'admin';
+  const canManageQAG = userRole === 'technical' || userRole === 'admin';
   const navigate = useNavigate();
 
   // Upload Logic

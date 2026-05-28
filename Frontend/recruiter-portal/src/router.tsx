@@ -280,7 +280,7 @@ const GroupOverviewWrapper = () => {
         <EnhancedGroupOverviewV2
             groupId={group.id}
             groupName={group.name}
-            description={group.description || "High-performing candidates filtered by criteria"}
+            description={group.position_title || group.description || "High-performing candidates filtered by criteria"}
             assignedRecruiter={group.assigned_hr?.name || "Unassigned"}
             candidateIds={[]} // We'll let EnhancedGroupOverviewV2 fetch candidates if needed, or pass empty
             recruiterType={recruiterType}
