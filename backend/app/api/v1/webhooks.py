@@ -17,19 +17,23 @@ class WebhookCVParsePayload(BaseModel):
     status: str
     parsed_data: dict | None = None
     error: str | None = None
+    source: str = "upload"
 
 async def verify_webhook_secret(x_webhook_secret: str = Header(None)):
-    if not settings.WEBHOOK_SECRET:
-        logger.warning("WEBHOOK_SECRET is not configured in backend!")
+    backend_secret = settings.WEBHOOK_SECRET or ""
+    incoming_secret = x_webhook_secret or ""
+
+    # If no secret is configured on the backend, allow through (dev/insecure mode)
+    if not backend_secret:
         allow_insecure = getattr(settings, "ALLOW_INSECURE_WEBHOOKS", False)
         env = getattr(settings, "ENV", "").lower()
         debug = getattr(settings, "DEBUG", False)
-        
         if allow_insecure or env == "development" or debug:
             return True
         raise HTTPException(status_code=401, detail="Webhook secret not configured")
-    
-    if x_webhook_secret != settings.WEBHOOK_SECRET:
+
+    if incoming_secret != backend_secret:
+        logger.warning(f"Webhook secret mismatch: got={repr(incoming_secret)} expected={repr(backend_secret)}")
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
     return True
 
@@ -52,7 +56,8 @@ async def handle_cv_parsed_webhook(
             file_path=payload.file_path,
             status=payload.status,
             parsed_data=payload.parsed_data,
-            error=payload.error
+            error=payload.error,
+            source=payload.source,
         )
         return {"message": "Webhook processed successfully"}
     except Exception as exc:
