@@ -909,13 +909,13 @@ export function EnhancedGroupOverviewV2({
 
     if (isArchived) return null;
 
-    // HR users are in monitoring/read-only mode — no stage actions allowed
-    if (userRole === 'recruiter') {
+    // Technical recruiters configure stages — HR manages the lifecycle (start/close)
+    if (userRole === 'technical') {
       return (
         <div className="flex items-center gap-2 px-4 py-2 rounded-[8px] bg-blue-50 border border-blue-200 text-blue-700">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
           <span className="font-['Arimo',sans-serif] text-[13px]">
-            Monitoring mode — only the Technical Recruiter can take stage actions
+            Monitoring mode — only HR can start, close, or progress stages
           </span>
         </div>
       );

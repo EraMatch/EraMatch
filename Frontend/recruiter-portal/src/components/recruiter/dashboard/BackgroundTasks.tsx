@@ -502,8 +502,14 @@ export function BackgroundTasks() {
 
     useEffect(() => {
         const visibleIds = new Set(visibleTasks.map((task) => task.id));
-        setSelectedTaskIds((prev) => prev.filter((id) => visibleIds.has(id)));
-        setExpandedTaskId((prev) => (prev && visibleIds.has(prev) ? prev : null));
+        setSelectedTaskIds((prev) => {
+            const next = prev.filter((id) => visibleIds.has(id));
+            return next.length === prev.length ? prev : next;
+        });
+        setExpandedTaskId((prev) => {
+            const next = prev && visibleIds.has(prev) ? prev : null;
+            return next === prev ? prev : next;
+        });
     }, [visibleTasks]);
 
     const overview = useMemo(() => {
