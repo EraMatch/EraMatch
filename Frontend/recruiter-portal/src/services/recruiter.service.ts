@@ -684,6 +684,21 @@ export const recruiterService = {
         });
     },
 
+    enhanceText: async (
+        text: string,
+        options?: { useCase?: string; metadata?: Record<string, any> }
+    ) => {
+        return fetchAPI<{ enhancedText: string }>('/recruiter/ai/enhance-text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text,
+                use_case: options?.useCase || '',
+                metadata: options?.metadata || undefined,
+            })
+        });
+    },
+
     // Filter Templates
     getFilterTemplates: async () => {
         return fetchAPI<any[]>('/recruiter/filters/templates');
