@@ -699,6 +699,32 @@ export const recruiterService = {
         });
     },
 
+    suggestQuestionRubric: async (
+        questionText: string,
+        options?: {
+            referenceAnswer?: string;
+            context?: {
+                position_title?: string;
+                job_description?: string;
+                group_name?: string;
+                experience_level?: string;
+            };
+        }
+    ) => {
+        return fetchAPI<{ rubric_checks: Array<{ id: number; check: string; weight: number }> }>(
+            '/recruiter/ai/suggest-question-rubric',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    question_text: questionText,
+                    reference_answer: options?.referenceAnswer || undefined,
+                    context: options?.context || undefined,
+                }),
+            }
+        );
+    },
+
     // Filter Templates
     getFilterTemplates: async () => {
         return fetchAPI<any[]>('/recruiter/filters/templates');
