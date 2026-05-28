@@ -909,18 +909,6 @@ export function EnhancedGroupOverviewV2({
 
     if (isArchived) return null;
 
-    // Technical recruiters configure stages — HR manages the lifecycle (start/close)
-    if (userRole === 'technical') {
-      return (
-        <div className="flex items-center gap-2 px-4 py-2 rounded-[8px] bg-blue-50 border border-blue-200 text-blue-700">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
-          <span className="font-['Arimo',sans-serif] text-[13px]">
-            Monitoring mode — only HR can start, close, or progress stages
-          </span>
-        </div>
-      );
-    }
-
     // Check if this is the last stage and it's closed - show Final Decision button
     const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
     const isLastStage = currentStepIndex === pipelineSteps.length - 1;
@@ -1241,12 +1229,13 @@ export function EnhancedGroupOverviewV2({
             {userRole === 'technical' && (
               <button
                 onClick={() => setShowFlowConfigModal(true)}
-                className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
-                title="Configure Pipeline Flow"
+                disabled={activeFlow.length > 0}
+                className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed hover:bg-[#f9fafb] transition-colors"
+                title={activeFlow.length > 0 ? "Filtration flow is already configured and locked" : "Configure Pipeline Flow"}
               >
-                <Edit size={16} className="text-[#6b7280]" />
-                <span className="font-['Arimo',sans-serif] text-[#111827] text-[14px]">
-                  Configure Flow
+                <Edit size={16} className={activeFlow.length > 0 ? "text-gray-400" : "text-[#6b7280]"} />
+                <span className="font-['Arimo',sans-serif] text-[14px]">
+                  {activeFlow.length > 0 ? 'Flow Configured' : 'Configure Flow'}
                 </span>
               </button>
             )}

@@ -957,12 +957,6 @@ class GroupService:
     # ── 4. POST /recruiter/groups/{groupId}/stages/start ─────────────────────
 
     async def start_stage(self, group_id: UUID, stage: str) -> dict:
-        # Only HR or admin can start stages — technical recruiters configure, HR activates
-        if self.user.role == "technical":
-            from app.core.exceptions import ForbiddenException
-
-            raise ForbiddenException("Only HR or admin users can start pipeline stages")
-
         group = await self._get_group(group_id)
 
         # Normalize stage type: DB uses underscores but frontend can send mixed formatting.
@@ -1293,12 +1287,6 @@ class GroupService:
 
     async def close_stage(self, group_id: UUID, stage: str) -> dict:
         """Closes the current stage and automatically rejects candidates who didn't progress."""
-        # Only HR or admin can close stages
-        if self.user.role == "technical":
-            from app.core.exceptions import ForbiddenException
-
-            raise ForbiddenException("Only HR or admin users can close pipeline stages")
-
         await self._get_group(group_id)
 
         # Normalize frontend stage names to underscore DB format
@@ -3059,12 +3047,19 @@ class GroupService:
         group = await self._get_group(group_id)
 
         # Only technical recruiters can modify the filtration flow
-        if data.filtration_flow is not None and self.user.role != "technical":
-            from app.core.exceptions import ForbiddenException
+        if data.filtration_flow is not None:
+            if self.user.role != "technical":
+                from app.core.exceptions import ForbiddenException
 
-            raise ForbiddenException(
-                "Only technical recruiters can configure the filtration flow"
-            )
+                raise ForbiddenException(
+                    "Only technical recruiters can configure the filtration flow"
+                )
+            if group.filtration_flow is not None and len(group.filtration_flow) > 0:
+                from app.core.exceptions import BadRequestException
+
+                raise BadRequestException(
+                    "Filtration flow has already been configured and cannot be modified."
+                )
 
         if data.name:
             group.group_name = data.name
