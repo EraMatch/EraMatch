@@ -112,8 +112,8 @@ class Settings(BaseSettings):
     FALLBACK_JUDGE_MODEL: str = "gemma3:4b-cloud"
 
     # Helper (classification, tags — needs fast model)
-    HELPER_PRIMARY_PROVIDER: str = "gemini"
-    HELPER_PRIMARY_MODEL: str = "gemini-2.5-flash-lite"
+    HELPER_PRIMARY_PROVIDER: str = "ollama"
+    HELPER_PRIMARY_MODEL: str = "gemini-3-flash-preview:cloud"
     HELPER_SECONDARY_PROVIDER: str = ""
     HELPER_SECONDARY_MODEL: str = ""
 

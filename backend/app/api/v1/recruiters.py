@@ -36,6 +36,7 @@ from app.schemas import (
     FilterTemplateCreate,
     AIGenerateQuestionRequest,
     AIRefineQuestionRequest,
+    AIEnhanceTextRequest,
 )
 from app.services import CandidateService, GroupService
 from app.models import CandidateApplication, CandidateProfile, CVAnalysis, Position, GitHubAnalysisJob
@@ -977,3 +978,15 @@ async def refine_question_with_ai(
     service = RecruiterService(session, current_user)
     refined_text = await service.refine_question_with_ai(data.question_text, data.use_case, data.metadata)
     return {"refinedText": refined_text}
+
+
+@router.post("/ai/enhance-text")
+async def enhance_text_with_ai(
+    data: AIEnhanceTextRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Improve recruiter-authored text while preserving its meaning."""
+    service = RecruiterService(session, current_user)
+    enhanced_text = await service.enhance_text_with_ai(data.text, data.use_case, data.metadata)
+    return {"enhancedText": enhanced_text}

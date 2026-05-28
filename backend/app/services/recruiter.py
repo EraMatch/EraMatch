@@ -2867,9 +2867,14 @@ class RecruiterService:
         metadata: dict[str, Any] | None = None,
     ) -> dict:
         """Generate a technical or interview question using the configured LLM provider."""
-        llm = get_llm(settings.DEFAULT_LLM_PROVIDER)
         metadata = metadata if isinstance(metadata, dict) else {}
         use_case = (use_case or "").strip().lower()
+        if use_case in {"recorded_interview_suggest", "live_interview_setup"}:
+            provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+            model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
+        else:
+            provider = settings.DEFAULT_LLM_PROVIDER
+            model = None
 
         def _derive_yes_no_checks(payload: dict) -> list[dict]:
             rubric = str(payload.get("rubric") or "").strip()
@@ -2960,6 +2965,7 @@ class RecruiterService:
         )
 
         try:
+            llm = get_llm(provider, model=model) if model else get_llm(provider)
             response = await llm.ainvoke(prompt)
             payload = self._extract_json_payload(getattr(response, "content", ""))
 
@@ -3073,7 +3079,7 @@ class RecruiterService:
 
             return payload
         except Exception as e:
-            print(f"LLM generation failed ({settings.DEFAULT_LLM_PROVIDER}): {e}")
+            print(f"LLM generation failed ({provider}{f'/{model}' if model else ''}): {e}")
             if use_case == "recorded_interview_suggest":
                 return {
                     "questions": [
@@ -3129,29 +3135,44 @@ class RecruiterService:
                 )
             return fallback
 
-    async def refine_question_with_ai(
+    async def enhance_text_with_ai(
         self,
-        question_text: str,
+        text: str,
         use_case: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        """Refine or polish a question text using Ollama."""
-        llm = get_llm("ollama")
+        """Improve recruiter-authored text using the helper LLM config."""
+        source_text = (text or "").strip()
+        if not source_text:
+            return text
+
+        provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+        model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
         metadata = metadata if isinstance(metadata, dict) else {}
         use_case = (use_case or "").strip().lower()
 
         template_name = {
             "assessment_question": "assessment_refine_question.md",
             "assessment_rubric": "assessment_refine_rubric.md",
+            "assessment_essay_question": "assessment_refine_question.md",
+            "assessment_essay_rubric": "assessment_refine_rubric.md",
             "recorded_interview_question": "recorded_interview_refine_question.md",
             "recorded_interview_instructions": "recorded_interview_refine_instructions.md",
+            "recorded_interview_title": "recorded_interview_refine_instructions.md",
+            "recorded_interview_description": "recorded_interview_refine_instructions.md",
             "live_interview_system_prompt": "live_interview_refine_system_prompt.md",
             "live_interview_flow_instructions": "live_interview_refine_flow_instructions.md",
+            "live_interview_dimension": "live_interview_refine_flow_instructions.md",
+            "live_interview_anchor": "live_interview_refine_flow_instructions.md",
+            "live_interview_question": "recorded_interview_refine_question.md",
+            "live_interview_intent": "live_interview_refine_flow_instructions.md",
         }.get(use_case, "assessment_refine_question.md")
 
         fallback_prompt = (
-            "Refine the following text for recruiter workflows. Keep intent unchanged, improve clarity and professionalism, "
-            "and return ONLY the refined text.\n"
+            "SYSTEM: You are an editing assistant inside a recruitment configuration tool. "
+            "The user will provide their own draft text. Improve grammar, clarity, concision, and professional tone. "
+            "Preserve the original meaning, constraints, language, and factual claims. Do not add new requirements, "
+            "new evaluation criteria, examples, explanations, markdown, or quotes. Return ONLY the improved text.\n"
             "Use case: {{USE_CASE}}\n"
             "Metadata: {{METADATA_JSON}}\n"
             "Text: {{QUESTION_TEXT}}"
@@ -3161,18 +3182,28 @@ class RecruiterService:
             template_name,
             fallback_prompt,
             {
-                "QUESTION_TEXT": question_text,
+                "QUESTION_TEXT": source_text,
                 "USE_CASE": use_case,
                 "METADATA_JSON": metadata,
             },
         )
 
         try:
+            llm = get_llm(provider, model=model, temperature=0.2)
             response = await llm.ainvoke(prompt)
             refined = str(getattr(response, "content", "")).strip()
             if refined.startswith("```") and refined.endswith("```"):
                 refined = refined.strip("`").strip()
-            return refined or question_text
+            return refined or source_text
         except Exception as e:
-            print(f"Ollama refinement failed: {e}")
-            return question_text
+            print(f"Text enhancement failed ({provider}/{model}): {e}")
+            return source_text
+
+    async def refine_question_with_ai(
+        self,
+        question_text: str,
+        use_case: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Backward-compatible alias for text enhancement."""
+        return await self.enhance_text_with_ai(question_text, use_case, metadata)
