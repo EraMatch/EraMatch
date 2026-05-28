@@ -266,7 +266,11 @@ async def get_background_tasks(
             tasks.append({
                 "id": str(job.id),
                 "status": job.status,
-                "type": "CV Import (ZIP)" if job.source_type == "zip_upload" else "CV Import (Google Drive)",
+                "type": (
+                    "CV Import (ZIP)" if job.source_type == "zip_upload"
+                    else "CV Import (PDF)" if job.source_type == "pdf_upload"
+                    else "CV Import (Google Drive)"
+                ),
                 "task_category": "cv_ingestion",
                 "candidate_name": None,
                 "source_filename": job.source_filename,

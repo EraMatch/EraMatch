@@ -1056,12 +1056,26 @@ class RecruiterService:
             
             universities = []
             degrees = []
+            gpas = []
             education = parsed.get("education", [])
             if isinstance(education, list):
                 for edu in education:
                     if isinstance(edu, dict):
                         uni = edu.get("institution") or edu.get("university") or edu.get("school")
                         if uni: universities.append(str(uni))
+                        deg = edu.get("degree") or edu.get("qualification")
+                        if deg: degrees.append(str(deg))
+                        gpa_val = edu.get("gpa")
+                        if gpa_val is not None:
+                            try:
+                                import re
+                                match = re.search(r"(\d+(\.\d+)?)", str(gpa_val))
+                                if match:
+                                    gpas.append(float(match.group(1)))
+                            except Exception:
+                                pass
+            candidate_gpa = max(gpas) if gpas else None
+
             # Filter by university/school (case-insensitive fuzzy substring)
             if school:
                 school_lower = school.strip().lower()
@@ -1076,22 +1090,7 @@ class RecruiterService:
 
             # Filter by GPA threshold
             if gpa is not None:
-                has_passing_gpa = False
-                for edu in education:
-                    if isinstance(edu, dict):
-                        gpa_val = edu.get("gpa")
-                        if gpa_val is not None:
-                            try:
-                                import re
-                                match = re.search(r"(\d+(\.\d+)?)", str(gpa_val))
-                                if match:
-                                    gpa_float = float(match.group(1))
-                                    if gpa_float >= gpa:
-                                        has_passing_gpa = True
-                                        break
-                            except Exception:
-                                pass
-                if not has_passing_gpa:
+                if candidate_gpa is None or candidate_gpa < gpa:
                     continue
 
             # Map to response (simulating match score for now)
@@ -1113,6 +1112,7 @@ class RecruiterService:
                 job_titles=job_titles,
                 universities=universities,
                 degrees=degrees,
+                gpa=candidate_gpa,
                 groupId=app.group_id,
                 groupName=group_map.get(app.group_id) if app.group_id else None,
                 prescore_version=prescore.get("version"),
@@ -1427,8 +1427,51 @@ class RecruiterService:
 
     # Application management
     async def update_application_status(self, application_id: UUID, data: ApplicationUpdate) -> CandidateApplication:
-        # TODO: Update application status
-        pass
+        query = select(CandidateApplication).where(
+            CandidateApplication.id == application_id,
+            CandidateApplication.organization_id == self.organization_id,
+            CandidateApplication.is_deleted == False
+        )
+        result = await self.session.execute(query)
+        application = result.scalar_one_or_none()
+        if not application:
+            raise NotFoundException("Application not found")
+        
+        if data.status is not None:
+            application.status = data.status
+        if data.group_id is not None:
+            application.group_id = data.group_id
+            
+        self.session.add(application)
+        await self.session.commit()
+        await self.session.refresh(application)
+        return application
+
+    async def list_applications(
+        self,
+        position_id: UUID | None = None,
+        status: str | None = None,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> list[CandidateApplication]:
+        try:
+            query = select(CandidateApplication).where(
+                CandidateApplication.organization_id == self.organization_id,
+                CandidateApplication.is_deleted == False
+            )
+            
+            if position_id:
+                query = query.where(CandidateApplication.position_id == position_id)
+            
+            if status:
+                query = query.where(CandidateApplication.status == status)
+                
+            query = query.order_by(CandidateApplication.applied_at.desc()).offset(skip).limit(limit)
+            result = await self.session.execute(query)
+            return list(result.scalars().all())
+        except Exception as e:
+            return []
+
 
     async def get_project_summary(self, project_id: UUID) -> ProjectSummaryResponse:
         """Get stats for a specific project with parallel fetching."""

@@ -20,15 +20,22 @@ async def upload_zip_ingestion(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Ingest CVs via ZIP file upload.
-    Dispatches a Celery task to process the ZIP.
+    Ingest CVs via ZIP or PDF file upload.
+    Dispatches a Celery task to process the uploaded file(s).
     """
-    if not file.filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="Only ZIP files are supported.")
+    filename_lower = file.filename.lower()
+    is_zip = filename_lower.endswith(".zip")
+    is_pdf = filename_lower.endswith(".pdf")
+
+    if not (is_zip or is_pdf):
+        raise HTTPException(
+            status_code=400, 
+            detail="Unsupported file format. Only ZIP and PDF files are supported."
+        )
 
     file_bytes = await file.read()
     if len(file_bytes) > 200 * 1024 * 1024:  # 200MB limit
-        raise HTTPException(status_code=400, detail="ZIP file too large.")
+        raise HTTPException(status_code=400, detail="File too large.")
 
     service = CVIngestionService(db)
     
@@ -40,14 +47,41 @@ async def upload_zip_ingestion(
         filename=file.filename
     )
 
-    # Encode bytes for Celery
-    encoded_zip = base64.b64encode(file_bytes).decode("utf-8")
-    
-    # Dispatch Task
-    from worker.tasks.cv_ingestion import process_zip_ingestion
-    process_zip_ingestion.delay(str(job.id), str(current_user.organization_id), str(position_id), encoded_zip)
+    if is_pdf:
+        # Update source_type to pdf_upload
+        job.source_type = "pdf_upload"
+        db.add(job)
+        await db.commit()
 
-    return {"message": "ZIP upload accepted.", "job_id": job.id}
+        # Encode bytes for Celery
+        encoded_pdf = base64.b64encode(file_bytes).decode("utf-8")
+        
+        # Dispatch PDF Ingestion Task
+        from worker.tasks.cv_ingestion import process_pdf_ingestion
+        process_pdf_ingestion.delay(
+            str(job.id), 
+            str(current_user.organization_id), 
+            str(position_id), 
+            file.filename, 
+            encoded_pdf
+        )
+
+        return {"message": "PDF upload accepted.", "job_id": job.id}
+    else:
+        # ZIP upload
+        # Encode bytes for Celery
+        encoded_zip = base64.b64encode(file_bytes).decode("utf-8")
+        
+        # Dispatch ZIP Ingestion Task
+        from worker.tasks.cv_ingestion import process_zip_ingestion
+        process_zip_ingestion.delay(
+            str(job.id), 
+            str(current_user.organization_id), 
+            str(position_id), 
+            encoded_zip
+        )
+
+        return {"message": "ZIP upload accepted.", "job_id": job.id}
 
 
 @router.post("/drive-schedule")

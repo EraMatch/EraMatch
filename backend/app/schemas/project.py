@@ -154,6 +154,8 @@ class PositionCandidateResponse(BaseModel):
     job_titles: list[str] = []
     universities: list[str] = []
     degrees: list[str] = []
+    gpa: float | None = None
+
 
     # GitHub analytics for cross-module filtering and segmentation
     github_overall_score: float | None = None
