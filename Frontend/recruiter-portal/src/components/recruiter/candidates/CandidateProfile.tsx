@@ -1,5 +1,49 @@
 import { useState } from 'react';
 import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock, ShieldCheck, Award, Zap, Code2, Cpu, Layers, Globe, Terminal, Briefcase, Users } from 'lucide-react';
+
+interface CriterionScore {
+  check: string;
+  weight: number;
+  score_1_5: number;
+  cited_quote: string | null;
+  reasoning: string;
+}
+
+function CriteriaBreakdown({ criteriaScores }: { criteriaScores: CriterionScore[] }) {
+  const cardClass = (s: number) =>
+    s >= 4 ? 'bg-green-50 border-green-200' : s === 3 ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200';
+  const badgeClass = (s: number) =>
+    s >= 4 ? 'bg-green-100 text-green-700' : s === 3 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-700';
+  const quoteClass = (s: number) =>
+    s >= 4 ? 'border-green-300 text-green-800' : s === 3 ? 'border-yellow-300 text-yellow-800' : 'border-red-300 text-red-800';
+
+  return (
+    <div className="space-y-2 mt-3">
+      <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Rubric Breakdown</div>
+      {criteriaScores.map((c, i) => (
+        <div key={i} className={`rounded-lg border p-3 ${cardClass(c.score_1_5)}`}>
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <span className="text-[12px] font-medium text-gray-800 flex-1">{c.check}</span>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="text-[10px] text-gray-400">w={c.weight?.toFixed(2)}</span>
+              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${badgeClass(c.score_1_5)}`}>
+                {c.score_1_5} / 5
+              </span>
+            </div>
+          </div>
+          {c.cited_quote && (
+            <div className={`text-[11px] italic border-l-2 pl-2 mb-1 ${quoteClass(c.score_1_5)}`}>
+              "{c.cited_quote}"
+            </div>
+          )}
+          {c.reasoning && (
+            <div className="text-[11px] text-gray-500">{c.reasoning}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 import LoadingSpinner from '../../common/LoadingSpinner';
 import { EnhancedAssessmentReport } from '../assessments/EnhancedAssessmentReport';
 import { EnhancedAIInterviewReport } from '../interviews/EnhancedAIInterviewReport';
@@ -1988,20 +2032,39 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     </div>
                   </div>
                 )}
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                    <div className="text-sm text-indigo-700 font-medium">Score</div>
-                    <div className="text-2xl font-bold text-indigo-900">{formatInterviewScore(videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.score)}/10</div>
-                  </div>
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <div className="text-sm text-gray-700 font-medium">Duration</div>
-                    <div className="text-2xl font-bold text-gray-900">{videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.duration}</div>
-                  </div>
-                </div>
-                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                  <h4 className="font-medium text-indigo-900 mb-2">Question</h4>
-                  <p className="text-indigo-800">{videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.question}</p>
-                </div>
+                {(() => {
+                  const vq = videoInterviewQuestions.find((q: any) => q.id === showVideoResponse);
+                  return (
+                    <>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                          <div className="text-sm text-indigo-700 font-medium">Score</div>
+                          <div className="text-2xl font-bold text-indigo-900">{formatInterviewScore(vq?.score)}/10</div>
+                        </div>
+                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                          <div className="text-sm text-gray-700 font-medium">Duration</div>
+                          <div className="text-2xl font-bold text-gray-900">{vq?.duration}</div>
+                        </div>
+                      </div>
+                      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-3">
+                        <h4 className="font-medium text-indigo-900 mb-2">Question</h4>
+                        <p className="text-indigo-800">{vq?.question}</p>
+                      </div>
+                      {/* Criteria breakdown (G-eval) or fallback feedback */}
+                      {vq?.criteriaScores?.length
+                        ? <CriteriaBreakdown criteriaScores={vq.criteriaScores} />
+                        : vq?.feedback
+                          ? (
+                            <div className="bg-violet-50 border border-violet-200 rounded-lg p-4">
+                              <div className="text-sm font-medium text-violet-900 mb-1">AI Feedback</div>
+                              <div className="text-sm text-violet-800">{vq.feedback}</div>
+                            </div>
+                          )
+                          : null
+                      }
+                    </>
+                  );
+                })()}
               </div>
             )}
           </DialogContent>
