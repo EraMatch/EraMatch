@@ -98,6 +98,7 @@ from app.schemas.recruiter_extra import (
     AIGenerateQuestionRequest,
     AIRefineQuestionRequest,
     AIEnhanceTextRequest,
+    SuggestQuestionRubricRequest,
 )
 
 from app.schemas.live_interview_v2 import (
@@ -207,6 +208,7 @@ __all__ = [
     "AIGenerateQuestionRequest",
     "AIRefineQuestionRequest",
     "AIEnhanceTextRequest",
+    "SuggestQuestionRubricRequest",
     # Live Interview V2
     "RubricDimension", "RubricCreate", "RubricUpdate", "RubricResponse",
     "BankItem", "SubCriterion", "BankCreate", "BankUpdate", "BankResponse",

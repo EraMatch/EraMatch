@@ -3207,3 +3207,111 @@ class RecruiterService:
     ) -> str:
         """Backward-compatible alias for text enhancement."""
         return await self.enhance_text_with_ai(question_text, use_case, metadata)
+
+    async def suggest_question_rubric(
+        self,
+        question_text: str,
+        reference_answer: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> list[dict]:
+        """
+        Suggest weighted rubric criteria for a recorded video interview question.
+        Returns [{id, check, weight}] with weights summing to 1.0.
+        """
+        import json as _json
+
+        ctx = context or {}
+        position_title = ctx.get("position_title") or "the role"
+        job_description = ctx.get("job_description") or ""
+        group_name = ctx.get("group_name") or ""
+        experience_level = ctx.get("experience_level") or ""
+
+        context_lines = [
+            f"Position: {position_title}" if position_title != "the role" else "",
+            f"Experience level: {experience_level}" if experience_level else "",
+            f"Group / hiring cohort: {group_name}" if group_name else "",
+            f"Job description excerpt:\n{job_description[:400]}" if job_description else "",
+        ]
+        context_block = "\n".join(l for l in context_lines if l)
+
+        reference_block = (
+            f"\nReference answer (what a strong answer covers):\n{reference_answer}"
+            if reference_answer
+            else ""
+        )
+
+        system_prompt = (
+            "You are a senior technical hiring manager designing structured evaluation rubrics "
+            "for recorded video interviews. Your rubrics are used by an LLM judge to score "
+            "candidates objectively.\n\n"
+            "Each criterion you write must be:\n"
+            "- Answerable with YES or NO based purely on what the candidate said\n"
+            "- Specific enough that two different judges would agree on the answer\n"
+            "- Grounded in what a genuinely strong answer to THIS specific question includes\n"
+            "- Phrased as 'Does the answer...?' (active, positive framing)\n\n"
+            "Avoid generic criteria like 'Is the answer clear?' or 'Does the candidate communicate well?' "
+            "— those measure delivery, not substance. Focus entirely on technical and conceptual content."
+        )
+
+        prompt = (
+            f"{system_prompt}\n\n"
+            f"## Interview Question\n{question_text}\n\n"
+            f"## Hiring Context\n{context_block or 'No additional context provided.'}"
+            f"{reference_block}\n\n"
+            "## Task\n"
+            "Generate 5 to 8 rubric criteria for this specific question. "
+            "Assign weights (floats) that sum exactly to 1.0. "
+            "Give higher weight to the most critical aspects of a strong answer. "
+            "Choose between 5 and 8 criteria based on the question's complexity.\n\n"
+            "Respond ONLY with a valid JSON array, no markdown fences, no explanation:\n"
+            '[\n'
+            '  {"id": 1, "check": "Does the answer ...?", "weight": 0.20},\n'
+            '  {"id": 2, "check": "Does the answer ...?", "weight": 0.25},\n'
+            '  ...\n'
+            ']'
+        )
+
+        provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+        model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
+
+        try:
+            llm = get_llm(provider, model=model, temperature=0.3)
+            response = await llm.ainvoke(prompt)
+            raw = str(getattr(response, "content", "")).strip()
+
+            # Strip markdown fences if model added them
+            if raw.startswith("```"):
+                import re as _re
+                raw = _re.sub(r"^```[a-z]*\n?", "", raw)
+                raw = _re.sub(r"\n?```$", "", raw.strip())
+
+            checks = _json.loads(raw)
+
+            # Normalize structure
+            normalized: list[dict] = []
+            for i, c in enumerate(checks, 1):
+                check_text = str(c.get("check") or c.get("text") or "").strip()
+                weight = float(c.get("weight", 0.1))
+                if check_text:
+                    normalized.append({"id": i, "check": check_text, "weight": weight})
+
+            if not normalized:
+                raise ValueError("LLM returned no valid criteria")
+
+            # Normalize weights to sum exactly to 1.0
+            total = sum(c["weight"] for c in normalized) or 1.0
+            for c in normalized:
+                c["weight"] = round(c["weight"] / total, 3)
+            diff = round(1.0 - sum(c["weight"] for c in normalized), 3)
+            normalized[-1]["weight"] = round(normalized[-1]["weight"] + diff, 3)
+
+            return normalized
+
+        except Exception as e:
+            print(f"suggest_question_rubric failed ({provider}/{model}): {e}")
+            return [
+                {"id": 1, "check": "Does the answer directly address the core of the question?", "weight": 0.25},
+                {"id": 2, "check": "Does the answer provide a specific example or evidence?", "weight": 0.25},
+                {"id": 3, "check": "Does the answer demonstrate relevant technical knowledge?", "weight": 0.25},
+                {"id": 4, "check": "Does the answer show structured thinking or problem-solving process?", "weight": 0.25},
+            ]

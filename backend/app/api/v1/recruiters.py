@@ -37,6 +37,7 @@ from app.schemas import (
     AIGenerateQuestionRequest,
     AIRefineQuestionRequest,
     AIEnhanceTextRequest,
+    SuggestQuestionRubricRequest,
 )
 from app.services import CandidateService, GroupService
 from app.models import CandidateApplication, CandidateProfile, CVAnalysis, Position, GitHubAnalysisJob
@@ -990,3 +991,19 @@ async def enhance_text_with_ai(
     service = RecruiterService(session, current_user)
     enhanced_text = await service.enhance_text_with_ai(data.text, data.use_case, data.metadata)
     return {"enhancedText": enhanced_text}
+
+
+@router.post("/ai/suggest-question-rubric")
+async def suggest_question_rubric(
+    data: SuggestQuestionRubricRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Suggest weighted rubric criteria for a recorded video interview question."""
+    service = RecruiterService(session, current_user)
+    checks = await service.suggest_question_rubric(
+        data.question_text,
+        reference_answer=data.reference_answer,
+        context=data.context,
+    )
+    return {"rubric_checks": checks}

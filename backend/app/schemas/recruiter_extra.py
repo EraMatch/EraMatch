@@ -35,3 +35,8 @@ class AIEnhanceTextRequest(BaseModel):
     text: str
     use_case: str = ""
     metadata: dict[str, Any] | None = None
+
+class SuggestQuestionRubricRequest(BaseModel):
+    question_text: str
+    reference_answer: str | None = None
+    context: dict[str, Any] | None = None  # {position_title, job_description, group_name, experience_level}
