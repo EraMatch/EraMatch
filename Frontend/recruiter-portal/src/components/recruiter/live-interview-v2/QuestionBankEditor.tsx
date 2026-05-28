@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, Loader2, ChevronLeft, ChevronRight, AlertCircle, Trash2, Plus, MessageSquare, ChevronDown, ChevronUp } from 'lucide-react';
 import { fetchAPI } from '../../../services/client';
+import { recruiterService } from '../../../services/recruiter.service';
 
 interface SubCriterion {
   name: string;
@@ -29,6 +30,7 @@ export function QuestionBankEditor({ groupId, rubricId, bankId, isFrozen, onBack
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [enhancingKey, setEnhancingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
 
@@ -123,6 +125,24 @@ export function QuestionBankEditor({ groupId, rubricId, bankId, isFrozen, onBack
     setItems(newItems);
   };
 
+  const enhanceItemField = async (index: number, field: 'text' | 'intent') => {
+    const current = items[index]?.[field] || '';
+    if (!current.trim()) return;
+    const key = `${index}-${field}`;
+    try {
+      setEnhancingKey(key);
+      const response = await recruiterService.enhanceText(current, {
+        useCase: field === 'text' ? 'live_interview_question' : 'live_interview_intent',
+        metadata: { field, group_id: groupId, dimension: items[index]?.dimension_name },
+      });
+      updateItem(index, field, (response?.enhancedText || current).trim() || current);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to fix text');
+    } finally {
+      setEnhancingKey(null);
+    }
+  };
+
   const removeItem = (index: number) => {
     setItems(items.filter((_, i) => i !== index));
   };
@@ -207,9 +227,20 @@ export function QuestionBankEditor({ groupId, rubricId, bankId, isFrozen, onBack
                           rows={2}
                        />
                        {!isFrozen && (
-                         <button onClick={() => removeItem(overallIdx)} className="text-gray-400 hover:text-red-600 transition-colors self-start mt-1">
-                           <Trash2 className="w-4 h-4" />
-                         </button>
+                         <div className="flex items-center gap-2 self-start mt-1">
+                           <button
+                             type="button"
+                             onClick={() => void enhanceItemField(overallIdx, 'text')}
+                             disabled={!item.text.trim() || enhancingKey === `${overallIdx}-text`}
+                             className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                           >
+                             {enhancingKey === `${overallIdx}-text` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                             Fix text
+                           </button>
+                           <button onClick={() => removeItem(overallIdx)} className="text-gray-400 hover:text-red-600 transition-colors">
+                             <Trash2 className="w-4 h-4" />
+                           </button>
+                         </div>
                        )}
                     </div>
                     
@@ -226,7 +257,20 @@ export function QuestionBankEditor({ groupId, rubricId, bankId, isFrozen, onBack
                     {isExp && (
                       <div className="p-4 pt-2 border-t border-gray-100 space-y-4 animate-in fade-in slide-in-from-top-2">
                          <div>
-                            <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">Question Intent</label>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider">Question Intent</label>
+                              {!isFrozen && (
+                                <button
+                                  type="button"
+                                  onClick={() => void enhanceItemField(overallIdx, 'intent')}
+                                  disabled={!item.intent.trim() || enhancingKey === `${overallIdx}-intent`}
+                                  className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                                >
+                                  {enhancingKey === `${overallIdx}-intent` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                                  Fix text
+                                </button>
+                              )}
+                            </div>
                             <input 
                               value={item.intent}
                               onChange={(e) => updateItem(overallIdx, 'intent', e.target.value)}
