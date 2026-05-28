@@ -131,6 +131,11 @@ class GroupDetailResponse(BaseModel):
     position_id: UUID
     project_id: UUID
     organization_id: UUID
+    position_title: str | None = None
+    job_description: str | None = None
+    required_skills: list = Field(default_factory=list)
+    experience_level: str | None = None
+    years_of_experience: int | None = None
     assigned_hr: AssignedHRResponse | None = None
     created_date: datetime
     status: str

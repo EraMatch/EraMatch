@@ -798,7 +798,7 @@ class GroupService:
                 interviews_data.append(
                     GroupInterviewItem(
                         id=liv2_rubric.id,
-                        title=f"AI Live Interview V2 – {dim_count} dimension{'s' if dim_count != 1 else ''}",
+                        title=f"AI Live Interview - {dim_count} dimension{'s' if dim_count != 1 else ''}",
                         interview_type="live_ai_v2",
                         max_retakes=1,
                         questions_count=q_count,
@@ -816,6 +816,11 @@ class GroupService:
             position_id=group.position_id,
             project_id=position.project_id,
             organization_id=group.organization_id,
+            position_title=position.job_title,
+            job_description=position.job_description,
+            required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
+            experience_level=position.experience_level,
+            years_of_experience=position.years_of_experience,
             assigned_hr=assigned_hr,
             created_date=group.created_at,
             status=group.status,
