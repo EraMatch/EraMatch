@@ -1,6 +1,6 @@
 import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -366,6 +366,29 @@ export function PositionDetailView({
     setKeywordsVisible(hasAnyKeywords(kw));
   }, [detailData]);
 
+  // Upload polling state — declared here so the useEffects below can reference them
+  const [isPollingForCandidates, setIsPollingForCandidates] = useState(false);
+  const [pollFoundCount, setPollFoundCount] = useState(0);
+  const candidateCountRef = useRef(0);
+
+  // Poll for new candidates after an upload, refreshing every 10s
+  useEffect(() => {
+    if (!isPollingForCandidates || !positionId) return;
+    const interval = setInterval(async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [isPollingForCandidates, positionId, queryClient]);
+
+  // Stop polling once we detect new candidates arrived
+  useEffect(() => {
+    if (!isPollingForCandidates) return;
+    if (candidates.length > candidateCountRef.current) {
+      setPollFoundCount(candidates.length - candidateCountRef.current);
+      setIsPollingForCandidates(false);
+    }
+  }, [candidates.length, isPollingForCandidates]);
+
   useEffect(() => {
     if (!insightsData) return;
     const i = insightsData as any;
@@ -468,9 +491,15 @@ export function PositionDetailView({
       formData.append('file', zipFile);
       formData.append('position_id', positionId);
 
+      const isPdf = zipFile.name.toLowerCase().endsWith('.pdf');
+      const fileTypeLabel = isPdf ? 'PDF' : 'ZIP';
+
       const res = await api.recruiter.importZipCandidates(positionId, formData);
-      setUploadSuccess(`Successfully processed ${res.job_id ? 'ZIP ingestion job started' : 'files'}. Background job is running.`);
-      // Optionally refresh candidates list here
+      setUploadSuccess(`${fileTypeLabel} upload accepted. Background job is running — candidates will appear shortly.`);
+      // Start polling for new candidates
+      candidateCountRef.current = candidates.length;
+      setPollFoundCount(0);
+      setIsPollingForCandidates(true);
     } catch (err: any) {
       setUploadError(err.message || "Upload failed");
     } finally {
@@ -786,6 +815,19 @@ export function PositionDetailView({
         {/* Candidates Tab Content */}
         {activeTab === 'candidates' && (
           <div className="w-full space-y-5">
+            {/* Polling banner — shows while background job is running */}
+            {isPollingForCandidates && (
+              <div className="flex items-center gap-3 rounded-[10px] border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
+                <Loader2 size={15} className="animate-spin shrink-0" />
+                <span>CV is being processed — candidates will appear automatically. Checking every 10s…</span>
+              </div>
+            )}
+            {pollFoundCount > 0 && !isPollingForCandidates && (
+              <div className="flex items-center gap-3 rounded-[10px] border border-green-200 bg-green-50 px-4 py-2.5 text-sm text-green-700">
+                <CheckCircle size={15} className="shrink-0" />
+                <span>{pollFoundCount} new candidate{pollFoundCount > 1 ? 's' : ''} added successfully.</span>
+              </div>
+            )}
             <div className="rounded-[14px] border border-[#dbe3ff] bg-gradient-to-br from-white via-[#f8faff] to-[#f3f6ff] p-5 shadow-sm">
               <div className="mb-2 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
                 <h2 className="font-['Arimo',sans-serif] text-[22px] leading-[28px] text-[#0f172a]">
@@ -931,7 +973,7 @@ export function PositionDetailView({
                   <Upload size={20} className="text-[#6366f1]" />
                   <div className="text-left">
                     <div className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                      Upload CVs (.zip)
+                      Upload CVs (.zip / .pdf)
                     </div>
                     <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
                       Drag & drop or browse
@@ -2188,12 +2230,12 @@ export function PositionDetailView({
         />
       )}
 
-      {/* ZIP Upload Modal */}
+      {/* ZIP/PDF Upload Modal */}
       {showZipUploadModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-[16px] w-full max-w-[600px] p-8">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-[#111827] text-[20px]">Upload CVs (.zip)</h3>
+              <h3 className="text-[#111827] text-[20px]">Upload CVs (.zip / .pdf)</h3>
               <button
                 onClick={() => {
                   setShowZipUploadModal(false);
@@ -2215,7 +2257,7 @@ export function PositionDetailView({
                 >
                   <input
                     type="file"
-                    accept=".zip"
+                    accept=".zip,.pdf"
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
@@ -2226,10 +2268,10 @@ export function PositionDetailView({
                   />
                   <Upload size={48} className={`mx-auto mb-4 ${zipFile ? 'text-[#6366f1]' : 'text-[#6b7280]'}`} />
                   <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] mb-2">
-                    {zipFile ? zipFile.name : "Drag and drop your ZIP file here, or click to browse"}
+                    {zipFile ? zipFile.name : "Drag and drop your ZIP or PDF file here, or click to browse"}
                   </p>
                   <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                    Supported format: .zip (max 100MB)
+                    Supported formats: .zip, .pdf (max 100MB)
                   </p>
                 </div>
 
@@ -2282,14 +2324,31 @@ export function PositionDetailView({
                   <CheckCircle size={32} className="text-green-600" />
                 </div>
                 <h4 className="text-lg font-medium text-gray-900 mb-2">Upload Complete!</h4>
-                <p className="text-sm text-gray-500 mb-6">{uploadSuccess}</p>
+                <p className="text-sm text-gray-500 mb-3">{uploadSuccess}</p>
+
+                {/* Live polling status */}
+                {pollFoundCount > 0 ? (
+                  <div className="flex items-center justify-center gap-2 text-sm text-green-600 font-medium mb-6">
+                    <CheckCircle size={14} />
+                    {pollFoundCount} new candidate{pollFoundCount > 1 ? 's' : ''} added to the list!
+                  </div>
+                ) : isPollingForCandidates ? (
+                  <div className="flex items-center justify-center gap-2 text-sm text-gray-400 mb-6">
+                    <Loader2 size={14} className="animate-spin" />
+                    Checking for new candidates... (refreshes every 10s)
+                  </div>
+                ) : (
+                  <div className="mb-6" />
+                )}
+
                 <button
                   onClick={() => {
                     setShowZipUploadModal(false);
                     setZipFile(null);
                     setUploadSuccess(null);
-                    // Refresh data
-                    window.location.reload(); // Quick refresh or re-fetch
+                    setIsPollingForCandidates(false);
+                    // Invalidate position detail to pick up any new candidates immediately
+                    if (positionId) queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
                   }}
                   className="px-6 py-2 bg-[#6366f1] text-white rounded-lg hover:bg-[#5558e3]"
                 >

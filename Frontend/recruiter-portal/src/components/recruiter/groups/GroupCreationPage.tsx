@@ -29,6 +29,7 @@ interface Candidate {
   job_titles?: string[];
   universities?: string[];
   degrees?: string[];
+  gpa?: number | null;
   // Group fields
   groupId?: string;
   groupName?: string;
@@ -350,6 +351,9 @@ export function GroupCreationPage({
     }
     if (f.degree && f.degree.length > 0) {
       filtered = filtered.filter(c => c.degrees?.some(d => f.degree.some((fd: string) => d.toLowerCase().includes(fd.toLowerCase()))));
+    }
+    if (f.gpaMin && f.gpaMin > 0) {
+      filtered = filtered.filter(c => c.gpa != null && c.gpa >= f.gpaMin);
     }
 
     // 3. Work Experience
@@ -1060,6 +1064,13 @@ export function GroupCreationPage({
                       <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
                         {candidate.email}
                       </div>
+                      {candidate.universities && candidate.universities.length > 0 && (
+                        <div className="font-['Arimo',sans-serif] text-[11px] text-[#8b5cf6] mt-0.5 truncate max-w-[200px]" title={candidate.universities.join(', ')}>
+                          🏫 {candidate.universities[0]}
+                          {candidate.degrees && candidate.degrees.length > 0 && ` (${candidate.degrees[0]})`}
+                          {candidate.gpa != null && ` • GPA: ${candidate.gpa.toFixed(2)}`}
+                        </div>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3">
@@ -1253,6 +1264,7 @@ export function GroupCreationPage({
             if (filters.techStack?.length > 0) count++;
             if (filters.seniority?.length > 0) count++;
             if (filters.degree?.length > 0) count++;
+            if (filters.gpaMin > 0) count++;
             setActiveFilterCount(count);
           }}
           activeFilters={advancedFilters}

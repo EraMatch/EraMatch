@@ -15,6 +15,7 @@ export function usePositionDetail(positionId: string | undefined) {
         queryKey: queryKeys.positions.detail(positionId ?? ''),
         queryFn: () => api.recruiter.getPositionDetails(positionId!),
         enabled: !!positionId,
+        staleTime: 30 * 1000, // 30s — avoids refetch on every window focus
     })
 }
 
