@@ -2792,6 +2792,7 @@ export function EnhancedGroupOverviewV2({
                 setPendingAISettings(null);
                 setEditingInterviewData(null);
                 setRefreshKey(prev => prev + 1);
+                queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
               } catch (error) {
                 console.error('Failed to assign recorded interview:', error);
                 showToast('Failed to save AI Interview');

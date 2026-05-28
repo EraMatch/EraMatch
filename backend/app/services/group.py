@@ -15,7 +15,7 @@ from uuid import UUID
 import asyncio
 from sqlalchemy import select, func, or_, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, flag_modified
 
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.models import (
@@ -2058,12 +2058,15 @@ class GroupService:
                     cfg.instructions = ic.get("instructions", cfg.instructions)
                     cfg.max_retakes = ic.get("max_retakes", cfg.max_retakes)
                     cfg.questions = ic.get("questions", cfg.questions)
+                    flag_modified(cfg, "questions")  # JSONB reassignment is not auto-tracked
                     cfg.live_interview_context = ic.get("live_interview_context", cfg.live_interview_context)
                     cfg.difficulty = ic.get("difficulty", cfg.difficulty)
                     cfg.total_duration_minutes = ic.get("duration", cfg.total_duration_minutes)
                     cfg.show_ai_feedback = ic.get("showAIFeedback", cfg.show_ai_feedback)
                     cfg.recording_required = ic.get("recordingRequired", cfg.recording_required)
                     cfg.live_flow_config = ic.get("live_flow_config", cfg.live_flow_config)
+                    if cfg.live_flow_config is not None:
+                        flag_modified(cfg, "live_flow_config")
                     cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     self.session.add(cfg)
                 
