@@ -635,11 +635,31 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
             )}
           </div>
 
-          <div className="bg-white border border-[#e5e7eb] rounded-xl px-4 py-3 shadow-sm min-w-[240px]">
-            <div className="text-[12px] text-[#6b7280] uppercase tracking-wide mb-1">Selection Summary</div>
-            <div className="text-[24px] font-semibold text-[#111827]">{visibleSelectedCount}/{visibleCount}</div>
-            <div className="text-[13px] text-[#6b7280]">Selected in this review page</div>
-            <div className="text-[12px] text-[#9ca3af] mt-1">Overall selected: {selectedCount}/{rows.length}</div>
+          <div className="bg-white border border-[#e5e7eb] rounded-xl px-4 py-4 shadow-sm min-w-[260px] flex flex-col justify-between">
+            <div>
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="text-[12px] text-[#6b7280] uppercase tracking-wide mb-1 font-semibold">Selection Summary</div>
+                  <div className="text-[24px] font-semibold text-[#111827]">{visibleSelectedCount}/{visibleCount}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[12px] text-[#9ca3af] uppercase tracking-wide mb-1 font-semibold">Overall</div>
+                  <div className="text-[20px] font-medium text-[#4b5563]">{selectedCount}/{rows.length}</div>
+                </div>
+              </div>
+              <div className="text-[13px] text-[#6b7280] mt-1">Selected in this review page</div>
+            </div>
+            
+            <div className="mt-4 pt-4 border-t border-[#f3f4f6]">
+              <button
+                onClick={handleApprove}
+                disabled={selectedCount === 0 || isApproving}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-[10px] text-[14px] font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-55 disabled:cursor-not-allowed shadow-sm transition-all duration-200 hover:shadow-md"
+              >
+                {isApproving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                {isApproving ? 'Importing...' : `Import ${selectedCount} Question${selectedCount !== 1 ? 's' : ''}`}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -887,16 +907,6 @@ export function QuestionImportReview({ jobId, onBack, onApproved }: Props) {
           <div className="text-[13px] text-[#6b7280]">
             {visibleSelectedCount} of {visibleCount} selected in {reviewPage === 'mcq' ? 'MCQ' : 'Essay'} page
           </div>
-          <div className="ml-auto" />
-
-          <button
-            onClick={handleApprove}
-            disabled={selectedCount === 0 || isApproving}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-[10px] text-[13px] font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-55 disabled:cursor-not-allowed"
-          >
-            {isApproving ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
-            {isApproving ? 'Importing...' : `Import ${selectedCount} Question${selectedCount !== 1 ? 's' : ''}`}
-          </button>
         </div>
 
         <div className="p-4 space-y-3">

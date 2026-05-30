@@ -124,6 +124,7 @@ class PositionResponse(BaseModel):
     candidatesCount: int = Field(default=0, serialization_alias="candidatesCount")
     applicantsCount: int = Field(default=0, serialization_alias="applicantsCount")
     department: str | None = Field(default="Technical", serialization_alias="department")
+    groupsCount: int = Field(default=0, serialization_alias="groupsCount")
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -138,6 +139,9 @@ class PositionCandidateResponse(BaseModel):
     color: str = "#6366f1"
     starred: bool = False
     selected: bool = False
+    position: str | None = None
+    project: str | None = None
+    hiringRound: str | None = None
     
     # Group Assignment
     groupId: UUID | None = None
@@ -197,6 +201,7 @@ class PositionGroupResponse(BaseModel):
     assigned_tech_name: str | None = None
     stage: str = "Initial"
     lastUpdated: str = "Just now"
+    filtration_flow: list[str] | None = None
 
 class PositionDetailsResponse(BaseModel):
     candidates: list[PositionCandidateResponse] = []

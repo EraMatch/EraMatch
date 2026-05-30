@@ -405,7 +405,7 @@ export function EnhancedGroupOverviewV2({
         }
 
         if (Number.isFinite(Number(data.github_questions_count))) {
-          setGithubQuestionsCount(Math.max(1, Math.min(30, Number(data.github_questions_count))));
+          setGithubQuestionsCount(Math.max(0, Math.min(30, Number(data.github_questions_count))));
         }
 
         if (data.activityLog) {
@@ -423,13 +423,20 @@ export function EnhancedGroupOverviewV2({
     fetchData();
   }, [groupDetailData]);
 
-  const handleSaveFlow = async (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[], configuredGithubQuestionsCount: number) => {
+  const handleSaveFlow = async (
+    flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[], 
+    configuredGithubQuestionsCount: number,
+    useGithubVideo: boolean,
+    useGithubLive: boolean
+  ) => {
     try {
       await updateGroupMutation.mutateAsync({
         groupId,
         data: {
           filtration_flow: flowConfig,
           github_questions_count: configuredGithubQuestionsCount,
+          use_github_questions_video_interview: useGithubVideo,
+          use_github_questions_live_interview: useGithubLive,
         },
       });
       setGithubQuestionsCount(configuredGithubQuestionsCount);

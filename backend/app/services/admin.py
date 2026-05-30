@@ -2035,7 +2035,8 @@ CandidateStageProgress.completed_at.isnot(None),
                                 title="Technical Review Assigned",
                                 message=f"You have been assigned to review the position '{position.job_title}'. Please review and approve it.",
                                 is_read=False,
-                                created_at=datetime.utcnow()
+                                created_at=datetime.utcnow(),
+                                data={"position_id": str(position.id)}
                             )
                             self.session.add(tech_notification)
 

@@ -63,6 +63,22 @@ async def get_notifications(
     return await service.get_notifications(skip=skip, limit=limit)
 
 
+class MarkReadRequest(BaseModel):
+    notification_id: UUID | None = None
+
+@router.post("/notifications/read")
+async def mark_notifications_read(
+    session: DbSession,
+    current_user: RecruiterUser,
+    data: MarkReadRequest | None = None,
+):
+    """Mark a specific notification or all notifications as read."""
+    service = RecruiterService(session, current_user)
+    notification_id = data.notification_id if data else None
+    count = await service.mark_notifications_read(notification_id)
+    return {"status": "success", "marked_count": count}
+
+
 # =============================================================================
 # PROJECTS
 # =============================================================================
@@ -707,6 +723,15 @@ async def upload_candidates_zip(
     if not file.filename.endswith('.zip'):
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Only .zip files are supported.")
+        
+    pos_res = await session.execute(select(Position).where(Position.id == position_id))
+    pos = pos_res.scalar_one_or_none()
+    if not pos:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Position not found.")
+    if pos.status in ["pending", "technical_review"]:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Cannot import candidates while position is under review.")
     
     content = await file.read()
     
@@ -834,6 +859,15 @@ async def create_position_group(
     if data.position_id != position_id:
          from fastapi import HTTPException
          raise HTTPException(status_code=400, detail="Position ID mismatch.")
+
+    pos_res = await session.execute(select(Position).where(Position.id == position_id))
+    pos = pos_res.scalar_one_or_none()
+    if not pos:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Position not found.")
+    if pos.status in ["pending", "technical_review"]:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Cannot create groups while position is under review.")
 
     # Use GroupService
     service = GroupService(session, current_user)

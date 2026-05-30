@@ -348,17 +348,20 @@ export function RecruiterSettings({ userRole }: RecruiterSettingsProps) {
                             </div>
                             <div className="space-y-1">
                                 {[
-                                    { id: 'email', label: 'Email Notifications', desc: 'Receive notifications via email', val: emailNotifications, set: setEmailNotifications },
-                                    { id: 'candidates', label: 'New Candidate Alerts', desc: 'Get notified when high-match candidates are found', val: newMemberRequests, set: setNewMemberRequests },
-                                    { id: 'assessments', label: 'Assessment Updates', desc: 'Receive updates when candidates complete assessments', val: projectUpdates, set: setProjectUpdates },
-                                    { id: 'summary', label: 'Weekly Summary', desc: 'Get a weekly summary of recruitment activities', val: weeklySummary, set: setWeeklySummary },
+                                    { id: 'email_notifications', label: 'Email Notifications', desc: 'Receive notifications via email', val: emailNotifications, set: setEmailNotifications },
+                                    { id: 'new_member_requests', label: 'New Candidate Alerts', desc: 'Get notified when high-match candidates are found', val: newMemberRequests, set: setNewMemberRequests },
+                                    { id: 'project_updates', label: 'Assessment Updates', desc: 'Receive updates when candidates complete assessments', val: projectUpdates, set: setProjectUpdates },
+                                    { id: 'weekly_summary', label: 'Weekly Summary', desc: 'Get a weekly summary of recruitment activities', val: weeklySummary, set: setWeeklySummary },
                                 ].map((item, idx, arr) => (
                                     <div key={item.id} className={`flex items-center justify-between py-4 ${idx !== arr.length - 1 ? 'border-b border-gray-100' : ''}`}>
                                         <div>
                                             <p className="text-gray-700 font-medium">{item.label}</p>
                                             <p className="text-gray-500 text-sm">{item.desc}</p>
                                         </div>
-                                        <Switch checked={item.val} onCheckedChange={item.set} />
+                                        <Switch checked={item.val} onCheckedChange={(val) => {
+                                            item.set(val);
+                                            handleSavePreferences({ [item.id]: val });
+                                        }} />
                                     </div>
                                 ))}
                             </div>
@@ -383,14 +386,20 @@ export function RecruiterSettings({ userRole }: RecruiterSettingsProps) {
                                         <p className="text-gray-700 font-medium">Two-Factor Authentication</p>
                                         <p className="text-gray-500 text-sm">Add an extra layer of security to your account</p>
                                     </div>
-                                    <Switch checked={twoFactorAuth} onCheckedChange={setTwoFactorAuth} />
+                                    <Switch checked={twoFactorAuth} onCheckedChange={(val) => {
+                                        setTwoFactorAuth(val);
+                                        handleSavePreferences({ two_factor_auth: val });
+                                    }} />
                                 </div>
                                 <div className="flex items-center justify-between py-3 border-b border-gray-100">
                                     <div>
                                         <p className="text-gray-700 font-medium">Session Timeout</p>
                                         <p className="text-gray-500 text-sm">Auto-logout after 30 minutes of inactivity</p>
                                     </div>
-                                    <Switch checked={sessionTimeout} onCheckedChange={setSessionTimeout} />
+                                    <Switch checked={sessionTimeout} onCheckedChange={(val) => {
+                                        setSessionTimeout(val);
+                                        handleSavePreferences({ session_timeout: val });
+                                    }} />
                                 </div>
                                 <Button variant="outline" className="rounded-full px-6 border-indigo-200 text-indigo-600 hover:bg-indigo-50" onClick={() => setIsPasswordModalOpen(true)}>
                                     Change Password

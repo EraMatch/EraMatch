@@ -38,6 +38,29 @@ def _drafts_root() -> Path:
     return (_repo_root() / default_from_settings).resolve()
 
 
+def _ensure_model_downloaded(local_path: Path, s3_key: str) -> bool:
+    """Download model from S3 if it doesn't exist locally."""
+    if local_path.exists():
+        return True
+        
+    s3_bucket = getattr(settings, "PROCTORING_MODELS_S3_BUCKET", "")
+    if not s3_bucket:
+        return False
+        
+    try:
+        import boto3
+        from botocore.exceptions import NoCredentialsError, ClientError
+        
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        s3 = boto3.client("s3", region_name=getattr(settings, "PROCTORING_MODELS_S3_REGION", "us-east-1"))
+        print(f"Downloading {s3_key} from s3://{s3_bucket} to {local_path}...")
+        s3.download_file(s3_bucket, s3_key, str(local_path))
+        return True
+    except Exception as e:
+        print(f"Failed to download model {s3_key}: {e}")
+        return False
+
+
 class _ModelRegistry:
     def __init__(self) -> None:
         root = _drafts_root()
@@ -47,12 +70,14 @@ class _ModelRegistry:
         self.face_tflite_file = root / "Eye monitoring" / "mobilefacenet.tflite"
         self.gaze_weights_file = root / "Eye monitoring" / "Eye gaze" / "gaze_model_final.pth"
         self.speaker_profiles_dir = root / "Speaker Identification" / "speaker_profiles"
+        self.yolo_model_file = root / "yolo11s.pt"
 
         self._speaker_profiles: dict[str, np.ndarray] | None = None
         self._emotion_loader_error: str | None = None
         self._voice_loader_error: str | None = None
         self._face_loader_error: str | None = None
         self._gaze_loader_error: str | None = None
+        self._yolo_loader_error: str | None = None
         self._emotion_model: Any | None = None
         self._emotion_labels = [
             "anger",
@@ -71,6 +96,8 @@ class _ModelRegistry:
         self._voice_feature_extractor: Any | None = None
         self._voice_model: Any | None = None
         self._gaze_model: Any | None = None
+        self._mp_face_mesh: Any | None = None
+        self._yolo_model: Any | None = None
 
     def wired_status(self) -> dict[str, Any]:
         return {
@@ -80,10 +107,12 @@ class _ModelRegistry:
             "face_weights_present": self.face_tflite_file.exists(),
             "gaze_weights_present": self.gaze_weights_file.exists(),
             "speaker_profiles_present": self.speaker_profiles_dir.exists(),
+            "yolo_weights_present": self.yolo_model_file.exists(),
             "emotion_loader_error": self._emotion_loader_error,
             "voice_loader_error": self._voice_loader_error,
             "face_loader_error": self._face_loader_error,
             "gaze_loader_error": self._gaze_loader_error,
+            "yolo_loader_error": self._yolo_loader_error,
         }
 
     def get_face_cascade(self) -> Any | None:
@@ -114,6 +143,7 @@ class _ModelRegistry:
         if self._emotion_model is not None:
             return self._emotion_model
 
+        _ensure_model_downloaded(self.emotion_model_file, "models/emotion/model_keras.h5")
         model_path = self.emotion_model_file if self.emotion_model_file.exists() else None
         if model_path is None:
             self._emotion_loader_error = "emotion_model_file_not_found"
@@ -158,6 +188,7 @@ class _ModelRegistry:
                 self._face_tflite_output_details,
             )
 
+        _ensure_model_downloaded(self.face_tflite_file, "models/face/mobilefacenet.tflite")
         if not self.face_tflite_file.exists():
             self._face_loader_error = "face_tflite_file_not_found"
             return None
@@ -183,6 +214,7 @@ class _ModelRegistry:
         if self._gaze_model is not None:
             return self._gaze_model
 
+        _ensure_model_downloaded(self.gaze_weights_file, "models/gaze/gaze_model_final.pth")
         if not self.gaze_weights_file.exists():
             self._gaze_loader_error = "gaze_weights_file_not_found"
             return None
@@ -246,6 +278,35 @@ class _ModelRegistry:
                 for npy_path in self.speaker_profiles_dir.glob("*.npy"):
                     self._speaker_profiles[npy_path.stem.lower()] = np.load(npy_path)
         return self._speaker_profiles.get(profile_key)
+
+    def get_yolo_model(self) -> Any | None:
+        if self._yolo_model is not None:
+            return self._yolo_model
+
+        _ensure_model_downloaded(self.yolo_model_file, "models/yolo/yolo11s.pt")
+        if not self.yolo_model_file.exists():
+            self._yolo_loader_error = "yolo_weights_file_not_found"
+            return None
+
+        try:
+            ultralytics = importlib.import_module("ultralytics")
+            self._yolo_model = ultralytics.YOLO(str(self.yolo_model_file))
+            self._yolo_loader_error = None
+            return self._yolo_model
+        except Exception as exc:
+            self._yolo_loader_error = str(exc)
+            return None
+
+    def get_mp_face_mesh(self) -> Any | None:
+        if self._mp_face_mesh is not None:
+            return self._mp_face_mesh
+        try:
+            mp = importlib.import_module("mediapipe")
+            mp_face_mesh = mp.solutions.face_mesh
+            self._mp_face_mesh = mp_face_mesh.FaceMesh(refine_landmarks=True)
+            return self._mp_face_mesh
+        except Exception:
+            return None
 
 
 REGISTRY = _ModelRegistry()
@@ -539,6 +600,87 @@ def _voice_embedding_from_waveform(
     return emb.astype(np.float32)
 
 
+def _objects_from_frame(frame_bgr: np.ndarray | None) -> tuple[int, list[str]]:
+    cv2 = _get_cv2()
+    if cv2 is None or frame_bgr is None:
+        return 1, []
+    
+    model = REGISTRY.get_yolo_model()
+    if model is None:
+        return 1, []
+
+    height, width = frame_bgr.shape[:2]
+    resize_width = 640
+    if width > resize_width:
+        aspect_ratio = height / width
+        frame_bgr = cv2.resize(frame_bgr, (resize_width, int(resize_width * aspect_ratio)))
+
+    try:
+        results = model.predict(frame_bgr, conf=0.25, imgsz=1280, verbose=False)
+        person_count = 0
+        detected_objects = []
+        for result in results:
+            for box in result.boxes.data.cpu().numpy():
+                score = float(box[4])
+                class_id = int(box[5])
+                if score >= 0.25:
+                    label = model.names[class_id].lower()
+                    if label == "person":
+                        person_count += 1
+                        detected_objects.append("person")
+                    elif label in {"cell phone", "cellphone", "mobile phone"}:
+                        detected_objects.append("cell phone")
+                    elif label == "book":
+                        detected_objects.append("book")
+        return person_count, detected_objects
+    except Exception as exc:
+        REGISTRY._yolo_loader_error = str(exc)
+        return 1, []
+
+
+def _gaze_direction_from_frame(frame_bgr: np.ndarray | None) -> str | None:
+    cv2 = _get_cv2()
+    if cv2 is None or frame_bgr is None:
+        return None
+    
+    face_mesh = REGISTRY.get_mp_face_mesh()
+    if face_mesh is None:
+        return None
+    
+    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(frame_rgb)
+    
+    if results.multi_face_landmarks:
+        for landmarks in results.multi_face_landmarks:
+            eye_left_outer = landmarks.landmark[33]
+            eye_left_inner = landmarks.landmark[133]
+            eye_right_inner = landmarks.landmark[362]
+            eye_right_outer = landmarks.landmark[263]
+            
+            left_iris = np.mean([(landmarks.landmark[i].x, landmarks.landmark[i].y) for i in [468, 469, 470, 471]], axis=0)
+            right_iris = np.mean([(landmarks.landmark[i].x, landmarks.landmark[i].y) for i in [472, 473, 474, 475]], axis=0)
+            
+            left_ratio = (left_iris[0] - eye_left_outer.x) / max(eye_left_inner.x - eye_left_outer.x, 1e-6)
+            right_ratio = (right_iris[0] - eye_right_inner.x) / max(eye_right_outer.x - eye_right_inner.x, 1e-6)
+            avg_x_ratio = (left_ratio + right_ratio) / 2.0
+            
+            eye_left_top = landmarks.landmark[159]
+            eye_left_bottom = landmarks.landmark[145]
+            eye_right_top = landmarks.landmark[386]
+            eye_right_bottom = landmarks.landmark[374]
+            
+            left_y_ratio = (left_iris[1] - eye_left_top.y) / max(eye_left_bottom.y - eye_left_top.y, 1e-6)
+            right_y_ratio = (right_iris[1] - eye_right_top.y) / max(eye_right_bottom.y - eye_right_top.y, 1e-6)
+            avg_y_ratio = (left_y_ratio + right_y_ratio) / 2.0
+            
+            if avg_y_ratio > 0.75: return "down"
+            if avg_y_ratio < 0.25: return "up"
+            if avg_x_ratio < 0.35: return "right"
+            if avg_x_ratio > 0.65: return "left"
+            return "center"
+    return "away"
+
+
 def _frame_face_observations(
     frame_b64: str | None,
     reference_embedding: np.ndarray | None = None,
@@ -616,6 +758,12 @@ def inference_readiness() -> dict[str, Any]:
         and wiring["speaker_profiles_present"]
         and not wiring.get("voice_loader_error")
     )
+    yolo_ready = bool(
+        _dependency_available("ultralytics")
+        and wiring.get("yolo_weights_present")
+        and not wiring.get("yolo_loader_error")
+    )
+    mp_ready = _dependency_available("mediapipe")
 
     return {
         "ready": face_ready and gaze_ready and emotion_ready and voice_ready and eye_blink_ready,
@@ -648,6 +796,14 @@ def inference_readiness() -> dict[str, Any]:
                 "speaker_profiles_present": wiring["speaker_profiles_present"],
                 "loader_error": wiring.get("voice_loader_error"),
             },
+            "environment": {
+                "ready": yolo_ready,
+                "weights_present": wiring.get("yolo_weights_present", False),
+                "loader_error": wiring.get("yolo_loader_error"),
+            },
+            "gaze_direction": {
+                "ready": mp_ready,
+            }
         },
         "wiring": wiring,
     }
@@ -832,6 +988,8 @@ def evaluate_gaze_signal(
     rapid_shift_count: int,
     gaze_model_score: float | None = None,
     frame_b64: str | None = None,
+    active_challenge: str | None = None,
+    challenge_elapsed_seconds: float | None = None,
 ) -> dict:
     risk = 0.0
     event_type = "gaze_ok"
@@ -839,18 +997,39 @@ def evaluate_gaze_signal(
 
     resolved_off_screen_ratio = off_screen_ratio
     inferred_gaze_offscreen_score = None
-    if gaze_model_score is None and frame_b64:
-        inferred_gaze_offscreen_score = _gaze_offscreen_score_from_frame(_decode_image(frame_b64))
-        if inferred_gaze_offscreen_score is not None:
-            resolved_off_screen_ratio = _clamp((resolved_off_screen_ratio * 0.5) + (inferred_gaze_offscreen_score * 0.5))
+    inferred_gaze_direction = None
+    if frame_b64:
+        frame = _decode_image(frame_b64)
+        if gaze_model_score is None:
+            inferred_gaze_offscreen_score = _gaze_offscreen_score_from_frame(frame)
+            if inferred_gaze_offscreen_score is not None:
+                resolved_off_screen_ratio = _clamp((resolved_off_screen_ratio * 0.5) + (inferred_gaze_offscreen_score * 0.5))
+                used_weighted_input = True
+        
+        inferred_gaze_direction = _gaze_direction_from_frame(frame)
+        if inferred_gaze_direction is not None:
             used_weighted_input = True
+
+    if active_challenge and challenge_elapsed_seconds is not None:
+        if challenge_elapsed_seconds > 15 and inferred_gaze_direction != active_challenge:
+            risk += 0.95
+            event_type = "liveness_failed"
+    elif inferred_gaze_direction and inferred_gaze_direction != "center":
+        if inferred_gaze_direction == "down":
+            risk += 0.6  # Lap phone trick
+            event_type = "gaze_detected_down"
+        else:
+            risk += 0.4
+            event_type = "gaze_detected_off_center"
 
     if resolved_off_screen_ratio >= 0.6:
         risk += 0.7
-        event_type = "gaze_off_screen"
+        if event_type == "gaze_ok":
+            event_type = "gaze_off_screen"
     elif resolved_off_screen_ratio >= 0.35:
         risk += 0.4
-        event_type = "gaze_often_off_screen"
+        if event_type == "gaze_ok":
+            event_type = "gaze_often_off_screen"
 
     if away_duration_seconds >= 10:
         risk += 0.35
@@ -878,6 +1057,59 @@ def evaluate_gaze_signal(
             "rapid_shift_count": rapid_shift_count,
             "used_frame_inference": frame_b64 is not None,
             "inferred_gaze_offscreen_score": inferred_gaze_offscreen_score,
+            "inferred_gaze_direction": inferred_gaze_direction,
+        },
+    }
+
+
+def evaluate_environment_signal(frame_b64: str | None = None, screen_frame_b64: str | None = None) -> dict:
+    risk = 0.0
+    event_type = "environment_ok"
+    used_weighted_input = False
+    
+    person_count = 1
+    detected_objects = []
+    
+    if frame_b64:
+        frame = _decode_image(frame_b64)
+        if frame is not None:
+            person_count, detected_objects = _objects_from_frame(frame)
+            used_weighted_input = True
+            
+    if screen_frame_b64:
+        screen_frame = _decode_image(screen_frame_b64)
+        if screen_frame is not None:
+            _, screen_objects = _objects_from_frame(screen_frame)
+            detected_objects.extend(screen_objects)
+            used_weighted_input = True
+            
+    if "cell phone" in detected_objects or "book" in detected_objects:
+        risk += 0.95
+        if "cell phone" in detected_objects:
+            event_type = "cell_phone_detected"
+        else:
+            event_type = "book_detected"
+    elif person_count > 1:
+        risk += 0.85
+        event_type = "multiple_persons"
+    elif person_count == 0:
+        risk += 0.75
+        event_type = "missing_person"
+        
+    risk = _clamp(risk)
+    confidence = _clamp(0.6 + (risk * 0.3))
+    
+    return {
+        "event_type": event_type,
+        "risk_score": risk,
+        "confidence": confidence,
+        "severity": _severity_from_risk(risk),
+        "adapter_mode": "weighted_local_v1" if used_weighted_input else "weighted_rules_fallback",
+        "model_wiring": REGISTRY.wired_status(),
+        "resolved_inputs": {
+            "person_count": person_count,
+            "detected_objects": detected_objects,
+            "used_frame_inference": frame_b64 is not None,
         },
     }
 
@@ -946,4 +1178,593 @@ def evaluate_emotion_signal(
             "distribution": model_distribution,
             "used_frame_inference": model_stress_score is not None,
         },
+    }
+
+
+# =============================================================================
+# PORTED FROM LEGACY: FuturProctor Cheating Prevention System
+# Source: Cheating PRevention/futurproctor/proctoring/
+# All Django dependencies removed. Pure Python logic only.
+# =============================================================================
+
+import logging as _logging
+import time as _time
+import random as _random
+import io as _io
+import wave as _wave
+
+_logger = _logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Face Encoding Extraction (multi-strategy with Haar cascade fallback)
+# Ported from: views.py:183-261
+# ---------------------------------------------------------------------------
+
+def extract_face_encoding(image: np.ndarray) -> list[float] | None:
+    """
+    Extract a face encoding from a BGR image using multiple strategies:
+    1. face_recognition library (if available)
+    2. OpenCV Haar cascade with simple embedding
+    3. Centered-crop fallback for clear webcam faces
+
+    Returns a list of floats (the face embedding) or None if no face detected.
+    """
+    if image is None or not isinstance(image, np.ndarray) or image.ndim < 2:
+        return None
+
+    # Convert BGR -> RGB
+    if image.ndim == 3 and image.shape[2] == 3:
+        rgb_image = image[:, :, ::-1]
+    else:
+        rgb_image = image
+
+    # Strategy 1: face_recognition library
+    try:
+        face_recognition = importlib.import_module("face_recognition")
+        detection_attempts = [
+            {"number_of_times_to_upsample": 1, "model": "hog"},
+            {"number_of_times_to_upsample": 2, "model": "hog"},
+        ]
+        for attempt in detection_attempts:
+            face_locations = face_recognition.face_locations(rgb_image, **attempt)
+            encodings = face_recognition.face_encodings(rgb_image, face_locations)
+            if encodings:
+                enc = encodings[0]
+                return enc.tolist() if hasattr(enc, "tolist") else list(enc)
+    except Exception:
+        pass
+
+    # Strategy 2: OpenCV Haar cascade
+    cv2 = _get_cv2()
+    if cv2 is not None:
+        try:
+            gray = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY) if rgb_image.ndim == 3 else rgb_image
+            gray = cv2.equalizeHist(gray)
+            cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
+            faces = cascade.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=3, minSize=(40, 40))
+            if len(faces) > 0:
+                x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
+                face_crop = gray[y : y + h, x : x + w]
+                if face_crop.size > 0:
+                    face_resized = cv2.resize(face_crop, (16, 8), interpolation=cv2.INTER_AREA)
+                    embedding = face_resized.astype("float32").flatten()
+                    norm = float(np.linalg.norm(embedding) + 1e-6)
+                    return (embedding / norm).tolist()
+        except Exception:
+            pass
+
+        # Strategy 3: Centered-crop fallback
+        try:
+            gray = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY) if rgb_image.ndim == 3 else rgb_image
+            height, width = gray.shape[:2]
+            if height >= 40 and width >= 40:
+                crop_top = max(0, int(height * 0.15))
+                crop_bottom = min(height, int(height * 0.85))
+                crop_left = max(0, int(width * 0.2))
+                crop_right = min(width, int(width * 0.8))
+                face_crop = gray[crop_top:crop_bottom, crop_left:crop_right]
+                if face_crop.size > 0:
+                    face_resized = cv2.resize(face_crop, (16, 8), interpolation=cv2.INTER_AREA)
+                    embedding = face_resized.astype("float32").flatten()
+                    norm = float(np.linalg.norm(embedding) + 1e-6)
+                    return (embedding / norm).tolist()
+        except Exception:
+            pass
+
+    return None
+
+
+def extract_face_encoding_b64(frame_b64: str | None) -> list[float] | None:
+    """Convenience: extract face encoding from a base64-encoded image."""
+    frame = _decode_image(frame_b64)
+    if frame is None:
+        return None
+    return extract_face_encoding(frame)
+
+
+# ---------------------------------------------------------------------------
+# Face Encoding Matching
+# Ported from: views.py:264-284
+# ---------------------------------------------------------------------------
+
+def match_face_encodings(
+    captured_encoding: list[float] | np.ndarray,
+    stored_encoding: list[float] | np.ndarray,
+    threshold: float = 0.6,
+) -> tuple[bool, float]:
+    """
+    Compare two face encodings and return (is_match, distance).
+
+    Tries face_recognition.compare_faces first, then falls back to numpy L2 norm.
+    """
+    # Strategy 1: face_recognition library
+    try:
+        face_recognition = importlib.import_module("face_recognition")
+        if hasattr(face_recognition, "compare_faces") and callable(face_recognition.compare_faces):
+            match = face_recognition.compare_faces([stored_encoding], captured_encoding)[0]
+            dist = float(np.linalg.norm(
+                np.array(captured_encoding, dtype=np.float32) - np.array(stored_encoding, dtype=np.float32)
+            ))
+            return bool(match), dist
+    except Exception:
+        pass
+
+    # Strategy 2: numpy distance
+    try:
+        a = np.array(captured_encoding, dtype=np.float32)
+        b = np.array(stored_encoding, dtype=np.float32)
+        if a.size != b.size:
+            return False, float("inf")
+        dist = float(np.linalg.norm(a - b))
+        return dist < threshold, dist
+    except Exception:
+        return False, float("inf")
+
+
+# ---------------------------------------------------------------------------
+# Audio Amplitude Detection (framework-agnostic)
+# Ported from: ml_models/audio_detection.py
+# ---------------------------------------------------------------------------
+
+# Audio detection constants
+AUDIO_THRESHOLD = 500
+AUDIO_CHUNK_SIZE = 2048
+AUDIO_SAMPLE_RATE = 48000
+AUDIO_SILENCE_DELAY = 4  # seconds after last sound to consider "stopped"
+
+
+def detect_audio_amplitude(
+    audio_chunk: bytes | np.ndarray,
+    threshold: int = AUDIO_THRESHOLD,
+) -> dict:
+    """
+    Analyze a chunk of raw PCM audio (int16) for speech/noise detection.
+
+    Args:
+        audio_chunk: Raw PCM bytes or numpy int16 array.
+        threshold: Amplitude threshold above which speech is considered detected.
+
+    Returns:
+        dict with keys: audio_detected (bool), max_amplitude (int), exceeds_threshold (bool)
+    """
+    if isinstance(audio_chunk, bytes):
+        audio_data = np.frombuffer(audio_chunk, dtype=np.int16)
+    elif isinstance(audio_chunk, np.ndarray):
+        audio_data = audio_chunk.astype(np.int16)
+    else:
+        return {"audio_detected": False, "max_amplitude": 0, "exceeds_threshold": False}
+
+    if audio_data.size == 0:
+        return {"audio_detected": False, "max_amplitude": 0, "exceeds_threshold": False}
+
+    max_amp = int(np.max(np.abs(audio_data)))
+    exceeds = max_amp > threshold
+
+    return {
+        "audio_detected": exceeds,
+        "max_amplitude": max_amp,
+        "exceeds_threshold": exceeds,
+    }
+
+
+def create_wav_bytes(
+    raw_audio: bytes,
+    channels: int = 1,
+    sample_width: int = 2,
+    framerate: int = AUDIO_SAMPLE_RATE,
+) -> bytes:
+    """
+    Wrap raw PCM audio bytes with a WAV header.
+
+    Returns complete WAV file as bytes.
+    """
+    wav_buffer = _io.BytesIO()
+    with _wave.open(wav_buffer, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(sample_width)
+        wf.setframerate(framerate)
+        wf.writeframes(raw_audio)
+    return wav_buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Liveness Challenge State Machine
+# Ported from: views.py:584-608
+# ---------------------------------------------------------------------------
+
+class LivenessChallenge:
+    """
+    Issues random gaze-direction challenges and validates completion.
+
+    Usage:
+        challenge = LivenessChallenge(interval_seconds=45, timeout_seconds=15)
+
+        # On every frame tick:
+        result = challenge.tick(current_gaze_direction)
+        if result["status"] == "challenge_active":
+            # Tell the candidate to look in result["direction"]
+        elif result["status"] == "challenge_failed":
+            # Flag as liveness failure
+        elif result["status"] == "challenge_passed":
+            # Candidate complied
+    """
+
+    DIRECTIONS = ["right", "left", "up", "down"]
+
+    def __init__(self, interval_seconds: float = 45.0, timeout_seconds: float = 15.0) -> None:
+        self.interval_seconds = interval_seconds
+        self.timeout_seconds = timeout_seconds
+        self._active_direction: str | None = None
+        self._challenge_start_time: float = 0.0
+        self._last_issue_time: float = _time.time()
+        self._challenges_issued: int = 0
+        self._challenges_passed: int = 0
+        self._challenges_failed: int = 0
+
+    @property
+    def active_challenge(self) -> str | None:
+        return self._active_direction
+
+    @property
+    def stats(self) -> dict:
+        return {
+            "issued": self._challenges_issued,
+            "passed": self._challenges_passed,
+            "failed": self._challenges_failed,
+        }
+
+    def tick(self, current_gaze_direction: str | None) -> dict:
+        """
+        Call on every frame analysis tick with the detected gaze direction.
+
+        Returns:
+            dict with "status" (idle|challenge_active|challenge_passed|challenge_failed),
+            "direction" (the required direction, if active), and timing info.
+        """
+        now = _time.time()
+
+        # Issue a new challenge if interval elapsed and none active
+        if self._active_direction is None and (now - self._last_issue_time) > self.interval_seconds:
+            self._active_direction = _random.choice(self.DIRECTIONS)
+            self._challenge_start_time = now
+            self._last_issue_time = now
+            self._challenges_issued += 1
+            return {
+                "status": "challenge_active",
+                "direction": self._active_direction,
+                "elapsed_seconds": 0.0,
+                "timeout_seconds": self.timeout_seconds,
+            }
+
+        # Check active challenge
+        if self._active_direction is not None:
+            elapsed = now - self._challenge_start_time
+
+            # Check if candidate looked in the required direction
+            if current_gaze_direction and current_gaze_direction == self._active_direction:
+                self._challenges_passed += 1
+                direction = self._active_direction
+                self._active_direction = None
+                return {
+                    "status": "challenge_passed",
+                    "direction": direction,
+                    "elapsed_seconds": elapsed,
+                    "timeout_seconds": self.timeout_seconds,
+                }
+
+            # Check if timed out
+            if elapsed > self.timeout_seconds:
+                self._challenges_failed += 1
+                direction = self._active_direction
+                self._active_direction = None
+                return {
+                    "status": "challenge_failed",
+                    "direction": direction,
+                    "elapsed_seconds": elapsed,
+                    "timeout_seconds": self.timeout_seconds,
+                }
+
+            return {
+                "status": "challenge_active",
+                "direction": self._active_direction,
+                "elapsed_seconds": elapsed,
+                "timeout_seconds": self.timeout_seconds,
+            }
+
+        return {"status": "idle", "direction": None, "elapsed_seconds": 0.0, "timeout_seconds": self.timeout_seconds}
+
+    def reset(self) -> None:
+        """Reset the challenge state (e.g., when a new exam starts)."""
+        self._active_direction = None
+        self._challenge_start_time = 0.0
+        self._last_issue_time = _time.time()
+
+
+# ---------------------------------------------------------------------------
+# Unified Frame Processor
+# Ported from: views.py:520-617
+# Orchestrates all detection in a single frame pass.
+# ---------------------------------------------------------------------------
+
+def process_frame(
+    frame_bgr: np.ndarray,
+    stored_face_encoding: list[float] | np.ndarray | None = None,
+    liveness_challenge: LivenessChallenge | None = None,
+    face_check_interval: float = 10.0,
+    last_face_check_time: float = 0.0,
+) -> dict:
+    """
+    Unified frame analysis: chains object detection → face identity → gaze → liveness.
+
+    This is the main per-frame processing function extracted from the legacy system.
+    All Django/ORM references removed. Returns a pure data dict.
+
+    Args:
+        frame_bgr: BGR image numpy array from webcam/video.
+        stored_face_encoding: The known face encoding for identity verification.
+        liveness_challenge: Optional LivenessChallenge instance for challenge tracking.
+        face_check_interval: Seconds between identity re-checks.
+        last_face_check_time: Timestamp of last identity check.
+
+    Returns:
+        dict with keys:
+            violations: list[dict] — each violation has {type, description, severity}
+            gaze_direction: str — "center", "left", "right", "up", "down", "away"
+            person_count: int
+            detected_objects: list[str]
+            identity_match: bool | None
+            identity_distance: float | None
+            liveness_result: dict | None
+            last_face_check_time: float — updated timestamp
+    """
+    violations: list[dict] = []
+    identity_match: bool | None = None
+    identity_distance: float | None = None
+    updated_face_check_time = last_face_check_time
+
+    # --- Step 1: Object Detection ---
+    person_count, detected_objects = _objects_from_frame(frame_bgr)
+
+    # Check for prohibited objects
+    for obj in detected_objects:
+        if obj in ("cell phone", "book"):
+            violations.append({
+                "type": "object_detected",
+                "description": f"Prohibited object detected: {obj}",
+                "severity": "high",
+                "object": obj,
+            })
+
+    # Check person count
+    if person_count > 1:
+        violations.append({
+            "type": "multiple_persons",
+            "description": f"Multiple persons detected: {person_count}",
+            "severity": "high",
+        })
+    elif person_count == 0:
+        violations.append({
+            "type": "missing_person",
+            "description": "No person detected at the desk",
+            "severity": "high",
+        })
+
+    # --- Step 2: Identity Verification (throttled) ---
+    now = _time.time()
+    if person_count == 1 and stored_face_encoding is not None:
+        if (now - last_face_check_time) > face_check_interval:
+            updated_face_check_time = now
+            captured_encoding = extract_face_encoding(frame_bgr)
+            if captured_encoding is not None:
+                identity_match, identity_distance = match_face_encodings(
+                    captured_encoding, stored_face_encoding
+                )
+                if not identity_match:
+                    violations.append({
+                        "type": "identity_mismatch",
+                        "description": "Unrecognized person detected (face mismatch)",
+                        "severity": "high",
+                        "distance": identity_distance,
+                    })
+
+    # --- Step 3: Gaze Tracking ---
+    gaze_direction = _gaze_direction_from_frame(frame_bgr) or "unknown"
+
+    # --- Step 4: Liveness Challenge ---
+    liveness_result: dict | None = None
+    if liveness_challenge is not None:
+        liveness_result = liveness_challenge.tick(gaze_direction)
+
+        if liveness_result["status"] == "challenge_failed":
+            violations.append({
+                "type": "liveness_failed",
+                "description": f"Liveness challenge failed: did not look {liveness_result['direction']}",
+                "severity": "high",
+            })
+    else:
+        # Without challenge system, flag non-center gaze as low-priority
+        if gaze_direction not in ("center", "unknown"):
+            violations.append({
+                "type": "gaze_detected",
+                "description": f"Candidate not looking at the screen: {gaze_direction}",
+                "severity": "medium" if gaze_direction == "down" else "low",
+            })
+
+    return {
+        "violations": violations,
+        "gaze_direction": gaze_direction,
+        "person_count": person_count,
+        "detected_objects": detected_objects,
+        "identity_match": identity_match,
+        "identity_distance": identity_distance,
+        "liveness_result": liveness_result,
+        "last_face_check_time": updated_face_check_time,
+    }
+
+
+def process_frame_b64(
+    frame_b64: str,
+    stored_face_encoding: list[float] | np.ndarray | None = None,
+    liveness_challenge: LivenessChallenge | None = None,
+    face_check_interval: float = 10.0,
+    last_face_check_time: float = 0.0,
+) -> dict:
+    """Convenience: process a base64-encoded frame."""
+    frame = _decode_image(frame_b64)
+    if frame is None:
+        return {
+            "violations": [{"type": "invalid_frame", "description": "Could not decode frame", "severity": "low"}],
+            "gaze_direction": "unknown",
+            "person_count": 0,
+            "detected_objects": [],
+            "identity_match": None,
+            "identity_distance": None,
+            "liveness_result": None,
+            "last_face_check_time": last_face_check_time,
+        }
+    return process_frame(
+        frame,
+        stored_face_encoding=stored_face_encoding,
+        liveness_challenge=liveness_challenge,
+        face_check_interval=face_check_interval,
+        last_face_check_time=last_face_check_time,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Trust Score Calculator
+# Ported from: views.py:984-985
+# ---------------------------------------------------------------------------
+
+def compute_trust_score(
+    cheating_event_count: int,
+    penalty_per_event: int = 10,
+    max_score: int = 100,
+) -> int:
+    """
+    Compute a candidate trust score based on cheating event count.
+
+    Formula: max(0, max_score - (cheating_event_count * penalty_per_event))
+    """
+    return max(0, max_score - (cheating_event_count * penalty_per_event))
+
+
+# ---------------------------------------------------------------------------
+# Browser Event Validators (server-side validation of client-reported events)
+# Ported from: exam.html:177-250
+# ---------------------------------------------------------------------------
+
+def validate_tab_switch_event(
+    current_count: int,
+    max_allowed: int = 5,
+) -> dict:
+    """
+    Validate a tab-switch event reported by the browser.
+
+    Returns:
+        dict with keys:
+            new_count: int — incremented count
+            is_violation: bool — True if count >= 1
+            is_terminated: bool — True if max exceeded
+            message: str
+    """
+    new_count = current_count + 1
+    is_terminated = new_count > max_allowed
+
+    if is_terminated:
+        return {
+            "new_count": new_count,
+            "is_violation": True,
+            "is_terminated": True,
+            "message": f"Exam terminated: {new_count} tab switches exceeded the limit of {max_allowed}.",
+        }
+
+    return {
+        "new_count": new_count,
+        "is_violation": new_count >= 1,
+        "is_terminated": False,
+        "message": f"Tab switch detected. Total switches: {new_count}/{max_allowed}.",
+    }
+
+
+# Browser event types that should be flagged
+BROWSER_PREVENTION_EVENTS = frozenset({
+    "tab_switch",          # Document visibility changed to hidden
+    "window_blur",         # Window lost focus (second monitor, alt-tab)
+    "fullscreen_exit",     # Exited fullscreen mode
+    "right_click",         # Context menu invoked
+    "copy_attempt",        # Ctrl+C / Cmd+C
+    "paste_attempt",       # Ctrl+V / Cmd+V
+    "devtools_open",       # Developer tools detected
+    "screen_capture",      # Screen capture API detected
+})
+
+
+def validate_browser_event(
+    event_type: str,
+    session_events: list[dict] | None = None,
+) -> dict:
+    """
+    Validate a browser prevention event reported by the client.
+
+    Args:
+        event_type: One of BROWSER_PREVENTION_EVENTS
+        session_events: Previous events in the session (for pattern analysis)
+
+    Returns:
+        dict with: is_violation, severity, event_type, description
+    """
+    is_known = event_type in BROWSER_PREVENTION_EVENTS
+
+    # Severity mapping
+    severity_map = {
+        "tab_switch": "high",
+        "window_blur": "high",
+        "fullscreen_exit": "high",
+        "right_click": "low",
+        "copy_attempt": "medium",
+        "paste_attempt": "medium",
+        "devtools_open": "high",
+        "screen_capture": "high",
+    }
+
+    description_map = {
+        "tab_switch": "Candidate switched away from the exam tab",
+        "window_blur": "Exam window lost focus (possible second monitor or alt-tab)",
+        "fullscreen_exit": "Candidate exited fullscreen mode",
+        "right_click": "Right-click context menu invoked",
+        "copy_attempt": "Copy action detected during exam",
+        "paste_attempt": "Paste action detected during exam",
+        "devtools_open": "Browser developer tools opened",
+        "screen_capture": "Screen capture API usage detected",
+    }
+
+    return {
+        "is_violation": is_known,
+        "severity": severity_map.get(event_type, "low"),
+        "event_type": event_type,
+        "description": description_map.get(event_type, f"Unknown browser event: {event_type}"),
     }

@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     PRESCORE_USE_AI_SERVICE: bool = True
     PRESCORE_LLM_PROVIDER: str = "ollama"
     PRESCORE_LLM_MODEL: str | None = None
-    PRESCORE_AI_SERVICE_TIMEOUT_SECONDS: float = 90.0
+    PRESCORE_AI_SERVICE_TIMEOUT_SECONDS: float = 600.0
     PRESCORE_ALLOW_FALLBACK: bool = False
 
     # Internal Services

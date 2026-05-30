@@ -6,6 +6,7 @@ export interface JobPosition {
     assignedTechnicalRecruiter?: string;
     applicantsCount: number;
     candidatesCount: number;
+    groupsCount?: number;
     status: 'Open' | 'Interview' | 'Closed' | 'On Hold' | 'Active' | 'active' | 'closed' | 'pending' | 'rejected';
     projectId?: string;
     description?: string;

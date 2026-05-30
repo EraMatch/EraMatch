@@ -15,6 +15,11 @@ export const recruiterService = {
 
     // Notifications
     getNotifications: async () => fetchAPI<any[]>('/recruiter/notifications'),
+    markNotificationRead: async (notificationId?: string) => 
+        fetchAPI<any>('/recruiter/notifications/read', {
+            method: 'POST',
+            body: JSON.stringify({ notification_id: notificationId || null })
+        }),
 
     // Project Management
     getProjects: async (status?: string) => {

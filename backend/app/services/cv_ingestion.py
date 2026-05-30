@@ -26,6 +26,7 @@ from app.models import (
     CandidateProfile,
     CandidateApplication,
     Position,
+    QAGProcessingJob,
 )
 from app.services.prescore import PreScoreService
 from worker.celery_app import celery_app
@@ -39,6 +40,61 @@ GOOGLE_SERVICE_ACCOUNT_FILE = getattr(settings, "GOOGLE_SERVICE_ACCOUNT_FILE", "
 class CVIngestionService:
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    async def _enqueue_resume_correction_if_ready(
+        self,
+        position: Position,
+        application_id: UUID,
+        candidate_id: UUID,
+    ) -> None:
+        """Queue a resume-correction job when approved QAG exists and no run is active."""
+        artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else {}
+        approved_questions = artifact.get("approved_questions") if isinstance(artifact.get("approved_questions"), list) else []
+        is_criteria_approved = str(artifact.get("status") or "").lower() == "approved" and len(approved_questions) > 0
+        if not is_criteria_approved:
+            return
+
+        active_query = select(QAGProcessingJob.id).where(
+            QAGProcessingJob.organization_id == position.organization_id,
+            QAGProcessingJob.position_id == position.id,
+            QAGProcessingJob.job_type == "qag_resume_correction",
+            QAGProcessingJob.status.in_(["pending", "processing"]),
+        )
+        active_result = await self.session.execute(active_query)
+        if active_result.scalar_one_or_none():
+            return
+
+        correction_job = QAGProcessingJob(
+            organization_id=position.organization_id,
+            position_id=position.id,
+            application_id=application_id,
+            candidate_id=candidate_id,
+            created_by_user_id=None,
+            job_type="qag_resume_correction",
+            status="pending",
+            source_provider=str(artifact.get("provider") or "ai-service:ollama"),
+            total_items=0,
+            processed_items=0,
+            summary={
+                "position_id": str(position.id),
+                "application_id": str(application_id),
+                "candidate_id": str(candidate_id),
+                "applications_scored": 0,
+                "candidates_found": 0,
+                "candidates_processed": 0,
+                "candidates_skipped": 0,
+                "zero_reason": "Queued after a new application arrived for an approved position.",
+            },
+            started_at=datetime.utcnow(),
+        )
+        self.session.add(correction_job)
+        await self.session.commit()
+        await self.session.refresh(correction_job)
+
+        celery_app.send_task(
+            "qag.recompute_position_prescores",
+            args=[str(position.id), str(position.organization_id), str(position.assigned_tech_id or candidate_id), str(correction_job.id)],
+        )
 
     async def update_job_status(self, job_id: UUID, status: str, **extra_fields):
         """Update a CVIngestionJob row."""
@@ -260,6 +316,11 @@ class CVIngestionService:
                         )
                 except Exception as score_exc:
                     logger.warning(f"Prescore computation skipped for app {app_id}: {score_exc}")
+
+                try:
+                    await self._enqueue_resume_correction_if_ready(position, app_id, candidate_id)
+                except Exception as enqueue_exc:
+                    logger.warning(f"Failed to enqueue resume correction for app {app_id}: {enqueue_exc}")
 
                 celery_app.send_task(
                     "cv_parsing.persist_parsed_data",

@@ -66,13 +66,14 @@ interface PositionDetailViewProps {
   screeningConditions?: string;
   isOpen?: boolean;
   onBack: () => void;
-  onSave: (title: string, description: string, screening: string, isOpen: boolean) => void;
+  onSave: (title: string, description: string, screening: string, isOpen: boolean) => void | Promise<void>;
   onCreateAssessment: () => void;
   onSaveAssessment?: (assessment: Assessment) => void;
   savedAssessments?: Assessment[];
   onViewDashboard?: () => void;
   onViewGroup?: (groupId: string) => void;
   initialActiveTab?: 'candidates' | 'groups' | 'insights';
+  positionStatus?: string;
 }
 
 const PREVIEW_SECTION_LABELS = [
@@ -191,13 +192,16 @@ export function PositionDetailView({
   savedAssessments = [],
   onViewDashboard,
   onViewGroup,
-  initialActiveTab = 'candidates'
+  initialActiveTab = 'candidates',
+  positionStatus = 'open'
 }: PositionDetailViewProps) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
   const [archivedGroups, setArchivedGroups] = useState<any[]>([]);
   const [showArchivedGroups, setShowArchivedGroups] = useState(false);
   const [archivedGroupsLoaded, setArchivedGroupsLoaded] = useState(false);
+  const isInsightsLocked = groups.length === 0;
+  const insightsLockMessage = 'Create at least one group to unlock role insights and charts.';
   const [fittingData, setFittingData] = useState<any[]>([]);
   const [scoreData, setScoreData] = useState<any[]>([]);
   const [skillDistribution, setSkillDistribution] = useState<any[]>([]);
@@ -386,6 +390,8 @@ export function PositionDetailView({
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const isHR = user.role === 'hr' || user.role === 'admin';
   const canManageQAG = user.role === 'technical' || user.role === 'admin';
+  const isUnderReview = positionStatus === 'pending' || positionStatus === 'technical_review';
+  const canUseCandidateActions = !isUnderReview;
   const navigate = useNavigate();
 
   // Upload Logic
@@ -498,10 +504,14 @@ export function PositionDetailView({
     setIsEditDialogOpen(true);
   };
 
-  const handleSaveChanges = () => {
+  const handleSaveChanges = async () => {
     if (editPositionTitle.trim()) {
-      onSave(editPositionTitle, editPositionDescription, editPositionScreening, editPositionIsOpen);
-      setIsEditDialogOpen(false);
+      try {
+        await onSave(editPositionTitle, editPositionDescription, editPositionScreening, editPositionIsOpen);
+        setIsEditDialogOpen(false);
+      } catch (error) {
+        console.error('Failed to save position changes', error);
+      }
     }
   };
 
@@ -528,6 +538,7 @@ export function PositionDetailView({
 
 
   const handleRecomputeScores = async () => {
+    if (!canUseCandidateActions) return;
     try {
       setIsRecomputingScores(true);
       setRecomputeError(null);
@@ -548,6 +559,7 @@ export function PositionDetailView({
   };
 
   const handleShowKeywords = async () => {
+    if (!canUseCandidateActions) return;
     try {
       setKeywordsVisible(true);
       setKeywordsError(null);
@@ -569,6 +581,7 @@ export function PositionDetailView({
   };
 
   const openQagManager = async () => {
+    if (!canUseCandidateActions) return;
     try {
       setIsQagDialogOpen(true);
       setQagLoading(true);
@@ -704,51 +717,84 @@ export function PositionDetailView({
           {viewingCandidateId !== null ? 'Back to Position' : 'Back to Positions'}
         </button>
 
-        {/* Header with Title and Edit Button */}
-        <div className="flex items-start justify-between w-full">
-          <h1 className="font-['Arimo',sans-serif] text-[36px] leading-[40px] text-black">
-            {positionTitle}
-          </h1>
-          <button
-            onClick={handleEditClick}
-            className="flex items-center justify-center w-[40px] h-[40px] rounded-[8px] hover:bg-white/50 transition-colors"
-          >
-            <Pencil size={20} className="text-[#6366f1]" strokeWidth={1.5} />
-          </button>
-        </div>
+        {/* Modern Header Section */}
+        <div className="relative w-full overflow-hidden rounded-[24px] bg-white p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100">
+          <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-gradient-to-br from-indigo-500/10 to-purple-500/10 blur-3xl mix-blend-multiply"></div>
+          <div className="absolute top-0 right-0 p-8 z-10">
+            <button
+              onClick={handleEditClick}
+              className="group flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 border border-slate-200 text-slate-500 transition-all hover:bg-indigo-600 hover:text-white hover:border-indigo-600 hover:shadow-md"
+            >
+              <Pencil size={18} className="transition-transform group-hover:scale-110" />
+            </button>
+          </div>
+          
+          <div className="relative z-10 max-w-[85%]">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                <Building2 size={16} />
+              </div>
+              <span className="text-[13px] font-bold uppercase tracking-widest text-indigo-600">
+                {projectTitle || "Active Position"}
+              </span>
+            </div>
+            <h1 className="bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-800 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent mb-8">
+              {positionTitle}
+            </h1>
 
-        {/* Description */}
-        <div className="w-full">
-          <h2 className="font-['Arimo',sans-serif] text-[16px] text-black mb-2">
-            Description
-          </h2>
-          <div className="rounded-[12px] border border-[#e5e7eb] bg-white/70 p-4">
-            <p className="font-['Arimo',sans-serif] text-[14px] leading-7 text-[#4b5563] whitespace-pre-line break-words">
-              {visibleDescription || 'No description provided'}
-            </p>
-            {collapsedDescription.truncated && (
-              <button
-                type="button"
-                onClick={() => setIsDescriptionExpanded((prev) => !prev)}
-                className="mt-3 font-['Arimo',sans-serif] text-[13px] font-semibold text-[#4f46e5] hover:text-[#4338ca] transition-colors"
-              >
-                {isDescriptionExpanded ? 'Show less' : 'Expand full description'}
-              </button>
-            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Description Card */}
+              <div className="group rounded-2xl border border-slate-100 bg-slate-50/50 p-5 transition-colors hover:bg-slate-50">
+                <div className="mb-3 flex items-center gap-2 text-slate-700">
+                  <MapPin size={16} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                  <h2 className="text-[15px] font-bold">Role Description</h2>
+                </div>
+                <p className="text-[14px] leading-relaxed text-slate-600 whitespace-pre-line break-words">
+                  {visibleDescription || 'No description provided'}
+                </p>
+                {collapsedDescription.truncated && (
+                  <button
+                    type="button"
+                    onClick={() => setIsDescriptionExpanded((prev) => !prev)}
+                    className="mt-4 flex items-center gap-1.5 text-[13px] font-bold text-indigo-600 hover:text-indigo-700 transition-colors"
+                  >
+                    {isDescriptionExpanded ? 'Show less' : 'Read full description'}
+                  </button>
+                )}
+              </div>
+
+              {/* Screening Conditions Card */}
+              <div className="group rounded-2xl border border-slate-100 bg-slate-50/50 p-5 transition-colors hover:bg-slate-50">
+                <div className="mb-3 flex items-center gap-2 text-slate-700">
+                  <ShieldCheck size={16} className="text-slate-400 group-hover:text-emerald-500 transition-colors" />
+                  <h2 className="text-[15px] font-bold">Screening Conditions</h2>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 h-full w-[2px] bg-emerald-200 rounded-full group-hover:bg-emerald-400 transition-colors"></div>
+                  <p className="text-[14px] leading-relaxed text-slate-600 whitespace-pre-line break-words italic">
+                    "{screeningPreview || 'No specific screening conditions'}"
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Screening Conditions */}
-        <div className="w-full">
-          <h2 className="font-['Arimo',sans-serif] text-[16px] text-black mb-2">
-            Screening Conditions
-          </h2>
-          <div className="rounded-[12px] border border-[#e5e7eb] bg-white/70 p-4">
-            <p className="font-['Arimo',sans-serif] text-[14px] leading-7 text-[#4b5563] whitespace-pre-line break-words">
-              {screeningPreview || 'No screening conditions provided'}
-            </p>
+        {/* Approval Status Banner */}
+        {isUnderReview && (
+          <div className="w-full bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3 shadow-sm animate-in fade-in zoom-in duration-500">
+            <div className="mt-0.5 flex-shrink-0">
+              <ShieldCheck size={20} className="text-amber-500" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-amber-800">Position Under Review</h3>
+              <p className="text-sm text-amber-700 mt-1">
+                This position is currently awaiting technical review. 
+                Administrative actions such as uploading candidates, creating groups, or modifying criteria are locked until approved by the Technical HR.
+              </p>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Tab Navigation */}
         <div className="w-full border-b border-[#e5e7eb]">
@@ -783,388 +829,428 @@ export function PositionDetailView({
           </div>
         </div>
 
-        {/* Candidates Tab Content */}
+{/* Candidates Tab Content */}
         {activeTab === 'candidates' && (
-          <div className="w-full space-y-5">
-            <div className="rounded-[14px] border border-[#dbe3ff] bg-gradient-to-br from-white via-[#f8faff] to-[#f3f6ff] p-5 shadow-sm">
-              <div className="mb-2 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
-                <h2 className="font-['Arimo',sans-serif] text-[22px] leading-[28px] text-[#0f172a]">
-                  Candidates Workspace
-                </h2>
-                <p className="font-['Arimo',sans-serif] text-[13px] text-[#64748b]">
-                  Manage criteria, keywords, and candidate scoring in one place
-                </p>
-              </div>
+          <div className="w-full space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            {/* Header & Workspace Actions */}
+            <div className="relative overflow-hidden rounded-3xl bg-white p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100">
+              <div className="absolute top-0 right-0 -mr-20 -mt-20 h-64 w-64 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 blur-3xl mix-blend-multiply"></div>
+              <div className="absolute bottom-0 left-0 -ml-20 -mb-20 h-64 w-64 rounded-full bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 blur-3xl mix-blend-multiply"></div>
+              
+              <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent">
+                    Candidates Workspace
+                  </h2>
+                  <p className="mt-2 text-[14px] font-medium text-slate-500">
+                    Manage criteria, track metrics, and orchestrate candidate evaluations seamlessly.
+                  </p>
+                </div>
 
-              <div className="mt-4 flex w-full flex-wrap items-center gap-2.5 lg:w-auto lg:justify-start">
-                <button
-                  onClick={handleShowKeywords}
-                  className="inline-flex h-[40px] items-center justify-center px-[14px] rounded-[10px] border border-[#bbf7d0] bg-[#f0fdf4] hover:bg-[#dcfce7] transition-colors"
-                >
-                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#166534]">
-                    {keywordsVisible ? 'JD Keywords Visible' : 'Show JD Keywords'}
-                  </span>
-                </button>
-                {canManageQAG && (
+                <div className="flex flex-wrap items-center gap-3">
                   <button
-                    onClick={openQagManager}
-                    className="inline-flex h-[40px] items-center justify-center px-[14px] rounded-[10px] border border-[#ddd6fe] bg-[#f5f3ff] hover:bg-[#ede9fe] transition-colors"
+                    onClick={handleShowKeywords}
+                    disabled={!canUseCandidateActions}
+                    title={!canUseCandidateActions ? 'Position must be approved before using JD keywords' : undefined}
+                    className={`group relative flex h-11 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-b from-white to-slate-50 px-5 shadow-sm ring-1 ring-slate-200/50 transition-all ${canUseCandidateActions ? 'hover:shadow-md hover:ring-indigo-500/30' : 'opacity-50 cursor-not-allowed'}`}
                   >
-                    <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#5b21b6]">
-                      Manage QAG Questions
+                    <div className="absolute inset-0 bg-gradient-to-r from-emerald-400/0 via-emerald-400/10 to-emerald-400/0 opacity-0 transition-opacity duration-500 group-hover:opacity-100"></div>
+                    <span className="relative flex items-center gap-2 text-[14px] font-semibold text-slate-700 transition-colors group-hover:text-emerald-700">
+                      <div className={`w-2 h-2 rounded-full ${keywordsVisible ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" : "bg-slate-300"}`}></div>
+                      {keywordsVisible ? 'JD Keywords Visible' : 'Show JD Keywords'}
                     </span>
                   </button>
-                )}
-                <button
-                  onClick={handleRecomputeScores}
-                  disabled={isRecomputingScores}
-                  className="inline-flex h-[40px] items-center justify-center gap-2 px-[14px] rounded-[10px] border border-[#c7d2fe] bg-[#eef2ff] hover:bg-[#e0e7ff] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isRecomputingScores && <Loader2 size={14} className="animate-spin text-[#4338ca]" />}
-                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold text-[#4338ca]">
-                    {isRecomputingScores ? 'Recomputing...' : 'Recompute Scores'}
-                  </span>
-                </button>
+                  
+                  {canManageQAG && (
+                    <button
+                      onClick={openQagManager}
+                      disabled={!canUseCandidateActions}
+                      title={!canUseCandidateActions ? 'Position must be approved before managing QAG' : undefined}
+                      className={`group relative flex h-11 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-b from-white to-slate-50 px-5 shadow-sm ring-1 ring-slate-200/50 transition-all ${canUseCandidateActions ? 'hover:shadow-md hover:ring-purple-500/30' : 'opacity-50 cursor-not-allowed'}`}
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-r from-purple-400/0 via-purple-400/10 to-purple-400/0 opacity-0 transition-opacity duration-500 group-hover:opacity-100"></div>
+                      <span className="relative flex items-center gap-2 text-[14px] font-semibold text-slate-700 transition-colors group-hover:text-purple-700">
+                        <Users size={16} className="text-slate-400 group-hover:text-purple-500 transition-colors" />
+                        Manage QAG
+                      </span>
+                    </button>
+                  )}
+                  
+                  <button
+                    onClick={handleRecomputeScores}
+                    disabled={isRecomputingScores || !canUseCandidateActions}
+                    title={!canUseCandidateActions ? 'Position must be approved before recomputing scores' : undefined}
+                    className={`group relative flex h-11 items-center justify-center overflow-hidden rounded-xl bg-indigo-600 px-6 shadow-[0_4px_14px_0_rgb(79,70,229,0.39)] transition-all ${canUseCandidateActions ? 'hover:bg-indigo-700 hover:-translate-y-0.5 hover:shadow-[0_6px_20px_rgba(79,70,229,0.23)]' : 'opacity-50 cursor-not-allowed'} disabled:hover:translate-y-0`}
+                  >
+                    <span className="relative flex items-center gap-2 text-[14px] font-semibold text-white">
+                      {isRecomputingScores ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Recomputing...
+                        </>
+                      ) : (
+                        <>
+                          <ArrowUpDown size={16} className="transition-transform group-hover:rotate-180 duration-500" />
+                          Recompute Scores
+                        </>
+                      )}
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
 
             {recomputeMessage && (
-              <div className="mb-4 rounded-[10px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
-                <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{recomputeMessage}</p>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3 backdrop-blur-sm animate-in fade-in">
+                <p className="text-sm font-medium text-emerald-800">{recomputeMessage}</p>
               </div>
             )}
             {recomputeError && (
-              <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
-                <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{recomputeError}</p>
+              <div className="rounded-xl border border-rose-200 bg-rose-50/50 px-4 py-3 backdrop-blur-sm animate-in fade-in">
+                <p className="text-sm font-medium text-rose-800">{recomputeError}</p>
               </div>
             )}
-
-            {keywordsVisible && (
-              <div className="rounded-[14px] border border-[#dbe4ff] bg-white p-5 shadow-sm">
-                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="font-['Arimo',sans-serif] text-[16px] font-semibold text-[#1e3a8a]">Extracted JD Keywords</span>
-                    {isGeneratingKeywords && <Loader2 size={14} className="animate-spin text-[#1e3a8a]" />}
-                  </div>
-                  <button
-                    type="button"
-                    disabled={isGeneratingKeywords}
-                    onClick={async () => {
-                      setIsGeneratingKeywords(true);
-                      setKeywordsMessage(null);
-                      setKeywordsError(null);
-                      try {
-                        const r = await api.recruiter.generatePositionKeywords(positionId) as any;
-                        const extracted = r?.keywords ?? null;
-                        setJdKeywords(extracted);
-                        setKeywordsMessage(`Keywords extracted via ${r?.model ?? 'LLM'}.`);
-                      } catch (e) {
-                        setKeywordsError(e instanceof Error ? e.message : 'Extraction failed — please retry.');
-                      } finally {
-                        setIsGeneratingKeywords(false);
-                      }
-                    }}
-                    className="h-[30px] px-[12px] rounded-[7px] border border-[#bfdbfe] bg-white text-[12px] text-[#1d4ed8] hover:bg-[#dbeafe] transition-colors disabled:opacity-50"
-                  >
-                    {isGeneratingKeywords ? 'Extracting...' : 'Re-extract'}
-                  </button>
-                </div>
-
-                {keywordsMessage && (
-                  <p className="mb-2 font-['Arimo',sans-serif] text-[12px] text-[#166534]">{keywordsMessage}</p>
-                )}
-                {keywordsError && (
-                  <p className="mb-2 font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{keywordsError}</p>
-                )}
-
-                {!hasAnyKeywords(jdKeywords) ? (
-                  <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                    No keywords are saved for this position yet.
-                  </p>
-                ) : (
-                  <div className="space-y-2 rounded-[12px] border border-[#dbeafe] bg-[#f8fbff] p-3.5">
-                    {KEYWORD_SECTIONS.map(({ key, label, color }) => {
-                      const kws: string[] = Array.isArray((jdKeywords as any)?.[key]) ? (jdKeywords as any)[key] : [];
-                      if (kws.length === 0) return null;
-                      const isExpanded = Boolean(expandedKeywordSections[key]);
-                      return (
-                        <div key={key} className="rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => setExpandedKeywordSections((prev) => ({ ...prev, [key]: !prev[key] }))}
-                            className="flex w-full items-center justify-between gap-2 text-[12px] text-[#334155] hover:text-[#111827]"
-                          >
-                            <span className="font-['Arimo',sans-serif] font-semibold uppercase tracking-wide">{label}</span>
-                            <span className="flex items-center gap-2">
-                              <span className="rounded-full bg-white border border-[#d1d5db] px-2 py-0 text-[11px] text-[#64748b]">{kws.length}</span>
-                              <span className="text-[11px] text-[#64748b]">{isExpanded ? 'Hide' : 'Show'}</span>
-                            </span>
-                          </button>
-
-                          {isExpanded && (
-                            <div className="flex flex-wrap gap-1.5 mt-2">
-                              {kws.map((kw, i) => (
-                                <span key={`${key}-${i}`} className={`inline-flex items-center px-[8px] py-[2px] rounded-[999px] border text-[11px] font-medium ${color}`}>
-                                  {kw}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Import Candidates Section */}
-            <div className="bg-white rounded-[14px] p-6 shadow-sm mb-6 border border-[#eef2ff]">
-              <h3 className="font-['Arimo',sans-serif] text-[19px] text-black mb-4">
-                Import Candidates
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <button
-                  onClick={() => setShowZipUploadModal(true)}
-                  className="flex items-center gap-3 p-4 rounded-[8px] border-2 border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-all"
-                >
-                  <Upload size={20} className="text-[#6366f1]" />
-                  <div className="text-left">
-                    <div className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                      Upload CVs (.zip)
-                    </div>
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                      Drag & drop or browse
-                    </div>
-                  </div>
-                </button>
-                <button
-                  onClick={() => setShowGoogleDriveModal(true)}
-                  className="flex items-center gap-3 p-4 rounded-[8px] border-2 border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-all"
-                >
-                  <Calendar size={20} className="text-[#10b981]" />
-                  <div className="text-left">
-                    <div className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                      Schedule Data Import
-                    </div>
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                      Google Drive integration
-                    </div>
-                  </div>
-                </button>
-              </div>
-            </div>
 
             {/* Quick Data Board */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-              {/* Total Candidates */}
-              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                    Total Candidates
-                  </h4>
-                  <Users size={18} className="text-[#6366f1]" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+              {[
+                { title: 'Total Candidates', value: filteredCandidates.length, icon: Users, color: 'indigo', total: null },
+                { title: 'Groups Created', value: groups.length, icon: Users, color: 'emerald', total: null },
+                { 
+                  title: 'Assigned', 
+                  value: groups.reduce((sum, g) => sum + g.candidateCount, 0), 
+                  icon: Users, 
+                  color: 'teal',
+                  total: candidates.length 
+                },
+                { 
+                  title: 'Unassigned', 
+                  value: (candidates as any[]).filter(c => !c.groupId).length, 
+                  icon: Users, 
+                  color: 'amber',
+                  total: candidates.length
+                }
+              ].map((stat, i) => (
+                <div key={i} className="group relative overflow-hidden rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100 transition-all hover:shadow-md hover:ring-slate-200">
+                  <div className={`absolute -right-6 -top-6 h-24 w-24 rounded-full bg-${stat.color}-500/5 transition-transform duration-500 group-hover:scale-150`}></div>
+                  <div className="relative z-10 flex items-center justify-between mb-4">
+                    <h4 className="text-[13px] font-semibold uppercase tracking-wider text-slate-500">
+                      {stat.title}
+                    </h4>
+                    <div className={`flex h-8 w-8 items-center justify-center rounded-full bg-${stat.color}-50 text-${stat.color}-600`}>
+                      <stat.icon size={16} />
+                    </div>
+                  </div>
+                  <div className="relative z-10">
+                    <p className="text-3xl font-bold tracking-tight text-slate-900">
+                      {stat.value}
+                    </p>
+                    {stat.total !== null && (
+                      <div className="mt-3 w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full bg-${stat.color}-500 transition-all duration-1000 ease-out`}
+                          style={{ width: `${stat.total ? (stat.value / stat.total) * 100 : 0}%` }}
+                        ></div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <p className="font-['Arimo',sans-serif] text-[28px] text-black">
-                  {filteredCandidates.length}
-                </p>
-              </div>
-
-              {/* Groups Created */}
-              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                    Groups Created
-                  </h4>
-                  <Users size={18} className="text-[#10b981]" />
-                </div>
-                <p className="font-['Arimo',sans-serif] text-[28px] text-black">
-                  {groups.length}
-                </p>
-              </div>
-
-              {/* Assigned Candidates */}
-              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                    Assigned
-                  </h4>
-                  <div className="w-[8px] h-[8px] rounded-full bg-[#10b981]"></div>
-                </div>
-                <p className="font-['Arimo',sans-serif] text-[28px] text-black mb-2">
-                  {groups.reduce((sum, g) => sum + g.candidateCount, 0)}
-                </p>
-                <div className="w-full h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#10b981]"
-                    style={{ width: `${(groups.reduce((sum, g) => sum + g.candidateCount, 0) / (candidates.length || 1)) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
-
-              {/* Unassigned Candidates */}
-              <div className="bg-white rounded-[14px] p-5 shadow-sm border border-[#eef2ff]">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                    Unassigned
-                  </h4>
-                  <div className="w-[8px] h-[8px] rounded-full bg-[#f59e0b]"></div>
-                </div>
-                <p className="font-['Arimo',sans-serif] text-[28px] text-black mb-2">
-                  {(candidates as any[]).filter(c => !c.groupId).length}
-                </p>
-                <div className="w-full h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#f59e0b]"
-                    style={{ width: `${((candidates as any[]).filter(c => !c.groupId).length / (candidates.length || 1)) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
+              ))}
             </div>
 
-            {/* Group Distribution */}
-            <div className="bg-white rounded-[14px] p-6 shadow-sm mb-6 border border-[#eef2ff]">
-              <h3 className="font-['Arimo',sans-serif] text-[19px] text-black mb-4">
-                Candidates by Group
-              </h3>
-              {groups.length > 0 ? (
-                <div className="space-y-3">
-                  {groups.map((group) => (
-                    <div key={group.id}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
-                          {group.name}
-                        </span>
-                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                          {group.candidateCount} candidates
-                        </span>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Column */}
+              <div className="lg:col-span-4 flex flex-col gap-6">
+                
+                {/* Import Candidates Section */}
+                <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100 hover:shadow-md transition-shadow">
+                  <h3 className="text-lg font-bold text-slate-900 mb-4">
+                    Import Candidates
+                  </h3>
+                  <div className="flex flex-col gap-3">
+                    <button
+                      onClick={() => setShowZipUploadModal(true)}
+                      disabled={!canUseCandidateActions}
+                      title={!canUseCandidateActions ? 'Position must be approved before importing candidates' : undefined}
+                      className={`group flex items-center gap-4 rounded-xl border border-dashed border-slate-300 p-4 transition-all ${canUseCandidateActions ? 'hover:border-indigo-400 hover:bg-indigo-50/50' : 'opacity-50 cursor-not-allowed bg-slate-50'}`}
+                    >
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600 transition-colors ${canUseCandidateActions ? 'group-hover:bg-indigo-600 group-hover:text-white' : ''}`}>
+                        <Upload size={20} />
                       </div>
-                      <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-[#6366f1]"
-                          style={{ width: `${(group.candidateCount / candidates.length) * 100}%` }}
-                        />
+                      <div className="text-left">
+                        <div className="text-[14px] font-semibold text-slate-900">Upload CVs (.zip)</div>
+                        <div className="text-[12px] font-medium text-slate-500">Drag & drop or browse</div>
                       </div>
+                    </button>
+                    <button
+                      onClick={() => setShowGoogleDriveModal(true)}
+                      disabled={!canUseCandidateActions}
+                      title={!canUseCandidateActions ? 'Position must be approved before scheduling data import' : undefined}
+                      className={`group flex items-center gap-4 rounded-xl border border-dashed border-slate-300 p-4 transition-all ${canUseCandidateActions ? 'hover:border-emerald-400 hover:bg-emerald-50/50' : 'opacity-50 cursor-not-allowed bg-slate-50'}`}
+                    >
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 transition-colors ${canUseCandidateActions ? 'group-hover:bg-emerald-600 group-hover:text-white' : ''}`}>
+                        <Calendar size={20} />
+                      </div>
+                      <div className="text-left">
+                        <div className="text-[14px] font-semibold text-slate-900">Schedule Data Import</div>
+                        <div className="text-[12px] font-medium text-slate-500">Google Drive integration</div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Group Distribution */}
+                <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100 hover:shadow-md transition-shadow">
+                  <h3 className="text-lg font-bold text-slate-900 mb-4">
+                    Candidates by Group
+                  </h3>
+                  {groups.length > 0 ? (
+                    <div className="space-y-4">
+                      {groups.map((group) => (
+                        <div key={group.id} className="group">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[14px] font-medium text-slate-700 group-hover:text-indigo-600 transition-colors">
+                              {group.name}
+                            </span>
+                            <span className="text-[12px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                              {group.candidateCount}
+                            </span>
+                          </div>
+                          <div className="w-full h-[6px] bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000"
+                              style={{ width: `${(group.candidateCount / candidates.length) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                      {(candidates as any[]).filter(c => !c.groupId).length > 0 && (
+                        <div className="group pt-2 border-t border-slate-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[14px] font-medium text-slate-500">
+                              Unassigned
+                            </span>
+                            <span className="text-[12px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                              {(candidates as any[]).filter(c => !c.groupId).length}
+                            </span>
+                          </div>
+                          <div className="w-full h-[6px] bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-amber-400 transition-all duration-1000"
+                              style={{ width: `${((candidates as any[]).filter(c => !c.groupId).length / candidates.length) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  ))}
-                  {(candidates as any[]).filter(c => !c.groupId).length > 0 && (
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
-                          Unassigned
-                        </span>
-                        <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                          {(candidates as any[]).filter(c => !c.groupId).length} candidates
-                        </span>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-6 text-center">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-50 mb-3">
+                        <Users size={20} className="text-slate-400" />
                       </div>
-                      <div className="w-full h-[6px] bg-[#e5e7eb] rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-[#f59e0b]"
-                          style={{ width: `${((candidates as any[]).filter(c => !c.groupId).length / candidates.length) * 100}%` }}
-                        />
-                      </div>
+                      <p className="text-[13px] font-medium text-slate-500">
+                        No groups created yet.
+                      </p>
                     </div>
                   )}
                 </div>
-              ) : (
-                <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af] text-center py-4">
-                  No groups created yet. Create a group to organize candidates.
-                </p>
-              )}
-            </div>
-
-            {/* All Candidates List */}
-            <div className="bg-white rounded-[14px] p-6 shadow-sm border border-[#eef2ff]">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="font-['Arimo',sans-serif] text-[19px] text-black">
-                  All Candidates ({filteredCandidates.length})
-                </h3>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsFilterOpen(true)}
-                    className={`flex items-center justify-center w-[32px] h-[32px] rounded-[6px] transition-colors ${Object.values(filters).some(v => Array.isArray(v) ? v.length > 0 : !!v) &&
-                      (filters.experienceRange[0] > 0 || filters.experienceRange[1] < 20)
-                      ? 'bg-[#6366f1] text-white hover:bg-[#5558e3]'
-                      : 'hover:bg-[#f3f4f6] text-[#6366f1]'
-                      }`}
-                  >
-                    <Filter size={18} className="text-[#6366f1]" strokeWidth={1.5} />
-                  </button>
-                  <button className="flex items-center justify-center w-[32px] h-[32px] rounded-[6px] hover:bg-[#f3f4f6] transition-colors">
-                    <ArrowUpDown size={18} className="text-[#6366f1]" strokeWidth={1.5} />
-                  </button>
-                </div>
-              </div>
-
-              {assessmentResetMessage && (
-                <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{assessmentResetMessage}</p>
-                </div>
-              )}
-              {assessmentResetError && (
-                <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{assessmentResetError}</p>
-                </div>
-              )}
-
-              <div className="max-h-[500px] overflow-y-auto pr-2">
-                <div className="flex flex-col gap-3">
-                  {filteredCandidates.map((candidate) => (
-                    
-                    <div
-                      key={candidate.id}
-                      className="grid grid-cols-1 lg:grid-cols-[auto_1fr_auto_auto_auto] items-center gap-3 p-4 rounded-[12px] border border-[#e2e8f0] bg-[#f8fafc] hover:bg-[#f1f5f9] transition-colors"
-                    >
-                      <div className={`w-[4px] h-[44px] rounded-full`} style={{ backgroundColor: candidate.color }}></div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-['Arimo',sans-serif] text-[16px] text-[#0f172a]">
-                          {candidate.name}
-                        </p>
-                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#64748b]">
-                          {candidate.email}
-                        </p>
-                      </div>
-                      <div className="text-left lg:text-right lg:mr-2">
-                        {(() => {
-                          const displayScore = getCandidateDisplayScore(candidate);
-                          const displayMatch = getCandidateDisplayMatch(candidate);
-                          return (
-                            <>
-                              <p className="font-['Arimo',sans-serif] text-[15px] text-black">
-                                Score: {displayScore != null ? displayScore : 'N/A'}
-                              </p>
-                              <p className="font-['Arimo',sans-serif] text-[13px] text-[#64748b]">
-                                Match: {displayMatch != null ? `${displayMatch}%` : 'N/A'}
-                              </p>
-                            </>
-                          );
-                        })()}
+                
+                {keywordsVisible && (
+                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100 hover:shadow-md transition-shadow animate-in fade-in slide-in-from-left-4">
+                    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg font-bold text-slate-900">Extracted JD Keywords</span>
+                        {isGeneratingKeywords && <Loader2 size={16} className="animate-spin text-indigo-600" />}
                       </div>
                       <button
-                        onClick={() => handleResetAssessmentTrial(candidate)}
-                        disabled={!candidate.applicationId || assessmentResetLoadingApplicationId === String(candidate.applicationId)}
-                        className="h-[38px] px-[12px] rounded-[8px] border border-[#fecaca] bg-[#fff1f2] hover:bg-[#ffe4e6] disabled:opacity-50 disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[12px] text-[#b91c1c] transition-colors"
-                      >
-                        {assessmentResetLoadingApplicationId === String(candidate.applicationId) ? 'Resetting...' : 'Reset Trial'}
-                      </button>
-                      <button
-                        onClick={() => {
-                          const query = candidate.applicationId
-                            ? `?applicationId=${encodeURIComponent(String(candidate.applicationId))}`
-                            : '';
-                          navigate(`/recruiter/candidates/${candidate.id}${query}`);
+                        type="button"
+                        disabled={isGeneratingKeywords}
+                        onClick={async () => {
+                          setIsGeneratingKeywords(true);
+                          setKeywordsMessage(null);
+                          setKeywordsError(null);
+                          try {
+                            const r = await api.recruiter.generatePositionKeywords(positionId) as any;
+                            const extracted = r?.keywords ?? null;
+                            setJdKeywords(extracted);
+                            setKeywordsMessage(`Keywords extracted via ${r?.model ?? 'LLM'}.`);
+                          } catch (e) {
+                            setKeywordsError(e instanceof Error ? e.message : 'Extraction failed — please retry.');
+                          } finally {
+                            setIsGeneratingKeywords(false);
+                          }
                         }}
-                        className="h-[38px] px-[16px] rounded-[8px] bg-[#5b21b6] hover:bg-[#6d28d9] font-['Arimo',sans-serif] text-[13px] text-white transition-colors"
+                        className="flex items-center justify-center h-8 px-3 rounded-lg bg-indigo-50 text-[12px] font-semibold text-indigo-600 hover:bg-indigo-100 transition-colors disabled:opacity-50"
                       >
-                        View Report
+                        {isGeneratingKeywords ? 'Extracting...' : 'Re-extract'}
                       </button>
                     </div>
-                  ))}
+
+                    {keywordsMessage && (
+                      <p className="mb-3 text-[13px] font-medium text-emerald-600 bg-emerald-50 px-3 py-2 rounded-lg">{keywordsMessage}</p>
+                    )}
+                    {keywordsError && (
+                      <p className="mb-3 text-[13px] font-medium text-rose-600 bg-rose-50 px-3 py-2 rounded-lg">{keywordsError}</p>
+                    )}
+
+                    {!hasAnyKeywords(jdKeywords) ? (
+                      <div className="flex flex-col items-center justify-center py-6 text-center border-2 border-dashed border-slate-100 rounded-xl">
+                        <p className="text-[13px] font-medium text-slate-500">
+                          No keywords are saved yet.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {KEYWORD_SECTIONS.map(({ key, label, color }) => {
+                          const kws: string[] = Array.isArray((jdKeywords as any)?.[key]) ? (jdKeywords as any)[key] : [];
+                          if (kws.length === 0) return null;
+                          const isExpanded = Boolean(expandedKeywordSections[key]);
+                          return (
+                            <div key={key} className="overflow-hidden rounded-xl border border-slate-100 bg-slate-50/50">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedKeywordSections((prev) => ({ ...prev, [key]: !prev[key] }))}
+                                className="flex w-full items-center justify-between p-3 hover:bg-slate-100/50 transition-colors"
+                              >
+                                <span className="text-[12px] font-bold uppercase tracking-wider text-slate-700">{label}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="flex h-5 items-center justify-center rounded-full bg-white px-2 text-[11px] font-bold text-slate-600 shadow-sm ring-1 ring-slate-200">{kws.length}</span>
+                                </div>
+                              </button>
+
+                              {isExpanded && (
+                                <div className="flex flex-wrap gap-2 p-3 pt-0">
+                                  {kws.map((kw, i) => (
+                                    <span key={`${key}-${i}`} className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[12px] font-semibold shadow-sm ring-1 ring-inset ring-black/5 ${color.replace('border', '').trim()} bg-white`}>
+                                      {kw}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: All Candidates List */}
+              <div className="lg:col-span-8">
+                <div className="flex h-full flex-col rounded-2xl bg-white shadow-sm ring-1 ring-slate-100">
+                  <div className="flex items-center justify-between border-b border-slate-100 p-6">
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900">
+                        Candidates Roster
+                      </h3>
+                      <p className="mt-1 text-[13px] font-medium text-slate-500">
+                        Showing {filteredCandidates.length} potential matches
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setIsFilterOpen(true)}
+                        className={`group relative flex h-10 w-10 items-center justify-center rounded-xl transition-all ${
+                          Object.values(filters).some(v => Array.isArray(v) ? v.length > 0 : !!v) &&
+                          (filters.experienceRange[0] > 0 || filters.experienceRange[1] < 20)
+                            ? 'bg-indigo-600 text-white shadow-md hover:bg-indigo-700'
+                            : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700 ring-1 ring-slate-200'
+                        }`}
+                      >
+                        <Filter size={18} className="transition-transform group-hover:scale-110" />
+                      </button>
+                      <button className="group flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 text-slate-500 ring-1 ring-slate-200 transition-all hover:bg-slate-100 hover:text-slate-700">
+                        <ArrowUpDown size={18} className="transition-transform group-hover:scale-110" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {assessmentResetMessage && (
+                    <div className="mx-6 mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                      <p className="text-[13px] font-medium text-emerald-800">{assessmentResetMessage}</p>
+                    </div>
+                  )}
+                  {assessmentResetError && (
+                    <div className="mx-6 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+                      <p className="text-[13px] font-medium text-rose-800">{assessmentResetError}</p>
+                    </div>
+                  )}
+
+                  <div className="flex-1 overflow-y-auto p-6 pt-4 min-h-[400px]">
+                    <div className="flex flex-col gap-4">
+                      {filteredCandidates.map((candidate) => (
+                        <div
+                          key={candidate.id}
+                          className="group relative flex flex-col gap-4 overflow-hidden rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 transition-all hover:-translate-y-1 hover:shadow-lg hover:ring-indigo-500/30 sm:flex-row sm:items-center"
+                        >
+                          <div className="absolute left-0 top-0 h-full w-1.5 transition-colors" style={{ backgroundColor: candidate.color || '#6366f1' }}></div>
+                          
+                          <div className="flex flex-1 items-center gap-4 pl-2">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 text-lg font-bold text-slate-700">
+                              {candidate.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-[16px] font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                                {candidate.name}
+                              </p>
+                              <p className="truncate text-[13px] font-medium text-slate-500">
+                                {candidate.email}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-4 sm:flex-nowrap sm:justify-end">
+                            <div className="flex flex-col items-start rounded-xl bg-slate-50 px-4 py-2 sm:items-end">
+                              {(() => {
+                                const displayScore = getCandidateDisplayScore(candidate);
+                                const displayMatch = getCandidateDisplayMatch(candidate);
+                                return (
+                                  <>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Score</span>
+                                      <span className="text-[16px] font-extrabold text-slate-900">{displayScore != null ? displayScore : '-'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Match</span>
+                                      <span className="text-[13px] font-bold text-indigo-600">{displayMatch != null ? `${displayMatch}%` : '-'}</span>
+                                    </div>
+                                  </>
+                                );
+                              })()}
+                            </div>
+
+                            <div className="flex w-full items-center gap-2 sm:w-auto">
+                              <button
+                                onClick={() => handleResetAssessmentTrial(candidate)}
+                                disabled={!candidate.applicationId || assessmentResetLoadingApplicationId === String(candidate.applicationId)}
+                                className="flex h-10 flex-1 items-center justify-center rounded-xl border-2 border-rose-100 bg-rose-50 px-4 text-[13px] font-bold text-rose-600 transition-colors hover:border-rose-200 hover:bg-rose-100 disabled:opacity-50 disabled:cursor-not-allowed sm:flex-none"
+                              >
+                                {assessmentResetLoadingApplicationId === String(candidate.applicationId) ? <Loader2 size={16} className="animate-spin" /> : 'Reset'}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const query = candidate.applicationId
+                                    ? `?applicationId=${encodeURIComponent(String(candidate.applicationId))}`
+                                    : '';
+                                  navigate(`/recruiter/candidates/${candidate.id}${query}`);
+                                }}
+                                className="flex h-10 flex-1 items-center justify-center rounded-xl bg-slate-900 px-6 text-[13px] font-bold text-white shadow-md transition-all hover:bg-indigo-600 hover:shadow-lg hover:shadow-indigo-500/25 sm:flex-none"
+                              >
+                                View Report
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         )}
+
 
         {/* Groups Tab Content */}
         {activeTab === 'groups' && (
@@ -1228,10 +1314,12 @@ export function PositionDetailView({
                   {isHR && !showArchivedGroups && (
                     <button
                       onClick={() => setShowGroupCreationPage(true)}
-                      className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] transition-colors"
+                      disabled={!canUseCandidateActions}
+                      className={`flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] transition-colors ${canUseCandidateActions ? 'bg-[#6366f1] hover:bg-[#5558e3] text-white' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}
+                      title={!canUseCandidateActions ? "Position must be approved before creating groups" : undefined}
                     >
-                      <Plus size={18} className="text-white" strokeWidth={2} />
-                      <span className="font-['Arimo',sans-serif] text-[14px] text-white">
+                      <Plus size={18} className={canUseCandidateActions ? "text-white" : "text-slate-500"} strokeWidth={2} />
+                      <span className={`font-['Arimo',sans-serif] text-[14px] ${canUseCandidateActions ? "text-white" : "text-slate-500"}`}>
                         Create Group
                       </span>
                     </button>
@@ -1279,26 +1367,43 @@ export function PositionDetailView({
                     </div>
                   )
                 ) : groups.length === 0 ? (
-                  <div className="bg-white rounded-[12px] p-12 text-center shadow-sm">
-                    <div className="w-[64px] h-[64px] rounded-full bg-[#f3f4f6] flex items-center justify-center mx-auto mb-4">
-                      <Users size={28} className="text-[#6b7280]" />
+                  <div className="relative overflow-hidden bg-white rounded-3xl p-16 text-center shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100 animate-in fade-in zoom-in-95 duration-500">
+                    <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0">
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-gradient-to-tr from-indigo-500/5 to-purple-500/5 rounded-full blur-3xl mix-blend-multiply pointer-events-none"></div>
                     </div>
-                    <h3 className="font-['Arimo',sans-serif] text-[18px] text-black mb-2">
-                      No Groups Created Yet
-                    </h3>
-                    <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af] mb-6 max-w-[400px] mx-auto">
-                      {isHR
-                        ? "Create candidate groups to organize and track subsets of candidates through your recruitment pipeline."
-                        : "No candidate groups have been created for this position yet."}
-                    </p>
-                    {isHR && (
-                      <button
-                        onClick={() => setShowGroupCreationPage(true)}
-                        className="h-[44px] px-[24px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[14px] text-white transition-colors"
-                      >
-                        Create Your First Group
-                      </button>
-                    )}
+                    
+                    <div className="relative z-10 flex flex-col items-center justify-center">
+                      <div className="relative flex items-center justify-center w-24 h-24 mb-6 rounded-2xl bg-gradient-to-br from-indigo-50 to-purple-50 border border-white shadow-lg shadow-indigo-100/50 transform transition-transform hover:scale-105 hover:rotate-3">
+                        <Users size={36} className="text-indigo-600" />
+                        <div className="absolute -bottom-2 -right-2 flex h-8 w-8 items-center justify-center rounded-full bg-white border border-indigo-100 shadow-sm">
+                          <Plus size={16} className="text-indigo-600" />
+                        </div>
+                      </div>
+                      
+                      <h3 className="text-2xl font-extrabold tracking-tight text-slate-900 mb-3">
+                        Pipeline Empty
+                      </h3>
+                      <p className="text-[15px] font-medium text-slate-500 mb-8 max-w-[420px]">
+                        {isHR
+                          ? "Start organizing candidates by creating your first group. Designate stages, assign reviewers, and orchestrate the recruitment pipeline."
+                          : "No candidate groups have been assembled for this position yet."}
+                      </p>
+                      
+                      {isHR && (
+                        <button
+                          onClick={() => setShowGroupCreationPage(true)}
+                          disabled={!canUseCandidateActions}
+                          title={!canUseCandidateActions ? "Position must be approved before creating groups" : undefined}
+                          className={`group relative flex h-12 items-center justify-center overflow-hidden rounded-xl px-8 transition-all ${canUseCandidateActions ? 'bg-indigo-600 shadow-[0_4px_14px_0_rgb(79,70,229,0.39)] hover:bg-indigo-700 hover:-translate-y-0.5 hover:shadow-[0_6px_20px_rgba(79,70,229,0.23)]' : 'bg-slate-300 cursor-not-allowed'}`}
+                        >
+                            {canUseCandidateActions && <div className="absolute inset-0 bg-[linear-gradient(to_right,transparent,rgba(255,255,255,0.2),transparent)] -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]"></div>}
+                            <span className={`relative flex items-center gap-2 text-[15px] font-bold ${canUseCandidateActions ? 'text-white' : 'text-slate-500'}`}>
+                              <Plus size={18} className={canUseCandidateActions ? 'transition-transform group-hover:rotate-90 duration-300' : ''} />
+                            Create Your First Group
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -1436,7 +1541,8 @@ export function PositionDetailView({
 
         {/* Insights Tab Content */}
         {activeTab === 'insights' && (
-          <div className="w-full animate-in fade-in duration-500">
+          <div className="relative w-full animate-in fade-in duration-500">
+            <div className={isInsightsLocked ? 'pointer-events-none select-none blur-sm opacity-35' : ''}>
             <div className="flex items-center justify-between mb-8">
               <div>
                 <h2 className="font-['Arimo',sans-serif] text-[24px] font-semibold text-slate-900 tracking-tight">
@@ -1860,6 +1966,22 @@ export function PositionDetailView({
               </div>
             </div>
 
+          </div>
+            {isInsightsLocked && (
+              <div className="absolute inset-0 z-10 flex items-start justify-center pt-24 px-6">
+                <div className="max-w-[540px] rounded-[24px] border border-white/70 bg-white/90 px-8 py-8 text-center shadow-[0px_20px_60px_rgba(15,23,42,0.18)] backdrop-blur-xl">
+                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-100">
+                    <div className="h-3 w-3 rounded-full bg-indigo-500 animate-pulse" />
+                  </div>
+                  <h3 className="font-['Arimo',sans-serif] text-[20px] font-semibold text-black">
+                    Insights locked
+                  </h3>
+                  <p className="mt-3 font-['Arimo',sans-serif] text-[14px] leading-[22px] text-[#6b7280]">
+                    {insightsLockMessage}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

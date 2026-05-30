@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     HUGGINGFACE_TOKEN: str = ""
     MODELS_DIR: str = "./models"
     PROCTORING_DRAFTS_DIR: str = "ai-service/gp-assessment-env-drafts"
+    PROCTORING_MODELS_S3_BUCKET: str = ""
+    PROCTORING_MODELS_S3_REGION: str = "us-east-1"
     # Dev-safe default: allow fallback adapter output unless explicitly forced by env.
     PROCTORING_REQUIRE_MODEL: bool = False
 

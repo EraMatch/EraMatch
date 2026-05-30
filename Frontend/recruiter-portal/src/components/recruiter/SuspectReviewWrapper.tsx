@@ -1,19 +1,16 @@
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SuspectReviewPage } from './candidates/SuspectReviewPage';
 
 export function SuspectReviewWrapper() {
     const navigate = useNavigate();
-    // In a real app, we might fetch the specific suspicious candidate ID from the URL or a context.
-    // For this mock/demo, we'll assume candidate ID 4 based on the previous context or a safe default.
-    // The user interaction just wants to see the page.
+    const [searchParams] = useSearchParams();
+    const candidateId = searchParams.get('candidateId') || '4';
+    const applicationId = searchParams.get('applicationId') || undefined;
 
     return (
         <SuspectReviewPage
-            candidateId={4}
-            candidateName="Michael Chen"
-            groupId="101"
-            groupName="Frontend Engineering Team"
-            currentModule="Assessment"
+            candidateId={candidateId}
+            applicationId={applicationId}
             onBack={() => navigate(-1)}
             onViewCandidate={(id) => navigate(`/recruiter/candidates/${id}`)}
         />
