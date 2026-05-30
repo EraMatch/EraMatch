@@ -15,7 +15,8 @@ export function usePositionDetail(positionId: string | undefined) {
         queryKey: queryKeys.positions.detail(positionId ?? ''),
         queryFn: () => api.recruiter.getPositionDetails(positionId!),
         enabled: !!positionId,
-        staleTime: 30 * 1000, // 30s — avoids refetch on every window focus
+        staleTime: 30 * 1000,
+        refetchOnWindowFocus: false,
     })
 }
 
@@ -25,6 +26,7 @@ export function usePositionInsights(positionId: string | undefined) {
         queryFn: () => api.recruiter.getPositionInsights(positionId!),
         enabled: !!positionId,
         staleTime: 5 * 60 * 1000,
+        refetchOnWindowFocus: false,
     })
 }
 
@@ -33,6 +35,8 @@ export function usePositionGroups(positionId: string | undefined) {
         queryKey: queryKeys.positions.groups(positionId ?? ''),
         queryFn: () => api.recruiter.getPositionGroups(positionId!),
         enabled: !!positionId,
+        staleTime: 30 * 1000,
+        refetchOnWindowFocus: false,
     })
 }
 

@@ -7,6 +7,8 @@ export function useGroupDetail(groupId: string | undefined) {
         queryKey: queryKeys.groups.detail(groupId ?? ''),
         queryFn: () => api.recruiter.getGroupDetails(groupId!),
         enabled: !!groupId,
+        staleTime: 30 * 1000,
+        refetchOnWindowFocus: false,
     })
 }
 

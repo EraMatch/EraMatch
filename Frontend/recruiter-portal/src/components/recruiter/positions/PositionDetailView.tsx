@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { usePositionDetail, usePositionInsights } from '../../../hooks/positions/usePositions';
+import { useBackgroundTasksPolling } from '../../../hooks/backgroundTasks/useBackgroundTasks';
 import { queryKeys } from '../../../lib/queryKeys';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../ui/dialog';
 import { Switch } from '../../ui/switch';
@@ -366,28 +367,22 @@ export function PositionDetailView({
     setKeywordsVisible(hasAnyKeywords(kw));
   }, [detailData]);
 
-  // Upload polling state — declared here so the useEffects below can reference them
-  const [isPollingForCandidates, setIsPollingForCandidates] = useState(false);
-  const [pollFoundCount, setPollFoundCount] = useState(0);
-  const candidateCountRef = useRef(0);
-
-  // Poll for new candidates after an upload, refreshing every 10s
-  useEffect(() => {
-    if (!isPollingForCandidates || !positionId) return;
-    const interval = setInterval(async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [isPollingForCandidates, positionId, queryClient]);
-
-  // Stop polling once we detect new candidates arrived
-  useEffect(() => {
-    if (!isPollingForCandidates) return;
-    if (candidates.length > candidateCountRef.current) {
-      setPollFoundCount(candidates.length - candidateCountRef.current);
-      setIsPollingForCandidates(false);
-    }
-  }, [candidates.length, isPollingForCandidates]);
+  // Scoring progress — derived from background-tasks (same cache as monitoring page)
+  const { data: bgTasks } = useBackgroundTasksPolling(true);
+  const scoringProgress = (() => {
+    if (!Array.isArray(bgTasks) || !positionId) return null;
+    // Aggregate scoring counts across all CV ingestion jobs for this position
+    const positionJobs = bgTasks.filter(
+      (t: any) => t.task_category === 'cv_ingestion' && t.position_id === positionId
+    );
+    if (positionJobs.length === 0) return null;
+    const total = positionJobs[0]?.total_candidate_count ?? null;
+    const scored = positionJobs[0]?.scored_count ?? null;
+    const pending = positionJobs[0]?.pending_count ?? null;
+    if (total == null) return null;
+    return { total: Number(total), scored: Number(scored ?? 0), pending: Number(pending ?? 0) };
+  })();
+  const hasPendingScoring = scoringProgress != null && scoringProgress.pending > 0;
 
   useEffect(() => {
     if (!insightsData) return;
@@ -489,11 +484,7 @@ export function PositionDetailView({
     setUploadError(null);
     try {
       const res = await api.recruiter.uploadZipCandidates(positionId, zipFiles);
-      setUploadSuccess(`Upload accepted. Background job is running — candidates will appear shortly.`);
-      // Start polling for new candidates
-      candidateCountRef.current = candidates.length;
-      setPollFoundCount(0);
-      setIsPollingForCandidates(true);
+      setUploadSuccess(`Upload accepted. Scoring progress will update automatically below.`);
       setZipFiles([]); // clear after successful upload
     } catch (err: any) {
       setUploadError(err.message || "Upload failed");
@@ -810,17 +801,20 @@ export function PositionDetailView({
         {/* Candidates Tab Content */}
         {activeTab === 'candidates' && (
           <div className="w-full space-y-5">
-            {/* Polling banner — shows while background job is running */}
-            {isPollingForCandidates && (
+            {/* Scoring progress banner — always-on, driven by background-tasks cache */}
+            {hasPendingScoring && scoringProgress && (
               <div className="flex items-center gap-3 rounded-[10px] border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
                 <Loader2 size={15} className="animate-spin shrink-0" />
-                <span>CV is being processed — candidates will appear automatically. Checking every 10s…</span>
+                <span>
+                  Scoring candidates: <strong>{scoringProgress.scored} / {scoringProgress.total}</strong> analyzed
+                  &nbsp;— updates every 5s automatically
+                </span>
               </div>
             )}
-            {pollFoundCount > 0 && !isPollingForCandidates && (
+            {scoringProgress != null && !hasPendingScoring && scoringProgress.total > 0 && (
               <div className="flex items-center gap-3 rounded-[10px] border border-green-200 bg-green-50 px-4 py-2.5 text-sm text-green-700">
                 <CheckCircle size={15} className="shrink-0" />
-                <span>{pollFoundCount} new candidate{pollFoundCount > 1 ? 's' : ''} added successfully.</span>
+                <span>All {scoringProgress.total} candidate{scoringProgress.total !== 1 ? 's' : ''} scored successfully.</span>
               </div>
             )}
             <div className="rounded-[14px] border border-[#dbe3ff] bg-gradient-to-br from-white via-[#f8faff] to-[#f3f6ff] p-5 shadow-sm">
@@ -2349,16 +2343,16 @@ export function PositionDetailView({
                 <h4 className="text-lg font-medium text-gray-900 mb-2">Upload Complete!</h4>
                 <p className="text-sm text-gray-500 mb-3">{uploadSuccess}</p>
 
-                {/* Live polling status */}
-                {pollFoundCount > 0 ? (
+                {/* Live scoring progress from background-tasks */}
+                {hasPendingScoring && scoringProgress ? (
+                  <div className="flex items-center justify-center gap-2 text-sm text-indigo-600 font-medium mb-6">
+                    <Loader2 size={14} className="animate-spin" />
+                    Scoring {scoringProgress.scored} / {scoringProgress.total} candidates…
+                  </div>
+                ) : scoringProgress && scoringProgress.total > 0 ? (
                   <div className="flex items-center justify-center gap-2 text-sm text-green-600 font-medium mb-6">
                     <CheckCircle size={14} />
-                    {pollFoundCount} new candidate{pollFoundCount > 1 ? 's' : ''} added to the list!
-                  </div>
-                ) : isPollingForCandidates ? (
-                  <div className="flex items-center justify-center gap-2 text-sm text-gray-400 mb-6">
-                    <Loader2 size={14} className="animate-spin" />
-                    Checking for new candidates... (refreshes every 10s)
+                    All {scoringProgress.total} candidates scored!
                   </div>
                 ) : (
                   <div className="mb-6" />
@@ -2369,8 +2363,6 @@ export function PositionDetailView({
                     setShowZipUploadModal(false);
                     setZipFile(null);
                     setUploadSuccess(null);
-                    setIsPollingForCandidates(false);
-                    // Invalidate position detail to pick up any new candidates immediately
                     if (positionId) queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
                   }}
                   className="px-6 py-2 bg-[#6366f1] text-white rounded-lg hover:bg-[#5558e3]"

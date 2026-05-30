@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 
 from app.api.deps import get_db, get_current_user
-from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob, GitHubAnalysisJob, QAGProcessingJob, CVIngestionJob, Position
+from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob, GitHubAnalysisJob, QAGProcessingJob, CVIngestionJob, Position, CVAnalysis
 
 router = APIRouter(prefix="/background-tasks", tags=["Background Tasks"])
 
@@ -254,6 +254,8 @@ async def get_background_tasks(
 
     # ── CV Ingestion jobs ──────────────────────────────────────────────────
     try:
+        from sqlalchemy import func, text
+
         cv_query = (
             select(CVIngestionJob)
             .where(CVIngestionJob.organization_id == current_user.organization_id)
@@ -261,8 +263,38 @@ async def get_background_tasks(
             .limit(limit)
         )
         cv_result = await db.execute(cv_query)
-        for job in cv_result.scalars().all():
+        cv_jobs = cv_result.scalars().all()
+
+        # Batch-fetch scoring progress for all positions in one query
+        position_ids = list({job.position_id for job in cv_jobs if job.position_id})
+        scoring_map: dict = {}
+        if position_ids:
+            scoring_q = (
+                select(
+                    CandidateApplication.position_id,
+                    func.count(CandidateApplication.id).label("total"),
+                    func.count(CVAnalysis.analysis_id).label("scored"),
+                )
+                .outerjoin(CVAnalysis, CVAnalysis.application_id == CandidateApplication.id)
+                .where(
+                    CandidateApplication.position_id.in_(position_ids),
+                    CandidateApplication.organization_id == current_user.organization_id,
+                    CandidateApplication.is_deleted == False,
+                )
+                .group_by(CandidateApplication.position_id)
+            )
+            scoring_result = await db.execute(scoring_q)
+            for row in scoring_result.all():
+                scoring_map[str(row.position_id)] = {
+                    "total_candidate_count": int(row.total),
+                    "scored_count": int(row.scored),
+                    "pending_count": max(0, int(row.total) - int(row.scored)),
+                }
+
+        for job in cv_jobs:
             processed, skipped = _derive_cv_metrics(job)
+            pos_id = str(job.position_id) if job.position_id else None
+            scoring = scoring_map.get(pos_id, {}) if pos_id else {}
             tasks.append({
                 "id": str(job.id),
                 "status": job.status,
@@ -281,6 +313,11 @@ async def get_background_tasks(
                 "total_approved": None,
                 "candidates_processed": processed,
                 "candidates_skipped": skipped,
+                # Scoring progress fields — used by the position page banner
+                "position_id": pos_id,
+                "total_candidate_count": scoring.get("total_candidate_count"),
+                "scored_count": scoring.get("scored_count"),
+                "pending_count": scoring.get("pending_count"),
             })
     except Exception:
         pass
