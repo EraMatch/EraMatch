@@ -1026,6 +1026,9 @@ class CandidateService:
                     "repo_count": github.repo_count if github else None,
                 },
                 jd_critic_result=jd_critic_result,
+                position_experience_level=getattr(position, "experience_level", None),
+                position_education_level=getattr(position, "education_level", None),
+                jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,
             )
 
             parsed_data["prescore_v2"] = prescore
@@ -1388,10 +1391,6 @@ class CandidateService:
 
     # Bulk Upload
     async def process_zip_upload(self, file_content: bytes, position_id: UUID) -> CandidateUploadResponse:
-        raise HTTPException(
-            status_code=501,
-            detail="Zip import file storage is not implemented. Upload candidates individually."
-        )
         success_count = 0
         failed_count = 0
         errors = []
@@ -1457,6 +1456,62 @@ class CandidateService:
                 errors=[f"Unexpected error: {str(e)}"],
                 created_candidates=[]
             )
+
+        return CandidateUploadResponse(
+            total_processed=success_count + failed_count,
+            success_count=success_count,
+            failed_count=failed_count,
+            errors=errors,
+            created_candidates=created_candidates
+        )
+
+    async def process_multiple_files_upload(self, files: list[tuple[str, bytes]], position_id: UUID) -> CandidateUploadResponse:
+        success_count = 0
+        failed_count = 0
+        errors = []
+        created_candidates = []
+
+        for filename, file_content in files:
+            # Skip directories and hidden files (just in case they are uploaded)
+            if filename.endswith('/') or filename.startswith('__MACOSX') or filename.startswith('.'):
+                continue
+                
+            try:
+                # Simple extraction of name from filename (remove extension)
+                name_part = os.path.basename(filename)
+                full_name = os.path.splitext(name_part)[0].replace('_', ' ').replace('-', ' ').title()
+                
+                # Generate a placeholder email since we can't extract it easily yet
+                # In a real system, we'd use a resume parser here.
+                # We'll use a deterministic email based on name+position to avoid duplicates if re-uploaded
+                safe_name = "".join(c for c in full_name if c.isalnum()).lower()
+                email = f"{safe_name}_{str(position_id)[:8]}@imported.candidate"
+                
+                # Create Profile
+                profile_data = CandidateCreate(
+                    full_name=full_name,
+                    email=email,
+                    linkedin_url=None,
+                    github_url=None,
+                    portfolio_url=None
+                )
+                
+                candidate = await self.create_profile(profile_data)
+
+                app_data = ApplicationCreate(
+                    position_id=position_id,
+                    resume_url=None,
+                    source="bulk_import"
+                )
+                await self.create_application(candidate.id, app_data)
+
+                created_candidates.append(CandidateResponse.model_validate(candidate))
+                success_count += 1
+                
+            except Exception as e:
+                failed_count += 1
+                errors.append(f"Failed to process {filename}: {str(e)}")
+                print(f"Error processing {filename}: {e}")
 
         return CandidateUploadResponse(
             total_processed=success_count + failed_count,

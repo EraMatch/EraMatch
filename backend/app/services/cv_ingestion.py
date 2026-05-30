@@ -257,6 +257,9 @@ class CVIngestionService:
                             candidate_parsed_data=parsed_data,
                             github_analysis_data={},
                             jd_critic_result=jd_critic_result,
+                            position_experience_level=getattr(position, "experience_level", None),
+                            position_education_level=getattr(position, "education_level", None),
+                            jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,
                         )
                 except Exception as score_exc:
                     logger.warning(f"Prescore computation skipped for app {app_id}: {score_exc}")
