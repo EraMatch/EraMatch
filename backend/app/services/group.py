@@ -15,7 +15,8 @@ from uuid import UUID
 import asyncio
 from sqlalchemy import select, func, or_, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, flag_modified
+from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.models import (
