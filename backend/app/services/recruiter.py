@@ -873,9 +873,21 @@ class RecruiterService:
 
         artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else None
         if not artifact:
+            # First time: trigger generation
             artifact = await self._evaluate_position_hdeval_qag(position, force=True)
             await self.session.commit()
             await self.session.refresh(position)
+        # ai_generation_failed: return as-is — let the UI show a Regenerate button
+        return artifact or {}
+
+    async def regenerate_position_hdeval_qag(self, position_id: UUID) -> dict:
+        """Force-regenerate QAG questions regardless of current status."""
+        position = await self.get_position(position_id)
+        if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("You are not assigned to this position")
+        artifact = await self._evaluate_position_hdeval_qag(position, force=True)
+        await self.session.commit()
+        await self.session.refresh(position)
         return artifact
 
     async def update_position_hdeval_qag(self, position_id: UUID, questions: list[dict]) -> dict:
@@ -960,11 +972,24 @@ class RecruiterService:
         if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
             raise UnauthorizedException("You are not assigned to this position")
 
+        # Count applications
+        from sqlmodel import select
+        from app.models import CandidateApplication
+        apps_res = await self.session.execute(
+            select(CandidateApplication).where(
+                CandidateApplication.position_id == position_id,
+                CandidateApplication.organization_id == self.organization_id,
+                CandidateApplication.is_deleted == False
+            )
+        )
+        apps = apps_res.scalars().all()
+        app_count = len(apps)
+
         # Start tracking job for background task
         job = await self._start_qag_job(
             position=position,
             job_type="qag_resume_correction",
-            total_items=0,
+            total_items=app_count,
             source_provider="ai-service:ollama",
         )
         await self.session.commit()
@@ -985,7 +1010,8 @@ class RecruiterService:
 
         return {
             "position_id": str(position.id),
-            "applications_scored": 0,
+            "applications_scheduled": app_count,
+            "applications_scored": app_count,
             "qag_status": artifact.get("status"),
             "approved_question_count": len(approved_questions),
             "message": "Recompute started successfully in the background",
@@ -1404,6 +1430,12 @@ class RecruiterService:
         criteria_checks = prescore.get("criteria_checks", position_critic.get("criteria_checks"))
         jd_quality_feedback = position_critic.get("feedback", prescore.get("jd_quality_feedback"))
 
+        def _f(val) -> float | None:
+            try:
+                return float(val) if val is not None else None
+            except (TypeError, ValueError):
+                return None
+
         return ApplicationScoreBreakdownResponse(
             application_id=app.id,
             candidate_id=candidate.id,
@@ -1412,13 +1444,18 @@ class RecruiterService:
             position_title=position.job_title,
             match_score=float(cv.match_score) if cv and cv.match_score is not None else 0.0,
             prescore_version=prescore.get("version"),
-            pre_score_final=float(prescore.get("pre_score_final")) if prescore.get("pre_score_final") is not None else None,
-            semantic_fit_score=float(prescore.get("semantic_fit_score")) if prescore.get("semantic_fit_score") is not None else None,
-            skills_experience_score=float(prescore.get("skills_experience_score")) if prescore.get("skills_experience_score") is not None else None,
-            optional_profile_boost=float(prescore.get("optional_profile_boost")) if prescore.get("optional_profile_boost") is not None else None,
-            jd_quality_score=float(jd_quality_score) if jd_quality_score is not None else None,
+            pre_score_final=_f(prescore.get("pre_score_final")),
+            semantic_fit_score=_f(prescore.get("semantic_fit_score")),
+            skills_experience_score=_f(prescore.get("skills_experience_score")),
+            optional_profile_boost=_f(prescore.get("optional_profile_boost")),
+            skill_alignment=_f(prescore.get("skill_alignment")),
+            experience_alignment=_f(prescore.get("experience_alignment")),
+            keyword_coverage=_f(prescore.get("keyword_coverage")),
+            seniority_score=_f(prescore.get("seniority_score")),
+            education_score=_f(prescore.get("education_score")),
+            jd_quality_score=_f(jd_quality_score),
             jd_quality_status=jd_quality_status,
-            jd_quality_cap=float(jd_quality_cap) if jd_quality_cap is not None else None,
+            jd_quality_cap=_f(jd_quality_cap),
             jd_quality_cap_applied=bool(prescore.get("jd_quality_cap_applied")) if "jd_quality_cap_applied" in prescore else None,
             score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
             criteria_checks=criteria_checks if isinstance(criteria_checks, list) else [],
@@ -2538,6 +2575,9 @@ class RecruiterService:
                         "repo_count": gh.repo_count if gh else None,
                     },
                     jd_critic_result=jd_critic_result,
+                    position_experience_level=getattr(position, "experience_level", None),
+                    position_education_level=getattr(position, "education_level", None),
+                    jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,
                 )
 
                 parsed_data["prescore_v2"] = prescore
@@ -3315,3 +3355,105 @@ class RecruiterService:
                 {"id": 3, "check": "Does the answer demonstrate relevant technical knowledge?", "weight": 0.25},
                 {"id": 4, "check": "Does the answer show structured thinking or problem-solving process?", "weight": 0.25},
             ]
+
+    async def suggest_jd_enrichment(
+        self,
+        gaps_and_roles: str,
+        job_title: str | None = None,
+        required_skills: list[str] | None = None,
+    ) -> dict:
+        """
+        AI-powered JD builder: takes job gaps/roles description and suggests an enhanced
+        title, detailed description, skills, experience/education level, and traits.
+        """
+        import json as _json
+        import re as _re
+
+        skills_list = required_skills or []
+        skills_str = ", ".join(skills_list) if skills_list else "None specified"
+        title_str = job_title or "Unspecified Role"
+
+        system_prompt = (
+            "You are an expert technical recruiter and HR specialist. "
+            "Your task is to take draft notes about job gaps and roles, and suggest a structured, "
+            "professional job definition to optimize candidate matching.\n\n"
+            "You must return ONLY a valid JSON object matching this schema, with no markdown fences, "
+            "no backticks, and no conversational prefix/suffix:\n"
+            "{\n"
+            '  "suggested_job_title": "string (professional, standard job title)",\n'
+            '  "suggested_job_description": "string (structured job description detailing responsibilities, requirements, and gaps addressed)",\n'
+            '  "suggested_skills": ["string (canonical technical skills only)"],\n'
+            '  "suggested_experience_level": "junior | mid-level | senior | lead | principal | executive",\n'
+            '  "suggested_years_of_experience": int (non-negative integer),\n'
+            '  "suggested_education_level": "any | high school | associate | bachelor | master | phd",\n'
+            '  "suggested_traits": ["string (soft skills or team alignment traits like Mentorship, Communication, Problem Solving)"]\n'
+            "}\n"
+        )
+
+        prompt = (
+            f"{system_prompt}\n\n"
+            f"## Recruiter Draft Inputs\n"
+            f"Job Title Draft: {title_str}\n"
+            f"Gaps and Roles needed: {gaps_and_roles}\n"
+            f"Existing skills input: {skills_str}\n\n"
+            "## Requirements:\n"
+            "1. Expand the job description into a high-quality job posting.\n"
+            "2. Identify the most critical technical skills (suggested_skills) and behavioral traits (suggested_traits).\n"
+            "3. Recommend appropriate standard experience level, required years of experience, and minimum education level.\n"
+            "4. Return ONLY valid JSON."
+        )
+
+        provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+        model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
+
+        fallback_response = {
+            "suggested_job_title": title_str if job_title else "Software Engineer",
+            "suggested_job_description": f"We are looking for a professional to fill the following roles and address these gaps:\n{gaps_and_roles}",
+            "suggested_skills": skills_list or ["Software Development"],
+            "suggested_experience_level": "mid-level",
+            "suggested_years_of_experience": 3,
+            "suggested_education_level": "bachelor",
+            "suggested_traits": ["Problem Solving", "Teamwork"],
+        }
+
+        try:
+            llm = get_llm(provider, model=model, temperature=0.3)
+            response = await llm.ainvoke(prompt)
+            raw = str(getattr(response, "content", "")).strip()
+
+            # Clean code fences
+            if raw.startswith("```"):
+                raw = _re.sub(r"^```[a-z]*\n?", "", raw)
+                raw = _re.sub(r"\n?```$", "", raw.strip())
+
+            # Attempt parsing
+            parsed = _json.loads(raw)
+            
+            # Normalize fields to match expected types
+            experience_level = str(parsed.get("suggested_experience_level") or "mid-level").lower().strip()
+            if experience_level not in ["junior", "mid-level", "senior", "lead", "principal", "executive"]:
+                experience_level = "mid-level"
+
+            education_level = str(parsed.get("suggested_education_level") or "bachelor").lower().strip()
+            if education_level not in ["any", "high school", "associate", "bachelor", "master", "phd"]:
+                education_level = "bachelor"
+
+            try:
+                years = int(parsed.get("suggested_years_of_experience") or 0)
+            except ValueError:
+                years = 3
+
+            return {
+                "suggested_job_title": str(parsed.get("suggested_job_title") or title_str),
+                "suggested_job_description": str(parsed.get("suggested_job_description") or fallback_response["suggested_job_description"]),
+                "suggested_skills": [str(s).strip() for s in parsed.get("suggested_skills") or [] if str(s).strip()],
+                "suggested_experience_level": experience_level,
+                "suggested_years_of_experience": max(0, years),
+                "suggested_education_level": education_level,
+                "suggested_traits": [str(t).strip() for t in parsed.get("suggested_traits") or [] if str(t).strip()],
+            }
+
+        except Exception as e:
+            print(f"suggest_jd_enrichment failed ({provider}/{model}): {e}")
+            return fallback_response
+

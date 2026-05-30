@@ -413,7 +413,7 @@ export function PositionDetailView({
   const navigate = useNavigate();
 
   // Upload Logic
-  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [zipFiles, setZipFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
@@ -483,24 +483,18 @@ export function PositionDetailView({
   };
 
   const handleZipUpload = async () => {
-    if (!zipFile || !positionId) return;
+    if (zipFiles.length === 0 || !positionId) return;
 
     setIsUploading(true);
     setUploadError(null);
     try {
-      const formData = new FormData();
-      formData.append('file', zipFile);
-      formData.append('position_id', positionId);
-
-      const isPdf = zipFile.name.toLowerCase().endsWith('.pdf');
-      const fileTypeLabel = isPdf ? 'PDF' : 'ZIP';
-
-      const res = await api.recruiter.importZipCandidates(positionId, formData);
-      setUploadSuccess(`${fileTypeLabel} upload accepted. Background job is running — candidates will appear shortly.`);
+      const res = await api.recruiter.uploadZipCandidates(positionId, zipFiles);
+      setUploadSuccess(`Upload accepted. Background job is running — candidates will appear shortly.`);
       // Start polling for new candidates
       candidateCountRef.current = candidates.length;
       setPollFoundCount(0);
       setIsPollingForCandidates(true);
+      setZipFiles([]); // clear after successful upload
     } catch (err: any) {
       setUploadError(err.message || "Upload failed");
     } finally {
@@ -567,8 +561,8 @@ export function PositionDetailView({
       queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.positions.insights(positionId) });
 
-      const scored = Number(result?.applications_scored ?? 0);
-      setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+      const scheduled = Number(result?.applications_scheduled ?? result?.applications_scored ?? 0);
+      setRecomputeMessage(`Scheduled score recomputation for ${scheduled} candidate${scheduled === 1 ? '' : 's'}.`);
     } catch (error) {
       console.error('Failed to recompute prescores:', error);
       setRecomputeError(error instanceof Error ? error.message : 'Failed to recompute scores');
@@ -650,9 +644,9 @@ export function PositionDetailView({
       queryClient.invalidateQueries({ queryKey: queryKeys.positions.insights(positionId) });
 
       setQagStatus('approved');
-      const scored = Number(recomputeResult?.applications_scored ?? 0);
-      setQagMessage(`QAG approved and recomputed for ${scored} candidate${scored === 1 ? '' : 's'}.`);
-      setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+      const scheduled = Number(recomputeResult?.applications_scheduled ?? recomputeResult?.applications_scored ?? 0);
+      setQagMessage(`QAG approved and recomputation scheduled for ${scheduled} candidate${scheduled === 1 ? '' : 's'}.`);
+      setRecomputeMessage(`Scheduled score recomputation for ${scheduled} candidate${scheduled === 1 ? '' : 's'}.`);
 
       // Auto-trigger keyword extraction after QAG approval
       setKeywordsVisible(true);   // show panel immediately
@@ -1940,8 +1934,35 @@ export function PositionDetailView({
                   Loading QAG questions...
                 </div>
               ) : qagQuestions.length === 0 ? (
-                <div className="h-[180px] flex items-center justify-center text-[#9ca3af]">
-                  No QAG questions found for this position.
+                <div className="h-[180px] flex flex-col items-center justify-center gap-3 text-[#9ca3af]">
+                  {qagStatus === 'ai_generation_failed' ? (
+                    <>
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#ef4444]">QAG generation failed — AI service was unavailable.</p>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setQagLoading(true);
+                          setQagError(null);
+                          try {
+                            await api.recruiter.regeneratePositionHDEvalQAG(positionId);
+                            setQagStatus('pending');
+                            setQagMessage('Regeneration started in the background. Reload in a moment.');
+                          } catch (e) {
+                            setQagError('Regeneration failed. Check AI service connectivity.');
+                          } finally {
+                            setQagLoading(false);
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-[6px] bg-[#6366f1] text-white font-['Arimo',sans-serif] text-[12px] hover:bg-[#4f46e5]"
+                      >
+                        Regenerate QAG Questions
+                      </button>
+                    </>
+                  ) : qagStatus === 'pending' ? (
+                    <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">QAG generation in progress — check back in a moment.</p>
+                  ) : (
+                    <p className="font-['Arimo',sans-serif] text-[13px]">No QAG questions found for this position.</p>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -2253,23 +2274,24 @@ export function PositionDetailView({
             {!uploadSuccess ? (
               <>
                 <div
-                  className={`border-2 border-dashed rounded-[12px] p-12 text-center mb-6 transition-colors cursor-pointer relative ${zipFile ? 'border-[#6366f1] bg-[#eef2ff]' : 'border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb]'
+                  className={`border-2 border-dashed rounded-[12px] p-12 text-center mb-6 transition-colors cursor-pointer relative ${zipFiles.length > 0 ? 'border-[#6366f1] bg-[#eef2ff]' : 'border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb]'
                     }`}
                 >
                   <input
                     type="file"
+                    multiple
                     accept=".zip,.pdf"
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        setZipFile(e.target.files[0]);
+                      if (e.target.files && e.target.files.length > 0) {
+                        setZipFiles(Array.from(e.target.files));
                         setUploadError(null);
                       }
                     }}
                   />
-                  <Upload size={48} className={`mx-auto mb-4 ${zipFile ? 'text-[#6366f1]' : 'text-[#6b7280]'}`} />
+                  <Upload size={48} className={`mx-auto mb-4 ${zipFiles.length > 0 ? 'text-[#6366f1]' : 'text-[#6b7280]'}`} />
                   <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] mb-2">
-                    {zipFile ? zipFile.name : "Drag and drop your ZIP or PDF file here, or click to browse"}
+                    {zipFiles.length > 0 ? `${zipFiles.length} file(s) selected` : "Drag and drop your ZIP or PDF files here, or click to browse"}
                   </p>
                   <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
                     Supported formats: .zip, .pdf (max 100MB)
@@ -2303,7 +2325,7 @@ export function PositionDetailView({
                   <button
                     onClick={() => {
                       setShowZipUploadModal(false);
-                      setZipFile(null);
+                      setZipFiles([]);
                     }}
                     className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
                   >
@@ -2311,7 +2333,7 @@ export function PositionDetailView({
                   </button>
                   <button
                     onClick={handleZipUpload}
-                    disabled={!zipFile || isUploading}
+                    disabled={zipFiles.length === 0 || isUploading}
                     className="flex-1 h-[44px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors flex items-center justify-center gap-2"
                   >
                     {isUploading ? <Loader2 size={16} className="animate-spin" /> : null}

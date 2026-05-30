@@ -226,6 +226,12 @@ class ApplicationScoreBreakdownResponse(BaseModel):
     semantic_fit_score: float | None = None
     skills_experience_score: float | None = None
     optional_profile_boost: float | None = None
+    # New composite signal scores
+    skill_alignment: float | None = None
+    experience_alignment: float | None = None
+    keyword_coverage: float | None = None
+    seniority_score: float | None = None
+    education_score: float | None = None
     jd_quality_score: float | None = None
     jd_quality_status: str | None = None
     jd_quality_cap: float | None = None

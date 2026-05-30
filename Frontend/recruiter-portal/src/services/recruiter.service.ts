@@ -343,6 +343,12 @@ export const recruiterService = {
         });
     },
 
+    regeneratePositionHDEvalQAG: async (positionId: string) => {
+        return fetchAPI<any>(`/recruiter/positions/${positionId}/hdeval-qag/regenerate`, {
+            method: 'POST'
+        });
+    },
+
     recomputePositionPrescores: async (positionId: string) => {
         return fetchAPI<any>(`/recruiter/positions/${positionId}/prescore/recompute`, {
             method: 'POST'
@@ -369,10 +375,12 @@ export const recruiterService = {
     },
 
     // Candidate Import & Group Creation
-    uploadZipCandidates: async (positionId: string, file: File) => {
+    uploadZipCandidates: async (positionId: string, files: File[]) => {
         const formData = new FormData();
         formData.append('position_id', positionId);
-        formData.append('file', file);
+        files.forEach(file => {
+            formData.append('files', file);
+        });
 
         const token = localStorage.getItem('token');
         const res = await fetch(`${API_URL}/ingestion/zip`, {
@@ -723,6 +731,30 @@ export const recruiterService = {
                 }),
             }
         );
+    },
+
+    suggestJDEnrichment: async (data: {
+        job_title?: string;
+        gaps_and_roles: string;
+        required_skills?: string[];
+    }) => {
+        return fetchAPI<{
+            suggested_job_title: string;
+            suggested_job_description: string;
+            suggested_skills: string[];
+            suggested_experience_level: string;
+            suggested_years_of_experience: number;
+            suggested_education_level: string;
+            suggested_traits: string[];
+        }>('/recruiter/ai/suggest-jd-enrichment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                job_title: data.job_title,
+                gaps_and_roles: data.gaps_and_roles,
+                required_skills: data.required_skills,
+            })
+        });
     },
 
     // Filter Templates
