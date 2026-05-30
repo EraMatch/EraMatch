@@ -15,73 +15,78 @@ router = APIRouter()
 @router.post("/zip")
 async def upload_zip_ingestion(
     position_id: UUID = Form(...),
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     current_user: OrganizationUser = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Ingest CVs via ZIP or PDF file upload.
-    Dispatches a Celery task to process the uploaded file(s).
+    Ingest CVs via ZIP or PDF file uploads.
+    Dispatches Celery tasks to process the uploaded file(s).
     """
-    filename_lower = file.filename.lower()
-    is_zip = filename_lower.endswith(".zip")
-    is_pdf = filename_lower.endswith(".pdf")
-
-    if not (is_zip or is_pdf):
-        raise HTTPException(
-            status_code=400, 
-            detail="Unsupported file format. Only ZIP and PDF files are supported."
-        )
-
-    file_bytes = await file.read()
-    if len(file_bytes) > 200 * 1024 * 1024:  # 200MB limit
-        raise HTTPException(status_code=400, detail="File too large.")
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
 
     service = CVIngestionService(db)
-    
-    # Create Tracking Job
-    job = await service.create_zip_ingestion_job(
-        organization_id=current_user.organization_id,
-        position_id=position_id,
-        user_id=current_user.id,
-        filename=file.filename
-    )
+    job_ids = []
 
-    if is_pdf:
-        # Update source_type to pdf_upload
-        job.source_type = "pdf_upload"
-        db.add(job)
-        await db.commit()
+    for file in files:
+        filename_lower = file.filename.lower()
+        is_zip = filename_lower.endswith(".zip")
+        is_pdf = filename_lower.endswith(".pdf")
 
-        # Encode bytes for Celery
-        encoded_pdf = base64.b64encode(file_bytes).decode("utf-8")
-        
-        # Dispatch PDF Ingestion Task
-        from worker.tasks.cv_ingestion import process_pdf_ingestion
-        process_pdf_ingestion.delay(
-            str(job.id), 
-            str(current_user.organization_id), 
-            str(position_id), 
-            file.filename, 
-            encoded_pdf
+        if not (is_zip or is_pdf):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported file format for {file.filename}. Only ZIP and PDF files are supported."
+            )
+
+        file_bytes = await file.read()
+        if len(file_bytes) > 200 * 1024 * 1024:  # 200MB limit
+            raise HTTPException(status_code=400, detail=f"File {file.filename} is too large.")
+
+        # Create Tracking Job
+        job = await service.create_zip_ingestion_job(
+            organization_id=current_user.organization_id,
+            position_id=position_id,
+            user_id=current_user.id,
+            filename=file.filename
         )
 
-        return {"message": "PDF upload accepted.", "job_id": job.id}
-    else:
-        # ZIP upload
-        # Encode bytes for Celery
-        encoded_zip = base64.b64encode(file_bytes).decode("utf-8")
-        
-        # Dispatch ZIP Ingestion Task
-        from worker.tasks.cv_ingestion import process_zip_ingestion
-        process_zip_ingestion.delay(
-            str(job.id), 
-            str(current_user.organization_id), 
-            str(position_id), 
-            encoded_zip
-        )
+        if is_pdf:
+            # Update source_type to pdf_upload
+            job.source_type = "pdf_upload"
+            db.add(job)
+            await db.commit()
 
-        return {"message": "ZIP upload accepted.", "job_id": job.id}
+            # Encode bytes for Celery
+            encoded_pdf = base64.b64encode(file_bytes).decode("utf-8")
+            
+            # Dispatch PDF Ingestion Task
+            from worker.tasks.cv_ingestion import process_pdf_ingestion
+            process_pdf_ingestion.delay(
+                str(job.id), 
+                str(current_user.organization_id), 
+                str(position_id), 
+                file.filename, 
+                encoded_pdf
+            )
+        else:
+            # ZIP upload
+            # Encode bytes for Celery
+            encoded_zip = base64.b64encode(file_bytes).decode("utf-8")
+            
+            # Dispatch ZIP Ingestion Task
+            from worker.tasks.cv_ingestion import process_zip_ingestion
+            process_zip_ingestion.delay(
+                str(job.id), 
+                str(current_user.organization_id), 
+                str(position_id), 
+                encoded_zip
+            )
+            
+        job_ids.append(job.id)
+
+    return {"message": f"{len(files)} file(s) upload accepted.", "job_ids": job_ids}
 
 
 @router.post("/drive-schedule")

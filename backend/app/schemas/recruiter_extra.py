@@ -40,3 +40,18 @@ class SuggestQuestionRubricRequest(BaseModel):
     question_text: str
     reference_answer: str | None = None
     context: dict[str, Any] | None = None  # {position_title, job_description, group_name, experience_level}
+
+class JDEnrichmentRequest(BaseModel):
+    job_title: str | None = None
+    gaps_and_roles: str
+    required_skills: list[str] = []
+
+class JDEnrichmentResponse(BaseModel):
+    suggested_job_title: str
+    suggested_job_description: str
+    suggested_skills: list[str]
+    suggested_experience_level: str
+    suggested_years_of_experience: int
+    suggested_education_level: str
+    suggested_traits: list[str]
+

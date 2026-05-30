@@ -7,7 +7,7 @@ import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { api } from '../../services/api';
 import { toast } from 'sonner';
-import { Loader2, Briefcase, MapPin, Users, Info, Plus, X } from 'lucide-react';
+import { Loader2, Briefcase, MapPin, Users, Info, Plus, X, Sparkles } from 'lucide-react';
 import { Badge } from '../ui/badge';
 
 const getErrorMessage = (error: unknown, fallback: string): string => {
@@ -45,6 +45,80 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
     const [assignedHRId, setAssignedHRId] = useState<string>('');
 
     const [isLoading, setIsLoading] = useState(false);
+    const [gapsAndRoles, setGapsAndRoles] = useState('');
+    const [isEnriching, setIsEnriching] = useState(false);
+    const [aiSuggestions, setAiSuggestions] = useState<any | null>(null);
+
+    const handleGenerateEnrichment = async () => {
+        if (!gapsAndRoles.trim()) return;
+        setIsEnriching(true);
+        try {
+            const res = await api.recruiter.suggestJDEnrichment({
+                job_title: jobTitle || undefined,
+                gaps_and_roles: gapsAndRoles,
+                required_skills: requiredSkills.length > 0 ? requiredSkills : undefined
+            });
+            setAiSuggestions(res);
+            toast.success('AI recommendations generated!');
+        } catch (error) {
+            console.error('Failed to generate JD enrichment:', error);
+            toast.error('Failed to generate AI recommendations');
+        } finally {
+            setIsEnriching(false);
+        }
+    };
+
+    const handleApplySuggestions = () => {
+        if (!aiSuggestions) return;
+        if (aiSuggestions.suggested_job_title) {
+            setJobTitle(aiSuggestions.suggested_job_title);
+        }
+        if (aiSuggestions.suggested_job_description) {
+            setJobDescription(aiSuggestions.suggested_job_description);
+        }
+        if (aiSuggestions.suggested_skills && aiSuggestions.suggested_skills.length > 0) {
+            const mergedSkills = Array.from(new Set([...requiredSkills, ...aiSuggestions.suggested_skills]));
+            setRequiredSkills(mergedSkills);
+        }
+        
+        const expLevelMap: Record<string, string> = {
+            'junior': 'Junior',
+            'mid-level': 'Mid-Level',
+            'senior': 'Senior',
+            'lead': 'Lead',
+            'principal': 'Lead',
+            'executive': 'Management'
+        };
+        if (aiSuggestions.suggested_experience_level) {
+            const levelKey = aiSuggestions.suggested_experience_level.toLowerCase();
+            setExperienceLevel(expLevelMap[levelKey] || 'Mid-Level');
+        }
+        
+        if (typeof aiSuggestions.suggested_years_of_experience === 'number') {
+            setYearsOfExperience(aiSuggestions.suggested_years_of_experience);
+        }
+
+        const eduLevelMap: Record<string, string> = {
+            'any': 'Any',
+            'high school': 'Any',
+            'associate': 'Associate',
+            'bachelor': 'Bachelor',
+            'master': 'Master',
+            'phd': 'PhD'
+        };
+        if (aiSuggestions.suggested_education_level) {
+            const eduKey = aiSuggestions.suggested_education_level.toLowerCase();
+            setEducationLevel(eduLevelMap[eduKey] || 'Bachelor');
+        }
+
+        if (aiSuggestions.suggested_traits && aiSuggestions.suggested_traits.length > 0) {
+            toast.success(`Suggestions applied! Soft traits identified: ${aiSuggestions.suggested_traits.join(', ')}`);
+        } else {
+            toast.success('Suggestions applied to form!');
+        }
+        setAiSuggestions(null);
+        setGapsAndRoles('');
+    };
     const [techRecruiters, setTechRecruiters] = useState<any[]>([]);
     const [hrRecruiters, setHRRecruiters] = useState<any[]>([]);
     const [userRole, setUserRole] = useState<string | null>(null);
@@ -217,7 +291,113 @@ export function AdminPositionModal({ isOpen, onClose, onSuccess, projectId, posi
 
                 <form onSubmit={handleSubmit} className="space-y-6 py-4 relative z-10">
                     <div className="grid grid-cols-2 gap-4">
-                        {/* ... (Existing fields) ... */}
+                        {/* AI Job Description Builder */}
+                        <div className="col-span-2 p-4 bg-indigo-50/40 rounded-2xl border border-indigo-100/80 space-y-3">
+                            <div className="flex items-center justify-between">
+                                <h4 className="text-sm font-semibold text-indigo-900 flex items-center gap-1.5">
+                                    <Sparkles className="w-4 h-4 text-indigo-500 fill-indigo-200 animate-pulse" />
+                                    AI Job Builder
+                                </h4>
+                                <span className="text-[10px] bg-indigo-100 text-indigo-700 font-medium px-2 py-0.5 rounded-full">Enrich from Draft</span>
+                            </div>
+                            <p className="text-xs text-indigo-700/80 leading-relaxed">
+                                Describe team gaps, roles, or candidate needs. The AI will recommend a structured job title, description, skills, and experience constraints.
+                            </p>
+                            
+                            <div className="space-y-2">
+                                <Textarea
+                                    placeholder="e.g., We need a backend engineer to take ownership of our data ingestion pipeline and scaling issues. They should be able to lead 2 junior devs and establish security best practices..."
+                                    value={gapsAndRoles}
+                                    onChange={(e) => setGapsAndRoles(e.target.value)}
+                                    className="min-h-[80px] text-xs bg-white/70 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                />
+                                <div className="flex justify-end">
+                                    <Button
+                                        type="button"
+                                        onClick={handleGenerateEnrichment}
+                                        disabled={isEnriching || !gapsAndRoles.trim()}
+                                        size="sm"
+                                        className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs px-3 h-8 shadow-sm flex items-center gap-1.5 transition-all duration-200"
+                                    >
+                                        {isEnriching ? (
+                                            <>
+                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                Analyzing...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Sparkles className="w-3.5 h-3.5" />
+                                                Propose Definition
+                                            </>
+                                        )}
+                                    </Button>
+                                </div>
+                            </div>
+
+                            {aiSuggestions && (
+                                <div className="mt-3 p-4 bg-white border border-indigo-100 rounded-xl space-y-4 text-xs animate-in fade-in slide-in-from-top-2 duration-200 shadow-sm">
+                                    <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+                                        <span className="font-semibold text-gray-800 text-sm">AI Suggested Configuration</span>
+                                        <div className="flex gap-2">
+                                            <Button
+                                                type="button"
+                                                onClick={() => setAiSuggestions(null)}
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-7 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg px-2"
+                                            >
+                                                Discard
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                onClick={handleApplySuggestions}
+                                                size="sm"
+                                                className="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg px-3"
+                                            >
+                                                Apply Suggestions
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3 text-xs text-gray-600">
+                                        <div>
+                                            <span className="font-semibold text-gray-700 block">Suggested Title:</span>
+                                            <span className="text-gray-900">{aiSuggestions.suggested_job_title}</span>
+                                        </div>
+                                        <div>
+                                            <span className="font-semibold text-gray-700 block">Experience Level:</span>
+                                            <span className="capitalize text-gray-900 font-medium">
+                                                {aiSuggestions.suggested_experience_level} ({aiSuggestions.suggested_years_of_experience} years)
+                                            </span>
+                                        </div>
+                                        <div>
+                                            <span className="font-semibold text-gray-700 block">Education Level:</span>
+                                            <span className="capitalize text-gray-900 font-medium">{aiSuggestions.suggested_education_level}</span>
+                                        </div>
+                                        <div>
+                                            <span className="font-semibold text-gray-700 block">Traits:</span>
+                                            <span className="text-gray-900">{aiSuggestions.suggested_traits?.join(', ') || 'None'}</span>
+                                        </div>
+                                        <div className="col-span-2">
+                                            <span className="font-semibold text-gray-700 block">Suggested Skills:</span>
+                                            <div className="flex flex-wrap gap-1 mt-1">
+                                                {aiSuggestions.suggested_skills?.map((s: string) => (
+                                                    <span key={s} className="bg-indigo-50 text-indigo-700 border border-indigo-100/60 px-2 py-0.5 rounded-lg text-[10px] font-medium">
+                                                        {s}
+                                                    </span>
+                                                )) || <span className="text-gray-400 italic">None</span>}
+                                            </div>
+                                        </div>
+                                        <div className="col-span-2">
+                                            <span className="font-semibold text-gray-700 block">Suggested Description:</span>
+                                            <p className="mt-1 text-gray-600 max-h-[100px] overflow-y-auto whitespace-pre-line border border-gray-100 p-2 rounded-xl bg-gray-50 leading-relaxed">
+                                                {aiSuggestions.suggested_job_description}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
                         <div className="col-span-2 space-y-2">
                             <Label htmlFor="title" className="text-sm font-semibold text-gray-700">Job Title</Label>
                             <Input id="title" placeholder="e.g., Senior Full-Stack Engineer" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} required className="bg-white/50 border-gray-200 focus:border-indigo-500 rounded-xl" />

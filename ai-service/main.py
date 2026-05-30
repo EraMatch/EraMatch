@@ -6,6 +6,9 @@ Generic AI service supporting multiple providers:
 - Whisper for transcription (faster-whisper)
 - HuggingFace models (custom)
 """
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import logging
 
 from fastapi import FastAPI
