@@ -265,7 +265,10 @@ async def get_background_tasks(
         cv_result = await db.execute(cv_query)
         cv_jobs = cv_result.scalars().all()
 
-        # Batch-fetch scoring progress for all positions in one query
+        # Batch-fetch scoring progress for all positions in one query.
+        # NOTE: CandidateApplication PK is Python attr `id` (aliased to `application_id` in DB).
+        #       CVAnalysis PK is Python attr `id` (aliased to `analysis_id` in DB).
+        #       Use .analyzed_at to count only fully-scored rows (non-null = scored).
         position_ids = list({job.position_id for job in cv_jobs if job.position_id})
         scoring_map: dict = {}
         if position_ids:
@@ -273,7 +276,7 @@ async def get_background_tasks(
                 select(
                     CandidateApplication.position_id,
                     func.count(CandidateApplication.id).label("total"),
-                    func.count(CVAnalysis.analysis_id).label("scored"),
+                    func.count(CVAnalysis.analyzed_at).label("scored"),
                 )
                 .outerjoin(CVAnalysis, CVAnalysis.application_id == CandidateApplication.id)
                 .where(

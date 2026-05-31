@@ -69,7 +69,15 @@ export function DevStatusBadge() {
     ];
 
     return (
-        <div className="fixed bottom-4 right-4 z-[9999] flex flex-col items-end gap-1">
+        <div className="fixed top-3 right-3 z-[9999] flex flex-col items-end gap-1">
+            <button
+                onClick={() => setOpen(o => !o)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium shadow-sm ${pillColor}`}
+            >
+                <Dot healthy={bh} />
+                <Dot healthy={ah} />
+                <span>dev</span>
+            </button>
             {open && (
                 <div className="bg-white border border-gray-200 rounded-[10px] shadow-lg p-3 w-52 text-xs space-y-2">
                     <p className="font-semibold text-gray-700 mb-1">Dev Status</p>
@@ -91,14 +99,6 @@ export function DevStatusBadge() {
                     </div>
                 </div>
             )}
-            <button
-                onClick={() => setOpen(o => !o)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium shadow-sm ${pillColor}`}
-            >
-                <Dot healthy={bh} />
-                <Dot healthy={ah} />
-                <span>dev</span>
-            </button>
         </div>
     );
 }
