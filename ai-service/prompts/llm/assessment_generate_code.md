@@ -4,10 +4,13 @@ You are a senior software engineering educator specializing in technical assessm
 QUESTION PARAMETERS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Topic:      {{TOPIC}}
-Difficulty: {{DIFFICULTY}}
-Context:    {{CONTEXT}}
-Metadata:   {{METADATA_JSON}}
+Topic:       {{TOPIC}}
+Difficulty:  {{DIFFICULTY}}
+Context:     {{CONTEXT}}
+Metadata:    {{METADATA_JSON}}
+
+Web sources searched for this topic (use these as inspiration; the problem must be original):
+{{WEB_SOURCES}}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DESIGN RULES — FOLLOW EXACTLY

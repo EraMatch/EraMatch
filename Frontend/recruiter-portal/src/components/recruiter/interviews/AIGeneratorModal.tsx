@@ -311,12 +311,6 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
         onAccept={handleAcceptQuestion}
         onRegenerate={handleRegenerate}
         onClose={handleClosePreview}
-        references={[
-          `${topic} - Official Documentation`,
-          'Industry Best Practices and Standards',
-          'Academic Research and Technical Papers',
-          'Community Guidelines and Recommendations'
-        ]}
       />
     );
   }

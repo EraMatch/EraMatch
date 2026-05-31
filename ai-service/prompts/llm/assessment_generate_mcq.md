@@ -4,10 +4,13 @@ You are a senior technical assessment designer with expertise in psychometrics a
 QUESTION PARAMETERS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Topic:      {{TOPIC}}
-Difficulty: {{DIFFICULTY}}
-Context:    {{CONTEXT}}
-Metadata:   {{METADATA_JSON}}
+Topic:       {{TOPIC}}
+Difficulty:  {{DIFFICULTY}}
+Context:     {{CONTEXT}}
+Metadata:    {{METADATA_JSON}}
+
+Web sources searched for this topic (use for accuracy; cite the best one as evidence):
+{{WEB_SOURCES}}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DESIGN RULES — FOLLOW EXACTLY

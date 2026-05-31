@@ -2987,6 +2987,21 @@ class RecruiterService:
             template_name = "interview_generate_questions.md"
             fallback = fallback_prompts["interview"]
 
+        # Web search — fetch real sources before calling the LLM so it can cite them.
+        web_refs: list[dict] = []
+        web_context_snippet = ""
+        if question_type in {"mcq", "essay", "code"}:
+            try:
+                from duckduckgo_search import DDGS  # available via langchain-community dep
+                search_q = f"{topic} {question_type} programming" if question_type == "code" else f"{topic} interview question"
+                with DDGS() as ddgs:
+                    raw = list(ddgs.text(search_q, max_results=4))
+                web_refs = [{"title": r.get("title", ""), "url": r.get("href", "")} for r in raw if r.get("href")]
+                snippets = [f'- {r.get("title", "")}: {r.get("href", "")}' for r in raw if r.get("href")]
+                web_context_snippet = "\n".join(snippets)
+            except Exception:
+                pass  # Search failure is non-fatal
+
         prompt = self._render_recruiter_prompt(
             template_name,
             fallback,
@@ -2997,6 +3012,7 @@ class RecruiterService:
                 "CONTEXT": context,
                 "USE_CASE": use_case,
                 "METADATA_JSON": metadata,
+                "WEB_SOURCES": web_context_snippet or "No web sources available.",
             },
         )
 
@@ -3138,6 +3154,10 @@ class RecruiterService:
                     for tc in raw_tcs
                     if isinstance(tc, dict)
                 ]
+
+            # Attach real web references regardless of question type
+            if web_refs:
+                payload["references"] = web_refs
 
             return payload
         except Exception as e:
