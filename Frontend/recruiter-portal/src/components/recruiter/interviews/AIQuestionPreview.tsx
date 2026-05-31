@@ -12,9 +12,11 @@ interface QuestionVariant {
 interface AIQuestionPreviewProps {
   question: QuestionVariant;
   onAccept: (question: QuestionVariant) => void;
-  onRegenerate: () => void;
+  onRegenerate?: () => void;
   onClose: () => void;
   references?: string[];
+  /** When true: shows "Approve & Back" instead of "Accept & Add", hides Regenerate */
+  approveMode?: boolean;
 }
 
 export function AIQuestionPreview({
@@ -22,6 +24,7 @@ export function AIQuestionPreview({
   onAccept,
   onRegenerate,
   onClose,
+  approveMode = false,
 }: AIQuestionPreviewProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [edited, setEdited] = useState<QuestionVariant>({ ...question });
@@ -69,7 +72,11 @@ export function AIQuestionPreview({
                   )}
                 </div>
                 <p className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af] mt-0.5">
-                  {isEditing ? 'Make changes below, then accept.' : 'Review before adding to the assessment.'}
+                  {isEditing
+                    ? 'Make changes below, then approve.'
+                    : approveMode
+                    ? 'Review and approve to include in the batch.'
+                    : 'Review before adding to the assessment.'}
                 </p>
               </div>
             </div>
@@ -419,13 +426,17 @@ export function AIQuestionPreview({
         {/* Footer */}
         <div className="px-7 py-4 border-t border-[#e5e7eb] flex-shrink-0">
           <div className="flex items-center justify-between">
-            <Button variant="outline" onClick={onRegenerate} className="rounded-[8px] h-[38px] text-[13px]">
-              <RefreshCw size={14} className="mr-2" />
-              Regenerate
-            </Button>
+            <div>
+              {!approveMode && onRegenerate && (
+                <Button variant="outline" onClick={onRegenerate} className="rounded-[8px] h-[38px] text-[13px]">
+                  <RefreshCw size={14} className="mr-2" />
+                  Regenerate
+                </Button>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={onClose} className="rounded-[8px] h-[38px] text-[13px]">
-                Cancel
+                {approveMode ? '← Back to list' : 'Cancel'}
               </Button>
               {isEditing && (
                 <Button
@@ -439,10 +450,14 @@ export function AIQuestionPreview({
               )}
               <Button
                 onClick={handleAccept}
-                className="rounded-[8px] h-[38px] px-5 bg-[#6366f1] hover:bg-[#4f46e5] text-white text-[13px]"
+                className={`rounded-[8px] h-[38px] px-5 text-white text-[13px] ${
+                  approveMode
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-[#6366f1] hover:bg-[#4f46e5]'
+                }`}
               >
                 <Check size={14} className="mr-2" />
-                Accept & Add
+                {approveMode ? 'Approve & Back' : 'Accept & Add'}
               </Button>
             </div>
           </div>

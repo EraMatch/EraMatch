@@ -271,8 +271,9 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
     setShowAIGenerator(true);
   };
 
-  const handleAIGenerate = (question: QuestionVariant) => {
-    handleAddVariant(question);
+  const handleAIGenerate = (question: QuestionVariant | QuestionVariant[]) => {
+    const list = Array.isArray(question) ? question : [question];
+    list.forEach(q => handleAddVariant(q));
     setShowAIGenerator(false);
   };
 

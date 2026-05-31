@@ -14,7 +14,7 @@ interface QuestionVariant {
 
 interface AIGeneratorModalProps {
   questionType?: 'mcq' | 'essay' | 'code' | 'interview';
-  onGenerate: (question: any) => void;
+  onGenerate: (question: QuestionVariant) => void;
   onClose: () => void;
   context?: any;
 }
@@ -34,10 +34,13 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
   const [generationStatus, setGenerationStatus] = useState('');
   const [generatedQuestion, setGeneratedQuestion] = useState<QuestionVariant | null>(null);
   const [generatedVariants, setGeneratedVariants] = useState<QuestionVariant[]>([]);
-  const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
   const [normalizationWarnings, setNormalizationWarnings] = useState<string[]>([]);
   const [showPreview, setShowPreview] = useState(false);
   const [savingToQB, setSavingToQB] = useState(false);
+  // Multi-variant review state
+  const [previewingIndex, setPreviewingIndex] = useState<number | null>(null);
+  // index → approved (and possibly edited) variant
+  const [approvedVariants, setApprovedVariants] = useState<Map<number, QuestionVariant>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const topicError = topicTouched && !topic.trim() ? 'Topic is required.' : null;
@@ -177,7 +180,8 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
 
       setNormalizationWarnings(combinedWarnings);
       setGeneratedVariants(variants);
-      setSelectedVariantIndex(0);
+      setApprovedVariants(new Map());
+      setPreviewingIndex(null);
       setGeneratedQuestion(variants[0] || null);
 
       if (combinedWarnings.length > 0) {
@@ -192,8 +196,8 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
           setShowPreview(true);
         }
       } else {
-        toast.success(`Generated ${variants.length} variants. Select one to preview.`);
-        setGenerationStatus(`Generated ${variants.length} variants. Select your preferred draft.`);
+        toast.success(`${variants.length} variants generated — preview and approve each one.`);
+        setGenerationStatus(`${variants.length} variants ready. Preview and approve each before adding.`);
       }
     } catch (error: any) {
       if (error?.name === 'AbortError') {
@@ -245,41 +249,61 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [generateQuestion, handleClose, isGenerating, showPreview]);
 
-  const handleAcceptQuestion = async (question: QuestionVariant) => {
-    let finalQuestion = question;
-
-    if (effectiveType === 'code') {
-      setSavingToQB(true);
-      try {
-        const saved = await recruiterService.createQuestionBank({
-          question_type: 'code',
-          question_text: question.questionText,
-          language: (question.language || 'python').toLowerCase(),
-          code_template: question.starterCode || question.codeTemplate || '',
-          function_name: question.functionName || '',
-          test_cases: question.testCases || [],
-          difficulty: question.difficulty || 'Medium',
-          category: question.category || '',
-          tags: question.tags || [],
-          input_format: question.inputFormat || '',
-          output_format: question.outputFormat || '',
-          constraints: question.questionConstraints || (question as any).constraints || [],
-          examples: question.questionExamples || (question as any).examples || [],
-          topics: question.topics || [],
-        });
-        finalQuestion = { ...question, id: saved.id };
-      } catch {
-        // QB save failed — proceed without a real UUID (variant generation won't work later)
-      } finally {
-        setSavingToQB(false);
-      }
+  const saveToQB = async (question: QuestionVariant): Promise<QuestionVariant> => {
+    if (effectiveType !== 'code') return question;
+    try {
+      const saved = await recruiterService.createQuestionBank({
+        question_type: 'code',
+        question_text: question.questionText,
+        language: (question.language || 'python').toLowerCase(),
+        code_template: question.starterCode || question.codeTemplate || '',
+        function_name: question.functionName || '',
+        test_cases: question.testCases || [],
+        difficulty: question.difficulty || 'Medium',
+        category: question.category || '',
+        tags: question.tags || [],
+        input_format: question.inputFormat || '',
+        output_format: question.outputFormat || '',
+        constraints: question.questionConstraints || (question as any).constraints || [],
+        examples: question.questionExamples || (question as any).examples || [],
+        topics: question.topics || [],
+      });
+      return { ...question, id: saved.id };
+    } catch {
+      return question;
     }
+  };
 
-    onGenerate(finalQuestion);
+  // Single variant accepted from preview — close modal
+  const handleAcceptQuestion = async (question: QuestionVariant) => {
+    setSavingToQB(true);
+    const final = await saveToQB(question);
+    setSavingToQB(false);
+    onGenerate(final);
     setShowPreview(false);
     setGeneratedQuestion(null);
     setGeneratedVariants([]);
-    setSelectedVariantIndex(0);
+  };
+
+  // Called from approve-mode preview — mark variant approved + return to list
+  const handleApproveVariant = (index: number, question: QuestionVariant) => {
+    setApprovedVariants(prev => new Map(prev).set(index, question));
+    setPreviewingIndex(null);
+  };
+
+  // Add all approved variants — saves code types to QB, then calls onGenerate for each
+  const handleAddApproved = async () => {
+    if (approvedVariants.size === 0) return;
+    setSavingToQB(true);
+    const toAdd: QuestionVariant[] = [];
+    for (const [, q] of approvedVariants) {
+      toAdd.push(await saveToQB(q));
+    }
+    setSavingToQB(false);
+    toAdd.forEach(q => onGenerate(q));
+    setGeneratedVariants([]);
+    setApprovedVariants(new Map());
+    setPreviewingIndex(null);
   };
 
   const handleRegenerate = () => {
@@ -288,22 +312,10 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
     void generateQuestion();
   };
 
-  const handleClosePreview = () => {
-    setShowPreview(false);
-  };
+  const handleClosePreview = () => setShowPreview(false);
+  const handleRetry = () => void generateQuestion();
 
-  const handleRetry = () => {
-    void generateQuestion();
-  };
-
-  const handlePreviewSelectedVariant = () => {
-    if (!generatedVariants[selectedVariantIndex]) {
-      return;
-    }
-    setGeneratedQuestion(generatedVariants[selectedVariantIndex]);
-    setShowPreview(true);
-  };
-
+  // Single-variant auto-preview (count=1) → accept closes modal
   if (showPreview && generatedQuestion) {
     return (
       <AIQuestionPreview
@@ -311,6 +323,18 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
         onAccept={handleAcceptQuestion}
         onRegenerate={handleRegenerate}
         onClose={handleClosePreview}
+      />
+    );
+  }
+
+  // Multi-variant per-card preview → approve marks it, returns to list
+  if (previewingIndex !== null && generatedVariants[previewingIndex]) {
+    return (
+      <AIQuestionPreview
+        question={generatedVariants[previewingIndex]}
+        onAccept={(q) => handleApproveVariant(previewingIndex, q)}
+        onClose={() => setPreviewingIndex(null)}
+        approveMode
       />
     );
   }
@@ -499,37 +523,92 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
             )}
 
             {!isGenerating && generatedVariants.length > 1 && (
-              <div className="p-4 border border-[#e5e7eb] rounded-[12px] bg-[#fcfcff]">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">Select a Variant</h3>
-                  <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{generatedVariants.length} generated</span>
+              <div className="rounded-[12px] border border-[#e5e7eb] bg-[#fcfcff] overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-[#e5e7eb]">
+                  <h3 className="font-['Arimo',sans-serif] text-[13px] font-medium text-[#111827]">
+                    {generatedVariants.length} variants generated
+                  </h3>
+                  <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                    Preview each, then approve
+                  </span>
                 </div>
-                <div className="space-y-2 mb-4">
-                  {generatedVariants.map((variant, index) => (
-                    <button
-                      key={`variant-${index}`}
-                      onClick={() => setSelectedVariantIndex(index)}
-                      className={`w-full p-3 rounded-[8px] border text-left transition-colors ${
-                        selectedVariantIndex === index
-                          ? 'border-purple-500 bg-purple-50'
-                          : 'border-[#e5e7eb] hover:border-purple-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Variant {index + 1}</span>
-                        {selectedVariantIndex === index && (
-                          <span className="font-['Arimo',sans-serif] text-[11px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">Selected</span>
-                        )}
+                <div className="divide-y divide-[#f3f4f6]">
+                  {generatedVariants.map((variant, index) => {
+                    const isApproved = approvedVariants.has(index);
+                    return (
+                      <div
+                        key={`variant-${index}`}
+                        className={`flex items-start gap-3 px-4 py-3 transition-colors ${
+                          isApproved ? 'bg-emerald-50/60' : 'bg-white hover:bg-[#f9fafb]'
+                        }`}
+                      >
+                        {/* Approve toggle */}
+                        <button
+                          onClick={() => {
+                            if (isApproved) {
+                              setApprovedVariants(prev => {
+                                const n = new Map(prev); n.delete(index); return n;
+                              });
+                            } else {
+                              setApprovedVariants(prev => new Map(prev).set(index, variant));
+                            }
+                          }}
+                          className={`mt-0.5 w-5 h-5 rounded-[4px] border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
+                            isApproved
+                              ? 'border-emerald-500 bg-emerald-500'
+                              : 'border-[#d1d5db] hover:border-[#6366f1]'
+                          }`}
+                          title={isApproved ? 'Remove approval' : 'Approve without preview'}
+                        >
+                          {isApproved && (
+                            <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                              <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </button>
+
+                        {/* Question preview */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-['Arimo',sans-serif] text-[11px] text-[#9ca3af]">
+                              Variant {index + 1}
+                            </span>
+                            {isApproved && (
+                              <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-medium">
+                                Approved
+                              </span>
+                            )}
+                          </div>
+                          <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151] line-clamp-2">
+                            {variant.questionText}
+                          </p>
+                        </div>
+
+                        {/* Preview button */}
+                        <button
+                          onClick={() => setPreviewingIndex(index)}
+                          className="flex-shrink-0 h-7 px-3 rounded-[6px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[12px] text-[#6b7280] hover:border-[#6366f1] hover:text-[#6366f1] transition-colors"
+                        >
+                          Preview
+                        </button>
                       </div>
-                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#111827] line-clamp-2">
-                        {variant.questionText}
-                      </p>
-                    </button>
-                  ))}
+                    );
+                  })}
                 </div>
-                <div className="flex items-center justify-end">
-                  <Button className="rounded-[8px]" onClick={handlePreviewSelectedVariant}>
-                    Preview Selected
+                {/* Approval summary */}
+                <div className="px-4 py-3 border-t border-[#e5e7eb] flex items-center justify-between bg-white">
+                  <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                    {approvedVariants.size} of {generatedVariants.length} approved
+                  </span>
+                  <Button
+                    onClick={() => void handleAddApproved()}
+                    disabled={approvedVariants.size === 0 || savingToQB}
+                    className="h-[32px] px-4 rounded-[7px] bg-[#6366f1] hover:bg-[#4f46e5] text-white text-[12px] disabled:opacity-50"
+                  >
+                    {savingToQB
+                      ? 'Saving...'
+                      : `Add ${approvedVariants.size > 0 ? approvedVariants.size + ' ' : ''}approved`
+                    }
                   </Button>
                 </div>
               </div>
