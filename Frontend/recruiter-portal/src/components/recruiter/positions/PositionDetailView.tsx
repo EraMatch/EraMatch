@@ -367,7 +367,12 @@ export function PositionDetailView({
     setKeywordsVisible(hasAnyKeywords(kw));
   }, [detailData]);
 
-  // Scoring progress — derived from background-tasks (same cache as monitoring page)
+  // ── Scoring progress tracking ────────────────────────────────────────────
+  // lastUploadAt: set on upload, drives polling for 8 min regardless of DB state.
+  // bgPendingCount: from background-tasks, non-zero while DB has unscored applications.
+  // Both independently trigger auto-refetch so the list updates without manual refresh.
+  const [lastUploadAt, setLastUploadAt] = useState<number | null>(null);
+
   const { data: bgTasks } = useBackgroundTasksPolling(true);
   const bgPendingCount = (() => {
     if (!Array.isArray(bgTasks) || !positionId) return 0;
@@ -377,20 +382,36 @@ export function PositionDetailView({
     if (positionJobs.length === 0) return 0;
     return Number(positionJobs[0]?.pending_count ?? 0);
   })();
-  const hasPendingScoring = bgPendingCount > 0;
 
-  // Scored count derived from visible candidates (most accurate — matches what the user sees)
+  const UPLOAD_POLL_WINDOW_MS = 8 * 60 * 1000; // 8 min after upload
+  const isRecentUpload = lastUploadAt != null && (Date.now() - lastUploadAt) < UPLOAD_POLL_WINDOW_MS;
+
+  // shouldPoll = recent upload OR DB still has unscored candidates
+  const shouldPoll = isRecentUpload || bgPendingCount > 0;
+
+  // Count from visible candidates — always accurate to what the user sees
   const scoredCandidateCount = candidates.filter((c: any) => (c.score ?? 0) > 0 || (c.match ?? 0) > 0).length;
   const totalCandidateCount = candidates.length;
 
-  // Auto-refetch position detail while scoring is in progress — picks up new candidates & scores
+  // Show the chip: processing started (shouldPoll) and we have candidates to display, OR some are still N/A
+  const unscoredVisible = totalCandidateCount > 0 && scoredCandidateCount < totalCandidateCount;
+  const showScoringChip = shouldPoll && (totalCandidateCount > 0 || isRecentUpload);
+
+  // Auto-refetch position detail the whole time — picks up new candidates + score updates
   useEffect(() => {
-    if (!hasPendingScoring || !positionId) return;
+    if (!shouldPoll || !positionId) return;
     const interval = setInterval(() => {
       queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
-    }, 6000);
+    }, 5000);
     return () => clearInterval(interval);
-  }, [hasPendingScoring, positionId, queryClient]);
+  }, [shouldPoll, positionId, queryClient]);
+
+  // Stop the recent-upload window if all candidates are scored (no more work to do)
+  useEffect(() => {
+    if (isRecentUpload && totalCandidateCount > 0 && !unscoredVisible && bgPendingCount === 0) {
+      setLastUploadAt(null);
+    }
+  }, [isRecentUpload, totalCandidateCount, unscoredVisible, bgPendingCount]);
 
   useEffect(() => {
     if (!insightsData) return;
@@ -493,6 +514,7 @@ export function PositionDetailView({
     try {
       const res = await api.recruiter.uploadZipCandidates(positionId, zipFiles);
       setUploadSuccess(`Upload accepted. Scoring progress will update automatically below.`);
+      setLastUploadAt(Date.now()); // start polling immediately, before any DB state
       setZipFiles([]); // clear after successful upload
     } catch (err: any) {
       setUploadError(err.message || "Upload failed");
@@ -1103,10 +1125,10 @@ export function PositionDetailView({
                   <h3 className="font-['Arimo',sans-serif] text-[19px] text-black">
                     All Candidates ({filteredCandidates.length})
                   </h3>
-                  {hasPendingScoring && totalCandidateCount > 0 && (
+                  {showScoringChip && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-[11px] font-medium text-indigo-600">
                       <Loader2 size={10} className="animate-spin" />
-                      {scoredCandidateCount}/{totalCandidateCount}
+                      {totalCandidateCount === 0 ? 'processing…' : `${scoredCandidateCount}/${totalCandidateCount}`}
                     </span>
                   )}
                 </div>
@@ -2343,11 +2365,13 @@ export function PositionDetailView({
                 <h4 className="text-lg font-medium text-gray-900 mb-2">Upload Complete!</h4>
                 <p className="text-sm text-gray-500 mb-3">{uploadSuccess}</p>
 
-                {/* Live scoring progress */}
-                {hasPendingScoring ? (
+                {/* Live scoring progress inside the modal */}
+                {showScoringChip ? (
                   <div className="flex items-center justify-center gap-2 text-sm text-indigo-600 font-medium mb-6">
                     <Loader2 size={14} className="animate-spin" />
-                    Scoring {scoredCandidateCount} / {totalCandidateCount} candidates…
+                    {totalCandidateCount === 0
+                      ? 'Processing CVs — candidates will appear shortly…'
+                      : `Scoring ${scoredCandidateCount} / ${totalCandidateCount} candidates…`}
                   </div>
                 ) : totalCandidateCount > 0 ? (
                   <div className="flex items-center justify-center gap-2 text-sm text-green-600 font-medium mb-6">
