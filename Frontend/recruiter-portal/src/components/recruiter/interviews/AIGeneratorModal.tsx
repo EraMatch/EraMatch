@@ -43,11 +43,6 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
   const topicError = topicTouched && !topic.trim() ? 'Topic is required.' : null;
   const canGenerate = !!topic.trim() && !isGenerating;
 
-  const metadataLabel = useMemo(
-    () => `Using AI | Type: ${effectiveType.toUpperCase()} | Difficulty: ${difficulty} | Variants: ${variantCount}`,
-    [effectiveType, difficulty, variantCount]
-  );
-
   const normalizeGeneratedQuestion = useCallback(
     (rawQuestion: any): { question: QuestionVariant; warnings: string[] } => {
       const warnings: string[] = [];
@@ -93,10 +88,11 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
           warnings.push('Code test cases was normalized to an empty array.');
           normalized.testCases = [];
         }
-        if (typeof normalized.codeTemplate !== 'string') {
-          warnings.push('Code template was normalized to an empty template.');
-          normalized.codeTemplate = '';
-        }
+        // Map backend field names to frontend conventions
+        normalized.starterCode = normalized.starterCode || normalized.codeTemplate || '';
+        normalized.codeTemplate = normalized.starterCode;
+        normalized.questionExamples = normalized.questionExamples || normalized.examples || [];
+        normalized.questionConstraints = normalized.questionConstraints || normalized.constraints || [];
       }
 
       return { question: normalized as QuestionVariant, warnings };
@@ -259,12 +255,17 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
           question_type: 'code',
           question_text: question.questionText,
           language: (question.language || 'python').toLowerCase(),
-          code_template: question.codeTemplate || question.starterCode || '',
+          code_template: question.starterCode || question.codeTemplate || '',
           function_name: question.functionName || '',
           test_cases: question.testCases || [],
           difficulty: question.difficulty || 'Medium',
           category: question.category || '',
           tags: question.tags || [],
+          input_format: question.inputFormat || '',
+          output_format: question.outputFormat || '',
+          constraints: question.questionConstraints || (question as any).constraints || [],
+          examples: question.questionExamples || (question as any).examples || [],
+          topics: question.topics || [],
         });
         finalQuestion = { ...question, id: saved.id };
       } catch {
@@ -320,41 +321,58 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
     );
   }
 
+  const typeConfig = {
+    mcq: { label: 'Multiple Choice', color: 'blue', hint: '4 options · correct answer · explanation' },
+    essay: { label: 'Essay', color: 'purple', hint: 'rubric · keywords · word limit' },
+    code: { label: 'Coding (Python)', color: 'emerald', hint: 'problem · starter code · 6+ test cases · function name' },
+    interview: { label: 'Interview', color: 'orange', hint: 'question · evaluation criteria · key points' },
+  }[effectiveType] || { label: effectiveType, color: 'gray', hint: '' };
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" aria-busy={isGenerating}>
-      <div className="bg-white rounded-[16px] shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-[16px] shadow-2xl max-w-xl w-full flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="px-8 py-6 border-b border-[#e5e7eb] flex-shrink-0">
+        <div className="px-6 py-5 border-b border-[#e5e7eb] flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center">
-                <Wand2 size={20} className="text-white" />
+              <div className="w-9 h-9 rounded-[10px] bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center">
+                <Wand2 size={17} className="text-white" />
               </div>
               <div>
-                <h2 className="text-[#111827]">AI Question Generator</h2>
-                <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                  Generate a {effectiveType === 'mcq' ? 'multiple choice' : effectiveType} question with AI
+                <div className="flex items-center gap-2">
+                  <h2 className="text-[#111827] text-[16px]">Generate with AI</h2>
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
+                    effectiveType === 'code' ? 'bg-emerald-100 text-emerald-700' :
+                    effectiveType === 'mcq' ? 'bg-blue-100 text-blue-700' :
+                    effectiveType === 'essay' ? 'bg-purple-100 text-purple-700' :
+                    'bg-gray-100 text-gray-700'
+                  }`}>
+                    {typeConfig.label}
+                  </span>
+                </div>
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af] mt-0.5">
+                  {typeConfig.hint}
                 </p>
               </div>
             </div>
             <button
               onClick={handleClose}
               disabled={isGenerating}
-              className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+              className="w-8 h-8 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
               aria-label="Close AI generator"
             >
-              <X size={20} className="text-[#6b7280]" />
+              <X size={18} className="text-[#6b7280]" />
             </button>
           </div>
         </div>
 
         {/* Content */}
-        <div className="p-8 overflow-y-auto flex-1">
-          <div className="space-y-6">
+        <div className="px-6 py-5 overflow-y-auto flex-1">
+          <div className="space-y-5">
             {/* Topic */}
             <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Topic or Concept *
+              <label className="block font-['Arimo',sans-serif] text-[13px] font-medium text-[#374151] mb-1.5">
+                Topic *
               </label>
               <input
                 type="text"
@@ -362,133 +380,103 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
                 onChange={(e) => setTopic(e.target.value)}
                 onBlur={() => setTopicTouched(true)}
                 disabled={isGenerating}
-                placeholder="e.g., React Hooks, Database Normalization, Binary Search..."
-                className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                placeholder={effectiveType === 'code'
+                  ? 'e.g., Two Sum, Sliding Window, Binary Search...'
+                  : 'e.g., React Hooks, Database Normalization, REST APIs...'}
+                className="w-full h-[42px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
                 autoFocus
               />
               {topicError && (
-                <p className="mt-2 font-['Arimo',sans-serif] text-[12px] text-red-700" role="alert">{topicError}</p>
+                <p className="mt-1.5 font-['Arimo',sans-serif] text-[12px] text-red-600" role="alert">{topicError}</p>
               )}
             </div>
 
-            {/* Difficulty */}
-            <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-3">
-                Difficulty Level
-              </label>
-              <div className="grid grid-cols-3 gap-3">
-                {(['Easy', 'Medium', 'Hard'] as const).map((level) => (
-                  <button
-                    key={level}
-                    onClick={() => setDifficulty(level)}
-                    disabled={isGenerating}
-                    className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${difficulty === level
-                      ? level === 'Easy'
-                        ? 'border-green-500 bg-green-50 text-green-700'
-                        : level === 'Medium'
-                          ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
+            {/* Difficulty + Count row */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block font-['Arimo',sans-serif] text-[13px] font-medium text-[#374151] mb-1.5">
+                  Difficulty
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(['Easy', 'Medium', 'Hard'] as const).map((level) => (
+                    <button
+                      key={level}
+                      onClick={() => setDifficulty(level)}
+                      disabled={isGenerating}
+                      className={`h-[36px] rounded-[7px] border-2 transition-all font-['Arimo',sans-serif] text-[12px] font-medium ${difficulty === level
+                        ? level === 'Easy' ? 'border-green-500 bg-green-50 text-green-700'
+                          : level === 'Medium' ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
                           : 'border-red-500 bg-red-50 text-red-700'
-                      : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-purple-300'
+                        : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]/40'
                       }`}
-                  >
-                    {level}
-                  </button>
-                ))}
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Generation Mode
-              </label>
-              <div className="flex items-center gap-2">
-                {[1, 2, 3].map((count) => (
-                  <button
-                    key={count}
-                    onClick={() => setVariantCount(count as 1 | 2 | 3)}
-                    disabled={isGenerating}
-                    className={`h-[36px] px-4 rounded-[8px] border text-[13px] font-['Arimo',sans-serif] transition-colors ${
-                      variantCount === count
-                        ? 'border-purple-500 bg-purple-50 text-purple-700'
-                        : 'border-[#e5e7eb] text-[#6b7280] hover:border-purple-300'
-                    }`}
-                  >
-                    {count} Variant{count > 1 ? 's' : ''}
-                  </button>
-                ))}
+              <div>
+                <label className="block font-['Arimo',sans-serif] text-[13px] font-medium text-[#374151] mb-1.5">
+                  Generate
+                </label>
+                <div className="flex gap-1.5">
+                  {[1, 2, 3].map((count) => (
+                    <button
+                      key={count}
+                      onClick={() => setVariantCount(count as 1 | 2 | 3)}
+                      disabled={isGenerating}
+                      className={`flex-1 h-[36px] rounded-[7px] border-2 text-[12px] font-medium font-['Arimo',sans-serif] transition-colors ${
+                        variantCount === count
+                          ? 'border-[#6366f1] bg-[#ede9fe] text-[#6366f1]'
+                          : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]/40'
+                      }`}
+                    >
+                      {count}×
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-
-            <div className="px-3 py-2 rounded-[8px] border border-[#e5e7eb] bg-[#f9fafb]">
-              <p className="font-['Arimo',sans-serif] text-[12px] text-[#4b5563]">{metadataLabel}</p>
             </div>
 
             {/* Additional Context */}
             <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Additional Context (Optional)
+              <label className="block font-['Arimo',sans-serif] text-[13px] font-medium text-[#374151] mb-1.5">
+                Context <span className="text-[#9ca3af] font-normal">(optional)</span>
               </label>
               <textarea
                 value={context}
                 onChange={(e) => setContext(e.target.value)}
                 disabled={isGenerating}
-                placeholder="Provide any specific requirements, focus areas, or constraints..."
-                rows={3}
-                className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                placeholder={effectiveType === 'code'
+                  ? 'e.g., Focus on O(n) time complexity, avoid sorting...'
+                  : 'e.g., For senior engineers, focus on distributed systems...'}
+                rows={2}
+                className="w-full px-4 py-2.5 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
               />
             </div>
 
-            {/* AI Info Box */}
-            <div className="p-4 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-[12px]">
-              <div className="flex items-start gap-3">
-                <Sparkles size={20} className="text-purple-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-['Arimo',sans-serif] text-[13px] text-purple-900 mb-1">
-                    <strong>AI will generate:</strong>
-                  </p>
-                  <ul className="font-['Arimo',sans-serif] text-[13px] text-purple-800 list-disc list-inside space-y-1">
-                    {effectiveType === 'mcq' && (
-                      <>
-                        <li>A relevant multiple-choice question</li>
-                        <li>4 plausible options with marked correct answer</li>
-                        <li>An explanation for the correct answer</li>
-                        <li>References from trusted sources</li>
-                      </>
-                    )}
-                    {effectiveType === 'essay' && (
-                      <>
-                        <li>A thought-provoking essay question</li>
-                        <li>Grading rubric with key evaluation criteria</li>
-                        <li>Expected keywords and concepts</li>
-                        <li>References from academic sources</li>
-                      </>
-                    )}
-                    {effectiveType === 'code' && (
-                      <>
-                        <li>A coding problem with clear requirements</li>
-                        <li>Code template in your preferred language</li>
-                        <li>Test cases for validation</li>
-                        <li>References to relevant documentation</li>
-                      </>
-                    )}
-                    {effectiveType === 'interview' && (
-                      <>
-                        <li>Relevant interview questions</li>
-                        <li>Evaluation criteria and key points</li>
-                        <li>Tailored to the selected difficulty</li>
-                      </>
-                    )}
-                  </ul>
-                </div>
-              </div>
+            {/* AI will generate — compact */}
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-[8px] bg-[#f9fafb] border border-[#e5e7eb]">
+              <Sparkles size={14} className="text-[#6366f1] flex-shrink-0" />
+              <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                {effectiveType === 'code'
+                  ? 'AI generates: problem statement · Python function stub · I/O format · examples · constraints · 6+ test cases (hidden + visible) · reference solution'
+                  : effectiveType === 'mcq'
+                  ? 'AI generates: question text · 4 answer options · correct answer · explanation'
+                  : effectiveType === 'essay'
+                  ? 'AI generates: question text · grading rubric · 10 yes/no rubric checks · expected keywords'
+                  : 'AI generates: interview questions · evaluation criteria'
+                }
+              </p>
             </div>
 
             {isGenerating && (
-              <div className="p-4 border border-indigo-200 bg-indigo-50 rounded-[12px]" role="status" aria-live="polite">
+              <div className="p-3 border border-[#6366f1]/20 bg-[#f5f3ff] rounded-[10px]" role="status" aria-live="polite">
                 <div className="flex items-center gap-3">
-                  <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                  <p className="font-['Arimo',sans-serif] text-[13px] text-indigo-900">
-                    Generating question with AI. This may take a few seconds.
+                  <div className="w-4 h-4 border-2 border-[#6366f1] border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                  <p className="font-['Arimo',sans-serif] text-[13px] text-[#4f46e5]">
+                    Generating{variantCount > 1 ? ` ${variantCount} variants` : ''}… this takes a few seconds.
                   </p>
                 </div>
               </div>
@@ -558,33 +546,38 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
         </div>
 
         {/* Footer */}
-        <div className="px-8 py-4 border-t border-[#e5e7eb] flex-shrink-0">
-          <div className="flex items-center justify-end gap-3">
-            <Button
-              variant="outline"
-              onClick={handleClose}
-              className="rounded-[8px]"
-              disabled={isGenerating}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void generateQuestion()}
-              className="rounded-[8px] bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
-              disabled={!canGenerate}
-            >
-              {isGenerating ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Wand2 size={16} className="mr-2" />
-                  {variantCount === 1 ? 'Generate Question' : `Generate ${variantCount} Variants`}
-                </>
-              )}
-            </Button>
+        <div className="px-6 py-4 border-t border-[#e5e7eb] flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <p className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af]">
+              Press Enter to generate
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={handleClose}
+                className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                disabled={isGenerating}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => void generateQuestion()}
+                className="rounded-[8px] h-[38px] px-5 bg-[#6366f1] hover:bg-[#4f46e5] text-white text-[13px]"
+                disabled={!canGenerate}
+              >
+                {isGenerating ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Wand2 size={14} className="mr-2" />
+                    {variantCount === 1 ? 'Generate' : `Generate ${variantCount}×`}
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
