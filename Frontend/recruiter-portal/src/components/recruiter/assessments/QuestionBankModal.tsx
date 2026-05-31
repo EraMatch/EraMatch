@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { X, Filter, Database, Sparkles } from 'lucide-react';
+import { X, Search, Filter, Database, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
 
 interface QuestionVariant {
