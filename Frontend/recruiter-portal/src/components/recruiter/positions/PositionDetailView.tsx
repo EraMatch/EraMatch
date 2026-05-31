@@ -369,20 +369,28 @@ export function PositionDetailView({
 
   // Scoring progress — derived from background-tasks (same cache as monitoring page)
   const { data: bgTasks } = useBackgroundTasksPolling(true);
-  const scoringProgress = (() => {
-    if (!Array.isArray(bgTasks) || !positionId) return null;
-    // Aggregate scoring counts across all CV ingestion jobs for this position
+  const bgPendingCount = (() => {
+    if (!Array.isArray(bgTasks) || !positionId) return 0;
     const positionJobs = bgTasks.filter(
       (t: any) => t.task_category === 'cv_ingestion' && t.position_id === positionId
     );
-    if (positionJobs.length === 0) return null;
-    const total = positionJobs[0]?.total_candidate_count ?? null;
-    const scored = positionJobs[0]?.scored_count ?? null;
-    const pending = positionJobs[0]?.pending_count ?? null;
-    if (total == null) return null;
-    return { total: Number(total), scored: Number(scored ?? 0), pending: Number(pending ?? 0) };
+    if (positionJobs.length === 0) return 0;
+    return Number(positionJobs[0]?.pending_count ?? 0);
   })();
-  const hasPendingScoring = scoringProgress != null && scoringProgress.pending > 0;
+  const hasPendingScoring = bgPendingCount > 0;
+
+  // Scored count derived from visible candidates (most accurate — matches what the user sees)
+  const scoredCandidateCount = candidates.filter((c: any) => (c.score ?? 0) > 0 || (c.match ?? 0) > 0).length;
+  const totalCandidateCount = candidates.length;
+
+  // Auto-refetch position detail while scoring is in progress — picks up new candidates & scores
+  useEffect(() => {
+    if (!hasPendingScoring || !positionId) return;
+    const interval = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+    }, 6000);
+    return () => clearInterval(interval);
+  }, [hasPendingScoring, positionId, queryClient]);
 
   useEffect(() => {
     if (!insightsData) return;
@@ -801,22 +809,6 @@ export function PositionDetailView({
         {/* Candidates Tab Content */}
         {activeTab === 'candidates' && (
           <div className="w-full space-y-5">
-            {/* Scoring progress banner — always-on, driven by background-tasks cache */}
-            {hasPendingScoring && scoringProgress && (
-              <div className="flex items-center gap-3 rounded-[10px] border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
-                <Loader2 size={15} className="animate-spin shrink-0" />
-                <span>
-                  Scoring candidates: <strong>{scoringProgress.scored} / {scoringProgress.total}</strong> analyzed
-                  &nbsp;— updates every 5s automatically
-                </span>
-              </div>
-            )}
-            {scoringProgress != null && !hasPendingScoring && scoringProgress.total > 0 && (
-              <div className="flex items-center gap-3 rounded-[10px] border border-green-200 bg-green-50 px-4 py-2.5 text-sm text-green-700">
-                <CheckCircle size={15} className="shrink-0" />
-                <span>All {scoringProgress.total} candidate{scoringProgress.total !== 1 ? 's' : ''} scored successfully.</span>
-              </div>
-            )}
             <div className="rounded-[14px] border border-[#dbe3ff] bg-gradient-to-br from-white via-[#f8faff] to-[#f3f6ff] p-5 shadow-sm">
               <div className="mb-2 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
                 <h2 className="font-['Arimo',sans-serif] text-[22px] leading-[28px] text-[#0f172a]">
@@ -1107,9 +1099,17 @@ export function PositionDetailView({
             {/* All Candidates List */}
             <div className="bg-white rounded-[14px] p-6 shadow-sm border border-[#eef2ff]">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="font-['Arimo',sans-serif] text-[19px] text-black">
-                  All Candidates ({filteredCandidates.length})
-                </h3>
+                <div className="flex items-center gap-2.5">
+                  <h3 className="font-['Arimo',sans-serif] text-[19px] text-black">
+                    All Candidates ({filteredCandidates.length})
+                  </h3>
+                  {hasPendingScoring && totalCandidateCount > 0 && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-[11px] font-medium text-indigo-600">
+                      <Loader2 size={10} className="animate-spin" />
+                      {scoredCandidateCount}/{totalCandidateCount}
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setIsFilterOpen(true)}
@@ -2343,16 +2343,16 @@ export function PositionDetailView({
                 <h4 className="text-lg font-medium text-gray-900 mb-2">Upload Complete!</h4>
                 <p className="text-sm text-gray-500 mb-3">{uploadSuccess}</p>
 
-                {/* Live scoring progress from background-tasks */}
-                {hasPendingScoring && scoringProgress ? (
+                {/* Live scoring progress */}
+                {hasPendingScoring ? (
                   <div className="flex items-center justify-center gap-2 text-sm text-indigo-600 font-medium mb-6">
                     <Loader2 size={14} className="animate-spin" />
-                    Scoring {scoringProgress.scored} / {scoringProgress.total} candidates…
+                    Scoring {scoredCandidateCount} / {totalCandidateCount} candidates…
                   </div>
-                ) : scoringProgress && scoringProgress.total > 0 ? (
+                ) : totalCandidateCount > 0 ? (
                   <div className="flex items-center justify-center gap-2 text-sm text-green-600 font-medium mb-6">
                     <CheckCircle size={14} />
-                    All {scoringProgress.total} candidates scored!
+                    {scoredCandidateCount}/{totalCandidateCount} candidates scored
                   </div>
                 ) : (
                   <div className="mb-6" />
