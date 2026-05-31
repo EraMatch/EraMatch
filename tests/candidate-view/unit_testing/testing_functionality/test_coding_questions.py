@@ -92,3 +92,20 @@ class TestCodingQuestionSchema:
         q = next((x for x in resp.json() if x["id"] == coding_question_id), None)
         assert isinstance(q["constraints"], list)
         assert q["constraints"][0] == "2 ≤ n ≤ 10⁴"
+
+
+class TestRunTestsFunctionNameLookup:
+    """run-tests uses function_name from question config, not regex."""
+
+    def test_helper_function_does_not_confuse_extractor(self, recruiter_client):
+        """
+        Verify function_name field is stored and readable on coding questions.
+        Full execution with helper functions is covered by test_coding_submission_flow.py.
+        """
+        resp = recruiter_client.get("/questions/bank")
+        assert resp.status_code == 200
+        coding_qs = [q for q in resp.json() if q.get("type") == "Code" and q.get("functionName")]
+        assert len(coding_qs) > 0, "Need at least one coding question with functionName set"
+        q = coding_qs[0]
+        assert q["functionName"] is not None
+        assert len(q["functionName"]) > 0

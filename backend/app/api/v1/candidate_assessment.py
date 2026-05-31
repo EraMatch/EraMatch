@@ -2604,13 +2604,18 @@ try {{
                 "time": "10.0"
             }
 
-    # Extract function name from candidate code
-    func_name = _extract_function_name_python(request.code) if is_python else _extract_function_name_js(request.code)
+    # Extract function name — prefer stored config, regex only as fallback
+    func_name = q_config.get("function_name") or (
+        _extract_function_name_python(request.code) if is_python
+        else _extract_function_name_js(request.code)
+    )
     
     try:
         for tc in test_cases:
             test_input = tc.get("input", "")
-            expected = tc.get("expected_output", "").strip() if tc.get("expected_output") else str(tc.get("expected", "")).strip()
+            # Prefer 'expected' (new schema), fall back to 'expected_output' (legacy)
+            raw_expected = tc.get("expected") or tc.get("expected_output") or ""
+            expected = str(raw_expected).strip()
             is_hidden = tc.get("is_hidden", False)
 
             # Use function-based execution if we can extract function name
