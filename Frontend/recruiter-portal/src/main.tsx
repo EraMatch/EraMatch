@@ -6,6 +6,7 @@ import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persist
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { queryClient } from './lib/queryClient'
 import { router } from './router'
+import { DevStatusBadge } from './components/dev/DevStatusBadge'
 import './index.css'
 
 const cacheOwner = localStorage.getItem('eramatch-recruiter-cache-owner') ?? 'guest'
@@ -45,6 +46,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         >
             <RouterProvider router={router} />
             {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+            {import.meta.env.DEV && <DevStatusBadge />}
         </PersistQueryClientProvider>
     </React.StrictMode>,
 )
