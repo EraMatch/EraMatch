@@ -249,25 +249,50 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [generateQuestion, handleClose, isGenerating, showPreview]);
 
+  const TYPE_LABEL: Record<string, string> = {
+    code: 'Code',
+    essay: 'Essay',
+    mcq: 'Multiple Choice',
+    interview: 'Multiple Choice',
+  };
+
   const saveToQB = async (question: QuestionVariant): Promise<QuestionVariant> => {
-    if (effectiveType !== 'code') return question;
+    const qtype = effectiveType;
     try {
-      const saved = await recruiterService.createQuestionBank({
-        question_type: 'code',
-        question_text: question.questionText,
-        language: (question.language || 'python').toLowerCase(),
-        code_template: question.starterCode || question.codeTemplate || '',
-        function_name: question.functionName || '',
-        test_cases: question.testCases || [],
+      const payload: Record<string, any> = {
+        text: question.questionText,
+        type: TYPE_LABEL[qtype] || 'Multiple Choice',
         difficulty: question.difficulty || 'Medium',
         category: question.category || '',
         tags: question.tags || [],
-        input_format: question.inputFormat || '',
-        output_format: question.outputFormat || '',
-        constraints: question.questionConstraints || (question as any).constraints || [],
-        examples: question.questionExamples || (question as any).examples || [],
-        topics: question.topics || [],
-      });
+      };
+
+      if (qtype === 'code') {
+        payload.codeLanguage = (question.language || 'python').toLowerCase();
+        payload.codeTemplate = question.starterCode || question.codeTemplate || '';
+        payload.starterCode = question.starterCode || question.codeTemplate || '';
+        payload.functionName = question.functionName || '';
+        payload.testCases = question.testCases || [];
+        payload.inputFormat = question.inputFormat || '';
+        payload.outputFormat = question.outputFormat || '';
+        payload.constraints = question.questionConstraints || (question as any).constraints || [];
+        payload.examples = question.questionExamples || (question as any).examples || [];
+        payload.topics = question.topics || [];
+      } else if (qtype === 'essay') {
+        payload.maxWords = question.maxWords || 500;
+        payload.rubric = question.rubric || '';
+        payload.expectedKeywords = question.expectedKeywords || [];
+        payload.rubricYesNoChecks = question.rubricYesNoChecks || [];
+        payload.evidence = question.evidence || '';
+        payload.referenceAnswer = question.referenceAnswer || '';
+      } else if (qtype === 'mcq') {
+        payload.options = question.options || [];
+        payload.correctAnswer = question.correctAnswer ?? 0;
+        payload.multipleCorrect = question.multipleCorrect || false;
+        payload.explanation = question.explanation || '';
+      }
+
+      const saved = await recruiterService.createQuestionBank(payload);
       return { ...question, id: saved.id };
     } catch {
       return question;
