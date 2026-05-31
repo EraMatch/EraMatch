@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, Plus, Wand2, Database, Save, Trash2, Copy, Edit2, CheckCircle, XCircle } from 'lucide-react';
+import { ChevronLeft, Plus, Wand2, Database, Save, Trash2, Copy, Edit2, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { MCQEditor } from '../../common/MCQEditor';
 import { EssayEditor } from '../../common/EssayEditor';
@@ -7,6 +7,7 @@ import { CodeEditor } from '../../common/CodeEditor';
 import { QuestionBankModal } from '../assessments/QuestionBankModal';
 import { AIGeneratorModal } from './AIGeneratorModal';
 import { AIVariantMaker } from './AIVariantMaker';
+import { recruiterService } from '../../../services/recruiter.service';
 
 interface Section {
   id: string;
@@ -29,7 +30,14 @@ interface QuestionVariant {
   maxWords?: number;
   rubric?: string;
   codeTemplate?: string;
-  testCases?: TestCase[];
+  starterCode?: string;
+  functionName?: string;
+  inputFormat?: string;
+  outputFormat?: string;
+  questionExamples?: any[];
+  questionConstraints?: string[];
+  topics?: string[];
+  testCases?: any[];
   language?: string;
   timeLimit?: number;
   memoryLimit?: number;
@@ -46,14 +54,6 @@ interface QuestionVariant {
   category?: string;
   difficulty?: 'Easy' | 'Medium' | 'Hard';
   tags?: string[];
-}
-
-interface TestCase {
-  id: string;
-  input: string;
-  expectedOutput: string;
-  isHidden: boolean;
-  points: number;
 }
 
 interface SectionEditorProps {
@@ -80,6 +80,7 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
   const [showAIVariantMaker, setShowAIVariantMaker] = useState(false);
   const [selectedVariantForAI, setSelectedVariantForAI] = useState<QuestionVariant | null>(null);
   const [expandedVariants, setExpandedVariants] = useState<Set<string>>(new Set());
+  const [generatingVariantFor, setGeneratingVariantFor] = useState<string | null>(null);
 
   const toggleVariantExpansion = (variantId: string) => {
     const newExpanded = new Set(expandedVariants);
@@ -154,6 +155,55 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
   const handleGenerateVariants = (baseVariant: QuestionVariant) => {
     setSelectedVariantForAI(baseVariant);
     setShowAIVariantMaker(true);
+  };
+
+  const MAX_VARIANTS = 7;
+
+  const handleGenerateCodingVariant = async (variant: QuestionVariant) => {
+    if (currentSection.variants.length >= MAX_VARIANTS) {
+      alert(`Maximum ${MAX_VARIANTS} variants per section reached.`);
+      return;
+    }
+
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(variant.id);
+    setGeneratingVariantFor(variant.id);
+
+    try {
+      let questionId = variant.id;
+
+      if (!isUUID) {
+        const saved = await recruiterService.createQuestionBank({
+          question_type: 'code',
+          question_text: variant.questionText,
+          language: (variant.language || 'python').toLowerCase(),
+          code_template: variant.starterCode || variant.codeTemplate || '',
+          function_name: variant.functionName || '',
+          test_cases: variant.testCases || [],
+          difficulty: variant.difficulty || 'Medium',
+          category: variant.category || '',
+          tags: variant.tags || [],
+          input_format: variant.inputFormat || '',
+          output_format: variant.outputFormat || '',
+          constraints: variant.questionConstraints || [],
+          examples: variant.questionExamples || [],
+          topics: variant.topics || [],
+        });
+        questionId = saved.id;
+      }
+
+      const result = await recruiterService.generateQuestionVariant(questionId);
+      handleAddVariant({
+        ...result,
+        type: currentSection.type,
+        questionExamples: result.questionExamples || result.examples,
+        questionConstraints: result.questionConstraints || result.constraints,
+        starterCode: result.starterCode || result.codeTemplate,
+      });
+    } catch {
+      alert('Failed to generate variant. Please try again.');
+    } finally {
+      setGeneratingVariantFor(null);
+    }
   };
 
   const handleAIVariantsGenerated = (variants: QuestionVariant[]) => {
@@ -501,11 +551,18 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                             <Copy size={14} className="text-[#6b7280]" />
                           </button>
                           <button
-                            onClick={() => handleGenerateVariants(variant)}
-                            className="w-8 h-8 rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-purple-50 hover:border-purple-200 transition-colors flex items-center justify-center"
-                            title="Generate AI Variants"
+                            onClick={() => currentSection.type === 'code'
+                              ? void handleGenerateCodingVariant(variant)
+                              : handleGenerateVariants(variant)
+                            }
+                            disabled={generatingVariantFor === variant.id}
+                            className="w-8 h-8 rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-purple-50 hover:border-purple-200 transition-colors flex items-center justify-center disabled:opacity-50"
+                            title={currentSection.type === 'code' ? 'Generate Coding Variant' : 'Generate AI Variants'}
                           >
-                            <Wand2 size={14} className="text-purple-600" />
+                            {generatingVariantFor === variant.id
+                              ? <Loader2 size={14} className="text-purple-600 animate-spin" />
+                              : <Wand2 size={14} className="text-purple-600" />
+                            }
                           </button>
                           <button
                             onClick={() => handleDeleteVariant(index)}
@@ -536,9 +593,15 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                           )}
 
                           {variant.type === 'code' && (
-                            <div className="mt-3 flex items-center gap-4 text-[13px] text-[#6b7280]">
-                              <span>Language: {variant.language || 'Not set'}</span>
-                              <span>Test Cases: {variant.testCases?.length || 0}</span>
+                            <div className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-[#6b7280]">
+                              {variant.functionName && (
+                                <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-[12px] text-[#111827]">{variant.functionName}()</span>
+                              )}
+                              <span>{variant.language || 'Python'}</span>
+                              <span>{variant.testCases?.length || 0} test cases</span>
+                              {variant.topics?.slice(0, 2).map((t: string, i: number) => (
+                                <span key={i} className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 text-[11px]">{t}</span>
+                              ))}
                               <span className="text-[#6366f1] font-medium">Click to see details</span>
                             </div>
                           )}
@@ -609,8 +672,14 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                               <div className="bg-white rounded-[8px] border border-[#e5e7eb] p-3 grid grid-cols-2 gap-3">
                                 <div>
                                   <span className="text-[12px] text-[#6b7280]">Language:</span>
-                                  <span className="text-[13px] text-[#111827] ml-2 font-medium">{variant.language || 'Not specified'}</span>
+                                  <span className="text-[13px] text-[#111827] ml-2 font-medium">{variant.language || 'Python'}</span>
                                 </div>
+                                {variant.functionName && (
+                                  <div>
+                                    <span className="text-[12px] text-[#6b7280]">Function:</span>
+                                    <span className="text-[13px] text-[#111827] ml-2 font-mono font-medium">{variant.functionName}()</span>
+                                  </div>
+                                )}
                                 {variant.timeLimit && (
                                   <div>
                                     <span className="text-[12px] text-[#6b7280]">Time Limit:</span>
@@ -626,6 +695,14 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                               </div>
                             </div>
 
+                            {variant.topics && variant.topics.length > 0 && (
+                              <div className="flex flex-wrap gap-2">
+                                {variant.topics.map((t: string, i: number) => (
+                                  <span key={i} className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-600 text-[11px] border border-indigo-100">{t}</span>
+                                ))}
+                              </div>
+                            )}
+
                             {variant.codeTemplate && (
                               <div>
                                 <div className="text-[13px] font-medium text-[#374151] mb-2">Code Template:</div>
@@ -639,15 +716,17 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                               <div>
                                 <div className="text-[13px] font-medium text-[#374151] mb-2">Test Cases ({variant.testCases.length}):</div>
                                 <div className="space-y-2">
-                                  {variant.testCases.map((testCase, tcIndex) => (
-                                    <div key={testCase.id} className="bg-white rounded-[8px] border border-[#e5e7eb] p-3">
+                                  {variant.testCases.map((testCase: any, tcIndex: number) => (
+                                    <div key={testCase.id || tcIndex} className="bg-white rounded-[8px] border border-[#e5e7eb] p-3">
                                       <div className="flex items-center justify-between mb-2">
                                         <span className="text-[12px] font-medium text-[#374151]">Test Case {tcIndex + 1}</span>
                                         <div className="flex items-center gap-2">
-                                          {testCase.isHidden && (
+                                          {(testCase.isHidden || testCase.is_hidden) && (
                                             <span className="text-[11px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">Hidden</span>
                                           )}
-                                          <span className="text-[11px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{testCase.points} pts</span>
+                                          {testCase.points != null && (
+                                            <span className="text-[11px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{testCase.points} pts</span>
+                                          )}
                                         </div>
                                       </div>
                                       <div className="grid grid-cols-2 gap-3">
@@ -657,7 +736,7 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                                         </div>
                                         <div>
                                           <div className="text-[11px] text-[#6b7280] mb-1">Expected Output:</div>
-                                          <pre className="text-[12px] text-[#111827] bg-[#f9fafb] p-2 rounded-[4px] overflow-x-auto">{testCase.expectedOutput}</pre>
+                                          <pre className="text-[12px] text-[#111827] bg-[#f9fafb] p-2 rounded-[4px] overflow-x-auto">{testCase.expectedOutput ?? testCase.expected ?? ''}</pre>
                                         </div>
                                       </div>
                                     </div>

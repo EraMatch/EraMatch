@@ -37,6 +37,7 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
   const [normalizationWarnings, setNormalizationWarnings] = useState<string[]>([]);
   const [showPreview, setShowPreview] = useState(false);
+  const [savingToQB, setSavingToQB] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const topicError = topicTouched && !topic.trim() ? 'Topic is required.' : null;
@@ -248,8 +249,32 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [generateQuestion, handleClose, isGenerating, showPreview]);
 
-  const handleAcceptQuestion = (question: QuestionVariant) => {
-    onGenerate(question);
+  const handleAcceptQuestion = async (question: QuestionVariant) => {
+    let finalQuestion = question;
+
+    if (effectiveType === 'code') {
+      setSavingToQB(true);
+      try {
+        const saved = await recruiterService.createQuestionBank({
+          question_type: 'code',
+          question_text: question.questionText,
+          language: (question.language || 'python').toLowerCase(),
+          code_template: question.codeTemplate || question.starterCode || '',
+          function_name: question.functionName || '',
+          test_cases: question.testCases || [],
+          difficulty: question.difficulty || 'Medium',
+          category: question.category || '',
+          tags: question.tags || [],
+        });
+        finalQuestion = { ...question, id: saved.id };
+      } catch {
+        // QB save failed — proceed without a real UUID (variant generation won't work later)
+      } finally {
+        setSavingToQB(false);
+      }
+    }
+
+    onGenerate(finalQuestion);
     setShowPreview(false);
     setGeneratedQuestion(null);
     setGeneratedVariants([]);
