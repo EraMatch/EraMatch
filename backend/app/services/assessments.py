@@ -48,16 +48,23 @@ class AssessmentService:
 
             # 2. Iterate through sections and questions
             for section_data in request_data.sections:
-                # Store section type as the raw string the DB constraint expects.
-                # The DB check constraint uses ('mcq', 'essay', 'code') — NOT 'coding'.
-                # QuestionType.CODING.value == 'coding' which violates the constraint.
+                # assessment_sections.section_type constraint: ('mcq', 'essay', 'code')
+                # question_bank.question_type constraint:    ('mcq', 'essay', 'coding')
+                # These two tables use different values for the coding type.
                 section_type_mapping = {
                     "mcq": "mcq",
                     "essay": "essay",
                     "code": "code",
                     "coding": "code",
                 }
+                qb_type_mapping = {
+                    "mcq": "mcq",
+                    "essay": "essay",
+                    "code": "coding",
+                    "coding": "coding",
+                }
                 db_section_type = section_type_mapping.get(section_data.type, "mcq")
+                db_qb_type = qb_type_mapping.get(section_data.type, "mcq")
 
                 section = AssessmentSection(
                     assessment_id=assessment.id,
@@ -114,7 +121,7 @@ class AssessmentService:
                              "rubric_yes_no_checks": variant_data.rubricYesNoChecks or [],
                              "explanation": variant_data.explanation
                          })
-                    elif variant_data.type == "code":
+                    elif variant_data.type in ("code", "coding"):
                          question_config.update({
                              "language": variant_data.language,
                              "time_limit": variant_data.timeLimit,
@@ -151,9 +158,10 @@ class AssessmentService:
 
                     if not question:
                         # Create Question in QuestionBank
+                        # question_bank uses 'coding' for the coding type (not 'code')
                         question = QuestionBank(
                             organization_id=organization_id,
-                            question_type=db_section_type,
+                            question_type=db_qb_type,
                             question_text=variant_data.questionText,
                             question_config=question_config,
                             correct_answer=correct_answer_payload,
@@ -175,7 +183,7 @@ class AssessmentService:
                         is_active=True
                     )
                     self.session.add(pool_entry)
-            
+
             # Commit the transaction after everything is staged successfully
             await self.session.commit()
             await self.session.refresh(assessment)
@@ -325,13 +333,21 @@ class AssessmentService:
 
             # Re-create sections and questions using the same logic
             for section_data in request_data.sections:
+                # assessment_sections uses 'code'; question_bank uses 'coding'
                 section_type_mapping = {
                     "mcq": "mcq",
                     "essay": "essay",
                     "code": "code",
                     "coding": "code",
                 }
+                qb_type_mapping = {
+                    "mcq": "mcq",
+                    "essay": "essay",
+                    "code": "coding",
+                    "coding": "coding",
+                }
                 db_section_type = section_type_mapping.get(section_data.type, "mcq")
+                db_qb_type = qb_type_mapping.get(section_data.type, "mcq")
 
                 section = AssessmentSection(
                     assessment_id=assessment.id,
@@ -384,7 +400,7 @@ class AssessmentService:
                              "rubric_yes_no_checks": variant_data.rubricYesNoChecks or [],
                              "explanation": variant_data.explanation
                          })
-                    elif variant_data.type == "code":
+                    elif variant_data.type in ("code", "coding"):
                          question_config.update({
                              "language": variant_data.language,
                              "time_limit": variant_data.timeLimit,
@@ -421,7 +437,7 @@ class AssessmentService:
                     if not question:
                         question = QuestionBank(
                             organization_id=organization_id,
-                            question_type=db_section_type,
+                            question_type=db_qb_type,
                             question_text=variant_data.questionText,
                             question_config=question_config,
                             correct_answer=correct_answer_payload,
