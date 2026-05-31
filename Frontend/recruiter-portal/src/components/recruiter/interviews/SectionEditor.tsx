@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, Plus, Wand2, Database, Save, Trash2, Copy, Edit2, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { ChevronLeft, Plus, Wand2, Database, Save, Trash2, Copy, Edit2, CheckCircle, XCircle, Loader2, Check, ChevronDown } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { MCQEditor } from '../../common/MCQEditor';
 import { EssayEditor } from '../../common/EssayEditor';
@@ -80,7 +80,12 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
   const [showAIVariantMaker, setShowAIVariantMaker] = useState(false);
   const [selectedVariantForAI, setSelectedVariantForAI] = useState<QuestionVariant | null>(null);
   const [expandedVariants, setExpandedVariants] = useState<Set<string>>(new Set());
-  const [generatingVariantFor, setGeneratingVariantFor] = useState<string | null>(null);
+  // Batch variant generation flow (code type only)
+  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
+  const [variantGenerateCount, setVariantGenerateCount] = useState(1);
+  const [generatingVariants, setGeneratingVariants] = useState(false);
+  const [generatedVariants, setGeneratedVariants] = useState<QuestionVariant[]>([]);
+  const [selectedGeneratedIds, setSelectedGeneratedIds] = useState<Set<number>>(new Set());
 
   const toggleVariantExpansion = (variantId: string) => {
     const newExpanded = new Set(expandedVariants);
@@ -159,51 +164,92 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
 
   const MAX_VARIANTS = 7;
 
-  const handleGenerateCodingVariant = async (variant: QuestionVariant) => {
-    if (currentSection.variants.length >= MAX_VARIANTS) {
-      alert(`Maximum ${MAX_VARIANTS} variants per section reached.`);
+  const handleGenerateVariantsBatch = async () => {
+    const baseVariant = currentSection.variants.find(v => v.id === selectedVariantId);
+    if (!baseVariant) return;
+
+    const remaining = MAX_VARIANTS - currentSection.variants.length;
+    const count = Math.min(variantGenerateCount, remaining);
+    if (count <= 0) {
+      alert(`Maximum ${MAX_VARIANTS} variants already reached.`);
       return;
     }
 
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(variant.id);
-    setGeneratingVariantFor(variant.id);
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(baseVariant.id);
+    setGeneratingVariants(true);
 
     try {
-      let questionId = variant.id;
+      let questionId = baseVariant.id;
 
       if (!isUUID) {
         const saved = await recruiterService.createQuestionBank({
           question_type: 'code',
-          question_text: variant.questionText,
-          language: (variant.language || 'python').toLowerCase(),
-          code_template: variant.starterCode || variant.codeTemplate || '',
-          function_name: variant.functionName || '',
-          test_cases: variant.testCases || [],
-          difficulty: variant.difficulty || 'Medium',
-          category: variant.category || '',
-          tags: variant.tags || [],
-          input_format: variant.inputFormat || '',
-          output_format: variant.outputFormat || '',
-          constraints: variant.questionConstraints || [],
-          examples: variant.questionExamples || [],
-          topics: variant.topics || [],
+          question_text: baseVariant.questionText,
+          language: (baseVariant.language || 'python').toLowerCase(),
+          code_template: baseVariant.starterCode || baseVariant.codeTemplate || '',
+          function_name: baseVariant.functionName || '',
+          test_cases: baseVariant.testCases || [],
+          difficulty: baseVariant.difficulty || 'Medium',
+          category: baseVariant.category || '',
+          tags: baseVariant.tags || [],
+          input_format: baseVariant.inputFormat || '',
+          output_format: baseVariant.outputFormat || '',
+          constraints: baseVariant.questionConstraints || [],
+          examples: baseVariant.questionExamples || [],
+          topics: baseVariant.topics || [],
         });
         questionId = saved.id;
+        const idx = currentSection.variants.findIndex(v => v.id === selectedVariantId);
+        if (idx >= 0) {
+          const updated = [...currentSection.variants];
+          updated[idx] = { ...updated[idx], id: questionId };
+          setCurrentSection({ ...currentSection, variants: updated });
+          setSelectedVariantId(questionId);
+        }
       }
 
-      const result = await recruiterService.generateQuestionVariant(questionId);
-      handleAddVariant({
+      const results = await Promise.all(
+        Array.from({ length: count }, () => recruiterService.generateQuestionVariant(questionId))
+      );
+
+      const mapped: QuestionVariant[] = results.map(result => ({
         ...result,
-        type: currentSection.type,
+        type: currentSection.type as 'mcq' | 'essay' | 'code',
+        questionText: result.questionText || result.question_text || baseVariant.questionText,
         questionExamples: result.questionExamples || result.examples,
         questionConstraints: result.questionConstraints || result.constraints,
         starterCode: result.starterCode || result.codeTemplate,
-      });
+      }));
+
+      setGeneratedVariants(mapped);
+      setSelectedGeneratedIds(new Set(Array.from({ length: count }, (_, i) => i)));
     } catch {
-      alert('Failed to generate variant. Please try again.');
+      alert('Failed to generate variants. Please check the AI service and try again.');
     } finally {
-      setGeneratingVariantFor(null);
+      setGeneratingVariants(false);
     }
+  };
+
+  const toggleGeneratedSelection = (index: number) => {
+    const newSet = new Set(selectedGeneratedIds);
+    if (newSet.has(index)) newSet.delete(index);
+    else newSet.add(index);
+    setSelectedGeneratedIds(newSet);
+  };
+
+  const handleAddSelectedGeneratedVariants = () => {
+    const toAdd = generatedVariants.filter((_, i) => selectedGeneratedIds.has(i));
+    if (toAdd.length === 0) return;
+    setCurrentSection({
+      ...currentSection,
+      variants: [
+        ...currentSection.variants,
+        ...toAdd.map(v => ({ ...v, id: v.id || `variant-${Date.now()}-${Math.random().toString(36).slice(2)}` })),
+      ],
+    });
+    setGeneratedVariants([]);
+    setSelectedGeneratedIds(new Set());
+    setSelectedVariantId(null);
   };
 
   const handleAIVariantsGenerated = (variants: QuestionVariant[]) => {
@@ -499,19 +545,38 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
             <div className="space-y-4">
               {currentSection.variants.map((variant, index) => {
                 const isExpanded = expandedVariants.has(variant.id);
+                const isSelected = selectedVariantId === variant.id;
+                const isCodeSection = currentSection.type === 'code';
                 return (
                   <div
                     key={variant.id}
-                    className="border border-[#e5e7eb] rounded-[12px] overflow-hidden hover:border-[#6366f1] transition-colors"
+                    className={`border-2 rounded-[12px] overflow-hidden transition-all ${
+                      isSelected
+                        ? 'border-[#6366f1] shadow-sm shadow-indigo-100'
+                        : 'border-[#e5e7eb] hover:border-[#6366f1]/40'
+                    }`}
                   >
-                    {/* Variant Header - Clickable to expand */}
+                    {/* Variant Header */}
                     <div
                       className="p-6 cursor-pointer"
-                      onClick={() => toggleVariantExpansion(variant.id)}
+                      onClick={() => {
+                        if (isCodeSection) {
+                          setSelectedVariantId(isSelected ? null : variant.id);
+                          if (!isSelected) setGeneratedVariants([]);
+                        }
+                        toggleVariantExpansion(variant.id);
+                      }}
                     >
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-2">
+                            {isCodeSection && (
+                              <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                                isSelected ? 'border-[#6366f1] bg-[#6366f1]' : 'border-[#d1d5db]'
+                              }`}>
+                                {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                              </div>
+                            )}
                             <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-medium">
                               Variant {index + 1}
                             </span>
@@ -531,7 +596,7 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                               </div>
                             )}
                           </div>
-                          <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
+                          <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] line-clamp-2">
                             {variant.questionText}
                           </p>
                         </div>
@@ -550,20 +615,15 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                           >
                             <Copy size={14} className="text-[#6b7280]" />
                           </button>
-                          <button
-                            onClick={() => currentSection.type === 'code'
-                              ? void handleGenerateCodingVariant(variant)
-                              : handleGenerateVariants(variant)
-                            }
-                            disabled={generatingVariantFor === variant.id}
-                            className="w-8 h-8 rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-purple-50 hover:border-purple-200 transition-colors flex items-center justify-center disabled:opacity-50"
-                            title={currentSection.type === 'code' ? 'Generate Coding Variant' : 'Generate AI Variants'}
-                          >
-                            {generatingVariantFor === variant.id
-                              ? <Loader2 size={14} className="text-purple-600 animate-spin" />
-                              : <Wand2 size={14} className="text-purple-600" />
-                            }
-                          </button>
+                          {!isCodeSection && (
+                            <button
+                              onClick={() => handleGenerateVariants(variant)}
+                              className="w-8 h-8 rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-purple-50 hover:border-purple-200 transition-colors flex items-center justify-center"
+                              title="Generate AI Variants"
+                            >
+                              <Wand2 size={14} className="text-purple-600" />
+                            </button>
+                          )}
                           <button
                             onClick={() => handleDeleteVariant(index)}
                             className="w-8 h-8 rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-red-50 hover:border-red-200 transition-colors flex items-center justify-center"
@@ -571,6 +631,7 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                           >
                             <Trash2 size={14} className="text-red-600" />
                           </button>
+                          <ChevronDown size={16} className={`text-[#9ca3af] transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                         </div>
                       </div>
 
@@ -866,9 +927,119 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
                 );
               })}
 
-              {/* Add Another Variant Button */}
+              {/* Batch Variant Generation Panel — code sections only, appears when a variant is selected */}
+              {currentSection.type === 'code' && selectedVariantId && generatedVariants.length === 0 && (
+                <div className="rounded-[12px] border border-[#6366f1]/30 bg-indigo-50/50 p-5">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151] font-medium mb-1">
+                        Generate variants from selected
+                      </p>
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                        The AI will rewrite the problem narrative while keeping the same test cases and code structure.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">Count:</span>
+                      {[1, 2, 3].filter((n) => currentSection.variants.length + n <= MAX_VARIANTS).map((n) => (
+                        <button
+                          key={n}
+                          onClick={() => setVariantGenerateCount(n)}
+                          className={`w-8 h-8 rounded-[6px] border text-[13px] font-medium transition-colors ${
+                            variantGenerateCount === n
+                              ? 'border-[#6366f1] bg-[#6366f1] text-white'
+                              : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]'
+                          }`}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => void handleGenerateVariantsBatch()}
+                        disabled={generatingVariants}
+                        className="h-[34px] px-4 rounded-[8px] bg-[#6366f1] hover:bg-[#4f46e5] text-white font-['Arimo',sans-serif] text-[13px] disabled:opacity-60 flex items-center gap-2 transition-colors"
+                      >
+                        {generatingVariants
+                          ? <><Loader2 size={13} className="animate-spin" /> Generating...</>
+                          : <><Wand2 size={13} /> Generate</>
+                        }
+                      </button>
+                      <button
+                        onClick={() => setSelectedVariantId(null)}
+                        className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] hover:text-[#374151] px-2"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Generated Variants Preview — select which to add */}
+              {generatedVariants.length > 0 && (
+                <div className="rounded-[12px] border border-[#6366f1]/30 bg-indigo-50/30 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] font-medium">
+                        {generatedVariants.length} variant{generatedVariants.length > 1 ? 's' : ''} generated — select which to add
+                      </p>
+                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mt-0.5">
+                        All are pre-selected. Uncheck any you don't want.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => { setGeneratedVariants([]); setSelectedGeneratedIds(new Set()); }}
+                      className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] hover:text-[#374151]"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                  <div className="space-y-3 mb-4">
+                    {generatedVariants.map((v, i) => (
+                      <div
+                        key={i}
+                        onClick={() => toggleGeneratedSelection(i)}
+                        className={`flex items-start gap-3 p-4 rounded-[10px] border-2 cursor-pointer transition-all ${
+                          selectedGeneratedIds.has(i)
+                            ? 'border-[#6366f1] bg-white'
+                            : 'border-[#e5e7eb] bg-white/60 opacity-60'
+                        }`}
+                      >
+                        <div className={`w-5 h-5 rounded-[4px] border-2 flex-shrink-0 mt-0.5 flex items-center justify-center transition-colors ${
+                          selectedGeneratedIds.has(i) ? 'border-[#6366f1] bg-[#6366f1]' : 'border-[#d1d5db]'
+                        }`}>
+                          {selectedGeneratedIds.has(i) && <Check size={12} className="text-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-['Arimo',sans-serif] text-[13px] text-[#111827] line-clamp-3 mb-2">
+                            {v.questionText || '(Problem narrative not returned — AI service may be unavailable)'}
+                          </p>
+                          <div className="flex items-center gap-3 text-[12px] text-[#6b7280]">
+                            {v.functionName && <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">{v.functionName}()</span>}
+                            <span>{v.testCases?.length || 0} test cases</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
+                      {selectedGeneratedIds.size} of {generatedVariants.length} selected
+                    </span>
+                    <button
+                      onClick={handleAddSelectedGeneratedVariants}
+                      disabled={selectedGeneratedIds.size === 0}
+                      className="h-[36px] px-5 rounded-[8px] bg-[#6366f1] hover:bg-[#4f46e5] text-white font-['Arimo',sans-serif] text-[13px] disabled:opacity-50 transition-colors"
+                    >
+                      Add {selectedGeneratedIds.size > 0 ? `${selectedGeneratedIds.size} ` : ''}Selected
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Add Another Variant / Show creation methods */}
               <button
-                onClick={() => setCreationMethod('manual')}
+                onClick={() => setCreationMethod(null)}
                 className="w-full p-4 rounded-[12px] border-2 border-dashed border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-all flex items-center justify-center gap-2"
               >
                 <Plus size={16} className="text-[#6366f1]" />
