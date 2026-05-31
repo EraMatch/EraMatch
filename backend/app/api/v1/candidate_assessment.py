@@ -2650,9 +2650,14 @@ try {{
 
     # 5. Increment attempt count and save
     new_attempt = current_attempt + 1
-    total_tests = len(test_cases)
-    passed_tests = len([r for r in visible_results if r["passed"]]) + hidden_passed
-    score_ratio = passed_tests / total_tests if total_tests > 0 else 0
+    visible_passed = len([r for r in visible_results if r["passed"]])
+    visible_total = len(visible_results)
+    # Score only on hidden tests (visible tests are feedback-only).
+    # Fall back to visible tests if the question has none hidden.
+    if hidden_total > 0:
+        score_ratio = hidden_passed / hidden_total
+    else:
+        score_ratio = visible_passed / visible_total if visible_total > 0 else 0
     points_earned = round(q_points * score_ratio, 2)
 
     answer_data = {

@@ -93,7 +93,7 @@ def clean_starter_code(raw: str | None) -> str | None:
 def parse_examples(problem: dict) -> list[dict]:
     """Extract examples from the problem dict."""
     raw = problem.get("examples") or problem.get("example") or []
-    if isinstance(raw, list):
+    if isinstance(raw, list) and raw:
         out = []
         for ex in raw:
             if isinstance(ex, dict):
@@ -104,8 +104,27 @@ def parse_examples(problem: dict) -> list[dict]:
                 })
             else:
                 out.append({"input": str(ex), "output": "", "explanation": ""})
-        return out
-    return [{"input": str(raw), "output": "", "explanation": ""}]
+        if out:
+            return out
+
+    # v0.3.1 JSONL: extract visible test cases from the "test" field (Python unittest code).
+    # We parse assert statements: assert func(args) == expected
+    test_code = problem.get("test") or ""
+    if test_code:
+        out = []
+        for line in test_code.splitlines():
+            line = line.strip()
+            m = re.match(r'assert\s+.+\((.+)\)\s*==\s*(.+)', line)
+            if m and len(out) < 3:
+                out.append({
+                    "input": m.group(1).strip(),
+                    "output": m.group(2).strip(),
+                    "explanation": "",
+                })
+        if out:
+            return out
+
+    return []
 
 
 def examples_to_visible_test_cases(examples: list[dict]) -> list[dict]:
@@ -146,11 +165,14 @@ def normalize(problem: dict, org_id: UUID) -> dict | None:
         or ""
     )
     starter = clean_starter_code(raw_starter) if raw_starter else None
-    # v0.3 JSONL provides entry_point directly; prefer it over regex extraction
+    # v0.3 JSONL provides entry_point directly; prefer it over regex extraction.
+    # Strip "Solution()." or "Solution." prefix (dataset stores "Solution().twoSum").
     function_name = (
         problem.get("entry_point")
         or (extract_function_name(starter) if starter else None)
     )
+    if function_name and "." in function_name:
+        function_name = function_name.rsplit(".", 1)[-1]
 
     constraints_raw = problem.get("constraints") or []
     if isinstance(constraints_raw, str):

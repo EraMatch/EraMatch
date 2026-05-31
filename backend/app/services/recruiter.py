@@ -3122,6 +3122,22 @@ class RecruiterService:
                 payload["constraints"] = payload.get("constraints")
                 payload["topics"] = payload.get("topics")
                 payload["referenceAnswerCode"] = payload.get("referenceAnswer")
+                # Normalize testCases: LLM returns camelCase keys, DB judge reads snake_case
+                raw_tcs = payload.get("testCases") or []
+                payload["testCases"] = [
+                    {
+                        "input": tc.get("input", ""),
+                        "expected": (
+                            tc.get("expected")
+                            or tc.get("expectedOutput")
+                            or tc.get("expected_output")
+                            or ""
+                        ),
+                        "is_hidden": bool(tc.get("isHidden") or tc.get("is_hidden")),
+                    }
+                    for tc in raw_tcs
+                    if isinstance(tc, dict)
+                ]
 
             return payload
         except Exception as e:

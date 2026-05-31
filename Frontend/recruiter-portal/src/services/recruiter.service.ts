@@ -296,6 +296,9 @@ export const recruiterService = {
 
     deleteQuestionBank: async (questionId: string) => fetchAPI(`/questions/bank/${questionId}`, { method: 'DELETE' }),
 
+    generateQuestionVariant: async (questionId: string) =>
+        fetchAPI<any>(`/questions/bank/${questionId}/variant`, { method: 'POST' }),
+
     getQuestionBankVariants: async (type: string) => fetchAPI(`/questions/variants?type=${type}`),
 
     generateQuestionVariants: async (baseVariant: any, numVariants: number = 3) => {
