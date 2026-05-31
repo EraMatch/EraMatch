@@ -24,25 +24,76 @@ class TestCreateAssessment:
 
     def test_create_assessment_with_valid_data(self, client):
         """POST assessment with valid data returns 200."""
-        resp = client.post("/assessments", json={
+        from app.db.session import sync_session_factory
+        from sqlalchemy import text
+
+        with sync_session_factory() as session:
+            result = session.execute(text(
+                "SELECT cg.position_id, cg.group_id FROM candidate_groups cg "
+                "JOIN positions p ON cg.position_id = p.position_id "
+                "WHERE p.organization_id = '59b023a9-db8e-450c-82e4-01f29f152351' "
+                "AND cg.status = 'active' "
+                "AND cg.group_id NOT IN ("
+                "    SELECT group_id FROM assessments "
+                "    WHERE group_id IS NOT NULL AND is_deleted = false"
+                ") LIMIT 1"
+            )).fetchone()
+
+            if not result:
+                result = session.execute(text(
+                    "SELECT position_id, group_id FROM candidate_groups "
+                    "WHERE group_id NOT IN ("
+                    "    SELECT group_id FROM assessments "
+                    "    WHERE group_id IS NOT NULL AND is_deleted = false"
+                    ") LIMIT 1"
+                )).fetchone()
+
+            if not result:
+                result = session.execute(text(
+                    "SELECT position_id, group_id FROM candidate_groups LIMIT 1"
+                )).fetchone()
+
+            assert result is not None, "No candidate groups found in database"
+            position_id, group_id = result
+
+        payload = {
+            "position_id": str(position_id),
+            "group_id": str(group_id),
             "title": "Test Assessment via Recruiter Suite",
+            "duration_minutes": 60,
+            "passing_score": 60.0,
             "sections": [
                 {
-                    "title": "General Knowledge",
-                    "questions": [
+                    "id": "section-1",
+                    "order": 1,
+                    "type": "mcq",
+                    "points": 10,
+                    "variants": [
                         {
-                            "text": "What is Python?",
+                            "id": "q-1",
                             "type": "mcq",
+                            "questionText": "What is Python?",
+                            "points": 10,
                             "options": ["A programming language", "A snake"],
-                            "correct_answer": "A programming language"
+                            "correctAnswer": 0
                         }
                     ]
                 }
             ]
-        })
+        }
+        resp = client.post("/assessments", json=payload)
         assert resp.status_code in (200, 201), (
             f"Expected 200/201, got {resp.status_code}: {resp.text}"
         )
+
+        # Cleanup: Soft delete the created assessment to keep tests stateless
+        data = resp.json()
+        assessment_id = data.get("assessment_id")
+        if assessment_id:
+            del_resp = client.delete(f"/assessments/{assessment_id}")
+            assert del_resp.status_code in (200, 201, 204), (
+                f"Cleanup failed: expected 200, got {del_resp.status_code}: {del_resp.text}"
+            )
 
 
 class TestGetAssessment:
