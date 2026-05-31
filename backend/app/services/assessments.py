@@ -111,6 +111,7 @@ class AssessmentService:
                              "rubric": variant_data.rubric,
                              "max_words": variant_data.maxWords,
                              "expected_keywords": variant_data.expectedKeywords,
+                             "rubric_yes_no_checks": variant_data.rubricYesNoChecks or [],
                              "explanation": variant_data.explanation
                          })
                     elif variant_data.type == "code":
@@ -380,6 +381,7 @@ class AssessmentService:
                              "rubric": variant_data.rubric,
                              "max_words": variant_data.maxWords,
                              "expected_keywords": variant_data.expectedKeywords,
+                             "rubric_yes_no_checks": variant_data.rubricYesNoChecks or [],
                              "explanation": variant_data.explanation
                          })
                     elif variant_data.type == "code":
