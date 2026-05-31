@@ -244,51 +244,88 @@ export function AIQuestionPreview({
                   )}
                 </div>
 
-                {question.codeTemplate && (
+                {/* Function signature */}
+                {question.functionName && (
+                  <div className="flex items-center gap-3">
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-semibold">Function:</span>
+                    <span className="font-mono bg-gray-900 text-emerald-400 px-3 py-1 rounded-[6px] text-[13px]">{question.functionName}()</span>
+                  </div>
+                )}
+
+                {/* Starter code */}
+                {(question.starterCode || question.codeTemplate) && (
                   <div>
                     <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-semibold mb-2">
-                      Code Template
+                      Starter Code
                     </h4>
                     <pre className="p-4 bg-gray-900 text-gray-100 rounded-[8px] overflow-x-auto text-[13px] font-mono">
-                      {question.codeTemplate}
+                      {question.starterCode || question.codeTemplate}
                     </pre>
+                  </div>
+                )}
+
+                {/* Input / output format */}
+                {(question.inputFormat || question.outputFormat) && (
+                  <div className="grid grid-cols-2 gap-4">
+                    {question.inputFormat && (
+                      <div>
+                        <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-semibold mb-1">Input Format</h4>
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">{question.inputFormat}</p>
+                      </div>
+                    )}
+                    {question.outputFormat && (
+                      <div>
+                        <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-semibold mb-1">Output Format</h4>
+                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">{question.outputFormat}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Constraints */}
+                {question.questionConstraints && question.questionConstraints.length > 0 && (
+                  <div>
+                    <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-semibold mb-2">Constraints</h4>
+                    <ul className="space-y-1">
+                      {question.questionConstraints.map((c: string, i: number) => (
+                        <li key={i} className="font-mono text-[12px] text-[#374151] bg-gray-50 px-3 py-1 rounded-[4px]">{c}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
 
                 {question.testCases && question.testCases.length > 0 && (
                   <div>
                     <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-semibold mb-2">
-                      Test Cases ({question.testCases.length})
+                      Test Cases ({question.testCases.length}) — {question.testCases.filter((tc: any) => tc.isHidden || tc.is_hidden).length} hidden
                     </h4>
                     <div className="space-y-2">
                       {question.testCases.map((tc: any, idx: number) => (
-                        <div key={tc.id} className="p-3 bg-gray-50 border border-gray-200 rounded-[8px]">
+                        <div key={tc.id || idx} className="p-3 bg-gray-50 border border-gray-200 rounded-[8px]">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-[12px] font-semibold text-gray-700">
                               Test Case {idx + 1}
                             </span>
                             <div className="flex items-center gap-2">
-                              {tc.isHidden && (
-                                <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-[10px] rounded-full">
-                                  Hidden
-                                </span>
+                              {(tc.isHidden || tc.is_hidden) && (
+                                <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] rounded-full">Hidden</span>
                               )}
-                              <span className="text-[11px] text-gray-600">
-                                {tc.points} pts
-                              </span>
+                              {tc.points != null && (
+                                <span className="text-[11px] text-gray-600">{tc.points} pts</span>
+                              )}
                             </div>
                           </div>
                           <div className="grid grid-cols-2 gap-3 text-[12px]">
                             <div>
                               <span className="text-gray-600">Input:</span>
-                              <code className="block mt-1 px-2 py-1 bg-white rounded font-mono text-gray-800">
+                              <code className="block mt-1 px-2 py-1 bg-white rounded font-mono text-gray-800 text-[11px]">
                                 {tc.input}
                               </code>
                             </div>
                             <div>
                               <span className="text-gray-600">Expected:</span>
-                              <code className="block mt-1 px-2 py-1 bg-white rounded font-mono text-gray-800">
-                                {tc.expectedOutput}
+                              <code className="block mt-1 px-2 py-1 bg-white rounded font-mono text-gray-800 text-[11px]">
+                                {tc.expectedOutput ?? tc.expected ?? ''}
                               </code>
                             </div>
                           </div>

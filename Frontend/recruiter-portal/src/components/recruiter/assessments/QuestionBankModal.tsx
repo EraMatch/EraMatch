@@ -1,8 +1,6 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
-import { X, Search, Filter, Database, Sparkles, ChevronDown, ChevronUp, GitBranch } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { X, Filter, Database, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
-
-const MAX_VARIANTS_PER_QUESTION = 7;
 
 interface QuestionVariant {
     id: string;
@@ -65,11 +63,6 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
 
     const [questions, setQuestions] = useState<QuestionVariant[]>([]);
     const [loading, setLoading] = useState(true);
-
-    // Variant state: questionId → list of generated variants
-    const [variantMap, setVariantMap] = useState<Record<string, QuestionVariant[]>>({});
-    const [generatingFor, setGeneratingFor] = useState<string | null>(null);
-    const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
 
     // Fetch questions from API
     useEffect(() => {
@@ -173,44 +166,6 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
         return result;
     }, [searchQuery, selectedDifficulty, selectedCategory, selectedTag, favoriteOnly, usageSort, questions]);
 
-    const handleGenerateVariant = useCallback(async (question: QuestionVariant) => {
-        const existing = variantMap[question.id] || [];
-        if (existing.length >= MAX_VARIANTS_PER_QUESTION) return;
-
-        setGeneratingFor(question.id);
-        try {
-            const result = await api.recruiter.generateQuestionVariant(question.id);
-            const variant: QuestionVariant = {
-                id: result.id,
-                questionText: result.text || result.questionText,
-                type: 'code',
-                difficulty: result.difficulty,
-                category: result.category,
-                tags: result.tags || [],
-                testCases: result.testCases,
-                starterCode: result.starterCode,
-                functionName: result.functionName,
-                inputFormat: result.inputFormat,
-                outputFormat: result.outputFormat,
-                questionExamples: result.examples,
-                questionConstraints: result.constraints,
-                topics: result.topics,
-            };
-            setVariantMap(prev => ({
-                ...prev,
-                [question.id]: [...(prev[question.id] || []), variant],
-            }));
-            setExpandedVariants(prev => ({ ...prev, [question.id]: true }));
-        } catch (err) {
-            console.error('Variant generation failed:', err);
-        } finally {
-            setGeneratingFor(null);
-        }
-    }, [variantMap]);
-
-    const toggleVariantPanel = (questionId: string) => {
-        setExpandedVariants(prev => ({ ...prev, [questionId]: !prev[questionId] }));
-    };
 
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
@@ -339,14 +294,8 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
                         <>
                             <div className="space-y-4">
                                 {filteredQuestions.map(question => {
-                                    const variants = variantMap[question.id] || [];
-                                    const isGenerating = generatingFor === question.id;
-                                    const variantsExpanded = expandedVariants[question.id];
-                                    const canGenerateMore = variants.length < MAX_VARIANTS_PER_QUESTION;
-
                                     return (
-                                        <div key={question.id} className="border border-[#e5e7eb] rounded-[12px] overflow-hidden">
-                                            {/* Base question card */}
+                                        <div key={question.id} className="border border-[#e5e7eb] rounded-[12px] overflow-hidden hover:border-[#6366f1]/40 transition-colors">
                                             <div className="p-6 hover:bg-[#fafafa] transition-colors">
                                                 <div className="flex items-start justify-between mb-3">
                                                     <div className="flex-1">
@@ -408,49 +357,14 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
                                                 )}
 
                                                 {question.type === 'code' && (
-                                                    <div className="mt-3 flex items-center justify-between">
-                                                        <div className="text-[13px] text-[#6b7280] flex items-center gap-3">
-                                                            {question.functionName && (
-                                                                <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-[12px]">{question.functionName}()</span>
-                                                            )}
-                                                            <span>{question.testCases?.length || 0} test cases</span>
-                                                            {question.topics?.slice(0, 2).map((t: string) => (
-                                                                <span key={t} className="text-indigo-600">{t}</span>
-                                                            ))}
-                                                        </div>
-
-                                                        {/* Variant controls */}
-                                                        <div className="flex items-center gap-2">
-                                                            {variants.length > 0 && (
-                                                                <button
-                                                                    onClick={() => toggleVariantPanel(question.id)}
-                                                                    className="flex items-center gap-1.5 text-[12px] text-[#6366f1] hover:text-[#4f46e5] font-medium"
-                                                                >
-                                                                    <GitBranch size={13} />
-                                                                    {variants.length} variant{variants.length !== 1 ? 's' : ''}
-                                                                    {variantsExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                                                                </button>
-                                                            )}
-                                                            {canGenerateMore && (
-                                                                <button
-                                                                    onClick={() => handleGenerateVariant(question)}
-                                                                    disabled={isGenerating}
-                                                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] border border-[#e5e7eb] text-[12px] text-[#374151] hover:border-[#6366f1] hover:text-[#6366f1] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                                                >
-                                                                    {isGenerating ? (
-                                                                        <>
-                                                                            <div className="w-3 h-3 border-2 border-[#6366f1] border-t-transparent rounded-full animate-spin" />
-                                                                            Generating…
-                                                                        </>
-                                                                    ) : (
-                                                                        <>
-                                                                            <Sparkles size={12} />
-                                                                            {variants.length === 0 ? 'Generate Variant' : `Another (${variants.length}/${MAX_VARIANTS_PER_QUESTION})`}
-                                                                        </>
-                                                                    )}
-                                                                </button>
-                                                            )}
-                                                        </div>
+                                                    <div className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-[#6b7280]">
+                                                        {question.functionName && (
+                                                            <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-[12px]">{question.functionName}()</span>
+                                                        )}
+                                                        <span>{question.testCases?.length || 0} test cases</span>
+                                                        {question.topics?.slice(0, 3).map((t: string) => (
+                                                            <span key={t} className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 text-[11px]">{t}</span>
+                                                        ))}
                                                     </div>
                                                 )}
 
@@ -459,36 +373,6 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
                                                 )}
                                             </div>
 
-                                            {/* Variant panel (code questions only) */}
-                                            {question.type === 'code' && variantsExpanded && variants.length > 0 && (
-                                                <div className="border-t border-[#e5e7eb] bg-[#f9fafb]">
-                                                    {variants.map((variant, idx) => (
-                                                        <div key={variant.id} className="p-4 border-b border-[#e5e7eb] last:border-b-0 flex items-start justify-between gap-4">
-                                                            <div className="flex-1">
-                                                                <div className="flex items-center gap-2 mb-1.5">
-                                                                    <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 text-[10px] font-medium flex items-center gap-1">
-                                                                        <GitBranch size={9} />
-                                                                        Variant {idx + 1}
-                                                                    </span>
-                                                                    {variant.functionName && (
-                                                                        <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-[11px] text-[#6b7280]">{variant.functionName}()</span>
-                                                                    )}
-                                                                </div>
-                                                                <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151] line-clamp-2">
-                                                                    {variant.questionText}
-                                                                </p>
-                                                            </div>
-                                                            <Button
-                                                                onClick={() => onSelect(variant)}
-                                                                variant="outline"
-                                                                className="shrink-0 rounded-[8px] text-[12px] h-8 px-3 border-[#6366f1] text-[#6366f1] hover:bg-[#ede9fe]"
-                                                            >
-                                                                Select Variant
-                                                            </Button>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
                                         </div>
                                     );
                                 })}
