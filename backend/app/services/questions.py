@@ -49,7 +49,7 @@ class QuestionService:
         response_items = []
         # DB Mappings
         diff_map = {1: "Easy", 2: "Medium", 3: "Hard"}
-        type_map = {"mcq": "Multiple Choice", "essay": "Essay", "code": "Code"}
+        type_map = {"mcq": "Multiple Choice", "essay": "Essay", "coding": "Code"}
 
         for qb in questions:
             # Map specific config fields to root response items
@@ -93,6 +93,16 @@ class QuestionService:
                 testCases=config.get("test_cases"),
                 timeLimit=config.get("time_limit"),
                 memoryLimit=config.get("memory_limit"),
+                starterCode=config.get("starter_code"),
+                functionName=config.get("function_name"),
+                inputFormat=config.get("input_format"),
+                outputFormat=config.get("output_format"),
+                examples=config.get("examples"),
+                constraints=config.get("constraints"),
+                topics=config.get("topics"),
+                referenceAnswerCode=(config.get("reference_solution") or (
+                    (qb.correct_answer or {}).get("reference_solution")
+                )),
                 maxWords=config.get("max_words"),
                 expectedKeywords=config.get("expected_keywords"),
                 rubric=config.get("rubric"),
@@ -128,7 +138,7 @@ class QuestionService:
         elif q_type == "Essay":
             q_type = "essay"
         elif q_type == "Code":
-            q_type = "code"
+            q_type = "coding"
 
         config = {}
         correct_answer = None
@@ -150,12 +160,22 @@ class QuestionService:
             config["explanation"] = data.explanation
             if data.correctAnswer is not None:
                 correct_answer = {"answer": data.correctAnswer}
-        elif q_type == "code":
+        elif q_type == "coding":
             config["language"] = data.codeLanguage
             config["code_template"] = data.codeTemplate
             config["test_cases"] = data.testCases
             config["time_limit"] = data.timeLimit
             config["memory_limit"] = data.memoryLimit
+            # NEW
+            config["starter_code"] = data.starterCode
+            config["function_name"] = data.functionName
+            config["input_format"] = data.inputFormat
+            config["output_format"] = data.outputFormat
+            config["examples"] = data.examples
+            config["constraints"] = data.constraints
+            config["topics"] = data.topics
+            if data.referenceAnswerCode:
+                correct_answer = {"reference_solution": data.referenceAnswerCode}
         elif q_type == "essay":
             config["max_words"] = data.maxWords
             config["expected_keywords"] = data.expectedKeywords
@@ -202,6 +222,14 @@ class QuestionService:
             testCases=data.testCases,
             timeLimit=data.timeLimit,
             memoryLimit=data.memoryLimit,
+            starterCode=data.starterCode,
+            functionName=data.functionName,
+            inputFormat=data.inputFormat,
+            outputFormat=data.outputFormat,
+            examples=data.examples,
+            constraints=data.constraints,
+            topics=data.topics,
+            referenceAnswerCode=data.referenceAnswerCode,
             maxWords=data.maxWords,
             expectedKeywords=data.expectedKeywords,
             rubric=data.rubric,
