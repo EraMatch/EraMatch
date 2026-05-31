@@ -2909,12 +2909,8 @@ class RecruiterService:
         """Generate a technical or interview question using the configured LLM provider."""
         metadata = metadata if isinstance(metadata, dict) else {}
         use_case = (use_case or "").strip().lower()
-        if use_case in {"recorded_interview_suggest", "live_interview_setup"}:
-            provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
-            model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
-        else:
-            provider = settings.DEFAULT_LLM_PROVIDER
-            model = None
+        provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+        model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
 
         def _derive_yes_no_checks(payload: dict) -> list[dict]:
             rubric = str(payload.get("rubric") or "").strip()
@@ -3116,6 +3112,16 @@ class RecruiterService:
                             }
                         )
                     payload["rubricYesNoChecks"] = normalized_checks
+
+            if question_type == "code":
+                payload["starterCode"] = payload.get("starterCode")
+                payload["functionName"] = payload.get("functionName")
+                payload["inputFormat"] = payload.get("inputFormat")
+                payload["outputFormat"] = payload.get("outputFormat")
+                payload["examples"] = payload.get("examples")
+                payload["constraints"] = payload.get("constraints")
+                payload["topics"] = payload.get("topics")
+                payload["referenceAnswerCode"] = payload.get("referenceAnswer")
 
             return payload
         except Exception as e:
