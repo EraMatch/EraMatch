@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-
+# ─────────────────────────────────────────────────────────────────────────────
+# EraMatch dev-server launcher — macOS, Linux, Windows (via WSL/Git Bash)
+# ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,9 +12,26 @@ mkdir -p "$LOG_DIR"
 
 if [[ ! -f "$VENV_ACTIVATE" ]]; then
   echo "Error: Python virtual environment not found at $VENV_ACTIVATE"
-  echo "Create it first, then install backend/ai-service dependencies."
+  echo "Create it first:  cd backend && python -m venv .venv && pip install -e ."
   exit 1
 fi
+
+# ── OS detection ──────────────────────────────────────────────────────────────
+OS_TYPE="$(uname -s 2>/dev/null || echo "Unknown")"
+
+# macOS: prefork pool crashes with SIGABRT when PyMuPDF/Obj-C libs are loaded
+# before fork(). Use threads pool + disable fork-safety check as belt-and-suspenders.
+# Linux: prefork is fine, but threads pool is still cleaner for I/O-bound tasks.
+# Windows: run this script in WSL or Git Bash; Celery prefork has no fork issue there.
+if [[ "$OS_TYPE" == "Darwin" ]]; then
+  CELERY_POOL="--pool=threads"
+  CELERY_PREFIX="OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES"
+else
+  CELERY_POOL="--pool=threads"
+  CELERY_PREFIX=""
+fi
+
+CELERY_CONCURRENCY="--concurrency=6"
 
 PIDS=()
 CLEANED_UP=0
@@ -26,17 +45,12 @@ start_service() {
   bash -lc "$command" >"$log_file" 2>&1 &
   local pid=$!
   PIDS+=("$pid")
-
-  echo "  PID: $pid"
-  echo "  Log: $log_file"
+  echo "  PID: $pid  |  Log: $log_file"
 }
 
 cleanup() {
-  if [[ "$CLEANED_UP" -eq 1 ]]; then
-    return
-  fi
+  if [[ "$CLEANED_UP" -eq 1 ]]; then return; fi
   CLEANED_UP=1
-
   echo
   echo "Stopping all services..."
   for pid in "${PIDS[@]}"; do
@@ -44,23 +58,28 @@ cleanup() {
       kill "$pid" 2>/dev/null || true
     fi
   done
-
   wait || true
   echo "All services stopped."
 }
 
 trap cleanup INT TERM EXIT
 
+# ── Services ─────────────────────────────────────────────────────────────────
 start_service "backend-api"      "source '$VENV_ACTIVATE' && cd '$ROOT_DIR/backend' && uvicorn app.main:app --reload --port 8000"
-start_service "celery-worker"    "source '$VENV_ACTIVATE' && cd '$ROOT_DIR/backend' && celery -A worker.celery_app worker --loglevel=info"
+start_service "celery-worker"    "source '$VENV_ACTIVATE' && cd '$ROOT_DIR/backend' && $CELERY_PREFIX celery -A worker.celery_app worker --loglevel=info $CELERY_POOL $CELERY_CONCURRENCY"
 start_service "ai-service"       "cd '$ROOT_DIR/ai-service' && uv run uvicorn main:app --reload --port 8001"
-start_service "ai-celery-worker" "cd '$ROOT_DIR/ai-service' && uv run celery -A worker.celery_app worker --loglevel=info --concurrency=3"
+start_service "ai-celery-worker" "cd '$ROOT_DIR/ai-service' && uv run celery -A worker.celery_app worker --loglevel=info --pool=solo"
 start_service "livekit-worker"   "cd '$ROOT_DIR/ai-service' && uv run python livekit_worker/agent_server.py dev"
 start_service "recruiter-portal" "cd '$ROOT_DIR/Frontend/recruiter-portal' && npm run dev"
 start_service "candidate-portal" "cd '$ROOT_DIR/Frontend/candidate-portal' && npm run dev"
 
 echo
 echo "All services started. Press Ctrl+C to stop all."
-echo "Use: tail -f '$LOG_DIR/<service>.log' to watch logs."
+echo "Logs: tail -f '$LOG_DIR/<service>.log'"
+echo
+echo "  backend-api      → http://localhost:8000"
+echo "  recruiter-portal → http://localhost:5173"
+echo "  candidate-portal → http://localhost:5174"
+echo "  ai-service       → http://localhost:8001"
 
 wait
