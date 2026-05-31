@@ -45,10 +45,22 @@ const LANGUAGES = [
   'Swift'
 ];
 
+// Normalize incoming test case — backend/QB data uses `expected` + `is_hidden` (snake_case)
+// while the editor form works with `expectedOutput` + `isHidden` (camelCase).
+function normalizeIncoming(tc: any): TestCase {
+  return {
+    id: tc.id || `testcase-${Date.now()}-${Math.random()}`,
+    input: tc.input ?? '',
+    expectedOutput: tc.expectedOutput ?? tc.expected ?? '',
+    isHidden: tc.isHidden ?? tc.is_hidden ?? false,
+    points: tc.points ?? 10,
+  };
+}
+
 export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
   const [questionData, setQuestionData] = useState<QuestionVariant>({
     ...variant,
-    testCases: variant.testCases || [],
+    testCases: (variant.testCases || []).map(normalizeIncoming),
     language: variant.language || 'JavaScript',
     timeLimit: variant.timeLimit || 5,
     memoryLimit: variant.memoryLimit || 256,
@@ -120,7 +132,15 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
       return;
     }
 
-    onSave(questionData);
+    // Emit test cases with both field-name conventions so downstream
+    // consumers (SectionEditor display, backend create_question) all work.
+    const normalizedTestCases = (questionData.testCases || []).map(tc => ({
+      ...tc,
+      expected: tc.expectedOutput,
+      is_hidden: tc.isHidden,
+    }));
+
+    onSave({ ...questionData, testCases: normalizedTestCases });
   };
 
   return (

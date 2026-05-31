@@ -1106,7 +1106,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                           aria-label="Select question"
                           className="w-4 h-4 rounded border-gray-300"
                         />
-                        <h3 className="text-[16px] font-medium font-['Arimo',sans-serif] text-[#111827]">{question.text}</h3>
+                        <h3 className="text-[16px] font-medium font-['Arimo',sans-serif] text-[#111827] line-clamp-2 overflow-hidden">{question.text}</h3>
                         <button
                           onClick={() => handleToggleFavorite(question.id)}
                           disabled={togglingFavorites[question.id]}
