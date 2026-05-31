@@ -301,7 +301,117 @@ class QuestionService:
         qb = q.scalars().first()
         if not qb:
             raise NotFoundException("Question not found")
-        
+
         qb.is_deleted = True
         self.session.add(qb)
         await self.session.commit()
+
+    async def generate_variant(self, question_id: UUID) -> QuestionBankResponseItem:
+        """
+        Create a text-only variant of a coding question.
+        Keeps test_cases, starter_code, function_name, constraints identical.
+        Rewrites question_text and examples via LLM.
+        """
+        import json
+        import re as re_mod
+        from pathlib import Path
+        from app.integrations.llm import get_llm
+        from app.core.config import settings
+        from app.core.exceptions import BadRequestException
+
+        result = await self.session.execute(
+            select(QuestionBank).where(
+                QuestionBank.id == question_id,
+                QuestionBank.organization_id == self.org_id,
+                QuestionBank.is_deleted == False,
+            )
+        )
+        original = result.scalar_one_or_none()
+        if not original:
+            raise NotFoundException("Question not found")
+        if original.question_type != "coding":
+            raise BadRequestException("Variant generation only supported for coding questions")
+
+        # Find the prompt template
+        prompt_path = (
+            Path(__file__).parent.parent.parent.parent.parent
+            / "ai-service" / "prompts" / "llm" / "coding_variant.md"
+        )
+        if prompt_path.exists():
+            template = prompt_path.read_text(encoding="utf-8")
+        else:
+            template = (
+                "Rewrite this coding question in a different real-world domain framing, "
+                "keeping the same algorithm and test cases. "
+                "Original: {{ORIGINAL_QUESTION_TEXT}}\nExamples: {{ORIGINAL_EXAMPLES_JSON}}\n"
+                "Return JSON with questionText and examples."
+            )
+
+        orig_config = original.question_config or {}
+        orig_examples = orig_config.get("examples", [])
+        prompt = template.replace("{{ORIGINAL_QUESTION_TEXT}}", original.question_text)
+        prompt = prompt.replace("{{ORIGINAL_EXAMPLES_JSON}}", json.dumps(orig_examples, ensure_ascii=False))
+
+        provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+        model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
+        llm = get_llm(provider, model=model)
+        response = await llm.ainvoke(prompt)
+        content = getattr(response, "content", "")
+
+        json_match = re_mod.search(r'\{.*\}', content, re_mod.DOTALL)
+        llm_payload = {}
+        if json_match:
+            try:
+                llm_payload = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+
+        variant_text = llm_payload.get("questionText") or f"[Variant] {original.question_text[:100]}"
+        variant_examples = llm_payload.get("examples") or orig_examples
+
+        new_config = {**orig_config, "examples": variant_examples}
+
+        variant = QuestionBank(
+            organization_id=self.org_id,
+            question_type="coding",
+            question_text=variant_text,
+            question_config=new_config,
+            correct_answer=original.correct_answer,
+            category=original.category,
+            difficulty=original.difficulty,
+            tags=original.tags,
+            points=original.points,
+            created_by_user_id=self.user.id,
+            is_base_question=False,
+            parent_question_id=original.id,
+            source=original.source,
+            is_deleted=False,
+        )
+        self.session.add(variant)
+        await self.session.commit()
+        await self.session.refresh(variant)
+
+        diff_map = {1: "Easy", 2: "Medium", 3: "Hard"}
+        cfg = variant.question_config or {}
+        return QuestionBankResponseItem(
+            id=variant.id,
+            text=variant.question_text,
+            category=variant.category or "Uncategorized",
+            difficulty=diff_map.get(variant.difficulty, "Medium"),
+            type="Code",
+            tags=variant.tags or [],
+            usageCount=0,
+            avgScore=0,
+            createdAt=variant.created_at.strftime("%Y-%m-%d"),
+            createdBy="You",
+            isFavorite=False,
+            starterCode=cfg.get("starter_code"),
+            functionName=cfg.get("function_name"),
+            inputFormat=cfg.get("input_format"),
+            outputFormat=cfg.get("output_format"),
+            examples=cfg.get("examples"),
+            constraints=cfg.get("constraints"),
+            topics=cfg.get("topics"),
+            testCases=cfg.get("test_cases"),
+            timeLimit=cfg.get("time_limit"),
+        )
