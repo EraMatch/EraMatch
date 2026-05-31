@@ -831,6 +831,34 @@ export function PositionDetailView({
         {/* Candidates Tab Content */}
         {activeTab === 'candidates' && (
           <div className="w-full space-y-5">
+
+            {/* ── Scoring progress bar — prominent, visible top of tab ── */}
+            {showScoringChip && (
+              <div className="flex items-center gap-3 rounded-[10px] bg-[#4f46e5] px-4 py-3 text-white shadow-sm">
+                <Loader2 size={15} className="animate-spin shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold">Scoring candidates</span>
+                  {totalCandidateCount > 0 && (
+                    <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-200 ml-2">
+                      {scoredCandidateCount} of {totalCandidateCount} analyzed
+                    </span>
+                  )}
+                  {totalCandidateCount === 0 && (
+                    <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-200 ml-2">
+                      Processing CVs, candidates will appear shortly…
+                    </span>
+                  )}
+                </div>
+                {totalCandidateCount > 0 && (
+                  <div className="shrink-0 text-right">
+                    <span className="font-['Arimo',sans-serif] text-[20px] font-bold">
+                      {scoredCandidateCount}/{totalCandidateCount}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="rounded-[14px] border border-[#dbe3ff] bg-gradient-to-br from-white via-[#f8faff] to-[#f3f6ff] p-5 shadow-sm">
               <div className="mb-2 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
                 <h2 className="font-['Arimo',sans-serif] text-[22px] leading-[28px] text-[#0f172a]">
@@ -1121,17 +1149,9 @@ export function PositionDetailView({
             {/* All Candidates List */}
             <div className="bg-white rounded-[14px] p-6 shadow-sm border border-[#eef2ff]">
               <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-2.5">
-                  <h3 className="font-['Arimo',sans-serif] text-[19px] text-black">
-                    All Candidates ({filteredCandidates.length})
-                  </h3>
-                  {showScoringChip && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-[11px] font-medium text-indigo-600">
-                      <Loader2 size={10} className="animate-spin" />
-                      {totalCandidateCount === 0 ? 'processing…' : `${scoredCandidateCount}/${totalCandidateCount}`}
-                    </span>
-                  )}
-                </div>
+                <h3 className="font-['Arimo',sans-serif] text-[19px] text-black">
+                  All Candidates ({filteredCandidates.length})
+                </h3>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setIsFilterOpen(true)}
