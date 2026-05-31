@@ -48,18 +48,21 @@ class AssessmentService:
 
             # 2. Iterate through sections and questions
             for section_data in request_data.sections:
-                # Validate enum mapping for section type
+                # Store section type as the raw string the DB constraint expects.
+                # The DB check constraint uses ('mcq', 'essay', 'code') — NOT 'coding'.
+                # QuestionType.CODING.value == 'coding' which violates the constraint.
                 section_type_mapping = {
-                    "mcq": QuestionType.MCQ,
-                    "essay": QuestionType.ESSAY,
-                    "code": QuestionType.CODING
+                    "mcq": "mcq",
+                    "essay": "essay",
+                    "code": "code",
+                    "coding": "code",
                 }
-                db_section_type = section_type_mapping.get(section_data.type, QuestionType.MCQ)
+                db_section_type = section_type_mapping.get(section_data.type, "mcq")
 
                 section = AssessmentSection(
                     assessment_id=assessment.id,
                     section_order=section_data.order,
-                    section_title=f"Section {section_data.order}", # Using a default title as none was provided by the frontend payload mapping
+                    section_title=f"Section {section_data.order}",
                     question_type=db_section_type,
                     variants_to_select=section_data.variantsToSelect or 1,
                     points_per_question=section_data.points,
@@ -322,11 +325,12 @@ class AssessmentService:
             # Re-create sections and questions using the same logic
             for section_data in request_data.sections:
                 section_type_mapping = {
-                    "mcq": QuestionType.MCQ,
-                    "essay": QuestionType.ESSAY,
-                    "code": QuestionType.CODING
+                    "mcq": "mcq",
+                    "essay": "essay",
+                    "code": "code",
+                    "coding": "code",
                 }
-                db_section_type = section_type_mapping.get(section_data.type, QuestionType.MCQ)
+                db_section_type = section_type_mapping.get(section_data.type, "mcq")
 
                 section = AssessmentSection(
                     assessment_id=assessment.id,
