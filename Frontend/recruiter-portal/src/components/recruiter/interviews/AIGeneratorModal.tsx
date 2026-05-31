@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Wand2, Sparkles } from 'lucide-react';
+import { X, Wand2, Sparkles, Check } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { AIQuestionPreview } from './AIQuestionPreview';
 import { recruiterService } from '../../../services/recruiter.service';
@@ -14,7 +14,7 @@ interface QuestionVariant {
 
 interface AIGeneratorModalProps {
   questionType?: 'mcq' | 'essay' | 'code' | 'interview';
-  onGenerate: (question: QuestionVariant) => void;
+  onGenerate: (question: QuestionVariant | QuestionVariant[]) => void;
   onClose: () => void;
   context?: any;
 }
@@ -325,7 +325,8 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
       toAdd.push(await saveToQB(q));
     }
     setSavingToQB(false);
-    toAdd.forEach(q => onGenerate(q));
+    // Pass all approved at once so SectionEditor adds them all before closing the modal
+    onGenerate(toAdd);
     setGeneratedVariants([]);
     setApprovedVariants(new Map());
     setPreviewingIndex(null);
@@ -620,21 +621,13 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
                     );
                   })}
                 </div>
-                {/* Approval summary */}
-                <div className="px-4 py-3 border-t border-[#e5e7eb] flex items-center justify-between bg-white">
+                {/* Status bar — action is in the modal footer */}
+                <div className="px-4 py-2.5 border-t border-[#e5e7eb] bg-[#f9fafb]">
                   <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                    {approvedVariants.size} of {generatedVariants.length} approved
+                    {approvedVariants.size > 0
+                      ? `${approvedVariants.size} of ${generatedVariants.length} approved — click "Add approved to section" below`
+                      : `Approve variants to enable adding them to the section`}
                   </span>
-                  <Button
-                    onClick={() => void handleAddApproved()}
-                    disabled={approvedVariants.size === 0 || savingToQB}
-                    className="h-[32px] px-4 rounded-[7px] bg-[#6366f1] hover:bg-[#4f46e5] text-white text-[12px] disabled:opacity-50"
-                  >
-                    {savingToQB
-                      ? 'Saving...'
-                      : `Add ${approvedVariants.size > 0 ? approvedVariants.size + ' ' : ''}approved`
-                    }
-                  </Button>
                 </div>
               </div>
             )}
@@ -643,40 +636,108 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
           </div>
         </div>
 
-        {/* Footer */}
+        {/* Footer — adapts based on state */}
         <div className="px-6 py-4 border-t border-[#e5e7eb] flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <p className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af]">
-              Press Enter to generate
-            </p>
-            <div className="flex items-center gap-2">
+          {approvedVariants.size > 0 ? (
+            /* Approved variants ready → "Add" is the primary CTA */
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleClose}
+                  className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                  disabled={savingToQB}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void generateQuestion()}
+                  className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                  disabled={!canGenerate || savingToQB}
+                >
+                  <Wand2 size={13} className="mr-1.5" />
+                  Regenerate
+                </Button>
+              </div>
               <Button
-                variant="outline"
-                onClick={handleClose}
-                className="rounded-[8px] h-[38px] px-4 text-[13px]"
-                disabled={isGenerating}
+                onClick={() => void handleAddApproved()}
+                disabled={savingToQB}
+                className="rounded-[8px] h-[38px] px-5 bg-emerald-600 hover:bg-emerald-700 text-white text-[13px]"
               >
-                Cancel
-              </Button>
-              <Button
-                onClick={() => void generateQuestion()}
-                className="rounded-[8px] h-[38px] px-5 bg-[#6366f1] hover:bg-[#4f46e5] text-white text-[13px]"
-                disabled={!canGenerate}
-              >
-                {isGenerating ? (
+                {savingToQB ? (
                   <>
                     <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                    Generating...
+                    Saving...
                   </>
                 ) : (
                   <>
-                    <Wand2 size={14} className="mr-2" />
-                    {variantCount === 1 ? 'Generate' : `Generate ${variantCount}×`}
+                    <Check size={14} className="mr-2" />
+                    Add {approvedVariants.size} approved to section
                   </>
                 )}
               </Button>
             </div>
-          </div>
+          ) : generatedVariants.length > 0 ? (
+            /* Variants shown but none approved yet → hint + regenerate secondary */
+            <div className="flex items-center justify-between">
+              <p className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af]">
+                Preview variants above, then approve to add
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleClose}
+                  className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void generateQuestion()}
+                  className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                  disabled={!canGenerate}
+                >
+                  <Wand2 size={13} className="mr-1.5" />
+                  Regenerate
+                </Button>
+              </div>
+            </div>
+          ) : (
+            /* Default state → Generate is primary */
+            <div className="flex items-center justify-between">
+              <p className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af]">
+                Press Enter to generate
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleClose}
+                  className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                  disabled={isGenerating}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => void generateQuestion()}
+                  className="rounded-[8px] h-[38px] px-5 bg-[#6366f1] hover:bg-[#4f46e5] text-white text-[13px]"
+                  disabled={!canGenerate}
+                >
+                  {isGenerating ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 size={14} className="mr-2" />
+                      {variantCount === 1 ? 'Generate' : `Generate ${variantCount}×`}
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
