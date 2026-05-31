@@ -274,7 +274,21 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
 
   const handleAIGenerate = (question: QuestionVariant | QuestionVariant[]) => {
     const list = Array.isArray(question) ? question : [question];
-    list.forEach(q => handleAddVariant(q));
+    // Use functional setState so each variant is appended to the result of
+    // the previous update — avoids the stale-closure overwrite in a forEach loop.
+    setCurrentSection(prev => {
+      let variants = [...prev.variants];
+      for (const variant of list) {
+        let newId = variant.id || `variant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        if (variants.some(v => v.id === newId)) {
+          newId = `${newId}-${Date.now()}`;
+        }
+        variants = [...variants, { ...variant, id: newId }];
+      }
+      return { ...prev, variants };
+    });
+    setCreationMethod(null);
+    setEditingVariant(null);
     setShowAIGenerator(false);
   };
 
