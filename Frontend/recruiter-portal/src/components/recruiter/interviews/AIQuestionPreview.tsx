@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Check, RefreshCw, Lightbulb, Edit2, Save, ExternalLink } from 'lucide-react';
+import { X, Check, RefreshCw, Lightbulb, Edit2, Save, ExternalLink, Plus, Trash2 } from 'lucide-react';
 import { Button } from '../../ui/button';
 
 interface QuestionVariant {
@@ -29,8 +29,38 @@ export function AIQuestionPreview({
   const [isEditing, setIsEditing] = useState(false);
   const [edited, setEdited] = useState<QuestionVariant>({ ...question });
 
+  const [newKeyword, setNewKeyword] = useState('');
+
   const set = (field: string, value: any) =>
     setEdited(prev => ({ ...prev, [field]: value }));
+
+  const setCheck = (idx: number, field: 'check' | 'weight', value: string | number) => {
+    const checks = [...(edited.rubricYesNoChecks || [])];
+    checks[idx] = { ...checks[idx], [field]: value };
+    set('rubricYesNoChecks', checks);
+  };
+
+  const addCheck = () => {
+    const checks = [...(edited.rubricYesNoChecks || [])];
+    checks.push({ id: checks.length + 1, check: '', weight: parseFloat((1 / (checks.length + 1)).toFixed(2)) });
+    set('rubricYesNoChecks', checks);
+  };
+
+  const removeCheck = (idx: number) => {
+    const checks = (edited.rubricYesNoChecks || []).filter((_: any, i: number) => i !== idx);
+    set('rubricYesNoChecks', checks);
+  };
+
+  const addKeyword = () => {
+    const kw = newKeyword.trim();
+    if (!kw) return;
+    set('expectedKeywords', [...(edited.expectedKeywords || []), kw]);
+    setNewKeyword('');
+  };
+
+  const removeKeyword = (idx: number) => {
+    set('expectedKeywords', (edited.expectedKeywords || []).filter((_: any, i: number) => i !== idx));
+  };
 
   const setOption = (idx: number, value: string) => {
     const opts = [...(edited.options || [])];

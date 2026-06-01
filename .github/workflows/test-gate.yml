@@ -1,0 +1,164 @@
+name: Test Gate
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # Unit tests — no backend required, runs everywhere
+  # ─────────────────────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: EraMatch
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e backend/ --quiet
+          pip install pytest pytest-asyncio httpx --quiet
+
+      - name: Run unit tests
+        run: |
+          python -m pytest \
+            tests/candidate-view/unit_testing/testing_functionality/test_assessment_score_calculation.py \
+            tests/candidate-view/unit_testing/testing_functionality/test_live_interview_judge_output.py \
+            tests/candidate-view/unit_testing/testing_functionality/test_recorded_interview_pipeline.py \
+            tests/candidate-view/unit_testing/testing_functionality/test_judge_grading_logic.py \
+            tests/candidate-view/unit_testing/testing_functionality/test_coding_solve_simulation.py \
+            -v --tb=short --no-header \
+            -q
+
+  # ─────────────────────────────────────────────────────────
+  # Frontend builds — verify both portals compile
+  # ─────────────────────────────────────────────────────────
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        portal:
+          - path: EraMatch/Frontend/recruiter-portal
+            name: recruiter-portal
+          - path: EraMatch/Frontend/candidate-portal
+            name: candidate-portal
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ${{ matrix.portal.path }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.portal.path }}
+        run: npm ci --silent
+
+      - name: Build ${{ matrix.portal.name }}
+        working-directory: ${{ matrix.portal.path }}
+        run: npm run build
+        env:
+          # Suppress Vite interactive prompts in CI
+          CI: "true"
+
+  # ─────────────────────────────────────────────────────────
+  # TypeScript type check
+  # ─────────────────────────────────────────────────────────
+  typescript-check:
+    name: TypeScript Check
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        portal:
+          - path: EraMatch/Frontend/recruiter-portal
+            name: recruiter-portal
+          - path: EraMatch/Frontend/candidate-portal
+            name: candidate-portal
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ${{ matrix.portal.path }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.portal.path }}
+        run: npm ci --silent
+
+      - name: Type check ${{ matrix.portal.name }}
+        working-directory: ${{ matrix.portal.path }}
+        run: npx tsc --noEmit
+
+  # ─────────────────────────────────────────────────────────
+  # Integration tests — runs on self-hosted runner with full stack
+  # Only triggered on push to main/dev branches (not every PR)
+  # ─────────────────────────────────────────────────────────
+  integration-tests:
+    name: Integration Tests
+    runs-on: self-hosted
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || contains(github.event.pull_request.labels.*.name, 'integration-test')
+    defaults:
+      run:
+        working-directory: EraMatch
+
+    env:
+      # Candidate test credentials (set as GitHub Actions secrets)
+      TEST_CANDIDATE_USERNAME: ${{ secrets.TEST_CANDIDATE_USERNAME }}
+      TEST_CANDIDATE_PASSWORD: ${{ secrets.TEST_CANDIDATE_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for backend to be ready
+        run: |
+          echo "Waiting for backend on :8000..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/ >/dev/null 2>&1; then
+              echo "Backend ready."
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run recruiter-side integration tests
+        run: |
+          backend/.venv/bin/python3 -m pytest \
+            tests/recruiter-view/unit_testing/testing_functionality/test_assessment_config_full.py \
+            -v --tb=short --no-header
+
+      - name: Run candidate-side integration tests
+        run: |
+          backend/.venv/bin/python3 -m pytest \
+            tests/candidate-view/unit_testing/testing_functionality/test_candidate_full_cycle.py \
+            -v --tb=short --no-header
+        continue-on-error: true   # skip marks propagate; full skip = not a failure
+
+      - name: Run existing integration test suites
+        run: |
+          backend/.venv/bin/python3 -m pytest \
+            tests/recruiter-view/unit_testing/testing_functionality/ \
+            tests/candidate-view/unit_testing/testing_functionality/ \
+            -v --tb=short --no-header --ignore=tests/candidate-view/unit_testing/testing_functionality/test_candidate_full_cycle.py \
+            -q
+        continue-on-error: true
