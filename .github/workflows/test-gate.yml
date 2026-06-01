@@ -8,14 +8,11 @@ on:
 
 jobs:
   # ─────────────────────────────────────────────────────────
-  # Unit tests — no backend required, runs everywhere
+  # Unit tests — no backend required, runs on any Ubuntu runner
   # ─────────────────────────────────────────────────────────
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: EraMatch
 
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +23,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install backend dependencies
+        # Repo root = EraMatch/ — backend/ is a direct child
         run: |
           python -m pip install --upgrade pip
           pip install -e backend/ --quiet
@@ -39,8 +37,7 @@ jobs:
             tests/candidate-view/unit_testing/testing_functionality/test_recorded_interview_pipeline.py \
             tests/candidate-view/unit_testing/testing_functionality/test_judge_grading_logic.py \
             tests/candidate-view/unit_testing/testing_functionality/test_coding_solve_simulation.py \
-            -v --tb=short --no-header \
-            -q
+            -v --tb=short --no-header -q
 
   # ─────────────────────────────────────────────────────────
   # Frontend builds — verify both portals compile
@@ -52,9 +49,9 @@ jobs:
     strategy:
       matrix:
         portal:
-          - path: EraMatch/Frontend/recruiter-portal
+          - path: Frontend/recruiter-portal
             name: recruiter-portal
-          - path: EraMatch/Frontend/candidate-portal
+          - path: Frontend/candidate-portal
             name: candidate-portal
 
     steps:
@@ -75,7 +72,6 @@ jobs:
         working-directory: ${{ matrix.portal.path }}
         run: npm run build
         env:
-          # Suppress Vite interactive prompts in CI
           CI: "true"
 
   # ─────────────────────────────────────────────────────────
@@ -88,9 +84,9 @@ jobs:
     strategy:
       matrix:
         portal:
-          - path: EraMatch/Frontend/recruiter-portal
+          - path: Frontend/recruiter-portal
             name: recruiter-portal
-          - path: EraMatch/Frontend/candidate-portal
+          - path: Frontend/candidate-portal
             name: candidate-portal
 
     steps:
@@ -111,19 +107,34 @@ jobs:
         run: npx tsc --noEmit
 
   # ─────────────────────────────────────────────────────────
-  # Integration tests — runs on self-hosted runner with full stack
-  # Only triggered on push to main/dev branches (not every PR)
+  # Integration tests — self-hosted runner (your dev machine)
+  # The runner already has:
+  #   - backend/.venv with all deps installed
+  #   - backend/.env and ai-service/.env with real DB/API keys
+  #   - Redis running (brew services start redis)
+  #   - Backend server started separately (bash start-dev.sh)
+  #
+  # Triggered on: push/PR to main or dev, OR when "integration-test" label added to PR
+  #
+  # HOW TO SET UP THE SELF-HOSTED RUNNER:
+  #   Go to: GitHub repo → Settings → Actions → Runners → New self-hosted runner
+  #   Follow the instructions to install and register the runner on your machine.
+  #   The runner will use your local backend .venv, .env files, and running services.
   # ─────────────────────────────────────────────────────────
   integration-tests:
-    name: Integration Tests
+    name: Integration Tests (self-hosted)
     runs-on: self-hosted
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || contains(github.event.pull_request.labels.*.name, 'integration-test')
-    defaults:
-      run:
-        working-directory: EraMatch
+    if: |
+      github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/dev' ||
+      contains(github.event.pull_request.labels.*.name, 'integration-test')
 
     env:
-      # Candidate test credentials (set as GitHub Actions secrets)
+      # Set these as GitHub repo secrets:
+      # Settings → Secrets and variables → Actions → New repository secret
+      #   TEST_CANDIDATE_USERNAME  →  the candidate's username (from credentials email)
+      #   TEST_CANDIDATE_PASSWORD  →  the candidate's password (from credentials email)
+      # Your backend .env and ai-service/.env stay local — never push them.
       TEST_CANDIDATE_USERNAME: ${{ secrets.TEST_CANDIDATE_USERNAME }}
       TEST_CANDIDATE_PASSWORD: ${{ secrets.TEST_CANDIDATE_PASSWORD }}
 
@@ -132,13 +143,14 @@ jobs:
 
       - name: Wait for backend to be ready
         run: |
-          echo "Waiting for backend on :8000..."
-          for i in $(seq 1 30); do
+          echo "Checking backend on :8000..."
+          for i in $(seq 1 20); do
             if curl -sf http://localhost:8000/ >/dev/null 2>&1; then
-              echo "Backend ready."
+              echo "Backend is up."
               break
             fi
-            sleep 2
+            echo "  attempt $i — waiting 3s..."
+            sleep 3
           done
 
       - name: Run recruiter-side integration tests
@@ -148,17 +160,10 @@ jobs:
             -v --tb=short --no-header
 
       - name: Run candidate-side integration tests
+        # continue-on-error so a skip (no candidate creds) doesn't block the pipeline
+        continue-on-error: true
         run: |
           backend/.venv/bin/python3 -m pytest \
             tests/candidate-view/unit_testing/testing_functionality/test_candidate_full_cycle.py \
+            tests/candidate-view/unit_testing/testing_functionality/test_recorded_interview_api.py \
             -v --tb=short --no-header
-        continue-on-error: true   # skip marks propagate; full skip = not a failure
-
-      - name: Run existing integration test suites
-        run: |
-          backend/.venv/bin/python3 -m pytest \
-            tests/recruiter-view/unit_testing/testing_functionality/ \
-            tests/candidate-view/unit_testing/testing_functionality/ \
-            -v --tb=short --no-header --ignore=tests/candidate-view/unit_testing/testing_functionality/test_candidate_full_cycle.py \
-            -q
-        continue-on-error: true
