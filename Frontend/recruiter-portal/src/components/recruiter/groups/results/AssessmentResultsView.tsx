@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { AlertTriangle, CheckCircle, Clock, Shield } from 'lucide-react';
 import { useStageMonitoring } from '../../../../hooks/groups/useGroups';
 
@@ -28,6 +28,7 @@ export function AssessmentResultsView({
     onOpenSuspectReview,
 }: AssessmentResultsViewProps) {
     const { data, isLoading, isError } = useStageMonitoring(groupId, 'assessment');
+    const [filterVerdict, setFilterVerdict] = useState<string | null>(null);
 
     const handleIntegrityClick = useCallback(
         (e: React.MouseEvent, applicationId: string, candidateId: string, verdict: string) => {
@@ -58,32 +59,72 @@ export function AssessmentResultsView({
 
     const { total_candidates, completed, avg_score, pass_threshold, integrity_summary, candidates } = data as any;
 
+    const filteredCandidates = filterVerdict
+        ? (candidates as any[]).filter((c: any) => (c.integrity_verdict ?? 'clean') === filterVerdict)
+        : (candidates as any[]);
+
     return (
         <div className="space-y-4">
             {/* KPI strip */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {[
-                    { label: 'Completed', value: `${completed} / ${total_candidates}`, icon: CheckCircle, color: 'text-emerald-600' },
-                    { label: 'Avg Score', value: `${(avg_score ?? 0).toFixed(1)}%`, icon: Clock, color: 'text-[#6366f1]' },
-                    { label: 'Pass Threshold', value: `${pass_threshold ?? 70}%`, icon: Shield, color: 'text-gray-500' },
-                    {
-                        label: 'Integrity Flags',
-                        value: `${((integrity_summary?.suspicious_review ?? 0) + (integrity_summary?.confirmed_cheating ?? 0))} flagged`,
-                        icon: AlertTriangle,
-                        color: ((integrity_summary?.suspicious_review ?? 0) + (integrity_summary?.confirmed_cheating ?? 0)) > 0 ? 'text-amber-600' : 'text-gray-400',
-                    },
-                ].map((kpi) => {
-                    const Icon = kpi.icon;
-                    return (
-                        <div key={kpi.label} className="flex flex-col gap-1 rounded-[12px] border border-gray-100 bg-white px-4 py-3 shadow-sm">
-                            <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">{kpi.label}</span>
-                            <div className="flex items-center gap-2">
-                                <Icon size={14} className={kpi.color} />
-                                <span className="text-[18px] font-bold tabular-nums text-gray-900">{kpi.value}</span>
+            <div className="space-y-3">
+                {/* 3-card row */}
+                <div className="grid grid-cols-3 gap-3">
+                    {[
+                        { label: 'Completed', value: `${completed} / ${total_candidates}`, icon: CheckCircle, color: 'text-emerald-600' },
+                        { label: 'Avg Score', value: `${(avg_score ?? 0).toFixed(1)}%`, icon: Clock, color: 'text-[#6366f1]' },
+                        { label: 'Pass Threshold', value: `${pass_threshold ?? 70}%`, icon: Shield, color: 'text-gray-500' },
+                    ].map((kpi) => {
+                        const Icon = kpi.icon;
+                        return (
+                            <div key={kpi.label} className="flex flex-col gap-1 rounded-[12px] border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                                <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">{kpi.label}</span>
+                                <div className="flex items-center gap-2">
+                                    <Icon size={14} className={kpi.color} />
+                                    <span className="text-[18px] font-bold tabular-nums text-gray-900">{kpi.value}</span>
+                                </div>
                             </div>
-                        </div>
-                    );
-                })}
+                        );
+                    })}
+                </div>
+                {/* Integrity 4-segment filter bar */}
+                <div className="rounded-[12px] border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                    <div className="mb-2 flex items-center justify-between">
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500 flex items-center gap-1.5">
+                            <AlertTriangle size={11} className="text-amber-500" />
+                            Integrity
+                        </span>
+                        {filterVerdict && (
+                            <button
+                                type="button"
+                                onClick={() => setFilterVerdict(null)}
+                                className="text-[11px] text-indigo-500 hover:underline"
+                            >
+                                Clear filter
+                            </button>
+                        )}
+                    </div>
+                    <div className="flex gap-2">
+                        {([
+                            { key: 'clean', label: 'Clean', count: integrity_summary?.clean ?? 0, bg: 'bg-emerald-50 border-emerald-200 text-emerald-700', activeBg: 'bg-emerald-100 border-emerald-400' },
+                            { key: 'monitoring', label: 'Monitoring', count: integrity_summary?.monitoring ?? 0, bg: 'bg-amber-50 border-amber-200 text-amber-700', activeBg: 'bg-amber-100 border-amber-400' },
+                            { key: 'suspicious_review', label: 'Suspicious', count: integrity_summary?.suspicious_review ?? 0, bg: 'bg-orange-50 border-orange-200 text-orange-700', activeBg: 'bg-orange-100 border-orange-400' },
+                            { key: 'confirmed_cheating', label: 'Confirmed', count: integrity_summary?.confirmed_cheating ?? 0, bg: 'bg-red-50 border-red-200 text-red-800', activeBg: 'bg-red-100 border-red-400' },
+                        ] as const).map((seg) => (
+                            <button
+                                key={seg.key}
+                                type="button"
+                                onClick={() => setFilterVerdict(filterVerdict === seg.key ? null : seg.key)}
+                                className={`flex flex-1 flex-col items-center rounded-[8px] border py-2 transition-colors cursor-pointer hover:opacity-80 ${
+                                    filterVerdict === seg.key ? seg.activeBg : seg.bg
+                                }`}
+                                aria-pressed={filterVerdict === seg.key}
+                            >
+                                <span className="text-[18px] font-bold tabular-nums">{seg.count}</span>
+                                <span className="text-[10px] font-medium">{seg.label}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
             </div>
 
             {/* Decision table */}
@@ -100,7 +141,7 @@ export function AssessmentResultsView({
                             </tr>
                         </thead>
                         <tbody>
-                            {(candidates as any[]).map((c: any, i: number) => {
+                            {filteredCandidates.map((c: any, i: number) => {
                                 const iv = c.integrity_verdict ?? 'clean';
                                 const isFlagged = iv !== 'clean';
                                 return (
@@ -149,7 +190,7 @@ export function AssessmentResultsView({
                                     </tr>
                                 );
                             })}
-                            {(candidates as any[]).length === 0 && (
+                            {filteredCandidates.length === 0 && (
                                 <tr>
                                     <td colSpan={5} className="px-5 py-10 text-center text-[13px] text-gray-400">
                                         No candidates have reached this stage yet.
