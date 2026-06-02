@@ -79,6 +79,7 @@ from app.schemas.group import (
     GroupStatsResponse,
     IntegrityFlag,
     IntegrityFlagDetail,
+    IntegritySummary,
     IntegrityFlagsResponse,
     LiveInterviewData,
     GroupIntegrityDecisionsResponse,
@@ -1788,6 +1789,7 @@ class GroupService:
         pending = 0
         scores: list[float] = []
         candidates: list[AssessmentMonitoringCandidate] = []
+        integrity_counts = {"clean": 0, "monitoring": 0, "suspicious_review": 0, "confirmed_cheating": 0}
 
         app_ids = [app.id for app, _, _ in rows]
 
@@ -1834,6 +1836,17 @@ class GroupService:
                 for f in app_flags
             ]
 
+            high_cnt = sum(1 for f in app_flags if f.severity.lower() == "high")
+            medium_cnt = sum(1 for f in app_flags if f.severity.lower() == "medium")
+            integrity_verdict, _ = self._decision_from_counts(
+                total_flags=len(app_flags),
+                high_cnt=high_cnt,
+                medium_cnt=medium_cnt,
+                critical_cnt=0,
+                fusion_cnt=0,
+            )
+            integrity_counts[integrity_verdict] = integrity_counts.get(integrity_verdict, 0) + 1
+
             candidates.append(
                 AssessmentMonitoringCandidate(
                     application_id=app.id,
@@ -1843,6 +1856,7 @@ class GroupService:
                     score=score,
                     meets_criteria=meets,
                     verdict=verdict,
+                    integrity_verdict=integrity_verdict,
                     flags=mon_flags,
                     completion_time=prog.completed_at,
                 )
@@ -1858,6 +1872,7 @@ class GroupService:
             flagged=flagged,
             avg_score=avg_score,
             pass_threshold=pass_threshold,
+            integrity_summary=IntegritySummary(**integrity_counts),
             candidates=candidates,
         )
 
