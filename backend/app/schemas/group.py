@@ -291,6 +291,13 @@ class MonitoringFlag(BaseModel):
     severity: str
 
 
+class IntegritySummary(BaseModel):
+    clean: int = 0
+    monitoring: int = 0
+    suspicious_review: int = 0
+    confirmed_cheating: int = 0
+
+
 class AssessmentMonitoringCandidate(BaseModel):
     application_id: UUID
     candidate_id: UUID
@@ -299,6 +306,7 @@ class AssessmentMonitoringCandidate(BaseModel):
     score: float | None = None
     meets_criteria: bool = False
     verdict: str = "pending"
+    integrity_verdict: str = "clean"  # clean | monitoring | suspicious_review | confirmed_cheating
     flags: list[MonitoringFlag] = []
     completion_time: datetime | None = None
 
@@ -310,6 +318,7 @@ class AssessmentMonitoringResponse(BaseModel):
     flagged: int = 0
     avg_score: float = 0.0
     pass_threshold: float = 70.0
+    integrity_summary: IntegritySummary = IntegritySummary()
     candidates: list[AssessmentMonitoringCandidate] = []
 
 
