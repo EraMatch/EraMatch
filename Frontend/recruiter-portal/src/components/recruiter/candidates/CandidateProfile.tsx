@@ -62,12 +62,12 @@ import type { RailCandidate } from '../groups/results/CandidateRail';
 export type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'interview' | 'live-interview' | 'notes' | 'final-report';
 
 export function getRailTabForStage(stageKey: string): TabType {
-    const map: Record<string, TabType> = {
-        'assessment': 'assessment',
-        'ai-interview': 'interview',
-        'live-interview': 'live-interview',
-    };
-    return map[stageKey] ?? 'overview';
+  const map: Record<string, TabType> = {
+    'assessment': 'assessment',
+    'ai-interview': 'interview',
+    'live-interview': 'live-interview',
+  };
+  return map[stageKey] ?? 'overview';
 }
 
 interface CandidateProfileProps {
@@ -543,7 +543,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
           onSelect={rail.onSelect}
         />
       )}
-      <div className={rail ? 'flex-1 min-w-0 overflow-y-auto' : 'w-full'}>
+      <div className={rail ? 'flex-1 min-w-0' : 'w-full'}>
         <div className="h-full w-full overflow-auto bg-[#f9fafb] relative">
       <div className="max-w-[1400px] mx-auto px-[48px] py-[24px]">
         {/* Header */}
