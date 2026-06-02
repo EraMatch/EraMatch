@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
 import { StageNavigator } from './StageNavigator';
 import { ModeToggle } from './ModeToggle';
@@ -87,6 +87,16 @@ export function GroupPageShell({
         [],
     );
 
+    const navigate = useNavigate();
+    const handleOpenSuspectReview = useCallback(
+        (applicationId: string, candidateId: string) => {
+            navigate(
+                `/recruiter/suspect-review?candidateId=${encodeURIComponent(candidateId)}&applicationId=${encodeURIComponent(applicationId)}`
+            );
+        },
+        [navigate],
+    );
+
     return (
         <div className="relative">
             {/* Main shell content — hidden (invisible + no pointer events) when profile open */}
@@ -144,7 +154,7 @@ export function GroupPageShell({
                             <AssessmentResultsView
                                 groupId={groupId}
                                 onOpenCandidate={handleOpenCandidate}
-                                onOpenSuspectReview={onOpenSuspectReview}
+                                onOpenSuspectReview={handleOpenSuspectReview}
                             />
                         ) : view.stage === 'ai-interview' ? (
                             <AIInterviewResultsView

@@ -19,7 +19,7 @@ const INTEGRITY_LABELS: Record<string, string> = {
 interface AssessmentResultsViewProps {
     groupId: string;
     onOpenCandidate: (applicationId: string, candidateId: string) => void;
-    onOpenSuspectReview?: (applicationId: string) => void;
+    onOpenSuspectReview?: (applicationId: string, candidateId: string) => void;
 }
 
 export function AssessmentResultsView({
@@ -30,10 +30,10 @@ export function AssessmentResultsView({
     const { data, isLoading, isError } = useStageMonitoring(groupId, 'assessment');
 
     const handleIntegrityClick = useCallback(
-        (e: React.MouseEvent, applicationId: string, verdict: string) => {
+        (e: React.MouseEvent, applicationId: string, candidateId: string, verdict: string) => {
             if (verdict !== 'clean' && onOpenSuspectReview) {
                 e.stopPropagation();
-                onOpenSuspectReview(applicationId);
+                onOpenSuspectReview(applicationId, candidateId);
             }
         },
         [onOpenSuspectReview],
@@ -134,7 +134,7 @@ export function AssessmentResultsView({
                                         <td className="px-4 py-3">
                                             <button
                                                 type="button"
-                                                onClick={(e) => handleIntegrityClick(e, c.application_id, iv)}
+                                                onClick={(e) => handleIntegrityClick(e, c.application_id, String(c.candidate_id), iv)}
                                                 className={`rounded-full px-2 py-0.5 text-[11px] font-semibold transition-colors ${INTEGRITY_COLORS[iv] ?? 'bg-gray-100 text-gray-600'} ${isFlagged && onOpenSuspectReview ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
                                                 title={isFlagged ? 'Click to review integrity flags' : undefined}
                                             >
