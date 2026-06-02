@@ -50,6 +50,7 @@ interface StageReviewPageProps {
     onProgressCandidates: (selectedIds: number[], action: 'progress' | 'reject' | 'hold') => void;
     onFinalDecision: () => void;
     onViewCandidate: (candidateId: number) => void;
+    sourceStage?: 'assessment' | 'ai-interview' | 'live-interview';
 }
 
 // ─── Sort options ────────────────────────────────────────────────────
@@ -71,7 +72,8 @@ export function StageReviewPage({
     onBack,
     onProgressCandidates,
     onFinalDecision,
-    onViewCandidate
+    onViewCandidate,
+    sourceStage,
 }: StageReviewPageProps) {
     // ─── Selection state ─────────────────────────────────────────────
     const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -171,6 +173,68 @@ export function StageReviewPage({
 
         return result;
     }, [candidates, keywordSearch, scoreRange, flagsFilter, meetsCriteriaFilter, verdictFilter, progressionFilter, sortBy]);
+
+    // ─── Stage-scoped quick-filter chips ─────────────────────────────
+
+    const quickFilterChips = useMemo<{ label: string; action: () => void }[]>(() => {
+        if (!sourceStage) return [];
+
+        if (sourceStage === 'assessment') {
+            return [
+                {
+                    label: `Score ≥ ${acceptanceCriteria.minimumTechnicalScore}%`,
+                    action: () => setSelectedIds(
+                        candidates.filter(c => c.assessmentScore >= acceptanceCriteria.minimumTechnicalScore).map(c => c.id)
+                    ),
+                },
+                {
+                    label: 'Clean integrity only',
+                    action: () => setSelectedIds(
+                        candidates.filter(c => !c.flags || c.flags.length === 0).map(c => c.id)
+                    ),
+                },
+                {
+                    label: 'Meets criteria',
+                    action: () => setSelectedIds(
+                        candidates.filter(c => c.meetsCriteria === true).map(c => c.id)
+                    ),
+                },
+            ];
+        }
+        if (sourceStage === 'ai-interview') {
+            return [
+                {
+                    label: `AI Score ≥ ${acceptanceCriteria.minimumTechnicalScore}%`,
+                    action: () => setSelectedIds(
+                        candidates.filter(c => c.aiInterviewScore >= acceptanceCriteria.minimumTechnicalScore).map(c => c.id)
+                    ),
+                },
+                {
+                    label: 'Pass verdict',
+                    action: () => setSelectedIds(
+                        candidates.filter(c => c.technicalVerdict === 'pass' || c.technicalVerdict === 'strong_pass').map(c => c.id)
+                    ),
+                },
+            ];
+        }
+        if (sourceStage === 'live-interview') {
+            return [
+                {
+                    label: 'Interviewer: Pass',
+                    action: () => setSelectedIds(
+                        candidates.filter(c => c.technicalVerdict === 'pass' || c.technicalVerdict === 'strong_pass').map(c => c.id)
+                    ),
+                },
+                {
+                    label: 'AI: Pass',
+                    action: () => setSelectedIds(
+                        candidates.filter(c => c.meetsCriteria === true).map(c => c.id)
+                    ),
+                },
+            ];
+        }
+        return [];
+    }, [sourceStage, acceptanceCriteria, candidates]);
 
     // ─── Smart selection helpers ─────────────────────────────────────
 
@@ -671,6 +735,27 @@ export function StageReviewPage({
                                                     Reset all filters
                                                 </button>
                                             </div>
+
+                                            {/* Quick Select — stage-scoped chips */}
+                                            {quickFilterChips.length > 0 && (
+                                                <div className="mt-4">
+                                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                                                        Quick Select
+                                                    </div>
+                                                    <div className="flex flex-col gap-1.5">
+                                                        {quickFilterChips.map((chip) => (
+                                                            <button
+                                                                key={chip.label}
+                                                                type="button"
+                                                                onClick={chip.action}
+                                                                className="w-full rounded-[8px] border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[12px] font-medium text-indigo-700 hover:bg-indigo-100 transition-colors text-left"
+                                                            >
+                                                                {chip.label}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     </motion.div>
                                 )}
