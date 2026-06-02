@@ -1,7 +1,11 @@
-// Maps monitoring API response candidates to StageReviewPage's CandidateData shape
+// Maps monitoring API response candidates to StageReviewPage's CandidateData shape.
+// Uses array index as numeric id (stable for selection tracking) and carries
+// applicationId / candidateId separately for API calls.
 
 export interface MonitoringCandidateBrief {
-    id: number;
+    id: number;             // array index — stable numeric key used by StageReviewPage selection
+    applicationId: string;  // UUID — used for bulk-progress API calls
+    candidateId: string;    // UUID — used to open inline candidate profile
     name: string;
     avatar: string;
     assessmentScore: number;
@@ -21,7 +25,7 @@ export function monitoringToCandidates(
     monitoringCandidates: any[],
     stageKey: string,
 ): MonitoringCandidateBrief[] {
-    return monitoringCandidates.map((c: any): MonitoringCandidateBrief => {
+    return monitoringCandidates.map((c: any, i: number): MonitoringCandidateBrief => {
         const score = typeof c.score === 'number' ? c.score : 0;
         const verdict: string | undefined = c.verdict;
         const techVerdict: MonitoringCandidateBrief['technicalVerdict'] =
@@ -29,7 +33,9 @@ export function monitoringToCandidates(
             : verdict === 'fail' ? 'fail'
             : undefined;
         return {
-            id: Number(c.application_id),
+            id: i,                                    // stable index for StageReviewPage selection
+            applicationId: String(c.application_id), // UUID for API calls
+            candidateId: String(c.candidate_id),      // UUID for profile overlay
             name: c.name ?? '',
             avatar: '',
             assessmentScore: stageKey === 'assessment' ? score : 0,

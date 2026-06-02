@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ArrowRight, Clock } from 'lucide-react';
 import { StageNavigator } from './StageNavigator';
 import { ModeToggle } from './ModeToggle';
@@ -9,6 +10,8 @@ import { deriveDefaultStage } from './deriveDefaultStage';
 import type { ViewMode } from './deriveDefaultStage';
 import { derivePipelineStages } from './stageLifecycle';
 import { useGroupDetail, useStageMonitoring } from '../../../../hooks/groups/useGroups';
+import { api } from '../../../../services/api';
+import { queryKeys } from '../../../../lib/queryKeys';
 import { OverviewMatrixView } from './OverviewMatrixView';
 import { AssessmentResultsView } from './AssessmentResultsView';
 import { AIInterviewResultsView } from './AIInterviewResultsView';
@@ -42,6 +45,7 @@ export function GroupPageShell({
     const [openProfile, setOpenProfile] = useState<OpenProfileState | null>(null);
     const [openStageReview, setOpenStageReview] = useState(false);
     const [showActivity, setShowActivity] = useState(false);
+    const qc = useQueryClient();
     const { data: groupDetail, isLoading: groupLoading } = useGroupDetail(groupId);
 
     const { navItems, lifecycleStages } = useMemo(
@@ -94,6 +98,16 @@ export function GroupPageShell({
         () => monitoringToCandidates((monitoringData as any)?.candidates ?? [], view.stage),
         [monitoringData, view.stage],
     );
+
+    // application_id → candidate_id lookup for onViewCandidate in StageReviewPage
+    const appIdToCandId = useMemo<Record<string, string>>(() => {
+        const mc = (monitoringData as any)?.candidates ?? [];
+        const map: Record<string, string> = {};
+        for (const c of mc) {
+            map[String(c.application_id)] = String(c.candidate_id);
+        }
+        return map;
+    }, [monitoringData]);
 
     const stageReviewPipelineSteps = useMemo(
         () => navItems.filter((n: any) => n.key !== 'overview').map((n: any) => ({ id: n.key, name: n.label })),
@@ -265,11 +279,34 @@ export function GroupPageShell({
                         acceptanceCriteria={{ minimumTechnicalScore: 70, allowedIntegrityRisk: 'low', requiredVerdict: 'pass' }}
                         sourceStage={view.stage as 'assessment' | 'ai-interview' | 'live-interview'}
                         onBack={() => setOpenStageReview(false)}
-                        onProgressCandidates={(_selectedIds: number[], _action: 'progress' | 'reject' | 'hold') => {
+                        onProgressCandidates={(selectedIndices: number[], action: 'progress' | 'reject' | 'hold') => {
+                            // Map indices → real application UUIDs, then call backend
+                            const appIds = selectedIndices
+                                .map(i => stageReviewCandidates[i]?.applicationId ?? '')
+                                .filter(Boolean);
+                            if (appIds.length > 0) {
+                                api.recruiter.bulkProgressCandidates(groupId, {
+                                    application_ids: appIds,
+                                    action,
+                                    current_stage_type: view.stage,
+                                }).catch((err: unknown) => {
+                                    console.error('bulk progress failed', err);
+                                });
+                                // Also invalidate monitoring and group-detail caches
+                                qc.invalidateQueries({ queryKey: queryKeys.groups.stageMonitoring(groupId, view.stage) });
+                                qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
+                            }
                             setOpenStageReview(false);
                         }}
                         onFinalDecision={() => setOpenStageReview(false)}
-                        onViewCandidate={(_id: number) => {}}
+                        onViewCandidate={(idx: number) => {
+                            // Open the inline candidate profile for the candidate at this index
+                            const item = stageReviewCandidates[idx];
+                            if (item) {
+                                const candId = appIdToCandId[item.applicationId];
+                                if (candId) setOpenProfile({ candidateId: candId, applicationId: item.applicationId });
+                            }
+                        }}
                         onPromoteAndStart={() => setOpenStageReview(false)}
                     />
                 </div>

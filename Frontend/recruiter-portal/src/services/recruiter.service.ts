@@ -565,6 +565,7 @@ export const recruiterService = {
     bulkProgressCandidates: async (groupId: string, data: {
         application_ids: string[];
         action: 'progress' | 'reject' | 'hold';
+        current_stage_type?: string;
         reason?: string;
     }) => {
         return fetchAPI<any>(`/recruiter/groups/${groupId}/candidates/bulk-progress`, {
