@@ -309,16 +309,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
   if (activeFlow.includes('assessment')) {
     baseTabs.push({ id: 'assessment', label: 'Assessment', icon: BarChart3, locked: !isStageAccessible('assessment') });
-  }
-
-  // Integrity tab: show when assessment is accessible
-  if (activeFlow.includes('assessment')) {
-    baseTabs.push({
-      id: 'integrity',
-      label: 'Integrity',
-      icon: ShieldCheck,
-      locked: !isStageAccessible('assessment'),
-    });
+    baseTabs.push({ id: 'integrity', label: 'Integrity', icon: ShieldCheck, locked: !isStageAccessible('assessment') });
   }
 
   if (activeFlow.includes('ai_interview') || activeFlow.includes('ai-interview') || activeFlow.includes('aiInterview')) {
