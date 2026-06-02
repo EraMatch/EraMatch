@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, ArrowRight } from 'lucide-react';
 import { StageNavigator } from './StageNavigator';
 import { ModeToggle } from './ModeToggle';
 import { parseGroupViewParams, buildGroupViewSearch } from './groupViewState';
@@ -15,6 +15,8 @@ import { AIInterviewResultsView } from './AIInterviewResultsView';
 import { LiveInterviewResultsView } from './LiveInterviewResultsView';
 import { CandidateProfile, getRailTabForStage } from '../../candidates/CandidateProfile';
 import type { RailCandidate } from './CandidateRail';
+import { StageReviewPage } from '../StageReviewPage';
+import { monitoringToCandidates } from './monitoringToCandidates';
 
 interface GroupPageShellProps {
     groupId: string;
@@ -35,6 +37,7 @@ export function GroupPageShell({
 }: GroupPageShellProps) {
     const [searchParams, setSearchParams] = useSearchParams();
     const [openProfile, setOpenProfile] = useState<OpenProfileState | null>(null);
+    const [openStageReview, setOpenStageReview] = useState(false);
     const { data: groupDetail, isLoading: groupLoading } = useGroupDetail(groupId);
 
     const { navItems, lifecycleStages } = useMemo(
@@ -60,6 +63,9 @@ export function GroupPageShell({
         return parseGroupViewParams(searchParams);
     }, [searchParams, groupStatus, lifecycleStages]);
 
+    // Current stage's lifecycle for CTA visibility
+    const currentLifecycle = lifecycleStages.find((s: any) => s.key === view.stage)?.lifecycle ?? 'locked';
+
     const setView = (next: GroupViewParams) => {
         const search = buildGroupViewSearch(next);
         setSearchParams(search ? new URLSearchParams(search) : {}, { replace: false });
@@ -79,6 +85,23 @@ export function GroupPageShell({
             verdict: c.verdict ?? null,
         }));
     }, [monitoringData]);
+
+    const stageReviewCandidates = useMemo(
+        () => monitoringToCandidates((monitoringData as any)?.candidates ?? [], view.stage),
+        [monitoringData, view.stage],
+    );
+
+    const stageReviewPipelineSteps = useMemo(
+        () => navItems.filter((n: any) => n.key !== 'overview').map((n: any) => ({ id: n.key, name: n.label })),
+        [navItems],
+    );
+
+    const stageReviewCurrentIndex = stageReviewPipelineSteps.findIndex((s: any) => s.id === view.stage);
+    const stageReviewIsLastStage = stageReviewCurrentIndex === stageReviewPipelineSteps.length - 1 && stageReviewCurrentIndex >= 0;
+
+    const handlePromoteSelected = useCallback(() => {
+        setOpenStageReview(true);
+    }, []);
 
     const handleOpenCandidate = useCallback(
         (applicationId: string, candidateId: string) => {
@@ -129,8 +152,18 @@ export function GroupPageShell({
                         />
                     </div>
 
-                    <div className="mb-4 flex items-center justify-between">
+                    <div className="mb-4 flex items-center justify-between gap-3">
                         <ModeToggle mode={view.mode} onChange={(mode: ViewMode) => setView({ ...view, mode })} />
+                        {view.stage !== 'overview' && currentLifecycle === 'closed_awaiting_decision' && (
+                            <button
+                                type="button"
+                                onClick={handlePromoteSelected}
+                                className="flex items-center gap-2 rounded-[8px] bg-[#6366f1] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#5558e3] transition-colors shadow-sm"
+                            >
+                                <ArrowRight size={14} />
+                                Promote Selected →
+                            </button>
+                        )}
                     </div>
 
                     {/* Main content area */}
@@ -189,6 +222,31 @@ export function GroupPageShell({
                             onSelect: (candidateId, applicationId) =>
                                 setOpenProfile({ candidateId, applicationId }),
                         } : undefined}
+                    />
+                </div>
+            )}
+
+            {/* Stage review / promote overlay */}
+            {openStageReview && (
+                <div className="absolute inset-0 z-50 bg-white overflow-y-auto min-h-screen">
+                    <StageReviewPage
+                        stageName={navItems.find((n: any) => n.key === view.stage)?.label ?? ''}
+                        stageId={view.stage}
+                        candidates={stageReviewCandidates as any}
+                        pipelineSteps={stageReviewPipelineSteps}
+                        currentStageIndex={stageReviewCurrentIndex}
+                        isLastStage={stageReviewIsLastStage}
+                        startDate={new Date()}
+                        endDate={new Date()}
+                        acceptanceCriteria={{ minimumTechnicalScore: 70, allowedIntegrityRisk: 'low', requiredVerdict: 'pass' }}
+                        sourceStage={view.stage as 'assessment' | 'ai-interview' | 'live-interview'}
+                        onBack={() => setOpenStageReview(false)}
+                        onProgressCandidates={(_selectedIds: number[], _action: 'progress' | 'reject' | 'hold') => {
+                            setOpenStageReview(false);
+                        }}
+                        onFinalDecision={() => setOpenStageReview(false)}
+                        onViewCandidate={(_id: number) => {}}
+                        onPromoteAndStart={() => setOpenStageReview(false)}
                     />
                 </div>
             )}
