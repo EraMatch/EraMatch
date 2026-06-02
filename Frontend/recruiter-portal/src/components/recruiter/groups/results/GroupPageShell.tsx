@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ArrowRight } from 'lucide-react';
+import { ChevronLeft, ArrowRight, Clock } from 'lucide-react';
 import { StageNavigator } from './StageNavigator';
 import { ModeToggle } from './ModeToggle';
 import { parseGroupViewParams, buildGroupViewSearch } from './groupViewState';
@@ -17,6 +17,9 @@ import { CandidateProfile, getRailTabForStage } from '../../candidates/Candidate
 import type { RailCandidate } from './CandidateRail';
 import { StageReviewPage } from '../StageReviewPage';
 import { monitoringToCandidates } from './monitoringToCandidates';
+import { ActivityLogPanel } from '../ActivityLogPanel';
+import { FiltrationFlowConfigModal } from '../FiltrationFlowConfigModal';
+import { ConfigWizardV2 } from '../../live-interview-v2/ConfigWizardV2';
 
 interface GroupPageShellProps {
     groupId: string;
@@ -38,6 +41,7 @@ export function GroupPageShell({
     const [searchParams, setSearchParams] = useSearchParams();
     const [openProfile, setOpenProfile] = useState<OpenProfileState | null>(null);
     const [openStageReview, setOpenStageReview] = useState(false);
+    const [showActivity, setShowActivity] = useState(false);
     const { data: groupDetail, isLoading: groupLoading } = useGroupDetail(groupId);
 
     const { navItems, lifecycleStages } = useMemo(
@@ -141,6 +145,16 @@ export function GroupPageShell({
                             </span>
                         </div>
                         <p className="text-[14px] text-gray-500">{positionTitle}</p>
+                        <div className="flex items-center gap-2 mt-3">
+                            <button
+                                type="button"
+                                onClick={() => setShowActivity((v) => !v)}
+                                className="flex items-center gap-1.5 rounded-[8px] border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-medium text-gray-600 hover:bg-gray-50 transition-colors shadow-sm"
+                            >
+                                <Clock size={13} />
+                                {showActivity ? 'Hide Activity' : 'Activity'}
+                            </button>
+                        </div>
                     </header>
 
                     <div className="mb-4">
@@ -175,9 +189,19 @@ export function GroupPageShell({
                                 ))}
                             </div>
                         ) : view.mode === 'configure' ? (
-                            <div className="flex items-center justify-center rounded-[14px] border border-dashed border-gray-300 bg-gray-50 py-16">
-                                <p className="text-[14px] text-gray-500">Configure mode — coming in Phase 6.</p>
-                            </div>
+                            view.stage === 'live-interview' ? (
+                                <ConfigWizardV2
+                                    groupId={groupId}
+                                    stageId="live_interview"
+                                    onComplete={() => setView({ ...view, mode: 'results' })}
+                                />
+                            ) : (
+                                <FiltrationFlowConfigModal
+                                    groupData={groupDetail}
+                                    onClose={() => setView({ ...view, mode: 'results' })}
+                                    onSave={(_flow, _count) => setView({ ...view, mode: 'results' })}
+                                />
+                            )
                         ) : view.stage === 'overview' ? (
                             <OverviewMatrixView
                                 candidates={candidates}
@@ -247,6 +271,18 @@ export function GroupPageShell({
                         onFinalDecision={() => setOpenStageReview(false)}
                         onViewCandidate={(_id: number) => {}}
                         onPromoteAndStart={() => setOpenStageReview(false)}
+                    />
+                </div>
+            )}
+
+            {/* Activity drawer */}
+            {showActivity && (
+                <div className="absolute right-0 top-0 z-30 h-full w-[420px] bg-white shadow-2xl border-l border-gray-200 overflow-y-auto">
+                    <ActivityLogPanel
+                        groupId={groupId}
+                        groupName={groupName}
+                        onClose={() => setShowActivity(false)}
+                        isInline={true}
                     />
                 </div>
             )}
