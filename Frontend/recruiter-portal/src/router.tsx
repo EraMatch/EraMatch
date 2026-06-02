@@ -24,6 +24,7 @@ import { CandidateGitHubAnalysisReviewPage } from './components/recruiter/candid
 import { CandidateQAGAuditPage } from './components/recruiter/candidates/CandidateQAGAuditPage';
 import { AlertsNotifications } from './components/common/AlertsNotifications';
 import { EnhancedGroupOverviewV2 } from './components/recruiter/groups/EnhancedGroupOverviewV2';
+import { GroupPageShell } from './components/recruiter/groups/results/GroupPageShell';
 import { LandingPage } from './components/common/LandingPage';
 import { SuspectReviewWrapper } from './components/recruiter/candidates/SuspectReviewWrapper';
 import { RecruiterSettings } from './components/recruiter/settings/RecruiterSettings';
@@ -274,6 +275,32 @@ const GroupOverviewWrapper = () => {
             const mapped = stageAliases[raw.toLowerCase()];
             if (mapped && !flow.includes(mapped)) flow.push(mapped);
         });
+    }
+
+    const useV2Shell = typeof window !== 'undefined' && window.localStorage.getItem('eramatch.groupShell.v2') === '1';
+
+    if (useV2Shell) {
+        return (
+            <GroupPageShell
+                groupId={groupId ?? ''}
+                groupName="Group"
+                positionTitle=""
+                statusLabel=""
+                navItems={[
+                    { key: 'overview', label: 'Overview', lifecycle: 'overview' },
+                    { key: 'assessment', label: 'Assessment', lifecycle: 'configured_not_started' },
+                    { key: 'ai-interview', label: 'AI Interview', lifecycle: 'locked' },
+                    { key: 'live-interview', label: 'Live Interview', lifecycle: 'locked' },
+                ]}
+                lifecycleStages={[
+                    { key: 'assessment', lifecycle: 'configured_not_started' },
+                    { key: 'ai-interview', lifecycle: 'locked' },
+                    { key: 'live-interview', lifecycle: 'locked' },
+                ]}
+                groupStatus="active"
+                onBack={() => navigate(-1)}
+            />
+        );
     }
 
     return (
