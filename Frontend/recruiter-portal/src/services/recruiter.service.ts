@@ -241,6 +241,9 @@ export const recruiterService = {
 
     getGroupOverviewV2: async (groupId: string) => fetchAPI(`/recruiter/groups/${groupId}`),
 
+    getStageMonitoring: async (groupId: string, stage: string) =>
+        fetchAPI<any>(`/recruiter/groups/${groupId}/stages/${stage}/monitoring`),
+
     getGroupCreationConfig: async () => fetchAPI('/groups/config/creation'),
 
     // Pipeline & Modules

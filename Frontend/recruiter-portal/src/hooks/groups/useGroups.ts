@@ -95,6 +95,16 @@ export function usePreviewBulkProgress() {
     })
 }
 
+export function useStageMonitoring(groupId: string | undefined, stage: string | undefined) {
+    return useQuery({
+        queryKey: queryKeys.groups.stageMonitoring(groupId ?? '', stage ?? ''),
+        queryFn: () => api.recruiter.getStageMonitoring(groupId!, stage!),
+        enabled: !!groupId && !!stage,
+        staleTime: 6 * 1000,
+        refetchOnWindowFocus: false,
+    })
+}
+
 export function useResetStages() {
     const qc = useQueryClient()
     return useMutation({
