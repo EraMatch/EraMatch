@@ -30,6 +30,7 @@ from app.models import (
     LiV2Evaluation,
     LiV2Rubric,
     LiV2Session,
+    InterviewResponse,
     OngoingAssessment,
     OngoingInterview,
     OrganizationUser,
@@ -1809,6 +1810,63 @@ class GroupService:
             for f in flag_res.scalars().all():
                 flag_map.setdefault(f.application_id, []).append(f)
 
+        # --- AI interview signals (bulk, only for ai_interview stage) ---
+        ai_interview_map: dict[UUID, dict] = {}
+        if stage_type == "ai_interview" and app_ids:
+            oi_res = await self.session.execute(
+                select(OngoingInterview).where(
+                    OngoingInterview.application_id.in_(app_ids),
+                )
+            )
+            for oi in oi_res.scalars().all():
+                ai_interview_map[oi.application_id] = {
+                    "ai_recommendation": oi.ai_recommendation,
+                    "retakes_used": 0,
+                }
+            # Count retakes per application (= number of InterviewResponse rows per session)
+            if ai_interview_map:
+                retake_res = await self.session.execute(
+                    select(
+                        OngoingInterview.application_id,
+                        func.count(InterviewResponse.response_id).label("retakes_used"),
+                    )
+                    .outerjoin(
+                        InterviewResponse,
+                        InterviewResponse.session_id == OngoingInterview.session_id,
+                    )
+                    .where(OngoingInterview.application_id.in_(app_ids))
+                    .group_by(OngoingInterview.application_id)
+                )
+                for row in retake_res.all():
+                    if row.application_id in ai_interview_map:
+                        ai_interview_map[row.application_id]["retakes_used"] = row.retakes_used
+
+        # --- Live interview signals (bulk, only for live_interview stage) ---
+        live_signals_map: dict[UUID, dict] = {}
+        if stage_type == "live_interview" and app_ids:
+            lev_res = await self.session.execute(
+                select(
+                    LiV2Session.application_id,
+                    LiV2Evaluation.auto_verdict,
+                    LiV2Evaluation.overall_score_pct,
+                )
+                .join(
+                    LiV2Evaluation,
+                    LiV2Evaluation.session_id == LiV2Session.id,
+                )
+                .where(
+                    LiV2Session.application_id.in_(app_ids),
+                )
+                .order_by(LiV2Evaluation.judged_at.desc())
+            )
+            for row in lev_res.all():
+                # First row per application = most recent evaluation (desc order)
+                if row.application_id not in live_signals_map:
+                    live_signals_map[row.application_id] = {
+                        "auto_verdict": row.auto_verdict,
+                        "overall_score_pct": float(row.overall_score_pct) if row.overall_score_pct is not None else None,
+                    }
+
         for app, cand, prog in rows:
             status = prog.status
             score = float(prog.score) if prog and prog.score is not None else None
@@ -1847,6 +1905,9 @@ class GroupService:
             )
             integrity_counts[integrity_verdict] = integrity_counts.get(integrity_verdict, 0) + 1
 
+            ai_signals = ai_interview_map.get(app.id, {})
+            live_signals = live_signals_map.get(app.id, {})
+
             candidates.append(
                 AssessmentMonitoringCandidate(
                     application_id=app.id,
@@ -1859,6 +1920,10 @@ class GroupService:
                     integrity_verdict=integrity_verdict,
                     flags=mon_flags,
                     completion_time=prog.completed_at,
+                    ai_recommendation=ai_signals.get("ai_recommendation"),
+                    retakes_used=ai_signals.get("retakes_used"),
+                    auto_verdict=live_signals.get("auto_verdict"),
+                    overall_score_pct=live_signals.get("overall_score_pct"),
                 )
             )
 
