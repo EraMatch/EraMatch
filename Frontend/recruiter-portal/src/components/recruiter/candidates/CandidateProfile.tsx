@@ -58,8 +58,9 @@ import { useNavigate } from 'react-router-dom';
 import { useCandidateDetail, useCandidateScoreBreakdown } from '../../../hooks/candidates/useCandidates';
 import { CandidateRail } from '../groups/results/CandidateRail';
 import type { RailCandidate } from '../groups/results/CandidateRail';
+import { AnswerReviewWithHITL } from '../assessments/AnswerReviewWithHITL';
 
-export type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'interview' | 'live-interview' | 'notes' | 'final-report';
+export type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'integrity' | 'interview' | 'live-interview' | 'notes' | 'final-report';
 
 export function getRailTabForStage(stageKey: string): TabType {
   const map: Record<string, TabType> = {
@@ -82,6 +83,46 @@ interface CandidateProfileProps {
     activeApplicationId: string;
     onSelect: (candidateId: string, applicationId: string) => void;
   };
+}
+
+// =========================================================
+// Integrity tab content — Phase 3
+// =========================================================
+interface IntegrityTabContentProps {
+  candidate: any;
+}
+
+function IntegrityTabContent({ candidate }: IntegrityTabContentProps) {
+  const hitlAnswers: any[] = (candidate as any)?.hitl_answers ?? [];
+
+  if (hitlAnswers.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <ShieldCheck size={40} className="mb-3 text-emerald-400" />
+        <p className="text-[15px] font-medium text-gray-700">No integrity flags</p>
+        <p className="text-[13px] text-gray-400 mt-1">
+          No answers were flagged for human review on this candidate.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-[13px] text-gray-500">
+        {hitlAnswers.length} answer{hitlAnswers.length !== 1 ? 's' : ''} flagged for review
+      </p>
+      {hitlAnswers.map((answer: any) => (
+        <AnswerReviewWithHITL
+          key={answer.answer_id}
+          answer={answer}
+          onApprove={(_id, _fb) => { /* Phase 4: wire to API */ }}
+          onReject={(_id, _fb) => { /* Phase 4: wire to API */ }}
+          onEscalate={(_ansId) => { /* Phase 4: wire to API */ }}
+        />
+      ))}
+    </div>
+  );
 }
 
 export function CandidateProfile({ candidateId, applicationId, onBack, showFinalReport = false, initialTab, rail }: CandidateProfileProps) {
@@ -268,6 +309,16 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
   if (activeFlow.includes('assessment')) {
     baseTabs.push({ id: 'assessment', label: 'Assessment', icon: BarChart3, locked: !isStageAccessible('assessment') });
+  }
+
+  // Integrity tab: show when assessment is accessible
+  if (activeFlow.includes('assessment')) {
+    baseTabs.push({
+      id: 'integrity',
+      label: 'Integrity',
+      icon: ShieldCheck,
+      locked: !isStageAccessible('assessment'),
+    });
   }
 
   if (activeFlow.includes('ai_interview') || activeFlow.includes('ai-interview') || activeFlow.includes('aiInterview')) {
@@ -1564,6 +1615,10 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                   </div>
                 </div>
               </div>
+            )}
+
+            {activeTab === 'integrity' && (
+              <IntegrityTabContent candidate={candidate} />
             )}
 
             {activeTab === 'interview' && (
