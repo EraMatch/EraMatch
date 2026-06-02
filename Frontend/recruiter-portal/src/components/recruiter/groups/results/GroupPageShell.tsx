@@ -19,7 +19,7 @@ import type { RailCandidate } from './CandidateRail';
 interface GroupPageShellProps {
     groupId: string;
     onBack: () => void;
-    onOpenCandidate: (applicationId: string, candidateId: string) => void;
+    onOpenCandidate?: (applicationId: string, candidateId: string) => void;
     onOpenSuspectReview?: (applicationId: string) => void;
 }
 
@@ -31,7 +31,6 @@ interface OpenProfileState {
 export function GroupPageShell({
     groupId,
     onBack,
-    onOpenCandidate,
     onOpenSuspectReview,
 }: GroupPageShellProps) {
     const [searchParams, setSearchParams] = useSearchParams();
