@@ -307,6 +307,11 @@ class AssessmentMonitoringCandidate(BaseModel):
     meets_criteria: bool = False
     verdict: str = "pending"
     integrity_verdict: str = "clean"  # clean | monitoring | suspicious_review | confirmed_cheating
+    # Per-stage optional signals (None for stages that don't supply them)
+    ai_recommendation: str | None = None       # ai_interview only: pass | borderline | fail | None
+    retakes_used: int | None = None            # ai_interview only
+    auto_verdict: str | None = None            # live_interview only: pass | fail | None
+    overall_score_pct: float | None = None     # live_interview only (0–100)
     flags: list[MonitoringFlag] = []
     completion_time: datetime | None = None
 

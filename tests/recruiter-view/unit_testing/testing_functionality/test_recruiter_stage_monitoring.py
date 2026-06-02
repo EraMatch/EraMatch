@@ -72,3 +72,49 @@ class TestStageMonitoringIntegrityContract:
         s = body["integrity_summary"]
         bucket_total = s["clean"] + s["monitoring"] + s["suspicious_review"] + s["confirmed_cheating"]
         assert bucket_total == body["total_candidates"], f"{bucket_total} != {body['total_candidates']}"
+
+
+class TestAIInterviewMonitoringSignals:
+    def test_ai_interview_monitoring_has_ai_recommendation_field(self, client):
+        """ai_recommendation field must be present on candidates (may be None)."""
+        gid = _first_group_id(client)
+        if not gid:
+            pytest.skip("No groups available")
+        resp = client.get(f"/recruiter/groups/{gid}/stages/ai-interview/monitoring")
+        if resp.status_code == 404:
+            pytest.skip("AI interview stage not configured for this group")
+        body = resp.json()
+        for c in body.get("candidates", []):
+            assert "ai_recommendation" in c, f"missing ai_recommendation key: {c.keys()}"
+
+    def test_ai_interview_monitoring_has_retakes_used_field(self, client):
+        gid = _first_group_id(client)
+        if not gid:
+            pytest.skip("No groups available")
+        resp = client.get(f"/recruiter/groups/{gid}/stages/ai-interview/monitoring")
+        if resp.status_code == 404:
+            pytest.skip("AI interview stage not configured for this group")
+        for c in resp.json().get("candidates", []):
+            assert "retakes_used" in c, f"missing retakes_used: {c.keys()}"
+
+
+class TestLiveInterviewMonitoringSignals:
+    def test_live_interview_monitoring_has_auto_verdict_field(self, client):
+        gid = _first_group_id(client)
+        if not gid:
+            pytest.skip("No groups available")
+        resp = client.get(f"/recruiter/groups/{gid}/stages/live-interview/monitoring")
+        if resp.status_code == 404:
+            pytest.skip("Live interview stage not configured for this group")
+        for c in resp.json().get("candidates", []):
+            assert "auto_verdict" in c, f"missing auto_verdict: {c.keys()}"
+
+    def test_live_interview_monitoring_has_overall_score_pct_field(self, client):
+        gid = _first_group_id(client)
+        if not gid:
+            pytest.skip("No groups available")
+        resp = client.get(f"/recruiter/groups/{gid}/stages/live-interview/monitoring")
+        if resp.status_code == 404:
+            pytest.skip("Live interview stage not configured for this group")
+        for c in resp.json().get("candidates", []):
+            assert "overall_score_pct" in c, f"missing overall_score_pct: {c.keys()}"
