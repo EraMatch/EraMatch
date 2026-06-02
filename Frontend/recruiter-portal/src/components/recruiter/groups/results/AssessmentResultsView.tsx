@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { AlertTriangle, CheckCircle, Clock, Shield } from 'lucide-react';
 import { useStageMonitoring } from '../../../../hooks/groups/useGroups';
+import { RubricAnomalyDashboard } from '../../assessments/RubricAnomalyDashboard';
 
 const INTEGRITY_COLORS: Record<string, string> = {
     clean: 'bg-emerald-50 text-emerald-700',
@@ -29,6 +30,7 @@ export function AssessmentResultsView({
 }: AssessmentResultsViewProps) {
     const { data, isLoading, isError } = useStageMonitoring(groupId, 'assessment');
     const [filterVerdict, setFilterVerdict] = useState<string | null>(null);
+    const [showRubricAnomaly, setShowRubricAnomaly] = useState(false);
 
     const handleIntegrityClick = useCallback(
         (e: React.MouseEvent, applicationId: string, candidateId: string, verdict: string) => {
@@ -200,6 +202,31 @@ export function AssessmentResultsView({
                         </tbody>
                     </table>
                 </div>
+            </div>
+
+            {/* Rubric Anomaly callout */}
+            <div className="overflow-hidden rounded-[12px] border border-gray-200 bg-white shadow-sm">
+                <button
+                    type="button"
+                    onClick={() => setShowRubricAnomaly((prev) => !prev)}
+                    className="flex w-full items-center justify-between px-5 py-3 text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                    <span className="flex items-center gap-2">
+                        <AlertTriangle size={14} className="text-amber-500" />
+                        Rubric Anomaly Analysis
+                    </span>
+                    <span className="text-[11px] text-gray-400">{showRubricAnomaly ? '▲' : '▼'}</span>
+                </button>
+                {showRubricAnomaly && (
+                    <div className="border-t border-gray-100 p-4">
+                        <RubricAnomalyDashboard
+                            criteria={(data as any)?.rubric_criteria ?? []}
+                            assessment_name={(data as any)?.assessment_name ?? 'Technical Assessment'}
+                            last_updated={(data as any)?.last_updated}
+                            onRefresh={() => {}}
+                        />
+                    </div>
+                )}
             </div>
         </div>
     );
