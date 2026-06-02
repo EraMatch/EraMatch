@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 
 // =========================================================
 // Interfaces
@@ -62,7 +62,7 @@ export function getRailKeyboardTarget(
 // Score badge helpers
 // =========================================================
 
-function scoreBadgeClass(verdict?: string | null): string {
+export function scoreBadgeClass(verdict?: string | null): string {
     if (verdict === 'pass') {
         return 'bg-emerald-50 text-emerald-700';
     }
@@ -78,6 +78,7 @@ function scoreBadgeClass(verdict?: string | null): string {
 
 export function CandidateRail({ candidates, activeApplicationId, onSelect }: CandidateRailProps) {
     const items = buildRailItems(candidates, activeApplicationId);
+    const containerRef = useRef<HTMLDivElement>(null);
 
     function handleKeyDown(
         e: React.KeyboardEvent<HTMLButtonElement>,
@@ -88,10 +89,10 @@ export function CandidateRail({ candidates, activeApplicationId, onSelect }: Can
             e.preventDefault();
             const direction = e.key === 'ArrowDown' ? 'down' : 'up';
             const targetIndex = getRailKeyboardTarget(items.length, index, direction);
-            const buttons = document.querySelectorAll<HTMLButtonElement>(
+            const buttons = containerRef.current?.querySelectorAll<HTMLButtonElement>(
                 '[data-rail-item]',
             );
-            buttons[targetIndex]?.focus();
+            buttons?.[targetIndex]?.focus();
         } else if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             onSelect(item.candidateId, item.applicationId);
@@ -100,6 +101,7 @@ export function CandidateRail({ candidates, activeApplicationId, onSelect }: Can
 
     return (
         <div
+            ref={containerRef}
             role="listbox"
             aria-label="Candidate rail"
             className="flex flex-col border-r border-gray-100 bg-gray-50 overflow-y-auto"

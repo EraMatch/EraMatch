@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildRailItems, getRailKeyboardTarget } from './CandidateRail';
+import { buildRailItems, getRailKeyboardTarget, scoreBadgeClass } from './CandidateRail';
 import type { RailCandidate } from './CandidateRail';
 
 // =========================================================
@@ -62,5 +62,22 @@ describe('getRailKeyboardTarget', () => {
     it('total count 1 always returns 0 regardless of direction', () => {
         expect(getRailKeyboardTarget(1, 0, 'down')).toBe(0);
         expect(getRailKeyboardTarget(1, 0, 'up')).toBe(0);
+    });
+});
+
+// =========================================================
+// scoreBadgeClass
+// =========================================================
+
+describe('scoreBadgeClass', () => {
+    it('returns emerald classes for pass', () => {
+        expect(scoreBadgeClass('pass')).toContain('emerald');
+    });
+    it('returns red classes for fail', () => {
+        expect(scoreBadgeClass('fail')).toContain('red');
+    });
+    it('returns gray classes for other verdicts', () => {
+        expect(scoreBadgeClass('pending')).toContain('gray');
+        expect(scoreBadgeClass(null)).toContain('gray');
     });
 });
