@@ -213,6 +213,7 @@ const PositionDetailWrapper = () => {
 const GroupOverviewWrapper = () => {
     const { groupId } = useParams();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const [group, setGroup] = React.useState<any | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
@@ -277,9 +278,10 @@ const GroupOverviewWrapper = () => {
         });
     }
 
-    const useV2Shell = typeof window !== 'undefined' && window.localStorage.getItem('eramatch.groupShell.v2') === '1';
+    // Phase 6: GroupPageShell is the default. Use ?legacy=1 to fall back to EnhancedGroupOverviewV2.
+    const useLegacy = searchParams.get('legacy') === '1';
 
-    if (useV2Shell) {
+    if (!useLegacy) {
         return (
             <GroupPageShell
                 groupId={groupId ?? ''}
