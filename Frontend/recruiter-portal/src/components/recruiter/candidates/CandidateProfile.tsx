@@ -59,6 +59,8 @@ import { useCandidateDetail, useCandidateScoreBreakdown } from '../../../hooks/c
 import { CandidateRail } from '../groups/results/CandidateRail';
 import type { RailCandidate } from '../groups/results/CandidateRail';
 import { AnswerReviewWithHITL } from '../assessments/AnswerReviewWithHITL';
+import { ModuleDetailAssessment } from '../assessments/ModuleDetailAssessment';
+import { ModuleDetailAIInterview } from '../interviews/ModuleDetailAIInterview';
 
 export type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'integrity' | 'interview' | 'live-interview' | 'notes' | 'final-report';
 
@@ -136,6 +138,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [showLiveInterviewTranscript, setShowLiveInterviewTranscript] = useState(false);
   const [showGithubAssignedQuestions, setShowGithubAssignedQuestions] = useState(false);
   const [githubQuestionTypeFilter, setGithubQuestionTypeFilter] = useState<'all' | 'mcq' | 'essay' | 'coding'>('all');
+  const [showModuleDetail, setShowModuleDetail] = useState(false);
+  const [showAIInterviewDetail, setShowAIInterviewDetail] = useState(false);
 
   const [assessmentResetLoading, setAssessmentResetLoading] = useState(false);
   const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
@@ -1605,6 +1609,28 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     ))}
                   </div>
                 </div>
+
+                {/* Per-question analysis — Phase 3 */}
+                {!showModuleDetail ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowModuleDetail(true)}
+                    className="w-full rounded-[10px] border border-dashed border-indigo-200 py-3 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+                  >
+                    View Per-Question Analysis
+                  </button>
+                ) : (
+                  <div className="rounded-[12px] border border-gray-200 overflow-hidden">
+                    <ModuleDetailAssessment
+                      candidateId={Number(candidateId)}
+                      candidateName={(candidate as any)?.name ?? ''}
+                      score={(candidate as any)?.scores?.assessment ?? 0}
+                      completedDate={(candidate as any)?.pipelineStatus?.assessment?.completedAt ?? '—'}
+                      onClose={() => setShowModuleDetail(false)}
+                      onMoveToNextStage={() => {}}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -1680,6 +1706,28 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     </p>
                   </div>
                 </div>
+
+                {/* Interview analysis — Phase 3 */}
+                {!showAIInterviewDetail ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAIInterviewDetail(true)}
+                    className="w-full rounded-[10px] border border-dashed border-indigo-200 py-3 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+                  >
+                    View Interview Analysis
+                  </button>
+                ) : (
+                  <div className="rounded-[12px] border border-gray-200 overflow-hidden">
+                    <ModuleDetailAIInterview
+                      candidateId={Number(candidateId)}
+                      candidateName={(candidate as any)?.name ?? ''}
+                      score={(candidate as any)?.scores?.aiInterview ?? 0}
+                      completedDate={(candidate as any)?.pipelineStatus?.aiInterview?.completedAt ?? '—'}
+                      onClose={() => setShowAIInterviewDetail(false)}
+                      onMoveToNextStage={() => {}}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
