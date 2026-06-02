@@ -637,6 +637,8 @@ class GroupService:
 
             total_c = len(active_candidates)
 
+            # Locate the GroupStageConfig for this stage to expose has_config
+            gsc = next((sc for sc in stage_configs if sc.stage_type == st_type), None)
             pipeline_stages.append(
                 PipelineStage(
                     id=st_type.replace("_", "-"),
@@ -649,6 +651,7 @@ class GroupService:
                         if stage_conf.status
                         else "not-started"
                     ),
+                    has_config=bool(gsc and gsc.config_id),
                 )
             )
 

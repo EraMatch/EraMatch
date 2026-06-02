@@ -15,30 +15,42 @@ const STAGE_LABELS: Record<string, string> = {
     'live_interview': 'Live Interview',
 };
 
-/** Normalize backend stage_type key (underscores) to frontend key (hyphens). */
+/** Normalize backend stage_type key (underscores/dashes) to frontend key (hyphens). */
 function normalizeKey(id: string): string {
     return id.toLowerCase().replace(/_/g, '-');
 }
 
+/**
+ * Extract a stage key from a filtration_flow item.
+ * Backend returns either a string ("assessment") or an object ({order, stage, status}).
+ */
+function extractFlowStageKey(item: any): string {
+    if (typeof item === 'string') return normalizeKey(item);
+    // FiltrationFlowStage object: {order, stage, status}
+    return normalizeKey((item.stage ?? item.type ?? '').toString());
+}
+
 function stateToLifecycle(
     state: string,
-    hasConfigId: boolean,
+    hasConfig: boolean,
     inFlow: boolean,
 ): StageLifecycle {
     if (!inFlow) return 'locked';
     const normalized = state.toLowerCase().replace(/-/g, '_');
     if (normalized === 'active') return 'active';
     if (normalized === 'closed') return 'closed_awaiting_decision';
-    // not_started
-    return hasConfigId ? 'configured_not_started' : 'not_configured';
+    // not_started: need a config to be ready
+    return hasConfig ? 'configured_not_started' : 'not_configured';
 }
 
 /**
  * Derives navItems and lifecycleStages from the raw GroupDetailResponse.
  * Reads: detail.filtration_flow (or filtrationFlow), detail.pipeline_stages (or pipelineStages).
+ * filtration_flow items may be strings OR FiltrationFlowStage objects {order, stage, status}.
  */
 export function derivePipelineStages(detail: any): DerivedStages {
-    const flow: string[] = (detail.filtration_flow ?? detail.filtrationFlow ?? []).map(normalizeKey);
+    const rawFlow: any[] = detail.filtration_flow ?? detail.filtrationFlow ?? [];
+    const flow: string[] = rawFlow.map(extractFlowStageKey).filter(Boolean);
     const rawStages: any[] = detail.pipeline_stages ?? detail.pipelineStages ?? [];
 
     // Index pipeline_stages by normalized key
@@ -58,9 +70,12 @@ export function derivePipelineStages(detail: any): DerivedStages {
         if (key === 'overview') continue;
         const s = stageMap.get(key);
         const inFlow = flow.includes(key);
-        const lifecycle = s
-            ? stateToLifecycle(s.state ?? 'not_started', !!s.config_id, inFlow)
-            : 'locked';
+        const lifecycle = stateToLifecycle(
+            s?.state ?? 'not_started',
+            // has_config from new backend field; fall back to legacy config_id truthy check
+            !!(s?.has_config ?? s?.config_id),
+            inFlow,
+        );
 
         lifecycleStages.push({ key, lifecycle });
         stageNavItems.push({

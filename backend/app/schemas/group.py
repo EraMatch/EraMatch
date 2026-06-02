@@ -51,6 +51,7 @@ class PipelineStage(BaseModel):
     total: int = 0
     pending: int = 0
     state: str = "not-started"
+    has_config: bool = False   # True when this stage has an assessment/interview config assigned
     start_date: datetime | None = None
     expected_end_date: datetime | None = None
     actual_end_date: datetime | None = None
