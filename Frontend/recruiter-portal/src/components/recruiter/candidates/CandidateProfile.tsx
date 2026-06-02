@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock, ShieldCheck, Award, Zap, Code2, Cpu, Layers, Globe, Terminal, Briefcase, Users } from 'lucide-react';
 
 interface CriterionScore {
@@ -56,17 +56,35 @@ import { LiveInterviewResults } from '../live-interview-v2/LiveInterviewResults'
 import type { ApplicationScoreBreakdown } from '../../../services/types';
 import { useNavigate } from 'react-router-dom';
 import { useCandidateDetail, useCandidateScoreBreakdown } from '../../../hooks/candidates/useCandidates';
+import { CandidateRail } from '../groups/results/CandidateRail';
+import type { RailCandidate } from '../groups/results/CandidateRail';
+
+export type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'interview' | 'live-interview' | 'notes' | 'final-report';
+
+export function getRailTabForStage(stageKey: string): TabType {
+    const map: Record<string, TabType> = {
+        'assessment': 'assessment',
+        'ai-interview': 'interview',
+        'live-interview': 'live-interview',
+    };
+    return map[stageKey] ?? 'overview';
+}
 
 interface CandidateProfileProps {
   candidateId: string;
   applicationId?: string;
   onBack: () => void;
   showFinalReport?: boolean;
+  // Phase 3: deep-link + candidate rail (optional, backward-compatible)
+  initialTab?: TabType;
+  rail?: {
+    candidates: RailCandidate[];
+    activeApplicationId: string;
+    onSelect: (candidateId: string, applicationId: string) => void;
+  };
 }
 
-type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'interview' | 'live-interview' | 'notes' | 'final-report';
-
-export function CandidateProfile({ candidateId, applicationId, onBack, showFinalReport = false }: CandidateProfileProps) {
+export function CandidateProfile({ candidateId, applicationId, onBack, showFinalReport = false, initialTab, rail }: CandidateProfileProps) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [showTranscript, setShowTranscript] = useState<number | null>(null);
@@ -84,6 +102,14 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [githubReanalysisLoading, setGithubReanalysisLoading] = useState(false);
   const [githubReanalysisMessage, setGithubReanalysisMessage] = useState<string | null>(null);
   const [githubReanalysisError, setGithubReanalysisError] = useState<string | null>(null);
+
+  const initialTabApplied = useRef(false);
+  useEffect(() => {
+    if (!initialTabApplied.current && initialTab) {
+      setActiveTab(initialTab);
+      initialTabApplied.current = true;
+    }
+  }, [initialTab]);
 
   const { data: candidate, isLoading } = useCandidateDetail(candidateId);
 
@@ -509,7 +535,16 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const assignedGroupName = candidate?.groupName || candidate?.group_name || null;
 
   return (
-    <div className="h-full w-full overflow-auto bg-[#f9fafb] relative">
+    <div className="flex h-full min-h-0">
+      {rail && (
+        <CandidateRail
+          candidates={rail.candidates}
+          activeApplicationId={rail.activeApplicationId}
+          onSelect={rail.onSelect}
+        />
+      )}
+      <div className={rail ? 'flex-1 min-w-0 overflow-y-auto' : 'w-full'}>
+        <div className="h-full w-full overflow-auto bg-[#f9fafb] relative">
       <div className="max-w-[1400px] mx-auto px-[48px] py-[24px]">
         {/* Header */}
         <button
@@ -2269,6 +2304,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
           </div>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }
