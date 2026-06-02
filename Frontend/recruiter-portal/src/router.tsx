@@ -283,22 +283,8 @@ const GroupOverviewWrapper = () => {
         return (
             <GroupPageShell
                 groupId={groupId ?? ''}
-                groupName="Group"
-                positionTitle=""
-                statusLabel=""
-                navItems={[
-                    { key: 'overview', label: 'Overview', lifecycle: 'overview' },
-                    { key: 'assessment', label: 'Assessment', lifecycle: 'configured_not_started' },
-                    { key: 'ai-interview', label: 'AI Interview', lifecycle: 'locked' },
-                    { key: 'live-interview', label: 'Live Interview', lifecycle: 'locked' },
-                ]}
-                lifecycleStages={[
-                    { key: 'assessment', lifecycle: 'configured_not_started' },
-                    { key: 'ai-interview', lifecycle: 'locked' },
-                    { key: 'live-interview', lifecycle: 'locked' },
-                ]}
-                groupStatus="active"
                 onBack={() => navigate(-1)}
+                onOpenCandidate={(_appId, candId) => navigate(`/recruiter/candidates/${candId}`)}
             />
         );
     }
