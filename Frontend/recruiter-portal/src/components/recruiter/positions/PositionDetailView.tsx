@@ -1222,13 +1222,6 @@ export function PositionDetailView({
 
                             <div className="flex w-full items-center gap-2 sm:w-auto">
                               <button
-                                onClick={() => handleResetAssessmentTrial(candidate)}
-                                disabled={!candidate.applicationId || assessmentResetLoadingApplicationId === String(candidate.applicationId)}
-                                className="flex h-10 flex-1 items-center justify-center rounded-xl border-2 border-rose-100 bg-rose-50 px-4 text-[13px] font-bold text-rose-600 transition-colors hover:border-rose-200 hover:bg-rose-100 disabled:opacity-50 disabled:cursor-not-allowed sm:flex-none"
-                              >
-                                {assessmentResetLoadingApplicationId === String(candidate.applicationId) ? <Loader2 size={16} className="animate-spin" /> : 'Reset'}
-                              </button>
-                              <button
                                 onClick={() => {
                                   const query = candidate.applicationId
                                     ? `?applicationId=${encodeURIComponent(String(candidate.applicationId))}`

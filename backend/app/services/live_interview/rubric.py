@@ -143,9 +143,12 @@ async def _link_rubric_to_stage(db: DbSession, group_id: UUID, rubric_id: UUID) 
         text("""
             UPDATE group_pipeline_stages
             SET acceptance_criteria = jsonb_set(
-                COALESCE(acceptance_criteria, '{}'),
+                CASE
+                    WHEN jsonb_typeof(acceptance_criteria) = 'object' THEN acceptance_criteria
+                    ELSE '{}'::jsonb
+                END,
                 '{liv2_rubric_id}',
-                to_jsonb(:rubric_id::text)
+                to_jsonb(CAST(:rubric_id AS text))
             )
             WHERE group_id = :group_id AND stage_type = 'live_interview'
         """),
