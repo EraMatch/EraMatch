@@ -10,6 +10,15 @@ from app.models import CVAnalysis, CandidateApplication, CandidateProfile, Posit
 logger = logging.getLogger(__name__)
 
 
+def _to_relative_url(file_path: str) -> str:
+    """Convert an absolute filesystem path to a /static/... relative URL."""
+    normalized = file_path.replace("\\", "/")
+    idx = normalized.find("/static/")
+    if idx != -1:
+        return normalized[idx:]
+    return "/" + normalized.lstrip("/")
+
+
 class CVParsingWorkerService:
     """Synchronous service for CV parsing database operations in Celery workers."""
 
@@ -52,14 +61,14 @@ class CVParsingWorkerService:
                 analysis.education = education_list
             if work_history_list is not None:
                 analysis.work_history = work_history_list
-            analysis.cv_file_url = file_path
+            analysis.cv_file_url = _to_relative_url(file_path)
             analysis.analyzed_at = datetime.utcnow()
             logger.info(f"[CVParsing] Updated existing CVAnalysis for application {application_id}")
         else:
             analysis = CVAnalysis(
                 application_id=application_id,
                 organization_id=organization_id,
-                cv_file_url=file_path,
+                cv_file_url=_to_relative_url(file_path),
                 parsed_data=parsed_data,
                 skills=skills_list if skills_list else None,
                 experience_years=experience_years if experience_years is not None else None,
@@ -79,7 +88,7 @@ class CVParsingWorkerService:
             application = self.session.execute(app_stmt).scalars().first()
             if application:
                 if not application.resume_url:
-                    application.resume_url = file_path
+                    application.resume_url = _to_relative_url(file_path)
                     self.session.add(application)
                     self.session.commit()
 

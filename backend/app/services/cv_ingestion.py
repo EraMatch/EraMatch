@@ -267,12 +267,26 @@ class CVIngestionService:
         app_id = await self.apply_for_position(UUID(str(tenant_id)), UUID(str(job_id)), candidate_id, app_source)
 
         if app_id:
+            saved_filename = None
             try:
                 with open(file_path, "rb") as f:
                     file_content = f.read()
                 self.save_cv_file(app_id, os.path.basename(file_path), file_content)
+                saved_filename = os.path.basename(file_path)
             except Exception as e:
                 logger.error(f"Failed to move staged file {file_path}: {e}")
+
+            if saved_filename:
+                try:
+                    from app.models import CandidateApplication as _CandidateApplication
+                    app_stmt = select(_CandidateApplication).where(_CandidateApplication.id == app_id)
+                    app_obj = (await self.session.execute(app_stmt)).scalars().first()
+                    if app_obj and not app_obj.resume_url:
+                        app_obj.resume_url = f"/static/cvs/{app_id}/{saved_filename}"
+                        self.session.add(app_obj)
+                        await self.session.commit()
+                except Exception as url_exc:
+                    logger.warning(f"Failed to set resume_url for app {app_id}: {url_exc}")
 
             if parsed_ok and parsed_data:
                 # Trigger prescore computation at ingestion time when possible.
@@ -641,17 +655,30 @@ class CVIngestionWorkerService:
         app_id = self.apply_for_position(UUID(str(tenant_id)), UUID(str(job_id)), candidate_id, app_source)
 
         if app_id:
+            saved_filename = None
             try:
                 with open(file_path, "rb") as f:
                     file_content = f.read()
 
                 base_dir = os.path.join(os.getcwd(), "static", "cvs", str(app_id))
                 os.makedirs(base_dir, exist_ok=True)
-                new_file_path = os.path.join(base_dir, os.path.basename(file_path))
-                with open(new_file_path, "wb") as new_f:
+                dest = os.path.join(base_dir, os.path.basename(file_path))
+                with open(dest, "wb") as new_f:
                     new_f.write(file_content)
+                saved_filename = os.path.basename(file_path)
             except Exception as e:
                 logger.error(f"Failed to move staged file {file_path}: {e}")
+
+            if saved_filename:
+                try:
+                    from app.models import CandidateApplication as _CandidateApplication
+                    app_obj = self.session.get(_CandidateApplication, app_id)
+                    if app_obj and not app_obj.resume_url:
+                        app_obj.resume_url = f"/static/cvs/{app_id}/{saved_filename}"
+                        self.session.add(app_obj)
+                        self.session.commit()
+                except Exception as url_exc:
+                    logger.warning(f"Failed to set resume_url for app {app_id}: {url_exc}")
 
             if parsed_ok and parsed_data:
                 celery_app.send_task(

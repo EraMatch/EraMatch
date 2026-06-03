@@ -433,6 +433,7 @@ export function PositionDetailView({
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [scheduleSuccess, setScheduleSuccess] = useState<string | null>(null);
+  const [driveModalStep, setDriveModalStep] = useState<1 | 2>(1);
 
   const extractDriveFolderId = (url: string) => {
     const match = url.match(/[-\w]{25,-}/);
@@ -2417,143 +2418,235 @@ export function PositionDetailView({
       )}
 
       {/* Google Drive Import Modal */}
-      {showGoogleDriveModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-[16px] w-full max-w-[600px] p-8">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-[#111827] text-[20px]">Schedule Data Import (Google Drive)</h3>
-              <button
-                onClick={() => {
-                  setShowGoogleDriveModal(false);
-                  setScheduleSuccess(null);
-                  setScheduleError(null);
-                  setDriveFolderUrl('');
-                  setStartDate('');
-                  setFrequencyDays(0);
-                  setFrequencyHours(0);
-                }}
-                className="w-[32px] h-[32px] flex items-center justify-center rounded-[6px] hover:bg-[#f3f4f6] transition-colors"
-              >
-                <X size={18} className="text-[#6b7280]" />
-              </button>
-            </div>
+      {showGoogleDriveModal && (() => {
+        const closeModal = () => {
+          setShowGoogleDriveModal(false);
+          setScheduleSuccess(null);
+          setScheduleError(null);
+          setDriveFolderUrl('');
+          setStartDate('');
+          setFrequencyDays(0);
+          setFrequencyHours(0);
+          setDriveModalStep(1);
+        };
 
-            {!scheduleSuccess ? (
-              <>
-                <div className="space-y-4 mb-6">
-                  <div>
-                    <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
-                      Google Drive Folder Link
-                    </label>
-                    <input
-                      type="text"
-                      value={driveFolderUrl}
-                      onChange={(e) => setDriveFolderUrl(e.target.value)}
-                      placeholder="https://drive.google.com/drive/folders/..."
-                      className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                    />
-                  </div>
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-[520px] overflow-hidden shadow-2xl">
 
-                  <div>
-                    <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
-                      Start Date & Time
-                    </label>
-                    <input
-                      type="datetime-local"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                    />
-                  </div>
+              {/* Gradient Header */}
+              <div className="bg-gradient-to-r from-indigo-500 to-violet-500 px-6 pt-6 pb-8 relative">
+                <button
+                  onClick={closeModal}
+                  className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors"
+                >
+                  <X size={16} className="text-white" />
+                </button>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
-                        Frequency (Days)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={frequencyDays}
-                        onChange={(e) => setFrequencyDays(parseInt(e.target.value) || 0)}
-                        placeholder="0"
-                        className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                      />
+                {!scheduleSuccess && (
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold ${driveModalStep === 1 ? 'bg-white text-indigo-600' : 'bg-white/20 text-white'}`}>
+                      <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold bg-indigo-600 text-white">1</span>
+                      Connect
                     </div>
-                    <div>
-                      <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
-                        Frequency (Hours)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={frequencyHours}
-                        onChange={(e) => setFrequencyHours(parseInt(e.target.value) || 0)}
-                        placeholder="0"
-                        className="w-full h-[44px] px-[16px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-                      />
+                    <div className="flex-1 h-px bg-white/30" />
+                    <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold ${driveModalStep === 2 ? 'bg-white text-indigo-600' : 'bg-white/20 text-white'}`}>
+                      <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${driveModalStep === 2 ? 'bg-indigo-600 text-white' : 'bg-white/30 text-white'}`}>2</span>
+                      Schedule
                     </div>
-                  </div>
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                    Setting both to 0 will result in a one-time import.
-                  </p>
-                </div>
-
-                {scheduleError && (
-                  <div className="mb-4 text-red-500 text-sm font-['Arimo',sans-serif]">
-                    {scheduleError}
                   </div>
                 )}
 
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => {
-                      setShowGoogleDriveModal(false);
-                      setScheduleError(null);
-                      setDriveFolderUrl('');
-                      setStartDate('');
-                      setFrequencyDays(0);
-                      setFrequencyHours(0);
-                    }}
-                    className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSaveDriveSchedule}
-                    disabled={!driveFolderUrl || !startDate || isSavingSchedule}
-                    className="flex-[2] h-[44px] px-[20px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors flex items-center justify-center gap-2 w-full"
-                  >
-                    {isSavingSchedule ? <Loader2 size={16} className="animate-spin" /> : null}
-                    Save Schedule
-                  </button>
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center text-2xl">
+                    {scheduleSuccess ? '🎉' : driveModalStep === 1 ? '📂' : '🗓️'}
+                  </div>
+                  <div>
+                    <h3 className="text-white text-[18px] font-bold leading-tight">
+                      {scheduleSuccess
+                        ? 'Schedule Saved!'
+                        : driveModalStep === 1
+                        ? 'Import CVs from Google Drive'
+                        : 'When should we import?'}
+                    </h3>
+                    <p className="text-white/70 text-[13px] mt-0.5">
+                      {scheduleSuccess
+                        ? 'Your import is all set'
+                        : driveModalStep === 1
+                        ? 'Paste your shared folder link below'
+                        : 'Set the start time and repeat frequency'}
+                    </p>
+                  </div>
                 </div>
-              </>
-            ) : (
-              <div className="text-center py-8">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <CheckCircle size={32} className="text-green-600" />
-                </div>
-                <h4 className="text-lg font-medium text-gray-900 mb-2">Schedule Saved!</h4>
-                <p className="text-sm text-gray-500 mb-6">{scheduleSuccess}</p>
-                <button
-                  onClick={() => {
-                    setShowGoogleDriveModal(false);
-                    setScheduleSuccess(null);
-                    setDriveFolderUrl('');
-                    setStartDate('');
-                    setFrequencyDays(0);
-                    setFrequencyHours(0);
-                  }}
-                  className="px-6 py-2 bg-[#6366f1] text-white rounded-lg hover:bg-[#5558e3]"
-                >
-                  Done
-                </button>
               </div>
-            )}
+
+              {/* Body */}
+              <div className="px-6 py-6">
+                {scheduleSuccess ? (
+                  <div className="text-center py-4">
+                    <p className="text-[14px] text-gray-500 mb-6">{scheduleSuccess}</p>
+                    <button
+                      onClick={closeModal}
+                      className="px-8 h-11 bg-indigo-600 hover:bg-indigo-700 text-white text-[14px] font-semibold rounded-xl transition-colors"
+                    >
+                      Done
+                    </button>
+                  </div>
+                ) : driveModalStep === 1 ? (
+                  <div className="space-y-5">
+                    <div>
+                      <label className="block text-[13px] font-semibold text-gray-700 mb-2">
+                        Google Drive Folder Link
+                      </label>
+                      <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-indigo-400 focus-within:border-transparent transition-all">
+                        <div className="px-3 py-2.5 bg-gray-50 border-r border-gray-200 flex items-center gap-1.5 shrink-0">
+                          <svg className="w-4 h-4" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
+                            <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                            <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+                            <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+                            <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                            <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                            <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 27h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+                          </svg>
+                          <span className="text-[12px] text-gray-500 font-medium">Drive</span>
+                        </div>
+                        <input
+                          type="text"
+                          value={driveFolderUrl}
+                          onChange={(e) => setDriveFolderUrl(e.target.value)}
+                          placeholder="https://drive.google.com/drive/folders/..."
+                          className="flex-1 h-[44px] px-3 text-[14px] bg-white outline-none text-gray-800 placeholder:text-gray-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-indigo-50 rounded-xl p-4 space-y-2">
+                      {[
+                        'We\'ll scan the folder for CV files',
+                        'CVs are parsed and structured automatically',
+                        'Candidates are added directly to this position',
+                      ].map((item) => (
+                        <div key={item} className="flex items-start gap-2">
+                          <span className="text-indigo-500 mt-0.5 text-[13px]">✓</span>
+                          <span className="text-[13px] text-indigo-700">{item}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        onClick={closeModal}
+                        className="text-[13px] text-gray-400 hover:text-gray-600 transition-colors underline"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => setDriveModalStep(2)}
+                        disabled={!driveFolderUrl.trim()}
+                        className="h-11 px-6 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-200 disabled:cursor-not-allowed text-white text-[14px] font-semibold rounded-xl transition-colors flex items-center gap-2"
+                      >
+                        Next: Set Schedule
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    <div>
+                      <label className="block text-[13px] font-semibold text-gray-700 mb-2">
+                        Start Date & Time
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="w-full h-[44px] px-4 rounded-xl border border-gray-200 text-[14px] text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[13px] font-semibold text-gray-700 mb-3">
+                        Repeat every
+                      </label>
+                      <div className="grid grid-cols-2 gap-4">
+                        {/* Days stepper */}
+                        <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3 border border-gray-200">
+                          <button
+                            onClick={() => setFrequencyDays(Math.max(0, frequencyDays - 1))}
+                            className="w-8 h-8 rounded-full border border-gray-200 bg-white hover:bg-indigo-50 text-indigo-600 font-bold text-lg flex items-center justify-center transition-colors"
+                          >
+                            −
+                          </button>
+                          <div className="text-center">
+                            <div className="text-[20px] font-bold text-gray-800 leading-none">{frequencyDays}</div>
+                            <div className="text-[11px] text-gray-400 mt-0.5">days</div>
+                          </div>
+                          <button
+                            onClick={() => setFrequencyDays(frequencyDays + 1)}
+                            className="w-8 h-8 rounded-full border border-gray-200 bg-white hover:bg-indigo-50 text-indigo-600 font-bold text-lg flex items-center justify-center transition-colors"
+                          >
+                            +
+                          </button>
+                        </div>
+                        {/* Hours stepper */}
+                        <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3 border border-gray-200">
+                          <button
+                            onClick={() => setFrequencyHours(Math.max(0, frequencyHours - 1))}
+                            className="w-8 h-8 rounded-full border border-gray-200 bg-white hover:bg-indigo-50 text-indigo-600 font-bold text-lg flex items-center justify-center transition-colors"
+                          >
+                            −
+                          </button>
+                          <div className="text-center">
+                            <div className="text-[20px] font-bold text-gray-800 leading-none">{frequencyHours}</div>
+                            <div className="text-[11px] text-gray-400 mt-0.5">hours</div>
+                          </div>
+                          <button
+                            onClick={() => setFrequencyHours(frequencyHours + 1)}
+                            className="w-8 h-8 rounded-full border border-gray-200 bg-white hover:bg-indigo-50 text-indigo-600 font-bold text-lg flex items-center justify-center transition-colors"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                      {frequencyDays === 0 && frequencyHours === 0 && (
+                        <div className="mt-2 flex items-center gap-1.5">
+                          <span className="text-[12px] text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-0.5 font-medium">
+                            ⚡ One-time import — no repeat
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {scheduleError && (
+                      <div className="text-[13px] text-red-500 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                        {scheduleError}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        onClick={() => { setDriveModalStep(1); setScheduleError(null); }}
+                        className="text-[13px] text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1 underline"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                        Change folder
+                      </button>
+                      <button
+                        onClick={handleSaveDriveSchedule}
+                        disabled={!startDate || isSavingSchedule}
+                        className="h-11 px-6 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-200 disabled:cursor-not-allowed text-white text-[14px] font-semibold rounded-xl transition-colors flex items-center gap-2"
+                      >
+                        {isSavingSchedule ? <Loader2 size={16} className="animate-spin" /> : null}
+                        Save Schedule
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Filtration Flow Config Modal */}
       {showFlowConfigModal && (
