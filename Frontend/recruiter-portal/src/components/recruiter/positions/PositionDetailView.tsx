@@ -2571,6 +2571,8 @@ export function PositionDetailView({
             // The modal already called api.recruiter.updateGroup (sets status + filtration_flow)
             // Just close and refresh the group list
             setShowFlowConfigModal(false);
+            queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.positions.groups(positionId) });
             const groups = await api.recruiter.getPositionGroups(positionId) as any[];
             setGroups(groups);
           }}

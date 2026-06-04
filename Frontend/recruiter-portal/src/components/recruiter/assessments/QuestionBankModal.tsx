@@ -26,19 +26,56 @@ interface QuestionVariant {
 interface QuestionBankModalProps {
   questionType: 'mcq' | 'essay' | 'code';
   onSelect: (question: QuestionVariant) => void;
+  onSelectMultiple?: (questions: QuestionVariant[]) => void;
   onClose: () => void;
   onSwitchToAI?: () => void;
 }
 
 import { api } from '../../../services/api';
 
-export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToAI }: QuestionBankModalProps) {
+const normalizeQuestionType = (value?: string): 'mcq' | 'essay' | 'code' => {
+  const normalized = (value || '').trim().toLowerCase();
+
+  if (
+    normalized === 'mcq' ||
+    normalized === 'multiple choice' ||
+    normalized === 'multiple-choice' ||
+    normalized === 'true/false' ||
+    normalized === 'true false'
+  ) {
+    return 'mcq';
+  }
+
+  if (normalized === 'essay' || normalized === 'descriptive') {
+    return 'essay';
+  }
+
+  if (normalized === 'code' || normalized === 'coding' || normalized === 'programming') {
+    return 'code';
+  }
+
+  return 'mcq';
+};
+
+const getQuestionTypeLabel = (type: 'mcq' | 'essay' | 'code') => {
+  switch (type) {
+    case 'mcq':
+      return 'MCQ';
+    case 'essay':
+      return 'Essay';
+    case 'code':
+      return 'Coding';
+  }
+};
+
+export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, onClose, onSwitchToAI }: QuestionBankModalProps) {
   const [searchType, setSearchType] = useState<'traditional' | 'semantic'>('traditional');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [favoriteOnly, setFavoriteOnly] = useState<boolean>(false);
   const [usageSort, setUsageSort] = useState<string>('none');
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
 
   const [questions, setQuestions] = useState<QuestionVariant[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,10 +89,7 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
 
         // Map backend response and filter by requested questionType
         let mappedData = (data as any[]).map(q => {
-          let vType: 'mcq' | 'essay' | 'code' = 'mcq';
-          if (q.type === 'Multiple Choice' || q.type === 'True/False') vType = 'mcq';
-          else if (q.type === 'Code') vType = 'code';
-          else if (q.type === 'Essay') vType = 'essay';
+          const vType = normalizeQuestionType(q.type || q.question_type);
 
           return {
             id: q.id,
@@ -99,6 +133,11 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
 
     fetchQuestions();
   }, [questionType]);
+
+  useEffect(() => {
+    const validIds = new Set(questions.map((question) => question.id));
+    setSelectedQuestionIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [questions]);
 
   // Extract dynamic categories
   const categories = useMemo(() => {
@@ -154,6 +193,30 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
     return result;
   }, [searchQuery, searchType, selectedDifficulty, selectedCategory, favoriteOnly, usageSort, questions]);
 
+  const selectedQuestions = useMemo(
+    () => questions.filter((question) => selectedQuestionIds.includes(question.id)),
+    [questions, selectedQuestionIds]
+  );
+
+  const isSelected = (questionId: string) => selectedQuestionIds.includes(questionId);
+
+  const toggleQuestionSelection = (questionId: string) => {
+    if (!onSelectMultiple) return;
+
+    setSelectedQuestionIds((prev) => (
+      prev.includes(questionId)
+        ? prev.filter((id) => id !== questionId)
+        : [...prev, questionId]
+    ));
+  };
+
+  const handleAddSelectedQuestions = () => {
+    if (!onSelectMultiple || selectedQuestions.length === 0) return;
+
+    onSelectMultiple(selectedQuestions);
+    setSelectedQuestionIds([]);
+  };
+
   const handleSearch = (value: string) => {
     setSearchQuery(value);
   };
@@ -171,7 +234,7 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
               <div>
                 <h2 className="text-[#111827]">Question Bank</h2>
                 <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                  Semantic search through existing questions
+                  Semantic search through existing {getQuestionTypeLabel(questionType)} questions
                 </p>
               </div>
             </div>
@@ -204,6 +267,13 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
               <Sparkles size={14} />
               Semantic Search
             </button>
+          </div>
+
+          <div className="mt-3 flex items-center gap-2 text-[12px] text-[#6b7280]">
+            <span className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 font-medium">
+              {getQuestionTypeLabel(questionType)} only
+            </span>
+            <span>Auto-detected from the section type.</span>
           </div>
 
           {/* Search Bar */}
@@ -316,7 +386,10 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
                 {filteredQuestions.map((question) => (
                   <div
                     key={question.id}
-                    className="border border-[#e5e7eb] rounded-[12px] p-6 hover:border-[#6366f1] hover:shadow-md transition-all"
+                    className={`border rounded-[12px] p-6 hover:shadow-md transition-all ${isSelected(question.id)
+                      ? 'border-[#6366f1] bg-[#f8f7ff] shadow-sm'
+                      : 'border-[#e5e7eb] hover:border-[#6366f1]'
+                      }`}
                   >
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex-1">
@@ -354,6 +427,18 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
                         </p>
                       </div>
                       <div className="flex flex-col items-end gap-2 shrink-0">
+                        {onSelectMultiple && (
+                          <label className="flex items-center gap-2 px-2 py-1 rounded-[8px] border border-[#e5e7eb] bg-white cursor-pointer hover:bg-[#f9fafb]">
+                            <input
+                              type="checkbox"
+                              checked={isSelected(question.id)}
+                              onChange={() => toggleQuestionSelection(question.id)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span className="text-[12px] text-[#374151]">Select</span>
+                          </label>
+                        )}
                         {question.isFavorite && (
                           <div className="flex items-center gap-1 text-red-500 text-[12px] font-medium">
                             <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
@@ -366,7 +451,7 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
                           onClick={() => onSelect(question)}
                           className="rounded-[8px] bg-[#6366f1] hover:bg-[#4f46e5] text-white"
                         >
-                          Select
+                          Add One
                         </Button>
                       </div>
                     </div>
@@ -437,13 +522,29 @@ export function QuestionBankModal({ questionType, onSelect, onClose, onSwitchToA
             <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
               {filteredQuestions.length} {filteredQuestions.length === 1 ? 'question' : 'questions'} found
             </span>
-            <Button
-              variant="outline"
-              onClick={onClose}
-              className="rounded-[8px]"
-            >
-              Cancel
-            </Button>
+            <div className="flex items-center gap-3">
+              {onSelectMultiple && selectedQuestionIds.length > 0 && (
+                <span className="text-[13px] text-[#6366f1] font-medium">
+                  {selectedQuestionIds.length} selected
+                </span>
+              )}
+              <Button
+                variant="outline"
+                onClick={onClose}
+                className="rounded-[8px]"
+              >
+                Cancel
+              </Button>
+              {onSelectMultiple && (
+                <Button
+                  onClick={handleAddSelectedQuestions}
+                  disabled={selectedQuestionIds.length === 0}
+                  className="rounded-[8px] bg-[#6366f1] hover:bg-[#4f46e5] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add Selected{selectedQuestionIds.length > 0 ? ` (${selectedQuestionIds.length})` : ''}
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>

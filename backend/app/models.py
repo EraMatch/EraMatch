@@ -311,7 +311,7 @@ class Position(SQLModel, table=True):
     organization_id: UUID = Field(foreign_key="organizations.organization_id")
     job_title: str = Field(max_length=255)
     job_description: str | None = Field(default=None, sa_column=Column(Text))
-    required_skills: dict = Field(default_factory=list, sa_column=Column(JSONB))
+    required_skills: list[str] = Field(default_factory=list, sa_column=Column(JSONB))
     experience_level: str | None = Field(default=None, max_length=20)
     work_type: str | None = Field(default=None, max_length=20)
     location: str | None = Field(default=None, max_length=255)
