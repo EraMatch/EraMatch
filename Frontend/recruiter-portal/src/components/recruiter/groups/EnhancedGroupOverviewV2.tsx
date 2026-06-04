@@ -789,7 +789,11 @@ export function EnhancedGroupOverviewV2({
 
   const handleSaveAssessment = async (assessment: any) => {
     try {
-      showToast(assessment.id && !assessment.id.toString().startsWith('assessment-') ? 'Updating assessment...' : 'Saving assessment...');
+      const existingAssessmentId = assessment.id && !assessment.id.toString().startsWith('assessment-')
+        ? assessment.id
+        : groupAssessments.find((item) => item?.id && !item.id.toString().startsWith('assessment-'))?.id;
+
+      showToast(existingAssessmentId ? 'Updating assessment...' : 'Saving assessment...');
 
       const payload = {
         position_id: positionId, // From component state fetched on mount
@@ -806,25 +810,49 @@ export function EnhancedGroupOverviewV2({
         sections: assessment.sections
       };
 
-      if (assessment.id && !assessment.id.toString().startsWith('assessment-')) {
-        await api.recruiter.updateAssessment(assessment.id, payload);
-        const updatedAssessments = groupAssessments.map(a =>
-          a.id === assessment.id ? { ...assessment, status: a.status || 'draft' } : a
+      if (existingAssessmentId) {
+        await api.recruiter.updateAssessment(existingAssessmentId, payload);
+        const updatedAssessments = groupAssessments.map((item) =>
+          item.id === existingAssessmentId ? { ...assessment, id: existingAssessmentId, status: item.status || 'draft' } : item
         );
         setGroupAssessments(updatedAssessments);
         showToast(`Assessment "${assessment.config.title}" updated successfully!`);
       } else {
-        const response = await api.recruiter.saveAssessment(payload);
-        const newAssessment = {
-          ...assessment,
-          id: response.assessment_id || `assessment-${Date.now()}`,
-          groupId,
-          createdAt: new Date().toISOString(),
-          createdBy: assignedRecruiter,
-          status: 'draft'
-        };
-        setGroupAssessments([...groupAssessments, newAssessment]);
-        showToast(`Assessment "${assessment.config.title}" created successfully!`);
+        try {
+          const response = await api.recruiter.saveAssessment(payload);
+          const newAssessment = {
+            ...assessment,
+            id: response.assessment_id || `assessment-${Date.now()}`,
+            groupId,
+            createdAt: new Date().toISOString(),
+            createdBy: assignedRecruiter,
+            status: 'draft'
+          };
+          setGroupAssessments([...groupAssessments, newAssessment]);
+          showToast(`Assessment "${assessment.config.title}" created successfully!`);
+        } catch (createError) {
+          const errorMessage = createError instanceof Error ? createError.message : String(createError);
+          const hasSingleAssessmentConstraint = errorMessage.includes('Only one assessment can be created for this group');
+          
+          let fallbackAssessmentId = groupAssessments.find((item) => item?.id && !item.id.toString().startsWith('assessment-'))?.id;
+          if (hasSingleAssessmentConstraint) {
+            const match = errorMessage.match(/Existing ID: ([\w-]+)/);
+            if (match && match[1]) {
+              fallbackAssessmentId = match[1];
+            }
+          }
+
+          if (!hasSingleAssessmentConstraint || !fallbackAssessmentId) {
+            throw createError;
+          }
+
+          await api.recruiter.updateAssessment(fallbackAssessmentId, payload);
+          const updatedAssessments = groupAssessments.map((item) =>
+            item.id === fallbackAssessmentId ? { ...assessment, id: fallbackAssessmentId, status: item.status || 'draft' } : item
+          );
+          setGroupAssessments(updatedAssessments);
+          showToast(`Assessment "${assessment.config.title}" updated successfully!`);
+        }
       }
 
       setShowAssessmentCreation(false);
