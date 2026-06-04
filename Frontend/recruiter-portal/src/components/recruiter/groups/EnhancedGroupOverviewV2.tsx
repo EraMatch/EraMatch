@@ -847,9 +847,26 @@ export function EnhancedGroupOverviewV2({
           }
 
           await api.recruiter.updateAssessment(fallbackAssessmentId, payload);
-          const updatedAssessments = groupAssessments.map((item) =>
-            item.id === fallbackAssessmentId ? { ...assessment, id: fallbackAssessmentId, status: item.status || 'draft' } : item
-          );
+          let itemFound = false;
+          const updatedAssessments = groupAssessments.map((item) => {
+            if (item.id === fallbackAssessmentId) {
+              itemFound = true;
+              return { ...assessment, id: fallbackAssessmentId, status: item.status || 'draft' };
+            }
+            return item;
+          });
+          
+          if (!itemFound) {
+            updatedAssessments.push({
+              ...assessment,
+              id: fallbackAssessmentId,
+              groupId,
+              createdAt: new Date().toISOString(),
+              createdBy: assignedRecruiter,
+              status: 'draft'
+            });
+          }
+          
           setGroupAssessments(updatedAssessments);
           showToast(`Assessment "${assessment.config.title}" updated successfully!`);
         }
