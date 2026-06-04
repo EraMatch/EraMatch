@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect } from 'react';
 import { X, Search, Filter, Database, Sparkles } from 'lucide-react';
 import { Button } from '../../ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../ui/dialog';
+import LoadingSpinner from '../../common/LoadingSpinner';
 
 interface QuestionVariant {
   id: string;
@@ -54,7 +56,30 @@ const normalizeQuestionType = (value?: string): 'mcq' | 'essay' | 'code' => {
     return 'code';
   }
 
-  return 'mcq';
+  return 'essay';
+};
+
+const hasQuestionOptions = (value: unknown): boolean => {
+  if (!Array.isArray(value)) return false;
+
+  return value.filter((option) => String(option ?? '').trim().length > 0).length > 0;
+};
+
+const hasNonEmptyText = (value: unknown): boolean => String(value ?? '').trim().length > 0;
+
+const inferQuestionType = (question: any): 'mcq' | 'essay' | 'code' => {
+  const options = question.options ?? question.question_config?.options;
+
+  if (hasQuestionOptions(options)) {
+    return 'mcq';
+  }
+
+  const normalizedType = normalizeQuestionType(question.type || question.question_type);
+
+  if (normalizedType === 'code') return 'code';
+  if (normalizedType === 'essay') return 'essay';
+
+  return 'essay';
 };
 
 const getQuestionTypeLabel = (type: 'mcq' | 'essay' | 'code') => {
@@ -76,6 +101,7 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
   const [favoriteOnly, setFavoriteOnly] = useState<boolean>(false);
   const [usageSort, setUsageSort] = useState<string>('none');
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
+  const [previewQuestion, setPreviewQuestion] = useState<QuestionVariant | null>(null);
 
   const [questions, setQuestions] = useState<QuestionVariant[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,7 +115,8 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
 
         // Map backend response and filter by requested questionType
         let mappedData = (data as any[]).map(q => {
-          const vType = normalizeQuestionType(q.type || q.question_type);
+          const vType = inferQuestionType(q);
+          const options = Array.isArray(q.options) ? q.options : q.question_config?.options;
 
           return {
             id: q.id,
@@ -100,7 +127,7 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
             tags: q.tags || [],
             usageCount: q.usageCount || 0,
             isFavorite: q.isFavorite || false,
-            options: q.options,
+            options: Array.isArray(options) ? options.filter((option: any) => String(option ?? '').trim().length > 0).map((option: any) => String(option)) : [],
             correctAnswer: q.correctAnswer,
             multipleCorrect: q.multipleCorrect,
             language: q.codeLanguage,
@@ -121,7 +148,15 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
         });
 
         // Only show variants matching the Section's question type
-        mappedData = mappedData.filter(q => q.type === questionType);
+        mappedData = mappedData.filter((q) => {
+          if (q.type !== questionType) return false;
+
+          if (questionType === 'essay') {
+            return hasNonEmptyText(q.rubric);
+          }
+
+          return true;
+        });
 
         setQuestions(mappedData);
       } catch (error) {
@@ -215,6 +250,15 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
 
     onSelectMultiple(selectedQuestions);
     setSelectedQuestionIds([]);
+  };
+
+  const closePreview = () => setPreviewQuestion(null);
+
+  const handleAddFromPreview = () => {
+    if (!previewQuestion) return;
+
+    onSelect(previewQuestion);
+    closePreview();
   };
 
   const handleSearch = (value: string) => {
@@ -358,7 +402,11 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
 
         {/* Questions List */}
         <div className="flex-1 overflow-y-auto p-8">
-          {filteredQuestions.length === 0 ? (
+          {loading ? (
+            <div className="min-h-[320px] flex items-center justify-center">
+              <LoadingSpinner message="Loading questions..." fullScreen={false} />
+            </div>
+          ) : filteredQuestions.length === 0 ? (
             <div className="text-center py-12">
               <Database size={48} className="text-[#d1d5db] mx-auto mb-4" />
               <p className="font-['Arimo',sans-serif] text-[16px] text-[#374151] mb-2">
@@ -391,44 +439,10 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
                       : 'border-[#e5e7eb] hover:border-[#6366f1]'
                       }`}
                   >
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          {searchQuery && question.semanticScore && (
-                            <div className="px-2 py-1 rounded-full bg-purple-100 text-purple-700 text-[10px] font-medium flex items-center gap-1">
-                              <Sparkles size={10} />
-                              {Math.round(question.semanticScore * 100)}% match
-                            </div>
-                          )}
-                          {question.difficulty && (
-                            <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${question.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
-                              question.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
-                                'bg-red-100 text-red-700'
-                              }`}>
-                              {question.difficulty}
-                            </span>
-                          )}
-                          {question.category && (
-                            <span className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-medium border border-indigo-100">
-                              {question.category}
-                            </span>
-                          )}
-                          <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-gray-50 text-gray-600 text-[11px] border border-gray-200">
-                            <span>Used {question.usageCount || 0} times</span>
-                          </div>
-                          {question.tags?.map((tag: string) => (
-                            <span key={tag} className="px-2 py-1 rounded-full bg-[#f3f4f6] text-[#6b7280] text-[11px]">
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                        <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] pr-4">
-                          {question.questionText}
-                        </p>
-                      </div>
-                      <div className="flex flex-col items-end gap-2 shrink-0">
+                    <div className="flex items-start justify-between mb-3 gap-4">
+                      <div className="flex-1 flex items-start gap-3">
                         {onSelectMultiple && (
-                          <label className="flex items-center gap-2 px-2 py-1 rounded-[8px] border border-[#e5e7eb] bg-white cursor-pointer hover:bg-[#f9fafb]">
+                          <label className="mt-1 flex items-center gap-2 px-2 py-1 rounded-[8px] border border-[#e5e7eb] bg-white cursor-pointer hover:bg-[#f9fafb] shrink-0">
                             <input
                               type="checkbox"
                               checked={isSelected(question.id)}
@@ -439,6 +453,43 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
                             <span className="text-[12px] text-[#374151]">Select</span>
                           </label>
                         )}
+
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            {searchQuery && question.semanticScore && (
+                              <div className="px-2 py-1 rounded-full bg-purple-100 text-purple-700 text-[10px] font-medium flex items-center gap-1">
+                                <Sparkles size={10} />
+                                {Math.round(question.semanticScore * 100)}% match
+                              </div>
+                            )}
+                            {question.difficulty && (
+                              <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${question.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
+                                question.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>
+                                {question.difficulty}
+                              </span>
+                            )}
+                            {question.category && (
+                              <span className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-medium border border-indigo-100">
+                                {question.category}
+                              </span>
+                            )}
+                            <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-gray-50 text-gray-600 text-[11px] border border-gray-200">
+                              <span>Used {question.usageCount || 0} times</span>
+                            </div>
+                            {question.tags?.map((tag: string) => (
+                              <span key={tag} className="px-2 py-1 rounded-full bg-[#f3f4f6] text-[#6b7280] text-[11px]">
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                          <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] pr-4">
+                            {question.questionText}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-2 shrink-0">
                         {question.isFavorite && (
                           <div className="flex items-center gap-1 text-red-500 text-[12px] font-medium">
                             <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
@@ -448,10 +499,10 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
                           </div>
                         )}
                         <Button
-                          onClick={() => onSelect(question)}
-                          className="rounded-[8px] bg-[#6366f1] hover:bg-[#4f46e5] text-white"
+                          onClick={() => setPreviewQuestion(question)}
+                          className="rounded-[8px] bg-white text-[#4f46e5] border border-[#c7d2fe] shadow-sm hover:bg-[#eef2ff] transition-all duration-200 hover:-translate-y-0.5"
                         >
-                          Add One
+                          Preview
                         </Button>
                       </div>
                     </div>
@@ -515,6 +566,124 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
             </>
           )}
         </div>
+
+        <Dialog open={!!previewQuestion} onOpenChange={(open) => { if (!open) closePreview(); }}>
+          <DialogContent className="sm:max-w-3xl max-h-[88vh] overflow-hidden p-0 bg-white/90 backdrop-blur-xl border-white/30 shadow-2xl rounded-[24px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-bottom-2 duration-300">
+            {previewQuestion && (
+              <div className="flex flex-col max-h-[88vh]">
+                <div className="px-8 py-6 border-b border-[#e5e7eb] bg-gradient-to-r from-indigo-50 via-white to-purple-50">
+                  <DialogHeader className="text-left">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-2">
+                        <DialogTitle className="text-[22px] font-semibold text-[#111827]">
+                          Question Preview
+                        </DialogTitle>
+                        <DialogDescription className="text-[14px] text-[#6b7280]">
+                          Review the question before adding it to the section.
+                        </DialogDescription>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap justify-end">
+                        <span className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-medium border border-indigo-100">
+                          {getQuestionTypeLabel(previewQuestion.type)}
+                        </span>
+                        {previewQuestion.difficulty && (
+                          <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${previewQuestion.difficulty === 'Easy' ? 'bg-green-100 text-green-700' : previewQuestion.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                            {previewQuestion.difficulty}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </DialogHeader>
+                </div>
+
+                <div className="overflow-y-auto px-8 py-6 space-y-6">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {previewQuestion.category && (
+                        <span className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-medium border border-indigo-100">
+                          {previewQuestion.category}
+                        </span>
+                      )}
+                      <span className="px-2 py-1 rounded-full bg-gray-50 text-gray-600 text-[11px] border border-gray-200">
+                        Used {previewQuestion.usageCount || 0} times
+                      </span>
+                      {previewQuestion.tags?.map((tag) => (
+                        <span key={tag} className="px-2 py-1 rounded-full bg-[#f3f4f6] text-[#6b7280] text-[11px]">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="rounded-[18px] border border-[#e5e7eb] bg-white p-5 shadow-sm">
+                      <p className="text-[16px] leading-7 text-[#111827] font-['Arimo',sans-serif]">
+                        {previewQuestion.questionText}
+                      </p>
+                    </div>
+                  </div>
+
+                  {previewQuestion.type === 'mcq' && previewQuestion.options && (
+                    <div className="space-y-3">
+                      <h4 className="text-[14px] font-semibold text-[#111827]">Answer choices</h4>
+                      <div className="grid gap-3">
+                        {previewQuestion.options.map((option, index) => (
+                          <div key={index} className="flex items-start gap-3 rounded-[14px] border border-[#e5e7eb] bg-[#fafafa] px-4 py-3 transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-sm">
+                            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-[12px] font-semibold text-indigo-700">
+                              {String.fromCharCode(65 + index)}
+                            </div>
+                            <div className="text-[14px] text-[#374151]">{option}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {previewQuestion.type === 'code' && (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="rounded-[16px] border border-[#e5e7eb] bg-[#0f172a] p-4 text-white shadow-sm">
+                        <div className="mb-2 text-[12px] uppercase tracking-wide text-slate-300">Language</div>
+                        <div className="text-[16px] font-medium">{previewQuestion.language || 'Not specified'}</div>
+                      </div>
+                      <div className="rounded-[16px] border border-[#e5e7eb] bg-white p-4 shadow-sm">
+                        <div className="mb-2 text-[12px] uppercase tracking-wide text-[#6b7280]">Test cases</div>
+                        <div className="text-[16px] font-medium text-[#111827]">{previewQuestion.testCases?.length || 0}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {previewQuestion.type === 'essay' && previewQuestion.maxWords && (
+                    <div className="rounded-[16px] border border-[#e5e7eb] bg-white p-4 shadow-sm">
+                      <div className="text-[12px] uppercase tracking-wide text-[#6b7280] mb-2">Word limit</div>
+                      <div className="text-[16px] font-medium text-[#111827]">Max words: {previewQuestion.maxWords}</div>
+                    </div>
+                  )}
+
+                  {previewQuestion.rubric && (
+                    <div className="rounded-[16px] border border-[#e5e7eb] bg-white p-4 shadow-sm">
+                      <div className="text-[12px] uppercase tracking-wide text-[#6b7280] mb-2">Rubric</div>
+                      <div className="whitespace-pre-wrap text-[14px] leading-6 text-[#374151]">{previewQuestion.rubric}</div>
+                    </div>
+                  )}
+                </div>
+
+                <DialogFooter className="px-8 py-5 border-t border-[#e5e7eb] bg-white/95 backdrop-blur justify-between sm:justify-between">
+                  <Button
+                    onClick={closePreview}
+                    variant="outline"
+                    className="rounded-[10px] border-[#d1d5db] bg-white text-[#374151] hover:bg-[#f9fafb]"
+                  >
+                    Close Preview
+                  </Button>
+                  <Button
+                    onClick={handleAddFromPreview}
+                    className="rounded-[10px] bg-[#6366f1] text-white shadow-md shadow-indigo-200 transition-all duration-200 hover:bg-[#4f46e5] hover:-translate-y-0.5"
+                  >
+                    Add Question
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* Footer */}
         <div className="px-8 py-4 border-t border-[#e5e7eb]">
