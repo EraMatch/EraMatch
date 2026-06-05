@@ -2591,10 +2591,10 @@ export function PositionDetailView({
           groupName={groupToDelete.name}
           candidateCount={candidates.filter(c => groups.find(g => g.id === groupToDelete.id)?.candidate_ids?.includes(c.id)).length || groupToDelete.candidate_count || 0}
           availableGroups={groups.filter(g => g.id !== groupToDelete.id)}
-          onConfirm={() => {
+          onConfirm={async () => {
             setIsGroupDeleteModalOpen(false);
             setGroupToDelete(null);
-            queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
           }}
         />
       )}

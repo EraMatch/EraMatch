@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Sparkles, Video, Clock, User, Camera, Mic, Play, Square, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw } from 'lucide-react';
+import { Sparkles, Video, Clock, User, Camera, Mic, Play, Square, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw, AlertCircle } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload } from '../utils/proctoringPayload';
@@ -366,8 +366,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     const buffer = analysisAudioBufferRef.current;
     if (!analyser || !buffer) return 0;
 
-    analyser.getFloatTimeDomainData(buffer as unknown as Float32Array<ArrayBufferLike>);
-    latestAudioFrameRef.current = new Float32Array(buffer);
+    analyser.getFloatTimeDomainData(buffer as any);
+    latestAudioFrameRef.current = new Float32Array((buffer as any).buffer);
 
     let sum = 0;
     for (let i = 0; i < buffer.length; i += 1) {

@@ -38,12 +38,12 @@ interface Question {
   rubric?: string;
   evidence?: string;
   referenceAnswer?: string;
-  rubricYesNoChecks?: { id?: number; check?: string; weight?: number }[];
+  rubricYesNoChecks?: { id: number; check: string; weight: number }[];
   needsReview?: boolean;
   criticScore?: number;
   criticWeightedScore?: number;
   criticFeedback?: string;
-  criticChecks?: { criterion?: string; verdict?: string; reason?: string; weight?: number }[];
+  criticChecks?: { id?: number; criterion: string; verdict: "YES" | "NO"; weight?: number; weighted_value?: number }[];
   retryCount?: number;
   importType?: string;
   importJobId?: string;
@@ -69,12 +69,12 @@ interface QuestionVariant {
   // Imported metadata
   evidence?: string;
   referenceAnswer?: string;
-  rubricYesNoChecks?: { id?: number; check?: string; weight?: number }[];
+  rubricYesNoChecks?: { id: number; check: string; weight: number }[];
   needsReview?: boolean;
   criticScore?: number;
   criticWeightedScore?: number;
   criticFeedback?: string;
-  criticChecks?: { criterion?: string; verdict?: string; reason?: string; weight?: number }[];
+  criticChecks?: { id?: number; criterion: string; verdict: "YES" | "NO"; weight?: number; weighted_value?: number }[];
   retryCount?: number;
   importType?: string;
   importJobId?: string;
@@ -342,15 +342,19 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     }
   };
 
-  const handleDuplicate = (q: Question) => {
-    const newQuestion = {
-      ...q,
-      id: Date.now().toString(),
-      text: `${q.text} (Copy)`,
-      usageCount: 0,
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-    setQuestions([newQuestion, ...questions]);
+  const handleDuplicate = async (q: Question) => {
+    const variant = toVariant(q);
+    variant.questionText = `${variant.questionText} (Copy)`;
+    const questionPayload = fromVariant(variant);
+    try {
+      setIsActionLoading(true);
+      await createQuestionMutation.mutateAsync(questionPayload);
+    } catch (err) {
+      console.error("Failed to duplicate:", err);
+      alert("Failed to duplicate question.");
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
   const handleExport = () => {
@@ -383,7 +387,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
             id: `import_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             isFavorite: false
           }));
-          setQuestions([...newQuestions, ...questions]);
+          queryClient.setQueryData(queryKeys.questionBank.list(), (old: any) => [...newQuestions, ...(old || [])]);
           alert(`Successfully imported ${newQuestions.length} questions.`);
         } else {
           alert('Invalid JSON format. Expected an array of questions.');

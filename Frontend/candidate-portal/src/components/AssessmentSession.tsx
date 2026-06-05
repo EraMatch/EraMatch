@@ -686,7 +686,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       const elapsedAssessmentSeconds = Math.max(0, initialTimerRef.current - assessmentTimerRef.current);
       const quantizedSecond = quantizeTimestampBucket(elapsedAssessmentSeconds, 5);
 
-      const [faceResult, voiceResult, gazeResult, emotionResult] = await Promise.all([
+      const [faceResult, gazeResult, emotionResult] = await Promise.all([
         postProctoringSignal('face', {
           session_id: sessionId,
           faces_detected: hasLiveVideo ? 1 : 0,

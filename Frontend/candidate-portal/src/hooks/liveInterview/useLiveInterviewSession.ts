@@ -13,7 +13,7 @@ export function useLiveInterviewSessionToken() {
 
 export function useCompleteLiveInterviewSession() {
     return useMutation({
-        mutationFn: ({ sessionId, transcript }: { sessionId: string; transcript: string }) =>
+        mutationFn: ({ sessionId, transcript }: { sessionId: string; transcript: any[] }) =>
             api.liveInterview.completeSession(sessionId, transcript),
     })
 }

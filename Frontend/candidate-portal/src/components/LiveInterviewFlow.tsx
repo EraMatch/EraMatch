@@ -159,9 +159,8 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                 roomName={roomName}
                 sessionId={sessionId}
                 timeBudgetMinutes={timeBudgetMinutes}
-                onLeave={() => {
-                    onCompletion();
-                }}
+                onComplete={() => onCompletion()}
+                onExit={() => onExit()}
             />
         );
     }

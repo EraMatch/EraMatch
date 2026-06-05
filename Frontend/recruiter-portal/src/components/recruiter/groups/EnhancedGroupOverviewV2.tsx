@@ -1189,7 +1189,7 @@ export function EnhancedGroupOverviewV2({
         groupName={groupName}
         positionTitle={description}
         candidates={candidateStatuses
-          .filter(c => c.progressionState !== 'rejected' && c.progressionState !== 'offered')
+          .filter(c => (c.progressionState as string) !== 'rejected' && (c.progressionState as string) !== 'offered')
           .map(c => ({
             id: c.id,
             name: c.name,
@@ -2595,7 +2595,7 @@ export function EnhancedGroupOverviewV2({
       {showArchiveModal && (
         <ArchiveGroupModal
           groupName={groupName}
-          nonRejectedCount={candidateStatuses.filter(c => c.progressionState !== 'rejected' && c.progressionState !== 'offered').length}
+          nonRejectedCount={candidateStatuses.filter(c => (c.progressionState as string) !== 'rejected' && (c.progressionState as string) !== 'offered').length}
           onConfirm={handleArchiveGroup}
           onClose={() => setShowArchiveModal(false)}
         />
@@ -2608,7 +2608,7 @@ export function EnhancedGroupOverviewV2({
         groupName={groupName}
         positionTitle={description}
         candidates={candidateStatuses
-          .filter(c => c.progressionState !== 'rejected' && c.progressionState !== 'offered')
+          .filter(c => (c.progressionState as string) !== 'rejected' && (c.progressionState as string) !== 'offered')
           .map(c => ({
             id: c.id,
             name: c.name,
