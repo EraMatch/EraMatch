@@ -102,8 +102,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   const lastFrameDimensionsRef = useRef<{ width: number; height: number } | null>(null);
   const analysisAudioContextRef = useRef<AudioContext | null>(null);
   const analysisAudioAnalyserRef = useRef<AnalyserNode | null>(null);
-  const analysisAudioBufferRef = useRef<Float32Array | null>(null);
-  const latestAudioFrameRef = useRef<Float32Array | null>(null);
+  const analysisAudioBufferRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const latestAudioFrameRef = useRef<Float32Array<ArrayBuffer> | null>(null);
   const silentSamplesRef = useRef(0);
   const totalAudioSamplesRef = useRef(0);
   const sampleWindowStartRef = useRef(Date.now());
@@ -359,15 +359,15 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
       source.connect(analyser);
       analysisAudioContextRef.current = ctx;
       analysisAudioAnalyserRef.current = analyser;
-      analysisAudioBufferRef.current = new Float32Array(analyser.fftSize);
+      analysisAudioBufferRef.current = new Float32Array(analyser.fftSize) as Float32Array<ArrayBuffer>;
     }
 
     const analyser = analysisAudioAnalyserRef.current;
     const buffer = analysisAudioBufferRef.current;
     if (!analyser || !buffer) return 0;
 
-    analyser.getFloatTimeDomainData(buffer as unknown as Float32Array<ArrayBufferLike>);
-    latestAudioFrameRef.current = new Float32Array(buffer);
+    analyser.getFloatTimeDomainData(buffer);
+    latestAudioFrameRef.current = new Float32Array(buffer) as Float32Array<ArrayBuffer>;
 
     let sum = 0;
     for (let i = 0; i < buffer.length; i += 1) {

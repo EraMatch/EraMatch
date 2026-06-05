@@ -1,5 +1,5 @@
 import { Bell, CheckCircle2, Clock, FileText, Video, Calendar, ArrowRight, AlertCircle, Wrench, Loader2, Lock } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
 import { Logo } from './ui/Logo';
@@ -55,10 +55,15 @@ export function CandidateHomePage({
   const navigate = useNavigate();
   const { data: rawHomeData, isLoading } = useCandidateHome();
   const homeData = rawHomeData as HomeData | null ?? null;
-  const notifications: Notification[] = (homeData?.notifications || []).map((n: any) => ({
+  const remoteNotifications: Notification[] = (homeData?.notifications || []).map((n: any) => ({
     ...n,
     type: n.type as 'success' | 'info' | 'warning',
   }));
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  useEffect(() => {
+    setNotifications(remoteNotifications);
+  }, [rawHomeData]);
 
   if (isLoading) {
     return (
