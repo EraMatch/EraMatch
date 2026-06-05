@@ -50,6 +50,7 @@ class DraftQuestion(BaseModel):
     critic_feedback: str | None = None
     critic_checks: list[dict] | None = None
     retry_count: int = 0
+    original_question_id: UUID | None = None
 
 
 class DraftQuestionsResponse(BaseModel):

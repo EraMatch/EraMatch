@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Plus, Filter, BookOpen, Code, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle, Sparkles, Inbox } from 'lucide-react';
+import { Search, Plus, Filter, BookOpen, Code as CodeIcon, Database, Globe, Cpu, ArrowLeft, Edit2, Trash2, Copy, Star, Clock, ChevronDown, Download, Upload, Tag, FileText, CheckCircle, XCircle, Sparkles, Inbox, Eye, AlertTriangle } from 'lucide-react';
 import { api } from '../../../services/api';
 import { useQuestionBank, useImportJobs, useCreateQuestion, useDeleteQuestion, useToggleQuestionFavorite, useDeleteImportJob } from '../../../hooks/questionBank/useQuestionBank';
 import { useQueryClient } from '@tanstack/react-query';
@@ -116,10 +116,12 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const [selectedType, setSelectedType] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
   const [showCreateMenu, setShowCreateMenu] = useState(false);
+  const [showOnlyIncompleteEssays, setShowOnlyIncompleteEssays] = useState(false);
 
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [togglingFavorites, setTogglingFavorites] = useState<Record<string, boolean>>({});
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
+  const [expandedQuestions, setExpandedQuestions] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Import state ────────────────────────────────────────────────────────
@@ -397,7 +399,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
 
   // --- Render Helpers ---
 
-  const categoryIcons = [BookOpen, Code, Globe, Cpu, Database];
+  const categoryIcons = [BookOpen, CodeIcon, Globe, Cpu, Database];
 
   const normalizeCategoryLabel = (value?: string) => {
     const cleaned = (value || '').trim();
@@ -410,7 +412,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
 
   const getCategoryIcon = (category: string, index: number) => {
     const normalized = category.toLowerCase();
-    if (/python|javascript|typescript|java|golang|c\+\+|c#|ruby|rust/.test(normalized)) return Code;
+    if (/python|javascript|typescript|java|golang|c\+\+|c#|ruby|rust/.test(normalized)) return CodeIcon;
     if (/database|sql|postgres|mysql|mongodb/.test(normalized)) return Database;
     if (/system|architecture|design|devops|cloud/.test(normalized)) return Cpu;
     if (/frontend|web|react|html|css/.test(normalized)) return Globe;
@@ -447,6 +449,41 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   const maxCategoryCount = categoryItems[0]?.count || 1;
   const visibleCategories = showAllCategories ? categoryItems : categoryItems.slice(0, 10);
 
+  const { incompleteEssayIds, incompleteGroups, incompleteStats } = useMemo(() => {
+    const textCounts = new Map<string, number>();
+    const firstOccurence = new Map<string, string>();
+    questions.forEach(q => {
+      if (q.type === 'Essay') {
+        const txt = (q.text || '').trim().toLowerCase();
+        textCounts.set(txt, (textCounts.get(txt) || 0) + 1);
+        if (!firstOccurence.has(txt)) firstOccurence.set(txt, q.id);
+      }
+    });
+
+    const ids = new Set<string>();
+    const groups = { missingRubric: new Set<string>(), fewChecks: new Set<string>(), missingModelAnswer: new Set<string>(), duplicates: new Set<string>() };
+    const stats = { missingRubric: 0, fewChecks: 0, missingModelAnswer: 0, duplicates: 0, total: 0 };
+
+    questions.forEach(q => {
+      if (q.type !== 'Essay') return;
+      const txt = (q.text || '').trim().toLowerCase();
+      const isDuplicate = (textCounts.get(txt) || 0) > 1 && firstOccurence.get(txt) !== q.id;
+      const noRubric = !q.rubric || q.rubric.trim() === '';
+      const fewChecks = !q.rubricYesNoChecks || q.rubricYesNoChecks.length < 10;
+      const noModelAnswer = !q.referenceAnswer || q.referenceAnswer.trim() === '';
+
+      if (isDuplicate || noRubric || fewChecks || noModelAnswer) {
+        ids.add(q.id);
+        stats.total++;
+        if (noRubric) { stats.missingRubric++; groups.missingRubric.add(q.id); }
+        if (fewChecks) { stats.fewChecks++; groups.fewChecks.add(q.id); }
+        if (noModelAnswer) { stats.missingModelAnswer++; groups.missingModelAnswer.add(q.id); }
+        if (isDuplicate) { stats.duplicates++; groups.duplicates.add(q.id); }
+      }
+    });
+    return { incompleteEssayIds: ids, incompleteGroups: groups, incompleteStats: stats };
+  }, [questions]);
+
   const filteredQuestions = questions.filter(q => {
     const matchesSearch = q.text.toLowerCase().includes(searchQuery.toLowerCase()) ||
       q.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -454,7 +491,13 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     const matchesDifficulty = selectedDifficulty === 'all' || q.difficulty === selectedDifficulty;
     const matchesType = selectedType === 'all' || q.type === selectedType;
 
-    return matchesSearch && matchesCategory && matchesDifficulty && matchesType;
+    if (!matchesSearch || !matchesCategory || !matchesDifficulty || !matchesType) return false;
+
+    if (showOnlyIncompleteEssays && selectedType === 'Essay') {
+      return incompleteEssayIds.has(q.id);
+    }
+
+    return true;
   });
 
   const filteredQuestionIds = filteredQuestions.map(q => q.id);
@@ -474,6 +517,64 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       const merged = new Set([...prev, ...filteredQuestionIds]);
       return Array.from(merged);
     });
+  };
+
+  const handleRefactorSelected = async (refactorType: string = 'all') => {
+    let toRefactor: string[] = [];
+    if (refactorType === 'all') {
+      toRefactor = selectedQuestionIds.filter(id => incompleteEssayIds.has(id));
+    } else if (refactorType === 'rubric') {
+      toRefactor = selectedQuestionIds.filter(id => incompleteGroups.missingRubric.has(id));
+    } else if (refactorType === 'checks') {
+      toRefactor = selectedQuestionIds.filter(id => incompleteGroups.fewChecks.has(id));
+    } else if (refactorType === 'answer') {
+      toRefactor = selectedQuestionIds.filter(id => incompleteGroups.missingModelAnswer.has(id));
+    }
+
+    if (toRefactor.length === 0) return;
+    
+    try {
+      setIsActionLoading(true);
+      await api.recruiter.refactorQuestions(toRefactor, refactorType);
+      alert(`Successfully queued ${toRefactor.length} questions for AI refactoring. Please check "Review Imports" to approve the results.`);
+      setSelectedQuestionIds(prev => prev.filter(id => !toRefactor.includes(id)));
+    } catch (err) {
+      console.error(err);
+      alert('Failed to queue refactoring job.');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleRemoveDuplicates = async () => {
+    const toDelete = selectedQuestionIds.filter(id => incompleteGroups.duplicates.has(id));
+    if (toDelete.length === 0) return;
+
+    const confirmed = window.confirm(`Drop ${toDelete.length} duplicate question(s)? This will keep one version of each and delete the selected duplicates.`);
+    if (!confirmed) return;
+
+    try {
+      setIsActionLoading(true);
+      const results = await Promise.allSettled(
+        toDelete.map((id) => deleteQuestionMutation.mutateAsync(id))
+      );
+
+      const successIds = toDelete.filter((_, idx) => results[idx].status === 'fulfilled');
+      const failedCount = toDelete.length - successIds.length;
+
+      if (successIds.length > 0) {
+        setSelectedQuestionIds(prev => prev.filter(id => !successIds.includes(id)));
+      }
+
+      if (failedCount > 0) {
+        alert(`Dropped ${successIds.length} duplicate(s). ${failedCount} failed.`);
+      }
+    } catch (err) {
+      console.error('Failed to drop duplicates:', err);
+      alert('Failed to drop duplicates.');
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
   const handleDeleteSelectedQuestions = async () => {
@@ -835,7 +936,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                       onClick={() => handleCreateClick('code')}
                       className="w-full text-left px-4 py-2 text-[14px] text-[#374151] hover:bg-[#f3f4f6] hover:text-[#6366f1] flex items-center gap-2"
                     >
-                      <Code size={16} />
+                      <CodeIcon size={16} />
                       Coding
                     </button>
                     <button
@@ -1059,32 +1160,125 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
             </div>
 
             {/* Results Summary */}
-            <div className="mb-4 flex items-center justify-between">
-              <p className="text-sm text-gray-600">
-                Showing <span className="font-medium text-gray-900">{filteredQuestions.length}</span> questions
-              </p>
-              <div className="flex items-center gap-2">
-                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#e5e7eb] bg-white text-[13px] text-[#374151]">
-                  <input
-                    type="checkbox"
-                    checked={allFilteredSelected}
-                    onChange={toggleSelectAllFilteredQuestions}
-                    disabled={filteredQuestions.length === 0 || isActionLoading}
-                    className="w-4 h-4 rounded border-gray-300"
-                  />
-                  <span>Select all shown</span>
-                </label>
-                {selectedQuestionIds.length > 0 && (
-                  <button
-                    onClick={handleDeleteSelectedQuestions}
-                    disabled={isActionLoading}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-rose-200 bg-rose-50 text-rose-700 text-[13px] font-medium disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    <Trash2 size={14} />
-                    {isActionLoading ? 'Deleting...' : `Delete Selected (${selectedQuestionIds.length})`}
-                  </button>
-                )}
+            <div className="mb-4 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <p className="text-sm text-gray-600">
+                    Showing <span className="font-medium text-gray-900">{filteredQuestions.length}</span> questions
+                  </p>
+                  {selectedType === 'Essay' && incompleteStats.total > 0 && (
+                    <label className="flex items-center gap-2 text-[13px] text-amber-700 bg-amber-50 px-3 py-1.5 rounded-full border border-amber-200 cursor-pointer hover:bg-amber-100 transition-colors">
+                      <input 
+                        type="checkbox" 
+                        checked={showOnlyIncompleteEssays}
+                        onChange={(e) => setShowOnlyIncompleteEssays(e.target.checked)}
+                        className="rounded border-amber-300 text-amber-600 focus:ring-amber-500"
+                      />
+                      <AlertTriangle size={14} />
+                      <span>{incompleteStats.total} Incomplete Essays</span>
+                    </label>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-[#e5e7eb] bg-white text-[13px] text-[#374151]">
+                    <input
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={toggleSelectAllFilteredQuestions}
+                      disabled={filteredQuestions.length === 0 || isActionLoading}
+                      className="w-4 h-4 rounded border-gray-300"
+                    />
+                    <span>Select all shown</span>
+                  </label>
+                  {selectedQuestionIds.length > 0 && (
+                    <button
+                      onClick={handleDeleteSelectedQuestions}
+                      disabled={isActionLoading}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-[10px] border border-rose-200 bg-rose-50 text-rose-700 text-[13px] font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 size={14} />
+                      {isActionLoading ? 'Deleting...' : `Delete Selected (${selectedQuestionIds.length})`}
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {selectedType === 'Essay' && showOnlyIncompleteEssays && incompleteStats.total > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-[12px] p-4 animate-in fade-in duration-200">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h4 className="text-amber-800 font-medium text-[14px] flex items-center gap-2 mb-2">
+                        <AlertTriangle size={16} />
+                        Incomplete Essays Breakdown
+                      </h4>
+                      <ul className="text-[13px] text-amber-700 space-y-2 ml-6 list-disc">
+                        {incompleteStats.missingRubric > 0 && (
+                          <li>
+                            <div className="flex items-center gap-4">
+                              <span className="w-40">Missing Rubric: {incompleteStats.missingRubric}</span>
+                              {selectedQuestionIds.some(id => incompleteGroups.missingRubric.has(id)) && (
+                                <button onClick={() => handleRefactorSelected('rubric')} className="px-2 py-0.5 bg-amber-100 border border-amber-300 rounded hover:bg-amber-200 text-amber-800 text-[11px] font-medium">Refactor Selected</button>
+                              )}
+                            </div>
+                          </li>
+                        )}
+                        {incompleteStats.fewChecks > 0 && (
+                          <li>
+                            <div className="flex items-center gap-4">
+                              <span className="w-40">&lt; 10 Yes/No Checks: {incompleteStats.fewChecks}</span>
+                              {selectedQuestionIds.some(id => incompleteGroups.fewChecks.has(id)) && (
+                                <button onClick={() => handleRefactorSelected('checks')} className="px-2 py-0.5 bg-amber-100 border border-amber-300 rounded hover:bg-amber-200 text-amber-800 text-[11px] font-medium">Refactor Selected</button>
+                              )}
+                            </div>
+                          </li>
+                        )}
+                        {incompleteStats.missingModelAnswer > 0 && (
+                          <li>
+                            <div className="flex items-center gap-4">
+                              <span className="w-40">Missing Model Answer: {incompleteStats.missingModelAnswer}</span>
+                              {selectedQuestionIds.some(id => incompleteGroups.missingModelAnswer.has(id)) && (
+                                <button onClick={() => handleRefactorSelected('answer')} className="px-2 py-0.5 bg-amber-100 border border-amber-300 rounded hover:bg-amber-200 text-amber-800 text-[11px] font-medium">Refactor Selected</button>
+                              )}
+                            </div>
+                          </li>
+                        )}
+                        {incompleteStats.duplicates > 0 && (
+                          <li>
+                            <div className="flex items-center gap-4">
+                              <span className="w-40">Duplicate Questions: {incompleteStats.duplicates}</span>
+                              {selectedQuestionIds.some(id => incompleteGroups.duplicates.has(id)) && (
+                                <button onClick={handleRemoveDuplicates} className="px-2 py-0.5 bg-rose-100 border border-rose-300 rounded hover:bg-rose-200 text-rose-800 text-[11px] font-medium">Drop Selected Duplicates</button>
+                              )}
+                            </div>
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => {
+                          const newSelected = new Set(selectedQuestionIds);
+                          incompleteEssayIds.forEach(id => newSelected.add(id));
+                          setSelectedQuestionIds(Array.from(newSelected));
+                        }}
+                        className="px-4 py-2 bg-white border border-amber-300 text-amber-700 text-[13px] rounded-[8px] hover:bg-amber-50 transition-colors font-medium text-center"
+                      >
+                        Select All Incomplete
+                      </button>
+                      {selectedQuestionIds.some(id => incompleteEssayIds.has(id)) && (
+                        <button
+                          onClick={() => handleRefactorSelected('all')}
+                          disabled={isActionLoading}
+                          className="flex items-center justify-center gap-2 px-4 py-2 bg-amber-600 text-white text-[13px] rounded-[8px] hover:bg-amber-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Sparkles size={14} />
+                          {isActionLoading ? 'Queueing...' : 'Refactor All Selected'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Questions List */}
@@ -1136,6 +1330,13 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                     <div className="flex items-center gap-2 ml-4">
                       {/* Action Buttons */}
                       <button
+                        onClick={() => setExpandedQuestions(prev => ({ ...prev, [question.id]: !prev[question.id] }))}
+                        className={`p-2 transition-colors rounded-[8px] ${expandedQuestions[question.id] ? 'bg-[#e0e7ff] text-[#6366f1]' : 'text-[#9ca3af] hover:text-[#6366f1] hover:bg-[#e0e7ff]'}`}
+                        title="Preview Details"
+                      >
+                        <Eye size={18} />
+                      </button>
+                      <button
                         onClick={() => handleEditClick(question)}
                         className="p-2 text-[#9ca3af] hover:text-[#6366f1] hover:bg-[#e0e7ff] rounded-[8px] transition-colors"
                         title="Edit"
@@ -1176,72 +1377,135 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                     </div>
                   </div>
 
-                  {(question.importJobId || question.sourceFilename || question.evidence || question.referenceAnswer || question.criticFeedback || (question.criticChecks?.length || 0) > 0) && (
-                    <div className="mt-4 rounded-[12px] border border-[#e5e7eb] bg-[#f8fafc] p-4">
-                      <div className="flex flex-wrap items-center gap-2 mb-3">
-                        <span className="px-2.5 py-1 text-[12px] rounded-full bg-white text-[#334155] border border-[#cbd5e1]">
-                          Imported Metadata
-                        </span>
-                        {question.importType && (
-                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 capitalize">
-                            {question.importType}
-                          </span>
-                        )}
-                        {typeof question.criticWeightedScore === 'number' && (
-                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            Critic Score {(question.criticWeightedScore * 100).toFixed(1)}%
-                          </span>
-                        )}
-                        {question.needsReview && (
-                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                            Needs Review
-                          </span>
-                        )}
-                        {typeof question.retryCount === 'number' && question.retryCount > 0 && (
-                          <span className="px-2.5 py-1 text-[12px] rounded-full bg-white text-[#475569] border border-[#cbd5e1]">
-                            Retry {question.retryCount}
-                          </span>
-                        )}
-                      </div>
-
-                      {question.sourceFilename && (
-                        <div className="mb-3">
-                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Source Filename</div>
-                          <p className="text-[13px] text-[#1f2937] break-all">{question.sourceFilename}</p>
+                  {expandedQuestions[question.id] && (
+                    <div className="mt-4 pt-4 border-t border-gray-100 animate-in fade-in slide-in-from-top-2 duration-200">
+                      {/* Type-Specific Details */}
+                      {question.type === 'Multiple Choice' && question.options && question.options.length > 0 && (
+                        <div className="mb-4">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-2">Options</div>
+                          <ul className="space-y-1.5">
+                            {question.options.map((opt, i) => {
+                              const isCorrect = Array.isArray(question.correctAnswer) ? question.correctAnswer.includes(i) : question.correctAnswer === i;
+                              return (
+                                <li key={i} className={`text-[13px] p-2.5 rounded-[8px] ${isCorrect ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 font-medium' : 'bg-gray-50 border border-gray-200 text-gray-700'}`}>
+                                  {isCorrect && <CheckCircle size={14} className="inline mr-1.5 text-emerald-600 mb-0.5" />}
+                                  {opt}
+                                </li>
+                              );
+                            })}
+                          </ul>
                         </div>
                       )}
 
-                      {question.importJobId && (
-                        <div className="mb-3">
-                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Import Job ID</div>
-                          <p className="text-[13px] text-[#1f2937] break-all">{question.importJobId}</p>
+                      {question.type === 'Essay' && (
+                        <>
+                          {question.rubric && (
+                            <div className="mb-4">
+                              <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Grading Rubric</div>
+                              <div className="text-[13px] text-[#1f2937] whitespace-pre-wrap bg-gray-50 p-3 rounded-[8px] border border-gray-200">{question.rubric}</div>
+                            </div>
+                          )}
+                          {(question.rubricYesNoChecks?.length || 0) > 0 && (
+                            <div className="mb-4">
+                              <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Yes/No Checks</div>
+                              <ul className="space-y-1.5">
+                                {question.rubricYesNoChecks!.map((check, i) => (
+                                  <li key={i} className="text-[13px] text-[#374151] bg-gray-50 p-2.5 rounded-[8px] border border-gray-200 flex justify-between items-start">
+                                    <span>{check.check}</span>
+                                    <span className="text-gray-400 text-[11px] font-medium uppercase ml-4 mt-0.5 whitespace-nowrap">Wt: {check.weight}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {question.type === 'Code' && question.testCases && question.testCases.length > 0 && (
+                        <div className="mb-4">
+                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-2">Test Cases</div>
+                          <div className="grid grid-cols-2 gap-3">
+                            {question.testCases.map((tc, i) => (
+                              <div key={i} className="bg-gray-50 border border-gray-200 rounded-[8px] p-3 text-[12px]">
+                                <div className="text-[#64748b] mb-1.5">Input: <span className="font-mono text-[#1e293b] block mt-0.5 whitespace-pre-wrap">{tc.input}</span></div>
+                                <div className="text-[#64748b]">Output: <span className="font-mono text-[#1e293b] block mt-0.5 whitespace-pre-wrap">{tc.output}</span></div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 
-                      {question.referenceAnswer && (
-                        <div className="mb-3">
-                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Reference Answer</div>
-                          <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap line-clamp-3">{question.referenceAnswer}</p>
-                        </div>
-                      )}
+                      {/* Imported Metadata */}
+                      {(question.importJobId || question.sourceFilename || question.evidence || question.referenceAnswer || question.criticFeedback || (question.criticChecks?.length || 0) > 0) && (
+                        <div className="rounded-[12px] border border-[#e5e7eb] bg-[#f8fafc] p-4">
+                          <div className="flex flex-wrap items-center gap-2 mb-4 pb-3 border-b border-[#e2e8f0]">
+                            <span className="px-2.5 py-1 text-[12px] rounded-full bg-white text-[#334155] border border-[#cbd5e1] font-medium">
+                              Imported Metadata
+                            </span>
+                            {question.importType && (
+                              <span className="px-2.5 py-1 text-[12px] rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 capitalize">
+                                {question.importType}
+                              </span>
+                            )}
+                            {typeof question.criticWeightedScore === 'number' && (
+                              <span className="px-2.5 py-1 text-[12px] rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                Critic Score {(question.criticWeightedScore * 100).toFixed(1)}%
+                              </span>
+                            )}
+                            {question.needsReview && (
+                              <span className="px-2.5 py-1 text-[12px] rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                                Needs Review
+                              </span>
+                            )}
+                            {typeof question.retryCount === 'number' && question.retryCount > 0 && (
+                              <span className="px-2.5 py-1 text-[12px] rounded-full bg-white text-[#475569] border border-[#cbd5e1]">
+                                Retry {question.retryCount}
+                              </span>
+                            )}
+                          </div>
 
-                      {question.evidence && (
-                        <div className="mb-3">
-                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Evidence</div>
-                          <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap line-clamp-3">{question.evidence}</p>
-                        </div>
-                      )}
+                          <div className="space-y-4">
+                            {question.sourceFilename && (
+                              <div>
+                                <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Source Filename</div>
+                                <p className="text-[13px] text-[#1f2937] break-all">{question.sourceFilename}</p>
+                              </div>
+                            )}
 
-                      {question.criticFeedback && (
-                        <div className="mb-3">
-                          <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Critic Feedback</div>
-                          <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap line-clamp-3">{question.criticFeedback}</p>
-                        </div>
-                      )}
+                            {question.importJobId && (
+                              <div>
+                                <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Import Job ID</div>
+                                <p className="text-[13px] text-[#1f2937] break-all font-mono text-[12px]">{question.importJobId}</p>
+                              </div>
+                            )}
 
-                      {(question.criticChecks?.length || 0) > 0 && (
-                        <div className="text-[13px] text-[#334155]">
-                          {question.criticChecks!.filter(c => String(c.verdict || '').toUpperCase() === 'NO').length} failed checklist item(s) out of {question.criticChecks!.length}
+                            {question.referenceAnswer && (
+                              <div>
+                                <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Reference Answer</div>
+                                <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap">{question.referenceAnswer}</p>
+                              </div>
+                            )}
+
+                            {question.evidence && (
+                              <div>
+                                <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Evidence (From Source)</div>
+                                <p className="text-[13px] text-[#1f2937] whitespace-pre-wrap border-l-2 border-indigo-200 pl-3 italic text-gray-600">{question.evidence}</p>
+                              </div>
+                            )}
+
+                            {question.criticFeedback && (
+                              <div>
+                                <div className="text-[12px] uppercase tracking-wide text-[#64748b] mb-1">Critic Feedback</div>
+                                <p className="text-[13px] text-amber-800 whitespace-pre-wrap bg-amber-50 p-3 rounded-[8px] border border-amber-200">{question.criticFeedback}</p>
+                              </div>
+                            )}
+
+                            {(question.criticChecks?.length || 0) > 0 && (
+                              <div className="text-[13px] text-[#334155] bg-gray-100 p-2.5 rounded-[8px]">
+                                <span className="font-medium text-gray-900">{question.criticChecks!.filter(c => String(c.verdict || '').toUpperCase() === 'NO').length}</span> failed checklist item(s) out of {question.criticChecks!.length}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
