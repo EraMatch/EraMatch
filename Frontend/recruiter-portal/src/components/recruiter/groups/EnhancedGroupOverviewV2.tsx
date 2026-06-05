@@ -2622,23 +2622,25 @@ export function EnhancedGroupOverviewV2({
       />
 
       {/* Toast Notification */}
-      <AnimatePresence>
-        {toastMessage && (
-          <motion.div
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50"
-          >
-            <div className="bg-[#111827] rounded-[16px] shadow-2xl px-8 py-4 flex items-center gap-3">
-              <CheckCircle size={20} className="text-[#10b981]" />
-              <span className="font-['Arimo',sans-serif] text-[14px] text-white">
-                {toastMessage}
-              </span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div className="fixed bottom-8 left-0 right-0 z-50 flex justify-center pointer-events-none">
+        <AnimatePresence>
+          {toastMessage && (
+            <motion.div
+              initial={{ y: 100, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 100, opacity: 0 }}
+              className="pointer-events-auto"
+            >
+              <div className="bg-[#111827] rounded-[16px] shadow-2xl px-8 py-4 flex items-center gap-3">
+                <CheckCircle size={20} className="text-[#10b981]" />
+                <span className="font-['Arimo',sans-serif] text-[14px] text-white">
+                  {toastMessage}
+                </span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       {/* Filtration Flow Configuration Modal */}
       {
