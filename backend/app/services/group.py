@@ -826,6 +826,7 @@ class GroupService:
             acceptance_criteria=criteria,
             candidates=candidates,
             pipeline_stages=pipeline_stages,
+            assessments=assessments_data,
             interviews=interviews_data,
             github_questions_count=github_questions_count,
             use_github_questions_video_interview=criteria_dict.get("use_github_questions_video_interview", False),
