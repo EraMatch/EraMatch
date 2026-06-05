@@ -14,12 +14,18 @@ LOG_DIR="$ROOT_DIR/.dev-logs"
 VENV_ACTIVATE="$ROOT_DIR/backend/.venv/bin/activate"
 
 # Ports used by every service
-declare -A SERVICE_PORTS=(
-    ["backend-api"]=8000
-    ["ai-service"]=8001
-    ["recruiter-portal"]=5173
-    ["candidate-portal"]=5174
-)
+SERVICES=("backend-api" "ai-service" "recruiter-portal" "candidate-portal")
+
+get_service_port() {
+    case "$1" in
+        "backend-api") echo 8000 ;;
+        "ai-service") echo 8001 ;;
+        "recruiter-portal") echo 5173 ;;
+        "candidate-portal") echo 5174 ;;
+        *) echo 0 ;;
+    esac
+}
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -47,8 +53,8 @@ kill_port() {
 
 if [[ "${1:-}" == "stop" ]]; then
     echo "Stopping all EraMatch dev services..."
-    for svc in "${!SERVICE_PORTS[@]}"; do
-        port="${SERVICE_PORTS[$svc]}"
+    for svc in "${SERVICES[@]}"; do
+        port=$(get_service_port "$svc")
         pid=$(pid_on_port "$port")
         if [[ -n "$pid" ]]; then
             echo "  Stopping $svc on :$port (PID $pid)"
@@ -65,8 +71,8 @@ fi
 
 if [[ "${1:-}" == "status" ]]; then
     echo "EraMatch dev service status:"
-    for svc in "backend-api" "ai-service" "recruiter-portal" "candidate-portal"; do
-        port="${SERVICE_PORTS[$svc]}"
+    for svc in "${SERVICES[@]}"; do
+        port=$(get_service_port "$svc")
         pid=$(pid_on_port "$port")
         if [[ -n "$pid" ]]; then
             echo "  ✓ $svc  :$port  (PID $pid)"
@@ -80,8 +86,8 @@ fi
 # ── Pre-flight: clear occupied ports ─────────────────────────────────────────
 
 echo "Checking ports..."
-for svc in "backend-api" "ai-service" "recruiter-portal" "candidate-portal"; do
-    port="${SERVICE_PORTS[$svc]}"
+for svc in "${SERVICES[@]}"; do
+    port=$(get_service_port "$svc")
     pid=$(pid_on_port "$port")
     if [[ -n "$pid" ]]; then
         echo "  Port $port ($svc) already in use by PID $pid — clearing..."

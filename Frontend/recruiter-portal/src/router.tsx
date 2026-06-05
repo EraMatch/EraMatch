@@ -278,10 +278,12 @@ const GroupOverviewWrapper = () => {
         });
     }
 
-    // Phase 6: GroupPageShell is the default. Use ?legacy=1 to fall back to EnhancedGroupOverviewV2.
-    const useLegacy = searchParams.get('legacy') === '1';
+    // Default is the full-featured EnhancedGroupOverviewV2 cockpit (per-stage config,
+    // correct back-nav, scheduling, offers). The newer results-oriented GroupPageShell
+    // is opt-in via ?shell=1 until it reaches feature parity.
+    const useShell = searchParams.get('shell') === '1';
 
-    if (!useLegacy) {
+    if (useShell) {
         return (
             <GroupPageShell
                 groupId={groupId ?? ''}

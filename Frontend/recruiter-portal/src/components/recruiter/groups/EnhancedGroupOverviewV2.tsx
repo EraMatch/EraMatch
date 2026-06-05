@@ -21,6 +21,7 @@ import { LiveInterviewMonitor } from '../live-interview-v2/LiveInterviewMonitor'
 import { LiveInterviewResults } from '../live-interview-v2/LiveInterviewResults';
 
 import { ActivityLogPanel } from './ActivityLogPanel';
+import { ReviewMode } from './review/ReviewMode';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
 import { useEffect } from 'react';
@@ -173,7 +174,15 @@ export function EnhancedGroupOverviewV2({
   // Use recruiterType prop directly instead of state
   const userRole = recruiterType;
 
-  const [activeSubTab, setActiveSubTab] = useState<'candidates' | 'configuration' | 'activity'>('candidates');
+  // Top-level mode: Configuration (per-stage setup) ⇄ Results (candidate matrix / review).
+  // Tech recruiters land on Configuration for a fresh group; HR lands on Results.
+  const [activeSubTab, setActiveSubTab] = useState<'candidates' | 'configuration'>(
+    recruiterType === 'technical' ? 'configuration' : 'candidates'
+  );
+  // Activity log is now a header dropdown rather than a tab.
+  const [showActivityMenu, setShowActivityMenu] = useState(false);
+  // Results sub-view: 'review' = per-stage review (rail + filters + breakdown), 'matrix' = classic cross-stage matrix.
+  const [resultsView, setResultsView] = useState<'review' | 'matrix'>('review');
   const [user, setUser] = useState<any>(null);
   const [actualUserRole, setActualUserRole] = useState<string | null>(null);
 
@@ -471,6 +480,34 @@ export function EnhancedGroupOverviewV2({
   const showToast = (message: string) => {
     setToastMessage(message);
     setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  // ── Review mode: stages list + proceed/view handlers (application-id based) ──
+  const reviewStages = pipelineSteps.map(s => ({ key: s.id, label: s.name, state: s.state as string }));
+
+  const handleReviewViewCandidate = (candidateId: string, _applicationId: string) => {
+    // Router's onViewCandidate navigates to /recruiter/candidates/<id>; pass the real UUID.
+    (onViewCandidate as unknown as (id: string) => void)(candidateId);
+  };
+
+  const handleReviewProceed = async (
+    stageKey: string,
+    applicationIds: string[],
+    action: 'progress' | 'reject' | 'hold',
+  ) => {
+    if (applicationIds.length === 0) return;
+    try {
+      await bulkProgressMutation.mutateAsync({
+        groupId,
+        payload: { application_ids: applicationIds, action, current_stage_type: stageKey },
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.stageMonitoring(groupId, stageKey) });
+      const verb = action === 'progress' ? 'progressed' : action === 'reject' ? 'rejected' : 'held';
+      showToast(`${applicationIds.length} candidate(s) ${verb}`);
+    } catch (err: any) {
+      showToast(err?.message || 'Bulk action failed — please try again');
+    }
   };
 
   const addActivityLog = (entry: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => {
@@ -990,26 +1027,37 @@ export function EnhancedGroupOverviewV2({
               <span className="font-['Arimo',sans-serif] text-[14px]">Move Candidates</span>
             </button>
           )}
-          <button
-            onClick={canStart ? handleStartStage : undefined}
-            disabled={!canStart || startStageMutation.isPending}
-            title={!canStart ? `Close "${prevStep?.name}" stage first` : undefined}
-            className={`flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] text-white transition-colors ${
-              canStart && !startStageMutation.isPending
-                ? 'bg-[#6366f1] hover:bg-[#5558e3] cursor-pointer'
-                : 'bg-[#9ca3af] cursor-not-allowed'
-            }`}
-          >
-            {startStageMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-            <span className="font-['Arimo',sans-serif] text-[14px]">
-              {startStageMutation.isPending ? 'Starting…' : 'Start Current Stage'}
-            </span>
-          </button>
+          {/* Start is a Technical-recruiter action only */}
+          {userRole === 'technical' && (
+            <button
+              onClick={canStart ? handleStartStage : undefined}
+              disabled={!canStart || startStageMutation.isPending}
+              title={!canStart ? `Close "${prevStep?.name}" stage first` : undefined}
+              className={`flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] text-white transition-colors ${
+                canStart && !startStageMutation.isPending
+                  ? 'bg-[#6366f1] hover:bg-[#5558e3] cursor-pointer'
+                  : 'bg-[#9ca3af] cursor-not-allowed'
+              }`}
+            >
+              {startStageMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+              <span className="font-['Arimo',sans-serif] text-[14px]">
+                {startStageMutation.isPending ? 'Starting…' : 'Start Current Stage'}
+              </span>
+            </button>
+          )}
         </div>
       );
     }
 
     if (stageState === 'active') {
+      // Close is a Technical-recruiter action only
+      if (userRole !== 'technical') {
+        return (
+          <span className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-indigo-50 text-indigo-600 text-[13px] font-medium font-['Arimo',sans-serif]">
+            <Clock size={15} /> Stage in progress
+          </span>
+        );
+      }
       return (
         <button
           onClick={handleCloseStage}
@@ -1474,30 +1522,50 @@ export function EnhancedGroupOverviewV2({
         </div>
       </div>
 
-      {/* Sub-Tab Navigation Bar */}
+      {/* Mode toggle: Configuration ⇄ Results, with Activity dropdown */}
         <div id="group-subtabs-section" className="px-8 mt-6">
-          <div className="flex border-b border-[#e5e7eb] bg-white p-1.5 rounded-[14px] shadow-sm border border-gray-100 flex-wrap gap-1">
-            <button
-              onClick={() => setActiveSubTab('candidates')}
-              className={`flex items-center gap-2 px-6 py-3 rounded-[10px] font-['Arimo',sans-serif] text-[14px] font-medium transition-all ${activeSubTab === 'candidates' ? 'bg-[#f5f3ff] text-[#6366f1] shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
-            >
-              <Users size={16} className={activeSubTab === 'candidates' ? 'text-[#6366f1]' : 'text-gray-400'} />
-              <span>Candidates Matrix</span>
-            </button>
-            <button
-              onClick={() => setActiveSubTab('configuration')}
-              className={`flex items-center gap-2 px-6 py-3 rounded-[10px] font-['Arimo',sans-serif] text-[14px] font-medium transition-all ${activeSubTab === 'configuration' ? 'bg-[#f5f3ff] text-[#6366f1] shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
-            >
-              <Sliders size={16} className={activeSubTab === 'configuration' ? 'text-[#6366f1]' : 'text-gray-400'} />
-              <span>Pipeline Configuration</span>
-            </button>
-            <button
-              onClick={() => setActiveSubTab('activity')}
-              className={`flex items-center gap-2 px-6 py-3 rounded-[10px] font-['Arimo',sans-serif] text-[14px] font-medium transition-all ${activeSubTab === 'activity' ? 'bg-[#f5f3ff] text-[#6366f1] shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
-            >
-              <Activity size={16} className={activeSubTab === 'activity' ? 'text-[#6366f1]' : 'text-gray-400'} />
-              <span>Activity History</span>
-            </button>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex bg-white p-1.5 rounded-[14px] shadow-sm border border-gray-100 gap-1">
+              <button
+                onClick={() => setActiveSubTab('configuration')}
+                className={`flex items-center gap-2 px-6 py-3 rounded-[10px] font-['Arimo',sans-serif] text-[14px] font-medium transition-all ${activeSubTab === 'configuration' ? 'bg-[#f5f3ff] text-[#6366f1] shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
+              >
+                <Sliders size={16} className={activeSubTab === 'configuration' ? 'text-[#6366f1]' : 'text-gray-400'} />
+                <span>Configuration</span>
+              </button>
+              <button
+                onClick={() => setActiveSubTab('candidates')}
+                className={`flex items-center gap-2 px-6 py-3 rounded-[10px] font-['Arimo',sans-serif] text-[14px] font-medium transition-all ${activeSubTab === 'candidates' ? 'bg-[#f5f3ff] text-[#6366f1] shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
+              >
+                <Users size={16} className={activeSubTab === 'candidates' ? 'text-[#6366f1]' : 'text-gray-400'} />
+                <span>Results</span>
+              </button>
+            </div>
+
+            {/* Activity log dropdown (replaces the old Activity tab) */}
+            <div className="relative">
+              <button
+                onClick={() => setShowActivityMenu(v => !v)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-[10px] border border-gray-200 bg-white text-[13px] font-medium text-gray-600 hover:bg-gray-50 shadow-sm transition-colors font-['Arimo',sans-serif]"
+              >
+                <Activity size={15} className="text-gray-400" />
+                <span>Activity</span>
+                <ChevronDown size={14} className={`text-gray-400 transition-transform ${showActivityMenu ? 'rotate-180' : ''}`} />
+              </button>
+              {showActivityMenu && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setShowActivityMenu(false)} />
+                  <div className="absolute right-0 mt-2 w-[440px] max-h-[70vh] overflow-y-auto z-40 rounded-[14px] border border-gray-200 bg-white shadow-2xl">
+                    <ActivityLogPanel
+                      groupId={groupId}
+                      groupName={groupName}
+                      isInline={true}
+                      onClose={() => setShowActivityMenu(false)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
@@ -2043,17 +2111,35 @@ export function EnhancedGroupOverviewV2({
           </div>
         )}
 
-        {activeSubTab === 'activity' && (
-          <div className="px-8 mt-6">
-            <ActivityLogPanel
-              groupId={groupId}
-              groupName={groupName}
-              isInline={true}
-            />
+        {/* Results sub-view toggle: Review (per-stage) ⇄ Matrix (cross-stage) */}
+        {activeSubTab === 'candidates' && (
+          <div className="px-8 mt-4">
+            <div className="inline-flex gap-1 bg-white border border-gray-100 rounded-[10px] p-1 shadow-sm">
+              <button
+                onClick={() => setResultsView('review')}
+                className={`px-4 py-2 rounded-[8px] text-[13px] font-medium transition-all ${resultsView === 'review' ? 'bg-[#f5f3ff] text-[#6366f1] font-semibold' : 'text-gray-500 hover:bg-gray-50'}`}
+              >Review</button>
+              <button
+                onClick={() => setResultsView('matrix')}
+                className={`px-4 py-2 rounded-[8px] text-[13px] font-medium transition-all ${resultsView === 'matrix' ? 'bg-[#f5f3ff] text-[#6366f1] font-semibold' : 'text-gray-500 hover:bg-gray-50'}`}
+              >Matrix</button>
+            </div>
           </div>
         )}
 
-        {activeSubTab === 'candidates' && (
+        {/* Per-stage Review mode (rail + filters + breakdown + proceed) */}
+        {activeSubTab === 'candidates' && resultsView === 'review' && (
+          <ReviewMode
+            groupId={groupId}
+            stages={reviewStages}
+            recruiterType={recruiterType}
+            onViewCandidate={handleReviewViewCandidate}
+            onProceed={handleReviewProceed}
+            proceedPending={bulkProgressMutation.isPending}
+          />
+        )}
+
+        {activeSubTab === 'candidates' && resultsView === 'matrix' && (
           <div className="px-8 py-6">
             {/* Candidate Progress Matrix */}
             <div className="bg-white rounded-[16px] border border-[#e5e7eb] overflow-hidden">

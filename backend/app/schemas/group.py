@@ -313,6 +313,13 @@ class AssessmentMonitoringCandidate(BaseModel):
     retakes_used: int | None = None            # ai_interview only
     auto_verdict: str | None = None            # live_interview only: pass | fail | None
     overall_score_pct: float | None = None     # live_interview only (0–100)
+    # Session backing this candidate's stage attempt (assessment/interview/live session id)
+    session_id: UUID | None = None
+    # Per-type breakdown for quick-filters. Keys differ by stage:
+    #   assessment    -> {"mcq": 82.0, "coding": 60.0, "essay": 74.0}
+    #   ai_interview  -> {"technical": 80.0, "communication": 70.0, "confidence": 65.0}
+    #   live_interview-> {"<dimension name>": 0-100, ...}
+    sub_scores: dict[str, float] | None = None
     flags: list[MonitoringFlag] = []
     completion_time: datetime | None = None
 

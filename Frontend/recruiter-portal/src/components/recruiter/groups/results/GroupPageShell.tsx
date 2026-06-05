@@ -1,7 +1,7 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ArrowRight, Clock } from 'lucide-react';
+import { ChevronLeft, ArrowRight, Clock, Play, XCircle, Loader2 } from 'lucide-react';
 import { StageNavigator } from './StageNavigator';
 import { ModeToggle } from './ModeToggle';
 import { parseGroupViewParams, buildGroupViewSearch } from './groupViewState';
@@ -9,8 +9,13 @@ import type { StageKey, GroupViewParams } from './groupViewState';
 import { deriveDefaultStage } from './deriveDefaultStage';
 import type { ViewMode } from './deriveDefaultStage';
 import { derivePipelineStages } from './stageLifecycle';
-import { useGroupDetail, useStageMonitoring } from '../../../../hooks/groups/useGroups';
-import { api } from '../../../../services/api';
+import {
+    useGroupDetail,
+    useStageMonitoring,
+    useStartStage,
+    useCloseStage,
+    useBulkProgressCandidates,
+} from '../../../../hooks/groups/useGroups';
 import { queryKeys } from '../../../../lib/queryKeys';
 import { OverviewMatrixView } from './OverviewMatrixView';
 import { AssessmentResultsView } from './AssessmentResultsView';
@@ -45,8 +50,18 @@ export function GroupPageShell({
     const [openProfile, setOpenProfile] = useState<OpenProfileState | null>(null);
     const [openStageReview, setOpenStageReview] = useState(false);
     const [showActivity, setShowActivity] = useState(false);
+    const [toast, setToast] = useState<{ msg: string; kind: 'ok' | 'err' } | null>(null);
     const qc = useQueryClient();
     const { data: groupDetail, isLoading: groupLoading } = useGroupDetail(groupId);
+
+    const startStage = useStartStage();
+    const closeStage = useCloseStage();
+    const bulkProgress = useBulkProgressCandidates();
+
+    const showToast = useCallback((msg: string, kind: 'ok' | 'err' = 'ok') => {
+        setToast({ msg, kind });
+        setTimeout(() => setToast(null), 3500);
+    }, []);
 
     const { navItems, lifecycleStages } = useMemo(
         () =>
@@ -121,6 +136,98 @@ export function GroupPageShell({
         setOpenStageReview(true);
     }, []);
 
+    const stageLabel = useCallback(
+        (key: string) => navItems.find((n: any) => n.key === key)?.label ?? key,
+        [navItems],
+    );
+
+    const handleStartStage = useCallback(async () => {
+        try {
+            await startStage.mutateAsync({ groupId, stage: view.stage });
+            qc.invalidateQueries({ queryKey: queryKeys.groups.stageMonitoring(groupId, view.stage) });
+            showToast(`${stageLabel(view.stage)} stage started — invitations sent`);
+        } catch (err: any) {
+            showToast(err?.message || 'Failed to start stage — please try again', 'err');
+        }
+    }, [startStage, groupId, view.stage, qc, showToast, stageLabel]);
+
+    const handleCloseStage = useCallback(async () => {
+        try {
+            const res: any = await closeStage.mutateAsync({ groupId, stage: view.stage });
+            qc.invalidateQueries({ queryKey: queryKeys.groups.stageMonitoring(groupId, view.stage) });
+            const autoFailed = res?.auto_failed_count ?? 0;
+            showToast(
+                autoFailed > 0
+                    ? `${stageLabel(view.stage)} closed — ${autoFailed} candidate(s) auto-failed`
+                    : `${stageLabel(view.stage)} stage closed`,
+            );
+        } catch (err: any) {
+            showToast(err?.message || 'Failed to close stage — please try again', 'err');
+        }
+    }, [closeStage, groupId, view.stage, qc, showToast, stageLabel]);
+
+    // StageReviewPage fires onProgressCandidates('progress') and THEN onPromoteAndStart()
+    // synchronously for the "Promote & Start Next" button. We queue the action and flush it
+    // once on the next microtask, so the bulk call runs exactly once with the right startNext.
+    const pendingBulkRef = useRef<{ indices: number[]; action: 'progress' | 'reject' | 'hold'; startNext: boolean } | null>(null);
+    const flushScheduledRef = useRef(false);
+
+    // Maps selected StageReviewPage indices → real application UUIDs, calls bulk-progress,
+    // and (optionally) starts the next stage.
+    const runBulkProgress = useCallback(
+        async (selectedIndices: number[], action: 'progress' | 'reject' | 'hold', startNext: boolean) => {
+            const appIds = selectedIndices
+                .map((i) => stageReviewCandidates[i]?.applicationId ?? '')
+                .filter(Boolean);
+            if (appIds.length === 0) {
+                setOpenStageReview(false);
+                return;
+            }
+            try {
+                await bulkProgress.mutateAsync({
+                    groupId,
+                    payload: { application_ids: appIds, action, current_stage_type: view.stage },
+                });
+                qc.invalidateQueries({ queryKey: queryKeys.groups.stageMonitoring(groupId, view.stage) });
+                qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
+
+                const verb = action === 'progress' ? 'progressed' : action === 'reject' ? 'rejected' : 'held';
+                showToast(`${appIds.length} candidate(s) ${verb}`);
+
+                if (startNext && action === 'progress') {
+                    const nextStage = stageReviewPipelineSteps[stageReviewCurrentIndex + 1]?.id;
+                    if (nextStage) {
+                        try {
+                            await startStage.mutateAsync({ groupId, stage: nextStage });
+                            qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
+                            showToast(`${stageLabel(nextStage)} stage started — invitations sent`);
+                            setView({ stage: nextStage as StageKey, mode: 'results' });
+                        } catch (err: any) {
+                            showToast(err?.message || 'Promoted, but failed to start next stage', 'err');
+                        }
+                    }
+                }
+            } catch (err: any) {
+                showToast(err?.message || 'Bulk action failed — please try again', 'err');
+            } finally {
+                setOpenStageReview(false);
+            }
+        },
+        [bulkProgress, startStage, groupId, view.stage, qc, showToast, stageLabel,
+         stageReviewCandidates, stageReviewPipelineSteps, stageReviewCurrentIndex],
+    );
+
+    const scheduleBulkFlush = useCallback(() => {
+        if (flushScheduledRef.current) return;
+        flushScheduledRef.current = true;
+        queueMicrotask(() => {
+            flushScheduledRef.current = false;
+            const p = pendingBulkRef.current;
+            pendingBulkRef.current = null;
+            if (p) void runBulkProgress(p.indices, p.action, p.startNext);
+        });
+    }, [runBulkProgress]);
+
     const handleOpenCandidate = useCallback(
         (applicationId: string, candidateId: string) => {
             setOpenProfile({ candidateId, applicationId });
@@ -182,6 +289,31 @@ export function GroupPageShell({
 
                     <div className="mb-4 flex items-center justify-between gap-3">
                         <ModeToggle mode={view.mode} onChange={(mode: ViewMode) => setView({ ...view, mode })} />
+
+                        {view.stage !== 'overview' && currentLifecycle === 'configured_not_started' && (
+                            <button
+                                type="button"
+                                onClick={handleStartStage}
+                                disabled={startStage.isPending}
+                                className="flex items-center gap-2 rounded-[8px] bg-[#6366f1] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#5558e3] disabled:bg-[#9ca3af] disabled:cursor-not-allowed transition-colors shadow-sm"
+                            >
+                                {startStage.isPending ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                                {startStage.isPending ? 'Starting…' : 'Start Stage'}
+                            </button>
+                        )}
+
+                        {view.stage !== 'overview' && currentLifecycle === 'active' && (
+                            <button
+                                type="button"
+                                onClick={handleCloseStage}
+                                disabled={closeStage.isPending}
+                                className="flex items-center gap-2 rounded-[8px] bg-[#ef4444] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#dc2626] disabled:bg-[#9ca3af] disabled:cursor-not-allowed transition-colors shadow-sm"
+                            >
+                                {closeStage.isPending ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                                {closeStage.isPending ? 'Closing…' : 'Close Stage'}
+                            </button>
+                        )}
+
                         {view.stage !== 'overview' && currentLifecycle === 'closed_awaiting_decision' && (
                             <button
                                 type="button"
@@ -280,25 +412,14 @@ export function GroupPageShell({
                         sourceStage={view.stage as 'assessment' | 'ai-interview' | 'live-interview'}
                         onBack={() => setOpenStageReview(false)}
                         onProgressCandidates={(selectedIndices: number[], action: 'progress' | 'reject' | 'hold') => {
-                            // Map indices → real application UUIDs, then call backend
-                            const appIds = selectedIndices
-                                .map(i => stageReviewCandidates[i]?.applicationId ?? '')
-                                .filter(Boolean);
-                            if (appIds.length > 0) {
-                                api.recruiter.bulkProgressCandidates(groupId, {
-                                    application_ids: appIds,
-                                    action,
-                                    current_stage_type: view.stage,
-                                }).catch((err: unknown) => {
-                                    console.error('bulk progress failed', err);
-                                });
-                                // Also invalidate monitoring and group-detail caches
-                                qc.invalidateQueries({ queryKey: queryKeys.groups.stageMonitoring(groupId, view.stage) });
-                                qc.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
-                            }
+                            // Queue; flushed once on microtask (onPromoteAndStart may flip startNext first).
+                            pendingBulkRef.current = { indices: selectedIndices, action, startNext: false };
+                            scheduleBulkFlush();
+                        }}
+                        onFinalDecision={() => {
+                            // Progress was already queued by onProgressCandidates; just close after flush.
                             setOpenStageReview(false);
                         }}
-                        onFinalDecision={() => setOpenStageReview(false)}
                         onViewCandidate={(idx: number) => {
                             // Open the inline candidate profile for the candidate at this index
                             const item = stageReviewCandidates[idx];
@@ -307,7 +428,10 @@ export function GroupPageShell({
                                 if (candId) setOpenProfile({ candidateId: candId, applicationId: item.applicationId });
                             }
                         }}
-                        onPromoteAndStart={() => setOpenStageReview(false)}
+                        onPromoteAndStart={() => {
+                            // Fires synchronously right after onProgressCandidates — flip the queued intent.
+                            if (pendingBulkRef.current) pendingBulkRef.current.startNext = true;
+                        }}
                     />
                 </div>
             )}
@@ -321,6 +445,18 @@ export function GroupPageShell({
                         onClose={() => setShowActivity(false)}
                         isInline={true}
                     />
+                </div>
+            )}
+
+            {/* Toast */}
+            {toast && (
+                <div
+                    className={`fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-[10px] px-4 py-2.5 text-[13px] font-medium text-white shadow-lg ${
+                        toast.kind === 'err' ? 'bg-[#ef4444]' : 'bg-gray-900'
+                    }`}
+                    role="status"
+                >
+                    {toast.msg}
                 </div>
             )}
         </div>

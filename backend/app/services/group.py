@@ -21,11 +21,13 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.models import (
     AssessmentSection,
+    CandidateAnswer,
     CandidateApplication,
     CandidateGroup,
     CandidateProfile,
     CandidateStageProgress,
     GroupStageConfig,
+    QuestionBank,
     LiV2Bank,
     LiV2Evaluation,
     LiV2Rubric,
@@ -1821,10 +1823,24 @@ class GroupService:
                     OngoingInterview.application_id.in_(app_ids),
                 )
             )
+            def _to_pct(v) -> float:
+                # Scores may be stored 0–1 or 0–100; normalize to 0–100.
+                f = float(v)
+                return round(f * 100.0, 1) if f <= 1.0 else round(f, 1)
+
             for oi in oi_res.scalars().all():
+                # Per-type sub-scores: technical / communication / confidence (0–100)
+                oi_sub: dict[str, float] = {}
+                if oi.technical_score is not None:
+                    oi_sub["technical"] = _to_pct(oi.technical_score)
+                if oi.communication_score is not None:
+                    oi_sub["communication"] = _to_pct(oi.communication_score)
+                if oi.confidence_score is not None:
+                    oi_sub["confidence"] = _to_pct(oi.confidence_score)
                 ai_interview_map[oi.application_id] = {
                     "ai_recommendation": oi.ai_recommendation,
                     "retakes_used": 0,
+                    "sub_scores": oi_sub or None,
                 }
             # Count retakes per application (= number of InterviewResponse rows per session)
             if ai_interview_map:
@@ -1852,6 +1868,7 @@ class GroupService:
                     LiV2Session.application_id,
                     LiV2Evaluation.auto_verdict,
                     LiV2Evaluation.overall_score_pct,
+                    LiV2Evaluation.dimension_scores,
                 )
                 .join(
                     LiV2Evaluation,
@@ -1865,10 +1882,45 @@ class GroupService:
             for row in lev_res.all():
                 # First row per application = most recent evaluation (desc order)
                 if row.application_id not in live_signals_map:
+                    # Per-dimension sub-scores (0–100). dimension_scores is a JSONB map
+                    # of dimension_id -> {score (1-3), dimension_name, ...}.
+                    dim_sub: dict[str, float] = {}
+                    if isinstance(row.dimension_scores, dict):
+                        for dim in row.dimension_scores.values():
+                            if not isinstance(dim, dict):
+                                continue
+                            name = dim.get("dimension_name") or dim.get("name")
+                            raw = dim.get("score")
+                            if name is not None and isinstance(raw, (int, float)):
+                                # anchors are 1-3; normalize to 0-100
+                                dim_sub[str(name)] = round(float(raw) / 3.0 * 100.0, 1)
                     live_signals_map[row.application_id] = {
                         "auto_verdict": row.auto_verdict,
                         "overall_score_pct": float(row.overall_score_pct) if row.overall_score_pct is not None else None,
+                        "sub_scores": dim_sub or None,
                     }
+
+        # --- Assessment per-type sub-scores (bulk, only for assessment stage) ---
+        # Aggregate earned/max points grouped by question type per session.
+        assessment_sub_map: dict[UUID, dict[str, float]] = {}
+        if stage_type == "assessment":
+            assess_session_ids = [prog.session_id for _, _, prog in rows if prog.session_id]
+            if assess_session_ids:
+                sub_res = await self.session.execute(
+                    select(
+                        CandidateAnswer.session_id,
+                        QuestionBank.question_type,
+                        func.sum(CandidateAnswer.points_earned).label("earned"),
+                        func.sum(CandidateAnswer.points_max).label("max_pts"),
+                    )
+                    .join(QuestionBank, QuestionBank.id == CandidateAnswer.question_id)
+                    .where(CandidateAnswer.session_id.in_(assess_session_ids))
+                    .group_by(CandidateAnswer.session_id, QuestionBank.question_type)
+                )
+                for r in sub_res.all():
+                    if r.max_pts and float(r.max_pts) > 0:
+                        pct = round(float(r.earned or 0) / float(r.max_pts) * 100.0, 1)
+                        assessment_sub_map.setdefault(r.session_id, {})[str(r.question_type)] = pct
 
         for app, cand, prog in rows:
             status = prog.status
@@ -1911,6 +1963,16 @@ class GroupService:
             ai_signals = ai_interview_map.get(app.id, {})
             live_signals = live_signals_map.get(app.id, {})
 
+            # Per-type sub-scores depend on the stage being viewed
+            if stage_type == "assessment":
+                sub_scores = assessment_sub_map.get(prog.session_id) if prog.session_id else None
+            elif stage_type == "ai_interview":
+                sub_scores = ai_signals.get("sub_scores")
+            elif stage_type == "live_interview":
+                sub_scores = live_signals.get("sub_scores")
+            else:
+                sub_scores = None
+
             candidates.append(
                 AssessmentMonitoringCandidate(
                     application_id=app.id,
@@ -1923,6 +1985,8 @@ class GroupService:
                     integrity_verdict=integrity_verdict,
                     flags=mon_flags,
                     completion_time=prog.completed_at,
+                    session_id=prog.session_id,
+                    sub_scores=sub_scores,
                     ai_recommendation=ai_signals.get("ai_recommendation"),
                     retakes_used=ai_signals.get("retakes_used"),
                     auto_verdict=live_signals.get("auto_verdict"),
