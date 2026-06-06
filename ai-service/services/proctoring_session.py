@@ -174,12 +174,36 @@ class SessionManager:
 
     def _serialize(self, session: ProctoringSession) -> str:
         data = asdict(session)
+        # Properly serialize the non-dataclass LivenessChallenge object
+        lc = session.liveness_challenge
+        data["liveness_challenge"] = {
+            "interval_seconds": lc.interval_seconds,
+            "timeout_seconds": lc.timeout_seconds,
+            "_active_direction": lc._active_direction,
+            "_challenge_start_time": lc._challenge_start_time,
+            "_last_issue_time": lc._last_issue_time,
+            "_challenges_issued": lc._challenges_issued,
+            "_challenges_passed": lc._challenges_passed,
+            "_challenges_failed": lc._challenges_failed,
+        }
         return json.dumps(data)
 
     def _deserialize(self, data_str: str) -> ProctoringSession:
         data = json.loads(data_str)
         liveness_data = data.pop("liveness_challenge", {})
-        liveness_challenge = LivenessChallenge(**liveness_data)
+        
+        # Reconstruct the LivenessChallenge
+        liveness_challenge = LivenessChallenge(
+            interval_seconds=liveness_data.get("interval_seconds", 45.0),
+            timeout_seconds=liveness_data.get("timeout_seconds", 15.0)
+        )
+        liveness_challenge._active_direction = liveness_data.get("_active_direction")
+        liveness_challenge._challenge_start_time = liveness_data.get("_challenge_start_time", 0.0)
+        liveness_challenge._last_issue_time = liveness_data.get("_last_issue_time", time.time())
+        liveness_challenge._challenges_issued = liveness_data.get("_challenges_issued", 0)
+        liveness_challenge._challenges_passed = liveness_data.get("_challenges_passed", 0)
+        liveness_challenge._challenges_failed = liveness_data.get("_challenges_failed", 0)
+        
         return ProctoringSession(**data, liveness_challenge=liveness_challenge)
 
     def get_or_create(self, session_id: str) -> ProctoringSession:

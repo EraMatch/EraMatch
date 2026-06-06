@@ -373,6 +373,42 @@ class FaceEncodingRequest(BaseModel):
 @router.post("/extract-face-encoding")
 async def extract_encoding(request: FaceEncodingRequest):
     """Extract face encoding and optionally store as session reference."""
+    debug_logs = []
+    
+    cv2_module = None
+    try:
+        import importlib
+        cv2_module = importlib.import_module("cv2")
+        debug_logs.append("cv2 module imported successfully")
+    except Exception as e:
+        debug_logs.append(f"cv2 import failed: {e}")
+
+    try:
+        if not request.frame_b64:
+            debug_logs.append("No frame_b64 provided")
+        else:
+            debug_logs.append(f"frame_b64 length: {len(request.frame_b64)}")
+            import base64, binascii, numpy as np
+            from services.proctoring_engine import _strip_data_url_prefix
+            decoded = base64.b64decode(_strip_data_url_prefix(request.frame_b64), validate=False)
+            debug_logs.append(f"decoded bytes: {len(decoded)}")
+            arr = np.frombuffer(decoded, dtype=np.uint8)
+            frame = cv2_module.imdecode(arr, cv2_module.IMREAD_COLOR) if cv2_module else None
+            if frame is None:
+                debug_logs.append("cv2.imdecode returned None")
+            else:
+                debug_logs.append(f"frame shape: {frame.shape}")
+                
+                from services.proctoring_engine import extract_face_encoding
+                encoding = extract_face_encoding(frame)
+                if encoding is None:
+                    debug_logs.append("extract_face_encoding returned None")
+                else:
+                    debug_logs.append(f"extracted encoding length: {len(encoding)}")
+                    
+    except Exception as e:
+        debug_logs.append(f"Exception during decoding: {e}")
+
     encoding = extract_face_encoding_b64(request.frame_b64)
 
     # If session_id provided, store as reference encoding for identity checks
@@ -382,7 +418,8 @@ async def extract_encoding(request: FaceEncodingRequest):
         SESSION_MANAGER.save(session)
 
     return {"encoding": encoding, "success": encoding is not None,
-            "stored_as_reference": encoding is not None and request.session_id is not None}
+            "stored_as_reference": encoding is not None and request.session_id is not None,
+            "debug": debug_logs}
 
 
 # --- Session management endpoints ---

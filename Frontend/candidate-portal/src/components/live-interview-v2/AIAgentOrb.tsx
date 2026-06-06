@@ -1,7 +1,7 @@
 import React from 'react';
 import { Bot } from 'lucide-react';
 
-export type AgentState = 'speaking' | 'listening' | 'thinking' | 'idle' | undefined;
+export type AgentState = 'speaking' | 'listening' | 'thinking' | 'idle' | 'failed' | 'disconnected' | 'connecting' | undefined;
 
 interface AIAgentOrbProps {
     agentState: AgentState;

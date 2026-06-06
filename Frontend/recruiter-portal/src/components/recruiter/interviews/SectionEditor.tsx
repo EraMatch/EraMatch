@@ -99,19 +99,36 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
     setCurrentSection({ ...currentSection, type });
   };
 
-  const handleAddVariant = (variant: QuestionVariant) => {
-    let newId = variant.id || `variant-${Date.now()}`;
-    // Prevent duplicate keys if the same bank question is added twice
-    if (currentSection.variants.some(v => v.id === newId)) {
-      newId = `${newId}-${Date.now()}`;
-    }
+  const handleAddVariants = (variants: QuestionVariant[]) => {
+    if (variants.length === 0) return;
 
-    setCurrentSection({
-      ...currentSection,
-      variants: [...currentSection.variants, { ...variant, id: newId }]
+    setCurrentSection((prev) => {
+      const existingIds = new Set(prev.variants.map((variant) => variant.id));
+      const nextVariants = [...prev.variants];
+
+      variants.forEach((variant, index) => {
+        let newId = variant.id || `variant-${Date.now()}-${index}`;
+
+        while (existingIds.has(newId)) {
+          newId = `${newId}-${index}`;
+        }
+
+        existingIds.add(newId);
+        nextVariants.push({ ...variant, id: newId });
+      });
+
+      return {
+        ...prev,
+        variants: nextVariants
+      };
     });
+
     setCreationMethod(null);
     setEditingVariant(null);
+  };
+
+  const handleAddVariant = (variant: QuestionVariant) => {
+    handleAddVariants([variant]);
   };
 
   const handleUpdateVariant = (index: number, variant: QuestionVariant) => {
@@ -167,6 +184,11 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
 
   const handleQuestionBankSelect = (question: QuestionVariant) => {
     handleAddVariant(question);
+    setShowQuestionBank(false);
+  };
+
+  const handleQuestionBankSelectMultiple = (questions: QuestionVariant[]) => {
+    handleAddVariants(questions);
     setShowQuestionBank(false);
   };
 
@@ -835,6 +857,7 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
         <QuestionBankModal
           questionType={currentSection.type}
           onSelect={handleQuestionBankSelect}
+          onSelectMultiple={handleQuestionBankSelectMultiple}
           onClose={() => setShowQuestionBank(false)}
           onSwitchToAI={handleSwitchToAIFromBank}
         />

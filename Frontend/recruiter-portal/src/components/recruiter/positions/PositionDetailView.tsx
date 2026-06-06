@@ -2658,6 +2658,8 @@ export function PositionDetailView({
             // The modal already called api.recruiter.updateGroup (sets status + filtration_flow)
             // Just close and refresh the group list
             setShowFlowConfigModal(false);
+            queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.positions.groups(positionId) });
             const groups = await api.recruiter.getPositionGroups(positionId) as any[];
             setGroups(groups);
           }}
@@ -2676,10 +2678,10 @@ export function PositionDetailView({
           groupName={groupToDelete.name}
           candidateCount={candidates.filter(c => groups.find(g => g.id === groupToDelete.id)?.candidate_ids?.includes(c.id)).length || groupToDelete.candidate_count || 0}
           availableGroups={groups.filter(g => g.id !== groupToDelete.id)}
-          onConfirm={() => {
+          onConfirm={async () => {
             setIsGroupDeleteModalOpen(false);
             setGroupToDelete(null);
-            queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
           }}
         />
       )}

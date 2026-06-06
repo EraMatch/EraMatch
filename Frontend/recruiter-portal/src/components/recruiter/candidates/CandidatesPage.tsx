@@ -190,9 +190,17 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
   };
 
   return (
-    <div className="min-h-screen flex">
-      {/* Main Content */}
-      <div className="flex-1">
+    <div className="min-h-screen flex relative">
+      {/* Loading Overlay */}
+      {loading && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/40">
+          <LoadingSpinner message="Loading candidates..." />
+        </div>
+      )}
+
+      {/* Main Content Area (Blurred when loading) */}
+      <div className={`flex w-full transition-all duration-300 ${loading ? 'opacity-50 blur-sm pointer-events-none' : ''}`}>
+        <div className="flex-1">
         <div className="px-8 py-6">
           {/* Header */}
           <div className="mb-6">
@@ -770,11 +778,8 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
                 </div>
               </div>
 
-              {loading ? (
-                <div className="py-24">
-                  <LoadingSpinner message="Loading candidates..." fullScreen={false} />
-                </div>
-              ) : filteredCandidates.length === 0 && (
+              {/* Empty State */}
+              {!loading && filteredCandidates.length === 0 && (
                 <div className="text-center py-12">
                   <Users size={48} className="text-[#d1d5db] mx-auto mb-4" />
                   <p className="font-['Arimo',sans-serif] text-[16px] text-[#6b7280]">
@@ -972,6 +977,8 @@ export function CandidatesPage({ onBack }: CandidatesPageProps) {
           </div>
         </div>
       )}
+
+      </div> {/* Close Main Content Area */}
     </div>
   );
 }

@@ -599,6 +599,14 @@ export const recruiterService = {
         });
     },
 
+    refactorQuestions: async (questionIds: string[], refactorType: string = 'all') => {
+        return fetchAPI<any>('/questions/bank/refactor/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question_ids: questionIds, refactor_type: refactorType })
+        });
+    },
+
     // Send Offers
     sendOffers: async (groupId: string, data: {
         application_ids: string[];

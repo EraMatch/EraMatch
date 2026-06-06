@@ -337,6 +337,44 @@ async def delete_question_bank(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class RefactorQuestionsRequest(BaseModel):
+    question_ids: list[str]
+    refactor_type: str = "all"
+
+@router.post("/bank/refactor/batch", response_model=MessageResponse)
+async def refactor_questions_batch_api(
+    request: RefactorQuestionsRequest,
+    session: DbSession,
+    current_user: RecruiterUser
+):
+    """
+    Triggers a background task to use AI to refactor missing attributes for the given questions.
+    """
+    try:
+        from worker.tasks.question_refactor import refactor_questions_batch
+        from app.models import QuestionImportJob
+        current_user_id, current_org_id = _resolve_current_user_ids(current_user)
+        
+        job = QuestionImportJob(
+            organization_id=current_org_id,
+            created_by_user_id=current_user_id,
+            status="pending",
+            import_type="Generative", # Use Generative so it works with Review Imports page easily
+            source_filename=f"AI Refactoring ({request.refactor_type})",
+            total_generated=len(request.question_ids),
+            total_flagged=0,
+            total_approved=0,
+            draft_questions=[]
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+
+        refactor_questions_batch.delay(str(job.id), request.question_ids, str(current_org_id), request.refactor_type)
+        return MessageResponse(message="Successfully queued questions for refactoring")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # =============================================================================
 # QUESTION IMPORT ENDPOINTS
 # =============================================================================
@@ -1064,6 +1102,12 @@ async def approve_import_questions(
         )
         session.add(new_q)
         imported += 1
+
+        if dq.original_question_id:
+            old_q = session.get(QuestionBank, dq.original_question_id)
+            if old_q and not old_q.is_deleted:
+                old_q.is_deleted = True
+                session.add(old_q)
 
     # Update job counters
     job.total_approved = imported

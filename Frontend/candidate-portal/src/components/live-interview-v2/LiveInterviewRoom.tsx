@@ -185,11 +185,11 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
         sessionId,
         enabled: isConnected && !isTerminated,
         enforceFullscreen: true,
-        onViolation: useCallback((evt) => {
+        onViolation: useCallback((evt: any) => {
             setProctoringWarning(evt.message);
             setTimeout(() => setProctoringWarning(null), 5000);
         }, []),
-        onTerminated: useCallback((msg) => {
+        onTerminated: useCallback((msg: any) => {
             setIsTerminated(true);
         }, []),
     });
@@ -485,7 +485,7 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
                     </div>
 
                     <div className="flex flex-col items-center gap-3 md:gap-6 z-10 mt-auto bg-white/60 p-4 md:p-6 rounded-2xl md:rounded-3xl backdrop-blur-sm border border-white/40 shadow-sm w-full">
-                        <AIAgentOrb agentState={agentState} />
+                        <AIAgentOrb agentState={agentState as any} />
 
                         <div className="text-center space-y-1">
                             <h2 className="text-gray-900 font-semibold text-lg">{agentLabel}</h2>

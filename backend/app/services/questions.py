@@ -11,6 +11,27 @@ from app.core.exceptions import NotFoundException
 from app.models import QuestionBank, QuestionBankFavorite, User
 from app.schemas.questions import QuestionBankCreateRequest, QuestionBankResponseItem
 
+QUESTION_TYPE_DISPLAY_MAP = {
+    'mcq': 'Multiple Choice',
+    'essay': 'Essay',
+    'code': 'Code',
+}
+
+
+def _normalize_question_type(value: str | None) -> str:
+    normalized = str(value or '').strip().lower()
+
+    if normalized in {'mcq', 'multiple choice', 'multiple-choice', 'multiplechoice', 'true/false', 'true false'}:
+        return 'mcq'
+
+    if normalized in {'essay', 'open ended', 'open-ended', 'open ended question', 'long answer', 'descriptive'}:
+        return 'essay'
+
+    if normalized in {'code', 'coding', 'programming'}:
+        return 'code'
+
+    return 'essay'
+
 class QuestionService:
     def __init__(self, session: AsyncSession, current_user: User):
         self.session = session
@@ -49,14 +70,14 @@ class QuestionService:
         response_items = []
         # DB Mappings
         diff_map = {1: "Easy", 2: "Medium", 3: "Hard"}
-        type_map = {"mcq": "Multiple Choice", "essay": "Essay", "code": "Code"}
+        type_map = QUESTION_TYPE_DISPLAY_MAP
 
         for qb in questions:
             # Map specific config fields to root response items
             config = qb.question_config or {}
             
             diff_str = diff_map.get(qb.difficulty, "Medium")
-            type_str = type_map.get(qb.question_type, "Multiple Choice")
+            type_str = type_map.get(_normalize_question_type(qb.question_type), "Essay")
 
             # Form specific settings from `question_config` and `correct_answer`
             raw_options = config.get("options")
@@ -122,13 +143,7 @@ class QuestionService:
         diff_int = diff_map.get(data.difficulty, 2)
 
         # Normalize type
-        q_type = data.type
-        if q_type == "Multiple Choice":
-            q_type = "mcq"
-        elif q_type == "Essay":
-            q_type = "essay"
-        elif q_type == "Code":
-            q_type = "code"
+        q_type = _normalize_question_type(data.type)
 
         config = {}
         correct_answer = None
@@ -186,7 +201,7 @@ class QuestionService:
             text=new_question.question_text,
             category=new_question.category,
             difficulty=data.difficulty or "Medium",
-            type=data.type,
+            type=QUESTION_TYPE_DISPLAY_MAP.get(q_type, 'Essay'),
             tags=new_question.tags or [],
             usageCount=0,
             avgScore=0,

@@ -81,7 +81,7 @@ export function CandidateHomePage({
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const markAllAsRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, read: true })));
+    console.log('Mark all read requested');
   };
 
   // Get overall application status based on stages

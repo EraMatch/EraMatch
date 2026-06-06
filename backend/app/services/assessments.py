@@ -24,8 +24,9 @@ class AssessmentService:
                 Assessment.is_deleted == False,
             )
             existing_assessment_res = await self.session.execute(existing_assessment_q)
-            if existing_assessment_res.scalars().first():
-                raise HTTPException(status_code=400, detail="Only one assessment can be created for this group")
+            existing_id = existing_assessment_res.scalars().first()
+            if existing_id:
+                raise HTTPException(status_code=400, detail=f"Only one assessment can be created for this group. Existing ID: {existing_id}")
 
             # 1. Create Assessment Record
             # Combine basic settings with specific fields from the request
@@ -181,6 +182,8 @@ class AssessmentService:
             await self.session.rollback()
             # Log the original error internally, return general error to user.
             print(f"Error creating assessment transaction: {e}")
+            if isinstance(e, HTTPException):
+                raise e
             raise HTTPException(status_code=500, detail=f"Failed to create assessment: {str(e)}")
 
     async def get_assessment(self, assessment_id: UUID, organization_id: UUID) -> dict:

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Sparkles, Video, Clock, User, Camera, Mic, Play, Square, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw } from 'lucide-react';
+import { Sparkles, Video, Clock, User, Camera, Mic, Play, Square, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw, AlertCircle } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload } from '../utils/proctoringPayload';
@@ -196,7 +196,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
 
   // Activate camera for specific steps and keep it running during interview session
   useEffect(() => {
-    const needsCamera = [2, 4, 8].includes(currentStep) || inInterviewSession;
+    const needsCamera = [2, 4, 7, 8].includes(currentStep) || inInterviewSession;
 
     if (needsCamera && !streamRef.current) {
       // Start camera if we need it and don't have it yet
@@ -366,8 +366,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     const buffer = analysisAudioBufferRef.current;
     if (!analyser || !buffer) return 0;
 
-    analyser.getFloatTimeDomainData(buffer as unknown as Float32Array<ArrayBufferLike>);
-    latestAudioFrameRef.current = new Float32Array(buffer);
+    analyser.getFloatTimeDomainData(buffer as any);
+    latestAudioFrameRef.current = new Float32Array((buffer as any).buffer);
 
     let sum = 0;
     for (let i = 0; i < buffer.length; i += 1) {
@@ -376,17 +376,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     return Math.sqrt(sum / buffer.length);
   }, []);
 
-  const steps = [
-    { number: 1, label: 'Welcome' },
-    { number: 2, label: 'Device Test' },
-    { number: 3, label: 'Instructions' },
-    { number: 4, label: 'Face Detection' },
-    { number: 5, label: 'Break the Ice' },
-    { number: 6, label: 'Copy/Paste' },
-    { number: 7, label: 'One Person' },
-    { number: 8, label: 'Mock Question' },
-    { number: 9, label: 'Ready' }
-  ];
+  
 
   useEffect(() => {
     if (!ENABLE_BIOMETRIC_BETA || !inInterviewSession) return;
@@ -1322,7 +1312,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
               </div>
 
               {/* Video Container - Expanded View */}
-              <div className="rounded-lg overflow-hidden relative shadow-lg bg-black transition-all duration-500 ease-in-out" style={{ aspectRatio: '16/9', width: '100%', maxHeight: '600px' }}>
+              <div className="bg-slate-900 rounded-[2rem] ring-4 ring-indigo-500/20 shadow-2xl overflow-hidden relative transition-all duration-500 ease-in-out" style={{ aspectRatio: '16/9', width: '100%', maxHeight: '600px' }}>
                 {isPlaying ? (
                   <video
                     src={recordedUrl || ''}
@@ -1348,7 +1338,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                     )}
                   </div>
                 ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center bg-slate-800">
+                  <div className="w-full h-full flex flex-col items-center justify-center">
                     <Camera className="w-16 h-16 text-slate-600 mb-4" />
                     <p className="text-slate-500">{cameraError || 'Camera not available'}</p>
                     {cameraError && (
@@ -1461,7 +1451,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                   variant="outline"
                   className="rounded-full text-orange-600 border-orange-300 hover:bg-orange-50"
                   onClick={() => {
-                    setCurrentStep(9);
+                    setCurrentStep(8);
                     setInInterviewSession(true);
                   }}
                 >
@@ -1566,299 +1556,109 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
 
       case 4:
         return (
-          <Card className="max-w-5xl mx-auto p-8">
-            <div className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: '#6366F1' }}>
-                  <Scan className="w-6 h-6 text-white" />
+          <Card className="max-w-5xl mx-auto p-8 border-none shadow-xl bg-white/50 backdrop-blur-sm">
+            <div className="space-y-8">
+              <div className="flex flex-col items-center justify-center text-center">
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-200">
+                  <Scan className="w-8 h-8 text-white" />
                 </div>
-                <h3 className="text-gray-700">Face Mesh Detection</h3>
-              </div>
-
-              <p className="text-gray-600">
-                We'll now calibrate our face detection system. Please follow the on-screen instructions and move your head as directed.
-              </p>
-
-              {/* Warning Message */}
-              <div className="p-4 rounded-lg" style={{ backgroundColor: '#FEE2E2' }}>
-                <p className="text-red-600 text-sm">
-                  Unable to access camera. The demo will continue with simulated face tracking.
+                <h3 className="text-2xl font-bold text-gray-800">Biometric Calibration</h3>
+                <p className="text-gray-500 max-w-lg mt-2">
+                  Please center your face within the frame. We will extract a secure biometric signature to verify your identity throughout the session.
                 </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-2 text-sm"
-                  onClick={handleRetryCamera}
-                >
-                  Retry Camera
-                </Button>
               </div>
 
-              {/* Camera and Face Mesh Display */}
-              <div className="grid grid-cols-2 gap-6">
-                {/* Camera Feed */}
-                <div className="bg-slate-900 rounded-lg h-80 flex flex-col items-center justify-center relative overflow-hidden">
-                  {stream ? (
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      className="w-full h-full object-cover"
-                      style={{ transform: 'scaleX(-1)' }}
-                    />
-                  ) : (
-                    <>
-                      <Camera className="w-16 h-16 text-slate-600 mb-2 relative z-10" />
-                      <p className="text-slate-500 text-sm relative z-10">Camera not available</p>
-                      <p className="text-slate-600 text-xs mt-1 relative z-10">Demo mode active</p>
-                    </>
-                  )}
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div
-                      className="w-64 h-64 rounded-full border-2 opacity-30"
-                      style={{ borderColor: '#6366F1' }}
-                    />
+              {cameraError && (
+                <div className="max-w-md mx-auto p-4 rounded-xl bg-red-50 border border-red-100 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-red-700 text-sm font-medium">Camera Access Required</p>
+                    <p className="text-red-600 text-sm mt-1">{cameraError}</p>
+                    <Button variant="outline" size="sm" className="mt-3 bg-white" onClick={handleRetryCamera}>
+                      Retry Permissions
+                    </Button>
                   </div>
                 </div>
+              )}
 
-                {/* Face Mesh Visualization */}
-                <div className="rounded-lg h-80 flex items-center justify-center" style={{ backgroundColor: '#F3E8FF' }}>
-                  {faceDetectionStarted ? (
-                    <svg width="200" height="240" viewBox="0 0 200 240" className="transition-opacity duration-500">
-                      {/* Face oval */}
-                      <ellipse cx="100" cy="120" rx="60" ry="80" fill="none" stroke="#A855F7" strokeWidth="2" />
-                      {/* Eyes */}
-                      <circle cx="80" cy="100" r="3" fill="#A855F7" />
-                      <circle cx="120" cy="100" r="3" fill="#A855F7" />
-                      {/* Nose */}
-                      <circle cx="100" cy="120" r="2" fill="#A855F7" />
-                      {/* Mouth */}
-                      <circle cx="85" cy="145" r="2" fill="#A855F7" />
-                      <circle cx="100" cy="148" r="2" fill="#A855F7" />
-                      <circle cx="115" cy="145" r="2" fill="#A855F7" />
-                      {/* Additional mesh points */}
-                      <circle cx="70" cy="95" r="1.5" fill="#A855F7" />
-                      <circle cx="130" cy="95" r="1.5" fill="#A855F7" />
-                      <circle cx="100" cy="80" r="1.5" fill="#A855F7" />
-                      <circle cx="100" cy="160" r="1.5" fill="#A855F7" />
-                    </svg>
-                  ) : (
-                    <div className="text-center">
-                      <div className="w-16 h-16 rounded-lg flex items-center justify-center mx-auto mb-3" style={{ backgroundColor: '#E9D5FF' }}>
-                        <Scan className="w-8 h-8" style={{ color: '#A855F7' }} />
-                      </div>
-                      <p className="text-gray-500">Face mesh will appear here</p>
+              <div className="flex justify-center">
+                <div className="relative w-80 h-80">
+                  <div className={`absolute inset-0 rounded-full border-4 transition-all duration-700 z-20 ${faceDetectionComplete ? 'border-emerald-400' : faceDetectionStarted ? 'border-indigo-400 animate-pulse' : 'border-gray-200'}`} />
+                  
+                  <div className="absolute inset-2 rounded-full overflow-hidden bg-slate-900 z-10 flex items-center justify-center">
+                    {stream ? (
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        muted
+                        playsInline
+                        className="w-full h-full object-cover"
+                        style={{ transform: 'scaleX(-1)' }}
+                      />
+                    ) : (
+                      <Camera className="w-12 h-12 text-slate-700" />
+                    )}
+                  </div>
+
+                  {faceDetectionStarted && !faceDetectionComplete && (
+                    <div className="absolute inset-0 z-30 flex items-center justify-center rounded-full bg-indigo-900/20 backdrop-blur-[2px]">
+                      <div className="w-full h-1 bg-indigo-500 absolute top-1/2 -translate-y-1/2 animate-[scan_2s_ease-in-out_infinite] shadow-[0_0_15px_rgba(99,102,241,0.8)]" />
+                    </div>
+                  )}
+
+                  {faceDetectionComplete && (
+                    <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 z-40 bg-emerald-500 text-white px-4 py-2 rounded-full shadow-lg flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span className="text-sm font-medium">Verified</span>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Progress Section */}
-              {faceDetectionStarted && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-700 text-sm">
-                      {faceDetectionComplete ? 'Face detection complete!' : 'Detecting face...'}
-                    </span>
-                    <span className="text-gray-600 text-sm">{detectionProgress}%</span>
+              <div className="max-w-md mx-auto">
+                {faceDetectionStarted && (
+                  <div className="space-y-2 mb-6">
+                    <div className="flex justify-between text-sm font-medium">
+                      <span className={faceDetectionComplete ? "text-emerald-600" : "text-indigo-600"}>
+                        {faceDetectionComplete ? "Biometric signature secured" : "Extracting facial embeddings..."}
+                      </span>
+                      <span className="text-gray-500">{detectionProgress}%</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${faceDetectionComplete ? 'bg-emerald-500' : 'bg-indigo-500'}`}
+                        style={{ width: `${detectionProgress}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="h-2 rounded-full transition-all duration-300"
-                      style={{
-                        width: `${detectionProgress}%`,
-                        backgroundColor: '#6366F1'
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
+                )}
 
-              {/* Success Message */}
-              {faceDetectionComplete && (
-                <div className="flex items-center gap-2 p-4 rounded-lg" style={{ backgroundColor: '#D1FAE5' }}>
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                  <span className="text-emerald-700">Face successfully detected and calibrated!</span>
+                <div className="flex justify-center">
+                  {!faceDetectionStarted ? (
+                    <Button
+                      className="w-full rounded-xl py-6 text-lg font-medium shadow-xl shadow-indigo-500/20 transition-all hover:scale-[1.02]"
+                      style={{ background: 'linear-gradient(to right, #6366F1, #8B5CF6)' }}
+                      onClick={handleStartFaceDetection}
+                      disabled={!stream}
+                    >
+                      Initialize Calibration
+                    </Button>
+                  ) : faceDetectionComplete ? (
+                    <Button
+                      className="w-full rounded-xl py-6 text-lg font-medium shadow-xl shadow-emerald-500/20 transition-all hover:scale-[1.02]"
+                      style={{ background: 'linear-gradient(to right, #10B981, #059669)' }}
+                      onClick={() => setCurrentStep(5)}
+                    >
+                      Continue Assessment
+                    </Button>
+                  ) : null}
                 </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex justify-center pt-4">
-                {!faceDetectionStarted ? (
-                  <Button
-                    className="text-white rounded-full px-8"
-                    style={{ backgroundColor: '#6366F1' }}
-                    onClick={handleStartFaceDetection}
-                  >
-                    Start Face Detection
-                  </Button>
-                ) : faceDetectionComplete ? (
-                  <Button
-                    className="text-white rounded-full px-8"
-                    style={{ backgroundColor: '#6366F1' }}
-                    onClick={() => setCurrentStep(5)}
-                  >
-                    Next Step
-                  </Button>
-                ) : null}
               </div>
             </div>
           </Card>
         );
 
       case 5:
-        if (!calibrationComplete) {
-          return (
-            <>
-              {/* Instructions Screen */}
-              {!isCalibrating && (
-                <Card className="max-w-5xl mx-auto p-8">
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: '#6366F1' }}>
-                        <Sparkles className="w-6 h-6 text-white" />
-                      </div>
-                      <h3 className="text-gray-700">Let's Break the Ice!</h3>
-                    </div>
-
-                    <p className="text-gray-600">
-                      Before we begin the interview, let's warm up with a fun little game! Catch the glowing fireflies as they appear across the screen.
-                    </p>
-
-                    <div className="flex items-center justify-center py-12">
-                      <div className="relative">
-                        <div className="w-32 h-32 rounded-full flex items-center justify-center" style={{ backgroundColor: '#F3E8FF' }}>
-                          <svg width="80" height="80" viewBox="0 0 80 80">
-                            <circle cx="40" cy="40" r="30" fill="#A855F7" opacity="0.3" />
-                            <circle cx="40" cy="40" r="20" fill="#A855F7" opacity="0.5" />
-                            <circle cx="40" cy="40" r="10" fill="#A855F7" />
-                            <circle cx="35" cy="35" r="3" fill="#FFF" />
-                          </svg>
-                        </div>
-                        <div className="absolute -top-2 -right-2 w-6 h-6 rounded-full animate-pulse" style={{ backgroundColor: '#FCD34D' }} />
-                        <div className="absolute top-4 -right-4 w-4 h-4 rounded-full animate-pulse" style={{ backgroundColor: '#FCD34D', animationDelay: '0.5s' }} />
-                      </div>
-                    </div>
-
-                    <p className="text-center text-gray-600">
-                      Relax and have fun! Click the fireflies as they light up. This helps you get comfortable before the interview.
-                    </p>
-
-                    <div className="flex justify-center pt-4">
-                      <Button
-                        className="text-white rounded-full px-8"
-                        style={{
-                          background: 'linear-gradient(135deg, #EC4899 0%, #8B5CF6 100%)'
-                        }}
-                        onClick={handleStartCalibration}
-                      >
-                        Start Game
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              )}
-
-              {/* Fullscreen Calibration Game */}
-              {isCalibrating && (
-                <div
-                  ref={calibrationRef}
-                  className="fixed inset-0 w-screen h-screen cursor-crosshair"
-                  style={{
-                    background: 'linear-gradient(135deg, #5B21B6 0%, #DB2777 100%)',
-                    zIndex: 9999
-                  }}
-                >
-                  {/* HUD - Top Bar */}
-                  <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center">
-                    <div className="text-white">
-                      <div className="text-sm opacity-80 mb-1">Progress: {targetsCaught} / {totalTargets} targets</div>
-                      <div className="w-64 bg-white/20 rounded-full h-2">
-                        <div
-                          className="bg-white h-2 rounded-full transition-all duration-300"
-                          style={{ width: `${(targetsCaught / totalTargets) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                    <div className="text-white text-right">
-                      <div className="text-sm opacity-80">Score</div>
-                      <div className="text-3xl">{score}</div>
-                    </div>
-                  </div>
-
-                  {/* Fireflies */}
-                  {fireflies.map((firefly) => (
-                    <div
-                      key={firefly.id}
-                      className="absolute animate-pulse cursor-pointer"
-                      style={{
-                        left: `${firefly.x}%`,
-                        top: `${firefly.y}%`,
-                        transform: 'translate(-50%, -50%)'
-                      }}
-                      onClick={() => handleFireflyClick(firefly)}
-                    >
-                      <svg width="40" height="40" viewBox="0 0 40 40">
-                        <circle cx="20" cy="20" r="15" fill="#FCD34D" opacity="0.3" />
-                        <circle cx="20" cy="20" r="10" fill="#FCD34D" opacity="0.6" />
-                        <circle cx="20" cy="20" r="5" fill="#FDE047" />
-                        <circle cx="18" cy="18" r="2" fill="#FEF9C3" />
-                      </svg>
-                    </div>
-                  ))}
-
-                  {/* Stars Background Effect */}
-                  {[...Array(30)].map((_, i) => (
-                    <div
-                      key={i}
-                      className="absolute w-1 h-1 bg-white rounded-full opacity-40"
-                      style={{
-                        left: `${Math.random() * 100}%`,
-                        top: `${Math.random() * 100}%`
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
-            </>
-          );
-        } else {
-          // Calibration complete screen
-          return (
-            <Card className="max-w-5xl mx-auto p-8">
-              <div className="space-y-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: '#10B981' }}>
-                    <CheckCircle2 className="w-6 h-6 text-white" />
-                  </div>
-                  <h3 className="text-gray-700">Great Job!</h3>
-                </div>
-
-                <div className="flex items-center gap-2 p-4 rounded-lg" style={{ backgroundColor: '#D1FAE5' }}>
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                  <span className="text-emerald-700">We've successfully broken the ice! You're all warmed up and ready to go.</span>
-                </div>
-
-                <p className="text-gray-600">
-                  Excellent! You're now comfortable and ready to shine in your interview. Let's proceed to the next step.
-                </p>
-
-                <div className="flex justify-center pt-4">
-                  <Button
-                    className="text-white rounded-full px-8"
-                    style={{ backgroundColor: '#6366F1' }}
-                    onClick={() => setCurrentStep(6)}
-                  >
-                    Continue to Next Step
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          );
-        }
-
-      case 6:
         return (
           <Card className="max-w-5xl mx-auto p-8">
             <div className="space-y-6">
@@ -1873,7 +1673,6 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 To maintain the integrity and fairness of this environment, copy and paste functionality has been disabled during your session.
               </p>
 
-              {/* Important Notice */}
               <div className="p-4 rounded-lg" style={{ backgroundColor: '#FEE2E2' }}>
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="w-5 h-5 flex-shrink-0 text-red-600" />
@@ -1886,7 +1685,6 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 </div>
               </div>
 
-              {/* What this means section */}
               <div>
                 <h4 className="text-gray-700 mb-4">What this means:</h4>
                 <div className="space-y-3">
@@ -1916,7 +1714,6 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 </div>
               </div>
 
-              {/* Checkbox */}
               <div className="pt-4">
                 <label className="flex items-start gap-3 cursor-pointer">
                   <input
@@ -1932,12 +1729,11 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 </label>
               </div>
 
-              {/* Next Step Button */}
               <div className="flex justify-end pt-4">
                 <Button
                   className="text-white rounded-full px-8"
                   style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => setCurrentStep(7)}
+                  onClick={() => setCurrentStep(6)}
                   disabled={!copyPasteUnderstood}
                 >
                   Next Step
@@ -1947,7 +1743,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
           </Card>
         );
 
-      case 7:
+      case 6:
         return (
           <Card className="max-w-5xl mx-auto p-8">
             <div className="space-y-6">
@@ -1962,7 +1758,6 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 For a fair and secure environment, only one person should be present during the session. Our monitoring system will detect multiple people in the frame.
               </p>
 
-              {/* Warning Alert */}
               <div className="p-4 rounded-lg" style={{ backgroundColor: '#FEE2E2' }}>
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="w-5 h-5 flex-shrink-0 text-red-600" />
@@ -1975,9 +1770,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 </div>
               </div>
 
-              {/* Two boxes: Allowed and Not Allowed */}
               <div className="grid grid-cols-2 gap-6 pt-4">
-                {/* Allowed */}
                 <div className="p-6 rounded-lg" style={{ backgroundColor: '#D1FAE5' }}>
                   <div className="flex flex-col items-center text-center space-y-3">
                     <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ backgroundColor: '#10B981' }}>
@@ -1990,7 +1783,6 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                   </div>
                 </div>
 
-                {/* Not Allowed */}
                 <div className="p-6 rounded-lg" style={{ backgroundColor: '#FEE2E2' }}>
                   <div className="flex flex-col items-center text-center space-y-3">
                     <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ backgroundColor: '#EF4444' }}>
@@ -2004,7 +1796,6 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 </div>
               </div>
 
-              {/* What will happen if violated */}
               <div className="pt-4">
                 <h4 className="text-gray-700 mb-3">What will happen if violated:</h4>
                 <div className="p-4 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
@@ -2015,12 +1806,11 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 </div>
               </div>
 
-              {/* Next Step Button */}
               <div className="flex justify-end pt-4">
                 <Button
                   className="text-white rounded-full px-8"
                   style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => setCurrentStep(8)}
+                  onClick={() => setCurrentStep(7)}
                 >
                   Next Step
                 </Button>
@@ -2029,115 +1819,126 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
           </Card>
         );
 
-      case 8:
+      case 7:
         return (
-          <Card className="max-w-4xl mx-auto p-8">
-            <div className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: '#6366F1' }}>
-                  <Mic className="w-6 h-6 text-white" />
+          <Card className="max-w-3xl mx-auto p-8 shadow-xl border-0 ring-1 ring-gray-100">
+            <div className="space-y-8">
+              <div className="flex flex-col items-center text-center space-y-4">
+                <div className="w-16 h-16 rounded-full flex items-center justify-center bg-indigo-50 text-indigo-600 mb-2">
+                  <Mic className="w-8 h-8" />
                 </div>
-                <h3 className="text-gray-700">Mock Question Practice</h3>
-              </div>
-
-              <p className="text-gray-600">
-                Let's practice with a warm-up question. This will help you get comfortable with the recording process before the actual interview.
-              </p>
-
-              {/* Question Box */}
-              <div className="p-6 rounded-lg text-center" style={{ backgroundColor: '#F9FAFB' }}>
-                <p className="text-gray-700">
-                  Tell us briefly about yourself and why you're interested in this position.
+                <h3 className="text-2xl font-bold text-gray-900">Mock Question Practice</h3>
+                <p className="text-gray-500 max-w-lg">
+                  Let's practice with a warm-up question. This helps you get comfortable with the recording process before the actual interview begins.
                 </p>
               </div>
 
-              {/* Camera Preview */}
-              <div className="bg-slate-900 rounded-lg h-72 flex flex-col items-center justify-center relative overflow-hidden">
-                {stream ? (
+              <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100/50 text-center">
+                <p className="text-indigo-900 font-medium text-lg">
+                  "Tell us briefly about yourself and why you're interested in this position."
+                </p>
+              </div>
+
+              <div className={`bg-slate-900 rounded-3xl shadow-2xl h-80 flex flex-col items-center justify-center relative overflow-hidden transition-all duration-300 ${
+                isRecording ? 'ring-4 ring-red-500 shadow-red-500/20' : 'ring-4 ring-indigo-500/20 shadow-indigo-500/20'
+              }`}>
+                {isRecording && (
+                  <div className="absolute top-4 right-4 z-10 flex items-center gap-2 bg-black/50 px-3 py-1.5 rounded-full backdrop-blur-sm">
+                    <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+                    <span className="text-white text-xs font-medium tracking-wide">REC</span>
+                  </div>
+                )}
+                
+                {recordedUrl && hasRecorded ? (
+                  <video
+                    src={recordedUrl}
+                    controls
+                    className="w-full h-full object-cover"
+                  />
+                ) : stream ? (
                   <video
                     ref={videoRef}
                     autoPlay
                     muted
                     playsInline
-                    className="w-full h-full object-cover"
+                    className={`w-full h-full object-cover transition-opacity duration-300 ${isRecording ? 'opacity-100' : 'opacity-70'}`}
                     style={{ transform: 'scaleX(-1)' }}
                   />
                 ) : (
-                  <>
-                    <Camera className="w-16 h-16 text-slate-600 mb-2" />
-                    <p className="text-slate-500 text-sm">Camera not available</p>
-                  </>
+                  <div className="flex flex-col items-center text-slate-500">
+                    <Camera className="w-12 h-12 mb-3 opacity-50" />
+                    <p className="text-sm font-medium">Camera not available</p>
+                  </div>
                 )}
               </div>
 
-              {/* Timer */}
-              <div className="text-center">
-                <p className="text-3xl text-gray-700" style={{ fontFamily: 'monospace' }}>
-                  {String(Math.floor(RECORDING_TIMEOUT_SECONDS / 60)).padStart(2, '0')}:{String(RECORDING_TIMEOUT_SECONDS % 60).padStart(2, '0')}
-                </p>
-              </div>
-
-              {/* Recording Controls */}
-              <div className="flex flex-col items-center gap-3">
+              <div className="flex flex-col items-center gap-4 pt-2">
                 {!hasRecorded ? (
-                  <Button
-                    className="text-white rounded-full px-8"
-                    style={{ backgroundColor: isRecording ? '#EF4444' : '#6366F1' }}
-                    onClick={() => {
-                      if (!isRecording) {
-                        // Start recording
-                        if (!stream) {
-                          setCameraError('No camera stream. Please check device setup.');
-                          return;
+                  <div className="flex flex-col items-center gap-3 w-full">
+                    <Button
+                      className={`text-white rounded-full px-10 py-6 text-lg w-full max-w-xs transition-all duration-300 ${
+                        isRecording ? 'bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/30' : 'bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-500/30'
+                      }`}
+                      onClick={() => {
+                        if (!isRecording) {
+                          if (!stream) {
+                            setCameraError('No camera stream. Please check device setup.');
+                            return;
+                          }
+                          setIsRecording(true);
+                          setHasRecorded(false);
+                          chunksRef.current = [];
+
+                          const recorder = new MediaRecorder(stream, {
+                            mimeType: 'video/webm;codecs=vp8,opus',
+                            videoBitsPerSecond: 250000
+                          });
+                          mediaRecorderRef.current = recorder;
+
+                          recorder.ondataavailable = (e) => {
+                            if (e.data.size > 0) {
+                              chunksRef.current.push(e.data);
+                            }
+                          };
+
+                          recorder.onstop = () => {
+                            const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+                            const url = URL.createObjectURL(blob);
+                            setRecordedUrl(url);
+                            setHasRecorded(true);
+                            setIsRecording(false);
+                          };
+
+                          recorder.start(1000);
+
+                          setTimeout(() => {
+                            if (recorder.state === 'recording') {
+                              recorder.stop();
+                            }
+                          }, RECORDING_TIMEOUT_SECONDS * 1000);
+                        } else if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                          mediaRecorderRef.current.stop();
                         }
-                        setIsRecording(true);
-                        setHasRecorded(false);
-                        chunksRef.current = [];
-
-                        const recorder = new MediaRecorder(stream, {
-                          mimeType: 'video/webm;codecs=vp8,opus',
-                          videoBitsPerSecond: 250000
-                        });
-                        mediaRecorderRef.current = recorder;
-
-                        recorder.ondataavailable = (e) => {
-                          if (e.data.size > 0) {
-                            chunksRef.current.push(e.data);
-                          }
-                        };
-
-                        recorder.onstop = () => {
-                          const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-                          const url = URL.createObjectURL(blob);
-                          setRecordedUrl(url);
-                          setHasRecorded(true);
-                          setIsRecording(false);
-                        };
-
-                        recorder.start(1000);
-
-                        setTimeout(() => {
-                          if (recorder.state === 'recording') {
-                            recorder.stop();
-                          }
-                        }, RECORDING_TIMEOUT_SECONDS * 1000);
-                      }
-                    }}
-                  >
-                    {isRecording ? (
-                      <>
-                        <div className="w-2 h-2 bg-white rounded-full mr-2 animate-pulse" />
-                        Recording... Click to Stop
-                      </>
-                    ) : (
-                      'Start Recording'
+                      }}
+                    >
+                      {isRecording ? (
+                        <div className="flex items-center">
+                          <div className="w-2.5 h-2.5 bg-white rounded-full mr-3 animate-pulse" />
+                          Stop Recording
+                        </div>
+                      ) : (
+                        'Start Practice Recording'
+                      )}
+                    </Button>
+                    {!isRecording && (
+                      <p className="text-sm text-gray-400 font-medium">Max length: 1 minute</p>
                     )}
-                  </Button>
+                  </div>
                 ) : (
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center justify-center gap-4 w-full">
                     <Button
                       variant="outline"
-                      className="rounded-full"
+                      className="rounded-full px-8 py-6 text-gray-700 border-gray-200 hover:bg-gray-50"
                       onClick={() => {
                         setIsRecording(false);
                         setHasRecorded(false);
@@ -2145,43 +1946,36 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                         chunksRef.current = [];
                       }}
                     >
-                      Retry
+                      Retry Recording
                     </Button>
                     <Button
-                      variant="outline"
-                      className="rounded-full"
-                      onClick={() => {
-                        setIsRecording(false);
-                      }}
+                      className="rounded-full px-8 py-6 text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-500/30"
+                      onClick={() => setCurrentStep(8)}
                     >
-                      Keep Recording
+                      Looks Good, Continue
                     </Button>
                   </div>
                 )}
-              </div>
 
-              {/* Continue Button */}
-              <div className="pt-4">
-                <Button
-                  className="w-full text-white rounded-full"
-                  style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => setCurrentStep(9)}
-                >
-                  Continue to Interview
-                </Button>
-                <p className="text-center text-gray-500 text-sm mt-2">
-                  You can skip the practice recording and continue directly
-                </p>
+                <div className="w-full h-px bg-gray-100 my-4" />
+                
+                <div className="flex justify-center w-full">
+                  <button 
+                    onClick={() => setCurrentStep(8)}
+                    className="text-sm text-gray-500 hover:text-gray-700 underline underline-offset-4 transition-colors"
+                  >
+                    Skip practice and continue to interview
+                  </button>
+                </div>
               </div>
             </div>
           </Card>
         );
 
-      case 9:
+      case 8:
         return (
           <Card className="max-w-5xl mx-auto p-12">
             <div className="flex flex-col items-center text-center space-y-8">
-              {/* Large Success Icon */}
               <div className="w-24 h-24 rounded-full flex items-center justify-center" style={{ backgroundColor: '#10B981' }}>
                 <CheckCircle2 className="w-16 h-16 text-white" />
               </div>
@@ -2192,7 +1986,6 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 You've completed all the setup steps
               </p>
 
-              {/* Start Session Button */}
               <Button
                 className="text-white rounded-full px-12 py-6 text-lg"
                 style={{ backgroundColor: '#6366F1' }}
@@ -2201,7 +1994,6 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 Start Session →
               </Button>
 
-              {/* Remember Text */}
               <p className="text-gray-700 text-sm max-w-xl">
                 Remember: Stay focused, remain alone in frame, and avoid any prohibited actions
               </p>
@@ -2226,7 +2018,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                 <Button
                   className="text-white rounded-full"
                   style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => currentStep < 9 && setCurrentStep(currentStep + 1)}
+                  onClick={() => currentStep < 8 && setCurrentStep(currentStep + 1)}
                 >
                   Continue
                 </Button>
@@ -2331,31 +2123,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
           {/* Conditionally render setup or interview session */}
           {!inInterviewSession ? (
             <>
-              {/* Progress Steps */}
-              <div className="px-12 py-6">
-                <Card className="max-w-5xl mx-auto p-6">
-                  <div className="flex items-start justify-between px-12">
-                    {steps.map((step) => (
-                      <div key={step.number} className="flex flex-col items-center w-20">
-                        <div
-                          className={`w-12 h-12 rounded-full flex items-center justify-center text-white transition-all ${currentStep > step.number
-                            ? 'bg-gradient-to-br'
-                            : currentStep === step.number
-                              ? 'bg-gradient-to-br'
-                              : 'bg-gray-300'
-                            }`}
-                          style={currentStep >= step.number ? { backgroundColor: '#6366F1' } : {}}
-                        >
-                          {currentStep > step.number ? '✓' : step.number}
-                        </div>
-                        <span className={`text-xs mt-2 text-center ${currentStep >= step.number ? 'text-gray-700' : 'text-gray-400'}`}>
-                          {step.label}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              </div>
+              
 
               {/* Main Content */}
               <main className="px-12 py-8">

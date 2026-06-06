@@ -789,7 +789,11 @@ export function EnhancedGroupOverviewV2({
 
   const handleSaveAssessment = async (assessment: any) => {
     try {
-      showToast(assessment.id && !assessment.id.toString().startsWith('assessment-') ? 'Updating assessment...' : 'Saving assessment...');
+      const existingAssessmentId = assessment.id && !assessment.id.toString().startsWith('assessment-')
+        ? assessment.id
+        : groupAssessments.find((item) => item?.id && !item.id.toString().startsWith('assessment-'))?.id;
+
+      showToast(existingAssessmentId ? 'Updating assessment...' : 'Saving assessment...');
 
       const payload = {
         position_id: positionId, // From component state fetched on mount
@@ -806,25 +810,66 @@ export function EnhancedGroupOverviewV2({
         sections: assessment.sections
       };
 
-      if (assessment.id && !assessment.id.toString().startsWith('assessment-')) {
-        await api.recruiter.updateAssessment(assessment.id, payload);
-        const updatedAssessments = groupAssessments.map(a =>
-          a.id === assessment.id ? { ...assessment, status: a.status || 'draft' } : a
+      if (existingAssessmentId) {
+        await api.recruiter.updateAssessment(existingAssessmentId, payload);
+        const updatedAssessments = groupAssessments.map((item) =>
+          item.id === existingAssessmentId ? { ...assessment, id: existingAssessmentId, status: item.status || 'draft' } : item
         );
         setGroupAssessments(updatedAssessments);
         showToast(`Assessment "${assessment.config.title}" updated successfully!`);
       } else {
-        const response = await api.recruiter.saveAssessment(payload);
-        const newAssessment = {
-          ...assessment,
-          id: response.assessment_id || `assessment-${Date.now()}`,
-          groupId,
-          createdAt: new Date().toISOString(),
-          createdBy: assignedRecruiter,
-          status: 'draft'
-        };
-        setGroupAssessments([...groupAssessments, newAssessment]);
-        showToast(`Assessment "${assessment.config.title}" created successfully!`);
+        try {
+          const response = await api.recruiter.saveAssessment(payload);
+          const newAssessment = {
+            ...assessment,
+            id: response.assessment_id || `assessment-${Date.now()}`,
+            groupId,
+            createdAt: new Date().toISOString(),
+            createdBy: assignedRecruiter,
+            status: 'draft'
+          };
+          setGroupAssessments([...groupAssessments, newAssessment]);
+          showToast(`Assessment "${assessment.config.title}" created successfully!`);
+        } catch (createError) {
+          const errorMessage = createError instanceof Error ? createError.message : String(createError);
+          const hasSingleAssessmentConstraint = errorMessage.includes('Only one assessment can be created for this group');
+          
+          let fallbackAssessmentId = groupAssessments.find((item) => item?.id && !item.id.toString().startsWith('assessment-'))?.id;
+          if (hasSingleAssessmentConstraint) {
+            const match = errorMessage.match(/Existing ID: ([\w-]+)/);
+            if (match && match[1]) {
+              fallbackAssessmentId = match[1];
+            }
+          }
+
+          if (!hasSingleAssessmentConstraint || !fallbackAssessmentId) {
+            throw createError;
+          }
+
+          await api.recruiter.updateAssessment(fallbackAssessmentId, payload);
+          let itemFound = false;
+          const updatedAssessments = groupAssessments.map((item) => {
+            if (item.id === fallbackAssessmentId) {
+              itemFound = true;
+              return { ...assessment, id: fallbackAssessmentId, status: item.status || 'draft' };
+            }
+            return item;
+          });
+          
+          if (!itemFound) {
+            updatedAssessments.push({
+              ...assessment,
+              id: fallbackAssessmentId,
+              groupId,
+              createdAt: new Date().toISOString(),
+              createdBy: assignedRecruiter,
+              status: 'draft'
+            });
+          }
+          
+          setGroupAssessments(updatedAssessments);
+          showToast(`Assessment "${assessment.config.title}" updated successfully!`);
+        }
       }
 
       setShowAssessmentCreation(false);
@@ -1144,7 +1189,7 @@ export function EnhancedGroupOverviewV2({
         groupName={groupName}
         positionTitle={description}
         candidates={candidateStatuses
-          .filter(c => c.progressionState !== 'rejected' && c.progressionState !== 'offered')
+          .filter(c => (c.progressionState as string) !== 'rejected' && (c.progressionState as string) !== 'offered')
           .map(c => ({
             id: c.id,
             name: c.name,
@@ -2550,7 +2595,7 @@ export function EnhancedGroupOverviewV2({
       {showArchiveModal && (
         <ArchiveGroupModal
           groupName={groupName}
-          nonRejectedCount={candidateStatuses.filter(c => c.progressionState !== 'rejected' && c.progressionState !== 'offered').length}
+          nonRejectedCount={candidateStatuses.filter(c => (c.progressionState as string) !== 'rejected' && (c.progressionState as string) !== 'offered').length}
           onConfirm={handleArchiveGroup}
           onClose={() => setShowArchiveModal(false)}
         />
@@ -2563,7 +2608,7 @@ export function EnhancedGroupOverviewV2({
         groupName={groupName}
         positionTitle={description}
         candidates={candidateStatuses
-          .filter(c => c.progressionState !== 'rejected' && c.progressionState !== 'offered')
+          .filter(c => (c.progressionState as string) !== 'rejected' && (c.progressionState as string) !== 'offered')
           .map(c => ({
             id: c.id,
             name: c.name,
@@ -2577,23 +2622,25 @@ export function EnhancedGroupOverviewV2({
       />
 
       {/* Toast Notification */}
-      <AnimatePresence>
-        {toastMessage && (
-          <motion.div
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50"
-          >
-            <div className="bg-[#111827] rounded-[16px] shadow-2xl px-8 py-4 flex items-center gap-3">
-              <CheckCircle size={20} className="text-[#10b981]" />
-              <span className="font-['Arimo',sans-serif] text-[14px] text-white">
-                {toastMessage}
-              </span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div className="fixed bottom-8 left-0 right-0 z-50 flex justify-center pointer-events-none">
+        <AnimatePresence>
+          {toastMessage && (
+            <motion.div
+              initial={{ y: 100, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 100, opacity: 0 }}
+              className="pointer-events-auto"
+            >
+              <div className="bg-[#111827] rounded-[16px] shadow-2xl px-8 py-4 flex items-center gap-3">
+                <CheckCircle size={20} className="text-[#10b981]" />
+                <span className="font-['Arimo',sans-serif] text-[14px] text-white">
+                  {toastMessage}
+                </span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       {/* Filtration Flow Configuration Modal */}
       {

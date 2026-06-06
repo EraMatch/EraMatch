@@ -76,6 +76,9 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const eventThrottleRef = useRef<Record<string, number>>({});
   const proctoringStreamRef = useRef<MediaStream | null>(null);
   const proctoringVideoRef = useRef<HTMLVideoElement | null>(null);
+  const captureStartedRef = useRef(false);
+  const captureFullyInitializedRef = useRef(false);
+  const screenCaptureVideoRef = useRef<HTMLVideoElement | null>(null);
   const proctoringCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastFrameRef = useRef<Uint8ClampedArray | null>(null);
   const lastFrameDimensionsRef = useRef<{ width: number; height: number } | null>(null);
@@ -84,7 +87,6 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const audioBufferRef = useRef<Float32Array | null>(null);
   const latestAudioFrameRef = useRef<Float32Array | null>(null);
   const screenCaptureStreamRef = useRef<MediaStream | null>(null);
-  const screenCaptureVideoRef = useRef<HTMLVideoElement | null>(null);
   const screenRecorderRef = useRef<MediaRecorder | null>(null);
   const screenRecordingChunksRef = useRef<BlobPart[]>([]);
   const screenRecordingBlobRef = useRef<Blob | null>(null);
@@ -105,11 +107,12 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const currentQuestionIndexRef = useRef(0);
   const audioWsRef = useRef<WebSocket | null>(null);
 
+
   // --- Browser prevention lockdown (tab switch, fullscreen, copy/paste, devtools) ---
   useExamLockdown({
     sessionId,
-    enabled: !assessmentComplete && !isLoading && !!sessionId,
-    enforceFullscreen: true,
+    enabled: !assessmentComplete && !isLoading && !!sessionId && screenRecordingActive,
+    enforceFullscreen: false,
     onTerminated: (message) => {
       setIntegrityBlocked(true);
       setIntegrityReason(message);
@@ -460,6 +463,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     let stopped = false;
 
     const handleBlur = () => {
+      if (!captureFullyInitializedRef.current) return;
       const now = Date.now();
       if (now - lastShiftTsRef.current < 4000) {
         rapidShiftCountRef.current += 1;
@@ -471,6 +475,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     };
 
     const handleFocus = () => {
+      if (!captureFullyInitializedRef.current) return;
       const now = Date.now();
       if (hiddenStartedAtRef.current !== null) {
         focusHiddenMsRef.current += now - hiddenStartedAtRef.current;
@@ -496,6 +501,9 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
 
     const startCapture = async () => {
       try {
+        if (captureStartedRef.current) return;
+        captureStartedRef.current = true;
+        
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 640 }, height: { ideal: 480 } },
           audio: true,
@@ -590,6 +598,13 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         screenCaptureStreamRef.current = displayStream;
         screenCaptureVideoRef.current = screenVideo;
         setScreenRecordingActive(true);
+
+        // Reset tracking to ignore the blur caused by the getDisplayMedia dialog
+        captureFullyInitializedRef.current = true;
+        sampleWindowStartRef.current = Date.now();
+        focusHiddenMsRef.current = 0;
+        rapidShiftCountRef.current = 0;
+        hiddenStartedAtRef.current = null;
       } catch (error) {
         console.error('Biometric capture init failed:', error);
         const err = error as { name?: string };
@@ -641,7 +656,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     }, BIOMETRIC_SAMPLE_INTERVAL_MS);
 
     const analysisInterval = window.setInterval(async () => {
-      if (!sessionId || assessmentComplete) return;
+      if (!sessionId || assessmentComplete || !captureFullyInitializedRef.current) return;
 
       if (hiddenStartedAtRef.current !== null) {
         const now = Date.now();
@@ -671,7 +686,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       const elapsedAssessmentSeconds = Math.max(0, initialTimerRef.current - assessmentTimerRef.current);
       const quantizedSecond = quantizeTimestampBucket(elapsedAssessmentSeconds, 5);
 
-      const [faceResult, voiceResult, gazeResult, emotionResult] = await Promise.all([
+      const [faceResult, gazeResult, emotionResult] = await Promise.all([
         postProctoringSignal('face', {
           session_id: sessionId,
           faces_detected: hasLiveVideo ? 1 : 0,
@@ -774,15 +789,18 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         const hiResFrame = captureVideoFrameBase64(proctoringVideoRef.current, 640, 480);
         if (hiResFrame) {
           try {
-            const unifiedResponse = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/analyze-frame`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                session_id: sessionId,
-                frame_b64: hiResFrame,
-                face_check_interval: 10.0,
-              }),
-            });
+              const storedFaceEncodingStr = sessionStorage.getItem('reference_face_encoding');
+              const storedFaceEncoding = storedFaceEncodingStr ? JSON.parse(storedFaceEncodingStr) : null;
+              const unifiedResponse = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/analyze-frame`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  session_id: sessionId,
+                  frame_b64: hiResFrame,
+                  stored_face_encoding: storedFaceEncoding,
+                  face_check_interval: 10.0,
+                }),
+              });
             if (unifiedResponse.ok) {
               const unified = await unifiedResponse.json();
               // Report any violations from the unified analysis
@@ -830,6 +848,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       window.removeEventListener('focus', handleFocus);
       proctoringStreamRef.current?.getTracks().forEach(track => track.stop());
       proctoringStreamRef.current = null;
+      captureStartedRef.current = false;
       proctoringVideoRef.current = null;
       if (screenRecorderRef.current && screenRecorderRef.current.state !== 'inactive') {
         screenRecorderRef.current.stop();
@@ -839,6 +858,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       screenCaptureStreamRef.current = null;
       screenCaptureVideoRef.current = null;
       setScreenRecordingActive(false);
+      captureFullyInitializedRef.current = false;
       audioAnalyserRef.current = null;
       audioBufferRef.current = null;
       if (audioContextRef.current) {
