@@ -1016,6 +1016,8 @@ class CandidateService:
                     "repo_count": github.repo_count if github else None,
                 },
                 jd_critic_result=jd_critic_result,
+                profile_embedding=cv.profile_embedding,
+                jd_embedding=position.jd_embedding,
             )
 
             parsed_data["prescore_v2"] = prescore

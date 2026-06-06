@@ -120,4 +120,6 @@ export interface ApplicationScoreBreakdown {
         passed?: boolean;
         reason?: string;
     }>;
+    keyword_match_score?: number | null;
+    jd_embedding_similarity?: number | null;
 }

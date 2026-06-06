@@ -115,6 +115,28 @@ async def init_db() -> None:
         except Exception:
             pass
 
+        # profile_embedding for semantic candidate search (Jina embeddings)
+        res = await conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name='cv_analysis' AND column_name='profile_embedding'")
+        )
+        if not res.fetchone():
+            try:
+                await conn.execute(text("ALTER TABLE cv_analysis ADD COLUMN profile_embedding JSONB"))
+                await conn.commit()
+            except Exception:
+                pass
+
+        # jd_embedding for JD-candidate embedding similarity scoring
+        res = await conn.execute(
+            text("SELECT column_name FROM information_schema.columns WHERE table_name='positions' AND column_name='jd_embedding'")
+        )
+        if not res.fetchone():
+            try:
+                await conn.execute(text("ALTER TABLE positions ADD COLUMN jd_embedding JSONB"))
+                await conn.commit()
+            except Exception:
+                pass
+
         # All columns added to pre-existing tables in this PR
         for table, col, col_type in [
             # LiV2 columns (table may predate these columns)

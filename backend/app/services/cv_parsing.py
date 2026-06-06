@@ -19,6 +19,50 @@ def _to_relative_url(file_path: str) -> str:
     return "/" + normalized.lstrip("/")
 
 
+def _build_profile_text(
+    skills: list[str] | None,
+    experience_years,
+    work_history: list | None,
+    education: list | None,
+) -> str:
+    """Build a flat profile string used as input for Jina embedding."""
+    parts: list[str] = []
+    if skills:
+        parts.append("Skills: " + ", ".join(skills))
+    if work_history:
+        titles = [w.get("job_title", "") for w in work_history if w.get("job_title")]
+        companies = [w.get("company", "") for w in work_history if w.get("company")]
+        if titles:
+            parts.append("Titles: " + ", ".join(titles))
+        if companies:
+            parts.append("Companies: " + ", ".join(companies))
+    if education:
+        unis = [e.get("institution", "") for e in education if e.get("institution")]
+        if unis:
+            parts.append("Education: " + ", ".join(unis))
+    if experience_years is not None:
+        parts.append(f"{float(experience_years):.1f} years experience")
+    return " | ".join(filter(None, parts))
+
+
+def _jina_embed_sync(text: str, ai_service_url: str) -> list[float] | None:
+    """Request a Jina embedding from the ai-service (synchronous, safe for Celery workers)."""
+    import requests as _req
+    try:
+        resp = _req.post(
+            f"{ai_service_url.rstrip('/')}/llm/embed",
+            headers={"Content-Type": "application/json"},
+            json={"input": [text]},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        embeddings = resp.json().get("embeddings", [])
+        return embeddings[0] if embeddings else None
+    except Exception as e:
+        logger.warning(f"[CVParsing] Embedding via ai-service failed: {e}")
+        return None
+
+
 class CVParsingWorkerService:
     """Synchronous service for CV parsing database operations in Celery workers."""
 
@@ -109,6 +153,23 @@ class CVParsingWorkerService:
                         self.session.commit()
         except Exception as e:
             logger.warning(f"[CVParsing] Post-persist enrichment failed for app {application_id}: {e}")
+
+        # Generate and store Jina profile embedding via ai-service
+        try:
+            from app.core.config import settings as _settings
+            if _settings.AI_SERVICE_URL and not analysis.profile_embedding:
+                profile_text = _build_profile_text(
+                    skills_list, experience_years, work_history_list, education_list
+                )
+                if profile_text:
+                    vec = _jina_embed_sync(profile_text, _settings.AI_SERVICE_URL)
+                    if vec:
+                        analysis.profile_embedding = vec
+                        self.session.add(analysis)
+                        self.session.commit()
+                        logger.info(f"[CVParsing] Stored profile embedding for application {application_id}")
+        except Exception as e:
+            logger.warning(f"[CVParsing] Failed to store profile embedding for {application_id}: {e}")
 
     def backfill_candidate_profile(self, application_id: UUID, parsed_data: dict):
         """

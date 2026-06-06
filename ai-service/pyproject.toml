@@ -5,7 +5,7 @@ description = "EraMatch AI Service for transcription and LLM evaluation"
 authors = [
     { name = "Anas Ahmed" }
 ]
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     # Web framework
     "fastapi>=0.109.0",
@@ -76,9 +76,3 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 
 [tool.uv]
-required-environments = [
-    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "sys_platform == 'darwin' and platform_machine == 'arm64'",
-    "sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "sys_platform == 'linux' and platform_machine == 'aarch64'",
-]

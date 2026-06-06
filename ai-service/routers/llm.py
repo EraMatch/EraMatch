@@ -4,11 +4,13 @@ LLM router - endpoints for LLM inference via Ollama Cloud.
 Example use cases:
 - Interview evaluation (transcript + reference + rubric)
 - Generic chat/prompt completion
+- Jina embedding for semantic search
 """
 
 from pathlib import Path
 import logging
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -748,3 +750,46 @@ async def jd_rank(request: JDRankRequest):
             fit_summary=f"Fallback: {str(e)[:80]}",
             model="fallback",
         )
+
+
+# ---------------------------------------------------------------------------
+# Jina Embeddings
+# ---------------------------------------------------------------------------
+
+class EmbedRequest(BaseModel):
+    input: list[str]
+    model: str = "jina-embeddings-v3"
+
+
+class EmbedResponse(BaseModel):
+    embeddings: list[list[float]]
+    model: str
+
+
+@router.post("/embed", response_model=EmbedResponse)
+async def embed(request: EmbedRequest):
+    """Generate Jina AI embeddings for a list of texts."""
+    from config import settings
+    if not settings.JINA_API_KEY:
+        raise HTTPException(status_code=503, detail="JINA_API_KEY not configured in ai-service")
+    if not request.input:
+        return EmbedResponse(embeddings=[], model=request.model)
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.jina.ai/v1/embeddings",
+                headers={
+                    "Authorization": f"Bearer {settings.JINA_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={"input": request.input, "model": request.model},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        items = sorted(data["data"], key=lambda x: x["index"])
+        embeddings = [item["embedding"] for item in items]
+        return EmbedResponse(embeddings=embeddings, model=request.model)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Jina API error: {e.response.text[:200]}")
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Embedding service unavailable: {str(e)[:200]}")

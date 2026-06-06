@@ -31,7 +31,8 @@ PER_CANDIDATE_TIMEOUT_SECONDS = 120
 async def _run_prescore_async(
     job_title, job_description, required_skills, years_of_experience,
     candidate_skills, candidate_experience_years, candidate_parsed_data,
-    github_analysis_data, jd_critic_result
+    github_analysis_data, jd_critic_result,
+    profile_embedding=None, jd_embedding=None,
 ):
     scorer = PreScoreService()
     return await asyncio.wait_for(
@@ -45,6 +46,8 @@ async def _run_prescore_async(
             candidate_parsed_data=candidate_parsed_data,
             github_analysis_data=github_analysis_data,
             jd_critic_result=jd_critic_result,
+            profile_embedding=profile_embedding,
+            jd_embedding=jd_embedding,
         ),
         timeout=PER_CANDIDATE_TIMEOUT_SECONDS,
     )
@@ -213,6 +216,8 @@ def recompute_position_prescores(self, position_id: str, organization_id: str, u
                                 "repo_count": gh.repo_count if gh else None,
                             },
                             jd_critic_result=jd_critic_result,
+                            profile_embedding=cv.profile_embedding,
+                            jd_embedding=position.jd_embedding,
                         )
                     )
                     logger.info(

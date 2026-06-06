@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Search, Sparkles, X, User, MapPin, Briefcase, ArrowUpDown, Users, Sliders, ChevronLeft, ExternalLink, Brain, TrendingUp, AlertCircle, Zap, BarChart3 } from 'lucide-react';
+import { Search, Sparkles, X, User, MapPin, Briefcase, ArrowUpDown, Users, Sliders, ChevronLeft, ExternalLink, Brain, TrendingUp, AlertCircle, Zap, BarChart3, Loader2 } from 'lucide-react';
 import { Switch } from '../../ui/switch';
 import { Badge } from '../../ui/badge';
 import { AdvancedFilterDrawer } from '../candidates/AdvancedFilterDrawer';
@@ -147,6 +147,8 @@ export function GroupCreationPage({
   const [jdRankError, setJdRankError] = useState<string | null>(null);
   // AI Rank Insights panel
   const [showRankInsights, setShowRankInsights] = useState(false);
+  // Search mode: keyword (local), semantic (Jina), hybrid (RRF blend)
+  const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid'>('keyword');
 
   // View Why modal
   const [viewWhyOpen, setViewWhyOpen] = useState(false);
@@ -382,8 +384,9 @@ export function GroupCreationPage({
 
   // Apply AI ranking — priority: AI Sort (NLP) > JD Rank (LLM) > local formula
   const displayCandidates = useMemo(() => {
-    // AI Sort (NLP query) takes highest priority when available
-    if (aiRankingEnabled && aiSortRankedIds.length > 0) {
+    // AI Sort / Semantic Search result takes highest priority when available
+    // (aiRankingEnabled not required — search results apply regardless of the AI Rank toggle)
+    if (aiSortRankedIds.length > 0) {
       const idxMap = new Map(aiSortRankedIds.map((id, i) => [id, i]));
       return [...filteredCandidates].sort((a, b) => {
         const ia = idxMap.has(a.id) ? idxMap.get(a.id)! : 9999;
@@ -492,6 +495,42 @@ export function GroupCreationPage({
       // Fallback: keep local formula (jdRankRankedIds stays empty)
     } finally {
       setIsJdRankProcessing(false);
+    }
+  };
+
+  // Clear stale AI results when search mode changes
+  useEffect(() => {
+    setAiSortRankedIds([]);
+    setAiSortError(null);
+  }, [searchMode]);
+
+  const handleSearch = async () => {
+    if (!nlpQuery.trim() || filteredCandidates.length === 0) return;
+    if (searchMode === 'keyword') {
+      // Keyword scoring runs live via getSemanticScore() in displayCandidates —
+      // just clear any previous AI results so local scoring takes over.
+      setAiSortRankedIds([]);
+      setAiSortError(null);
+      return;
+    }
+    setIsAiProcessing(true);
+    setAiSortError(null);
+    try {
+      const data = await api.recruiter.searchCandidates({
+        query: nlpQuery,
+        mode: searchMode,
+        candidates: filteredCandidates
+          .filter(c => c.applicationId)
+          .map(c => ({ candidate_id: c.id, application_id: c.applicationId! })),
+      });
+      setAiSortRankedIds(data.ranked_ids);
+      if (data.mode_used !== searchMode) {
+        setAiSortError('AI search unavailable — fell back to keyword matching.');
+      }
+    } catch {
+      setAiSortError('Search service unavailable — using local scoring as fallback.');
+    } finally {
+      setIsAiProcessing(false);
     }
   };
 
@@ -700,33 +739,66 @@ export function GroupCreationPage({
         </div>
 
         {/* Unified Search & Filter Toolbar */}
-        <div className="mb-6 flex items-center gap-4">
-          {/* Search Bar - Flex Grow */}
-          <div className="flex-1 relative">
-            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9ca3af]" />
-            <input
-              type="text"
-              value={nlpQuery}
-              onChange={(e) => setNlpQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleAiEnhance()}
-              placeholder="Describe your ideal candidate group (e.g. 'Senior Python backend 5+ years, fintech exp') — press Enter or AI Sort"
-              className="w-full h-[48px] pl-[40px] pr-[140px] rounded-[10px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent shadow-sm transition-all"
-            />
-            {/* AI Sort Button inside Input */}
-            <div className="absolute right-2 top-1/2 -translate-y-1/2">
-              <button
-                onClick={handleAiEnhance}
-                disabled={!nlpQuery.trim() || isAiProcessing}
-                className="h-[36px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] disabled:from-[#f3f4f6] disabled:to-[#f3f4f6] disabled:text-[#9ca3af] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[13px] text-white flex items-center gap-1.5 transition-all font-medium shadow-sm"
-              >
-                {isAiProcessing ? (
-                  <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /><span>Ranking...</span></>
-                ) : (
-                  <><Zap size={13} /><span>AI Sort</span></>
-                )}
-              </button>
+        <div className="mb-4">
+          {/* Search bar row: input + search button */}
+          <div className="flex items-center gap-2 mb-2">
+            {/* Input */}
+            <div className="flex-1 relative">
+              <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9ca3af]" />
+              <input
+                type="text"
+                value={nlpQuery}
+                onChange={(e) => setNlpQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                placeholder={
+                  searchMode === 'keyword'
+                    ? 'Search by skills, title, location, company...'
+                    : searchMode === 'semantic'
+                    ? "Describe your ideal candidate (e.g. 'Senior Python 5+ years, fintech')"
+                    : 'Keywords or description — we blend both for best results'
+                }
+                className="w-full h-[48px] pl-[40px] pr-4 rounded-[10px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent shadow-sm transition-all"
+              />
             </div>
+            {/* Search button */}
+            <button
+              onClick={handleSearch}
+              disabled={!nlpQuery.trim() || isAiProcessing}
+              className="shrink-0 h-[48px] px-5 rounded-[10px] bg-[#6366f1] hover:bg-[#5558e3] disabled:opacity-50 disabled:cursor-not-allowed text-white font-['Arimo',sans-serif] text-[13px] font-semibold flex items-center gap-2 transition-colors shadow-sm"
+            >
+              {isAiProcessing
+                ? <Loader2 size={14} className="animate-spin" />
+                : <Search size={14} />}
+              <span>
+                {searchMode === 'keyword' ? 'Search' : searchMode === 'semantic' ? 'AI Search' : 'Hybrid'}
+              </span>
+            </button>
           </div>
+
+          {/* Search mode toggle + filter toolbar row */}
+          <div className="flex items-center gap-4">
+            {/* 3-segment mode toggle */}
+            <div className="flex items-center gap-0.5 bg-gray-100 rounded-xl p-1">
+              {(['keyword', 'semantic', 'hybrid'] as const).map((mode) => {
+                const active = searchMode === mode;
+                const labels = { keyword: 'Keyword', semantic: 'AI Semantic', hybrid: 'Hybrid' };
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => setSearchMode(mode)}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                      active
+                        ? 'bg-white text-[#6366f1] shadow-sm font-semibold'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {mode === 'semantic' && <Sparkles size={12} />}
+                    {mode === 'hybrid' && <Zap size={12} />}
+                    {labels[mode]}
+                  </button>
+                );
+              })}
+            </div>
 
           {/* AI Rank Toggle */}
           <div className={`flex items-center gap-3 h-[48px] px-[16px] rounded-[10px] border shadow-sm transition-all ${aiRankingEnabled ? 'bg-gradient-to-r from-[#eef2ff] to-[#f5f3ff] border-[#a5b4fc]' : 'bg-white border-[#e5e7eb]'}`}>
@@ -765,6 +837,7 @@ export function GroupCreationPage({
               <span className="bg-[#6366f1] text-white rounded-full min-w-[20px] h-[20px] px-1 flex items-center justify-center text-[11px] font-medium">{activeFilterCount}</span>
             )}
           </button>
+          </div>
         </div>
 
         {/* JD Rank Fit Summary Banner */}
@@ -1292,7 +1365,7 @@ export function GroupCreationPage({
                     const semanticContribution = semanticQueryScore * 0.55;
                     const finalAiScore = clampScore(baseContribution + semanticContribution);
                     const cvMatchScore = clampScore(Number(candidate?.match || viewWhyBreakdown?.match_score || 0));
-                    const aiModeActive = Boolean(aiRankingEnabled && nlpQuery.trim());
+                    const aiModeActive = Boolean((aiRankingEnabled || aiSortRankedIds.length > 0) && nlpQuery.trim());
                     const displayedScore = candidate ? getDisplayScore(candidate) : 0;
 
                     const backendSemantic = Number(viewWhyBreakdown?.semantic_fit_score ?? candidate?.semantic_fit_score ?? 0);

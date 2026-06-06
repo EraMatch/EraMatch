@@ -325,8 +325,10 @@ class CVIngestionService:
                             candidate_skills=candidate_skills,
                             candidate_experience_years=candidate_experience_years,
                             candidate_parsed_data=parsed_data,
-                            github_analysis_data={},
+                            github_analysis_data={},  # GitHub not yet available at parse time; recompute via QAG task
                             jd_critic_result=jd_critic_result,
+                            jd_embedding=position.jd_embedding,  # Use stored JD embedding if available
+                            # profile_embedding not yet available; set by cv_parsing.py after Celery task
                         )
                 except Exception as score_exc:
                     logger.warning(f"Prescore computation skipped for app {app_id}: {score_exc}")

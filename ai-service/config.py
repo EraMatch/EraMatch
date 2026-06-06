@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # Dev-safe default: allow fallback adapter output unless explicitly forced by env.
     PROCTORING_REQUIRE_MODEL: bool = False
 
+    # Jina AI — embeddings for semantic candidate search
+    JINA_API_KEY: str = ""
+
     # Mock mode is opt-in for local testing only.
     USE_MOCK: bool = False
 

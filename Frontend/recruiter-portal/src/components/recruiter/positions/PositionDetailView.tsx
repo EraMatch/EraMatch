@@ -549,8 +549,9 @@ export function PositionDetailView({
       queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.positions.insights(positionId) });
 
-      const scored = Number(result?.applications_scored ?? 0);
-      setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+      setRecomputeMessage(
+        result?.message ?? 'Score recomputation started in the background. Refresh in a moment.'
+      );
     } catch (error) {
       console.error('Failed to recompute prescores:', error);
       setRecomputeError(error instanceof Error ? error.message : 'Failed to recompute scores');
