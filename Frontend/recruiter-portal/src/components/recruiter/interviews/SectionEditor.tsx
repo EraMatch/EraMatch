@@ -9,7 +9,7 @@ import { AIGeneratorModal } from './AIGeneratorModal';
 import { AIVariantMaker } from './AIVariantMaker';
 import { recruiterService } from '../../../services/recruiter.service';
 
-interface Section {
+export interface Section {
   id: string;
   order: number;
   type: 'mcq' | 'essay' | 'code';
@@ -19,7 +19,7 @@ interface Section {
   selectionStrategy?: 'random' | 'sequential';
 }
 
-interface QuestionVariant {
+export interface QuestionVariant {
   id: string;
   questionText: string;
   type: 'mcq' | 'essay' | 'code';
@@ -44,12 +44,12 @@ interface QuestionVariant {
   explanation?: string;
   evidence?: string;
   referenceAnswer?: string;
-  rubricYesNoChecks?: Array<{ id: number; check: string; weight: number }>;
+  rubricYesNoChecks?: Array<{ id?: number; check?: string; weight?: number }>;
   needsReview?: boolean;
   criticScore?: number;
   criticWeightedScore?: number;
   criticFeedback?: string;
-  criticChecks?: Array<{ id?: number; criterion: string; verdict: 'YES' | 'NO'; weight?: number; weighted_value?: number }>;
+  criticChecks?: Array<{ id?: number; criterion: string; verdict: 'YES' | 'NO'; reason?: string; weight?: number; weighted_value?: number }>;
   retryCount?: number;
   category?: string;
   difficulty?: 'Easy' | 'Medium' | 'Hard';
@@ -272,8 +272,8 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
     setShowAIGenerator(true);
   };
 
-  const handleAIGenerate = (question: QuestionVariant | QuestionVariant[]) => {
-    const list = Array.isArray(question) ? question : [question];
+  const handleAIGenerate = (question: QuestionVariant | QuestionVariant[] | any) => {
+    const list = (Array.isArray(question) ? question : [question]) as QuestionVariant[];
     // Use functional setState so each variant is appended to the result of
     // the previous update — avoids the stale-closure overwrite in a forEach loop.
     setCurrentSection(prev => {
@@ -325,9 +325,9 @@ export function SectionEditor({ section, onSave, onCancel }: SectionEditorProps)
     if (currentSection.type === 'mcq') {
       return <MCQEditor variant={variant} onSave={handleEditorSave} onCancel={handleEditorCancel} />;
     } else if (currentSection.type === 'essay') {
-      return <EssayEditor variant={variant} onSave={handleEditorSave} onCancel={handleEditorCancel} />;
+      return <EssayEditor variant={variant as any} onSave={handleEditorSave} onCancel={handleEditorCancel} />;
     } else if (currentSection.type === 'code') {
-      return <CodeEditor variant={variant} onSave={handleEditorSave} onCancel={handleEditorCancel} />;
+      return <CodeEditor variant={variant as any} onSave={handleEditorSave} onCancel={handleEditorCancel} />;
     }
   }
 

@@ -272,7 +272,7 @@ export const recruiterService = {
 
     getAssessmentDetails: async (candidateId: number) => fetchAPI(`/candidates/${candidateId}/assessment-details`),
 
-    getAssessmentTemplates: async () => fetchAPI('/assessments/templates'),
+    getAssessmentTemplates: async () => fetchAPI<any[]>('/assessments/templates'),
 
     getAssessmentSession: async (sessionId: string) => fetchAPI(`/assessments/sessions/${sessionId}`),
 
@@ -288,7 +288,7 @@ export const recruiterService = {
     getQuestionBank: async () => fetchAPI('/questions/bank'),
 
     createQuestionBank: async (data: any) => {
-        return fetchAPI('/questions/bank', {
+        return fetchAPI<any>('/questions/bank', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -312,9 +312,9 @@ export const recruiterService = {
     },
 
     // Interview Management
-    getAIInterviewResult: async (candidateId: number) => fetchAPI(`/candidates/${candidateId}/ai-interview-result`),
+    getAIInterviewResult: async (candidateId: number | string) => fetchAPI(`/candidates/${candidateId}/ai-interview-result`),
 
-    getAIInterviewConfig: async (interviewId: string) => fetchAPI(`/interviews/${interviewId}/config`),
+    getAIInterviewConfig: async (interviewId: string) => fetchAPI<any>(`/interviews/${interviewId}/config`),
 
     getLiveInterviewQuestions: async (interviewId: string) => fetchAPI(`/interviews/${interviewId}/questions`),
 
@@ -324,7 +324,7 @@ export const recruiterService = {
     getAssignedRequests: async () => fetchAPI<any[]>('/recruiter/requests/assigned'),
 
     reviewRequest: async (requestId: string, status: 'approved' | 'rejected', reviewNotes?: string) => {
-        return fetchAPI(`/recruiter/requests/${requestId}/review`, {
+        return fetchAPI<any>(`/recruiter/requests/${requestId}/review`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status, review_notes: reviewNotes })

@@ -984,7 +984,7 @@ export function BackgroundTasks() {
                                 SLO Alerts ({sloHealth.alerts.length}) · Last {sloHealth.window_hours}h
                             </div>
                             <div className="space-y-1">
-                                {sloHealth.alerts.slice(0, 5).map((alert, idx) => (
+                                {sloHealth.alerts.slice(0, 5).map((alert: any, idx: number) => (
                                     <div key={`${alert.pipeline}-${alert.metric}-${idx}`} className="text-[12px] text-amber-800">
                                         <span className="font-semibold">[{alert.pipeline}]</span> {alert.message} ({alert.metric}: {alert.actual} vs threshold {alert.threshold})
                                     </div>
@@ -1051,7 +1051,9 @@ export function BackgroundTasks() {
                             </label>
 
                             <button
-                                onClick={fetchTasks}
+                                onClick={() => {
+                                    void fetchTasks();
+                                }}
                                 className="h-[36px] w-[36px] inline-flex items-center justify-center rounded-[10px] border border-border bg-background text-muted-foreground hover:text-primary"
                             >
                                 <RefreshCcw size={16} className={loading ? 'animate-spin' : ''} />

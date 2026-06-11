@@ -1199,7 +1199,7 @@ export function EnhancedGroupOverviewV2({
         groupName={groupName}
         positionTitle={description}
         candidates={candidateStatuses
-          .filter(c => c.progressionState !== 'rejected' && c.progressionState !== 'offered')
+          .filter(c => c.progressionState !== 'rejected')
           .map(c => ({
             id: c.id,
             name: c.name,
@@ -1869,6 +1869,7 @@ export function EnhancedGroupOverviewV2({
                                                 }
                                               }}
                                               disabled={stageConfigLocked}
+                                              title={stageConfigLocked ? 'Stage is active — close the stage before editing its configuration' : undefined}
                                               className="h-8 px-3 rounded-[8px] border border-gray-300 hover:bg-gray-50 font-semibold text-xs text-gray-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 font-['Arimo',sans-serif]"
                                             >
                                               <Edit size={12} />
@@ -1878,7 +1879,7 @@ export function EnhancedGroupOverviewV2({
                                               onClick={() => handleDeleteAssessment(assessment.id)}
                                               disabled={stageConfigLocked}
                                               className="h-8 w-8 flex items-center justify-center rounded-[8px] border border-gray-300 hover:bg-red-50 hover:border-red-300 hover:text-red-600 text-gray-500 disabled:opacity-50 transition-colors"
-                                              title="Delete Assessment"
+                                              title={stageConfigLocked ? 'Stage is active — close the stage before editing its configuration' : 'Delete Assessment'}
                                             >
                                               <Trash2 size={12} />
                                             </button>
@@ -1935,6 +1936,7 @@ export function EnhancedGroupOverviewV2({
                                                 setShowRecordedInterviewSetup(true);
                                               }}
                                               disabled={stageConfigLocked}
+                                              title={stageConfigLocked ? 'Stage is active — close the stage before editing its configuration' : undefined}
                                               className="h-8 px-3 rounded-[8px] border border-gray-300 hover:bg-gray-50 font-semibold text-xs text-gray-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 font-['Arimo',sans-serif]"
                                             >
                                               <Edit size={12} />
@@ -2022,6 +2024,7 @@ export function EnhancedGroupOverviewV2({
                                                   setShowLiveInterviewV2Setup(true);
                                                 }}
                                                 disabled={stageConfigLocked}
+                                              title={stageConfigLocked ? 'Stage is active — close the stage before editing its configuration' : undefined}
                                                 className="h-8 px-3 rounded-[8px] border border-gray-300 hover:bg-gray-50 font-semibold text-xs text-gray-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 font-['Arimo',sans-serif]"
                                               >
                                                 <Edit size={12} />
@@ -2084,6 +2087,7 @@ export function EnhancedGroupOverviewV2({
                                   }
                                 }}
                                 disabled={stageConfigLocked}
+                                title={stageConfigLocked ? 'Stage is active — close the stage before editing its configuration' : undefined}
                                 className="inline-flex items-center gap-2 h-10 px-5 rounded-[10px] bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white font-semibold text-[13px] shadow-md shadow-indigo-100 transition-all font-['Arimo',sans-serif]"
                               >
                                 <Plus size={16} />
@@ -2946,7 +2950,7 @@ export function EnhancedGroupOverviewV2({
       {showArchiveModal && (
         <ArchiveGroupModal
           groupName={groupName}
-          nonRejectedCount={candidateStatuses.filter(c => c.progressionState !== 'rejected' && c.progressionState !== 'offered').length}
+          nonRejectedCount={candidateStatuses.filter(c => c.progressionState !== 'rejected').length}
           onConfirm={handleArchiveGroup}
           onClose={() => setShowArchiveModal(false)}
         />
@@ -2959,7 +2963,7 @@ export function EnhancedGroupOverviewV2({
         groupName={groupName}
         positionTitle={description}
         candidates={candidateStatuses
-          .filter(c => c.progressionState !== 'rejected' && c.progressionState !== 'offered')
+          .filter(c => c.progressionState !== 'rejected')
           .map(c => ({
             id: c.id,
             name: c.name,

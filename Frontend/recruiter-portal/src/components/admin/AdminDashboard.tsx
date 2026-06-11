@@ -71,7 +71,7 @@ export function AdminDashboard({ onSignOut, initialView = 'dashboard' }: AdminDa
   const projects: Project[] = (dashboardStats?.projects ?? []) as Project[];
   const jobPositions: JobPosition[] = (dashboardStats?.jobPositions ?? []) as JobPosition[];
   const positionGroups: PositionGroup[] = (dashboardStats?.positionGroups ?? []) as PositionGroup[];
-  const pipelineData: any[] = dashboardStats?.pipelineData ?? [];
+  const [pipelineData, setPipelineData] = useState<any[]>([]);
   const pendingRequestsCount: number = pendingRequests?.length ?? 0;
 
   // Local state kept for group analytics (conditional, view-dependent)
@@ -107,6 +107,10 @@ export function AdminDashboard({ onSignOut, initialView = 'dashboard' }: AdminDa
   }, [viewMode, selectedGroup]);
 
   // Project/Position-specific pipeline data
+  useEffect(() => {
+    setPipelineData(dashboardStats?.pipelineData ?? []);
+  }, [dashboardStats]);
+
   useEffect(() => {
     const fetchFunnel = async () => {
       try {

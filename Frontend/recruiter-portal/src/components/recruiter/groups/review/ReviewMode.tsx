@@ -4,7 +4,7 @@ import {
     CheckCircle, XCircle, Clock, Shield, ArrowRight, Filter, ChevronDown, Eye, Loader2,
 } from 'lucide-react';
 import { useStageMonitoring } from '../../../../hooks/groups/useGroups';
-import { LiveInterviewResults } from '../../live-interview-v2/LiveInterviewResults';
+import { CandidateProfile, getRailTabForStage } from '../../candidates/CandidateProfile';
 
 export interface ReviewStage {
     key: string;       // 'assessment' | 'ai-interview' | 'live-interview'
@@ -41,6 +41,7 @@ function scoreColor(v: number | null | undefined): string {
 }
 
 export function ReviewMode({ groupId, stages, recruiterType, onViewCandidate, onProceed, proceedPending }: ReviewModeProps) {
+    const navigate = useNavigate();
     // Default stage: most-recent closed → active → first
     const defaultStageKey = useMemo(() => {
         const closed = [...stages].reverse().find((s) => norm(s.state) === 'closed');
@@ -235,31 +236,40 @@ export function ReviewMode({ groupId, stages, recruiterType, onViewCandidate, on
                         </div>
                     </div>
 
-                    {/* Detail panel */}
-                    <div className="rounded-[14px] border border-gray-200 bg-white shadow-sm p-5 min-h-[400px]">
+                    {/* Detail panel — slim header + quick sub-scores + full reused profile breakdown */}
+                    <div className="rounded-[14px] border border-gray-200 bg-white shadow-sm min-h-[400px] flex flex-col overflow-hidden">
                         {!active ? (
-                            <div className="flex items-center justify-center h-full text-gray-400 text-[13px]">Select a candidate to see their breakdown.</div>
+                            <div className="flex items-center justify-center h-full text-gray-400 text-[13px] p-5">Select a candidate to see their breakdown.</div>
                         ) : (
-                            <div className="space-y-5">
-                                {/* Header */}
-                                <div className="flex items-start justify-between">
+                            <>
+                                {/* Slim header */}
+                                <div className="flex items-start justify-between p-4 border-b border-gray-100">
                                     <div>
                                         <h3 className="text-[18px] font-bold text-gray-900">{active.name}</h3>
                                         <div className="flex items-center gap-2 mt-1">
                                             <span className={`text-[22px] font-bold ${scoreColor(active.score)}`}>{active.score != null ? `${Math.round(active.score)}%` : '—'}</span>
                                             <span className="text-[12px] text-gray-400">overall · threshold {passThreshold}%</span>
+                                            {active.verdict && active.verdict !== 'pending' && (
+                                                <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${active.verdict === 'pass' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                                    {active.verdict === 'pass' ? <CheckCircle size={11} className="inline mr-1" /> : <XCircle size={11} className="inline mr-1" />}
+                                                    {active.verdict}
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        {active.verdict && active.verdict !== 'pending' && (
-                                            <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${active.verdict === 'pass' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                                                {active.verdict === 'pass' ? <CheckCircle size={11} className="inline mr-1" /> : <XCircle size={11} className="inline mr-1" />}
-                                                {active.verdict}
-                                            </span>
+                                        {/* Integrity — clickable to the suspect / cheating report when not clean */}
+                                        {(active.integrity_verdict ?? 'clean') !== 'clean' ? (
+                                            <button
+                                                onClick={() => navigate(`/recruiter/suspect-review?candidateId=${encodeURIComponent(String(active.candidate_id))}&applicationId=${encodeURIComponent(String(active.application_id))}`)}
+                                                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border cursor-pointer hover:brightness-95 ${INTEGRITY_STYLE[active.integrity_verdict ?? 'clean']}`}
+                                                title="Open integrity / cheating report"
+                                            >
+                                                <Shield size={11} /> {INTEGRITY_LABEL[active.integrity_verdict ?? 'clean']} — review
+                                            </button>
+                                        ) : (
+                                            <span className={`px-2.5 py-1 rounded-full text-[11px] font-medium border ${INTEGRITY_STYLE['clean']}`}>{INTEGRITY_LABEL['clean']}</span>
                                         )}
-                                        <span className={`px-2.5 py-1 rounded-full text-[11px] font-medium border ${INTEGRITY_STYLE[active.integrity_verdict ?? 'clean']}`}>
-                                            {INTEGRITY_LABEL[active.integrity_verdict ?? 'clean']}
-                                        </span>
                                         <button onClick={() => onViewCandidate(String(active.candidate_id), String(active.application_id))}
                                             className="flex items-center gap-1 rounded-[8px] border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50">
                                             <Eye size={12} /> Full profile
@@ -267,10 +277,9 @@ export function ReviewMode({ groupId, stages, recruiterType, onViewCandidate, on
                                     </div>
                                 </div>
 
-                                {/* Per-type sub-score bars */}
+                                {/* Quick per-type sub-score bars (tie to the filters) */}
                                 {active.sub_scores && Object.keys(active.sub_scores).length > 0 && (
-                                    <div className="space-y-2.5">
-                                        <div className="text-[12px] font-semibold text-gray-700 uppercase tracking-wide">Breakdown by type</div>
+                                    <div className="px-4 py-3 border-b border-gray-100 space-y-2">
                                         {Object.entries(active.sub_scores as Record<string, number>).map(([k, v]) => (
                                             <div key={k} className="flex items-center gap-3">
                                                 <span className="text-[12px] text-gray-600 capitalize w-[120px] truncate" title={k}>{k}</span>
@@ -283,33 +292,19 @@ export function ReviewMode({ groupId, stages, recruiterType, onViewCandidate, on
                                     </div>
                                 )}
 
-                                {/* Per-stage signal chips */}
-                                <div className="flex items-center gap-2 flex-wrap text-[12px]">
-                                    {active.ai_recommendation && <span className="px-2 py-1 rounded-[6px] bg-indigo-50 text-indigo-700">AI rec: {active.ai_recommendation}</span>}
-                                    {active.retakes_used != null && <span className="px-2 py-1 rounded-[6px] bg-gray-100 text-gray-600">Retakes: {active.retakes_used}</span>}
-                                    {active.auto_verdict && <span className="px-2 py-1 rounded-[6px] bg-indigo-50 text-indigo-700">Auto-verdict: {active.auto_verdict}</span>}
-                                    {active.completion_time && <span className="px-2 py-1 rounded-[6px] bg-gray-100 text-gray-500 flex items-center gap-1"><Clock size={11} /> {new Date(active.completion_time).toLocaleDateString()}</span>}
+                                {/* Full per-stage breakdown — reuses the real candidate profile (explainability,
+                                    citations, transcript for live; Q/A for recorded; performance analysis for assessment) */}
+                                <div className="flex-1 min-h-0 max-h-[640px] overflow-auto">
+                                    <CandidateProfile
+                                        key={String(active.application_id) + ':' + stageKey}
+                                        embedded
+                                        candidateId={String(active.candidate_id)}
+                                        applicationId={String(active.application_id)}
+                                        initialTab={getRailTabForStage(stageKey)}
+                                        onBack={() => { }}
+                                    />
                                 </div>
-
-                                {/* Flags */}
-                                {Array.isArray(active.flags) && active.flags.length > 0 && (
-                                    <div className="rounded-[10px] border border-orange-200 bg-orange-50 p-3">
-                                        <div className="text-[12px] font-semibold text-orange-800 mb-1">Integrity flags ({active.flags.length})</div>
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {active.flags.map((f: any, i: number) => (
-                                                <span key={i} className="px-2 py-0.5 rounded-[6px] bg-white border border-orange-200 text-[11px] text-orange-700">{f.type} · {f.severity}</span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Full live-interview explainability (standalone component, same as profile) */}
-                                {isLive && active.session_id && (
-                                    <div className="border-t border-gray-100 pt-4">
-                                        <LiveInterviewResults sessionId={String(active.session_id)} />
-                                    </div>
-                                )}
-                            </div>
+                            </>
                         )}
                     </div>
                 </div>

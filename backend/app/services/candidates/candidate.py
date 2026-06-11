@@ -949,7 +949,8 @@ class CandidateService:
             resume_url=data.resume_url,
             cover_letter=data.cover_letter,
             source=data.source or "manual_upload",
-            applied_at=datetime.now(timezone.utc)
+            # DB column is TIMESTAMP WITHOUT TIME ZONE — must be tz-naive (matches model default).
+            applied_at=datetime.utcnow(),
         )
         self.session.add(application)
         await self.session.commit()

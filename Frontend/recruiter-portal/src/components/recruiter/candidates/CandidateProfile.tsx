@@ -85,6 +85,9 @@ interface CandidateProfileProps {
     activeApplicationId: string;
     onSelect: (candidateId: string, applicationId: string) => void;
   };
+  // Embedded mode: render inside another panel (e.g. group Review detail) —
+  // hides the Back button and tightens padding. No own rail/chrome.
+  embedded?: boolean;
 }
 
 // =========================================================
@@ -127,7 +130,7 @@ function IntegrityTabContent({ candidate }: IntegrityTabContentProps) {
   );
 }
 
-export function CandidateProfile({ candidateId, applicationId, onBack, showFinalReport = false, initialTab, rail }: CandidateProfileProps) {
+export function CandidateProfile({ candidateId, applicationId, onBack, showFinalReport = false, initialTab, rail, embedded = false }: CandidateProfileProps) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [showTranscript, setShowTranscript] = useState<number | null>(null);
@@ -590,9 +593,10 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
         />
       )}
       <div className={rail ? 'flex-1 min-w-0' : 'w-full'}>
-        <div className="h-full w-full overflow-auto bg-[#f9fafb] relative">
-      <div className="max-w-[1400px] mx-auto px-[48px] py-[24px]">
+        <div className={`h-full w-full overflow-auto relative ${embedded ? 'bg-white' : 'bg-[#f9fafb]'}`}>
+      <div className={embedded ? 'w-full px-1 py-1' : 'max-w-[1400px] mx-auto px-[48px] py-[24px]'}>
         {/* Header */}
+        {!embedded && (
         <button
           onClick={onBack}
           className="flex items-center gap-2 mb-6 text-[#6b7280] hover:text-[#111827] transition-colors"
@@ -600,6 +604,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
           <ChevronLeft size={20} />
           <span className="font-['Arimo',sans-serif] text-[14px]">Back</span>
         </button>
+        )}
 
         {/* Profile Header */}
         <div className="bg-white rounded-[12px] border border-[#e5e7eb] p-8 mb-6">

@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 from app.models import (
     Assessment,
     AssessmentSection,
+    GroupStageConfig,
     QuestionBank,
     SectionQuestionPool,
     QuestionType
@@ -18,14 +19,21 @@ class AssessmentService:
 
     async def create_assessment(self, request_data: AssessmentCreateRequest, user_id: UUID, organization_id: UUID) -> Assessment:
         try:
-            existing_assessment_q = select(Assessment.id).where(
+            existing_assessment_q = select(Assessment).where(
                 Assessment.group_id == request_data.group_id,
                 Assessment.organization_id == organization_id,
                 Assessment.is_deleted == False,
             )
             existing_assessment_res = await self.session.execute(existing_assessment_q)
-            if existing_assessment_res.scalars().first():
-                raise HTTPException(status_code=400, detail="Only one assessment can be created for this group")
+            existing = existing_assessment_res.scalars().first()
+            if existing:
+                # A3 fix: reload after submit sends POST again — delegate to update path
+                return await self.update_assessment(
+                    assessment_id=existing.id,
+                    request_data=request_data,
+                    user_id=user_id,
+                    organization_id=organization_id,
+                )
 
             # 1. Create Assessment Record
             # Combine basic settings with specific fields from the request
@@ -183,6 +191,19 @@ class AssessmentService:
                         is_active=True
                     )
                     self.session.add(pool_entry)
+
+            # A1 fix: bind assessment to group_pipeline_stages so has_config becomes true
+            if request_data.group_id:
+                sc_res = await self.session.execute(
+                    select(GroupStageConfig).where(
+                        GroupStageConfig.group_id == request_data.group_id,
+                        GroupStageConfig.stage_type == "assessment",
+                    )
+                )
+                sc = sc_res.scalars().first()
+                if sc and sc.config_id is None:
+                    sc.config_id = assessment.id
+                    self.session.add(sc)
 
             # Commit the transaction after everything is staged successfully
             await self.session.commit()
@@ -458,7 +479,20 @@ class AssessmentService:
                         is_active=True
                     )
                     self.session.add(pool_entry)
-            
+
+            # Ensure stage is bound even for groups created before the A1 fix
+            if assessment.group_id:
+                sc_res = await self.session.execute(
+                    select(GroupStageConfig).where(
+                        GroupStageConfig.group_id == assessment.group_id,
+                        GroupStageConfig.stage_type == "assessment",
+                    )
+                )
+                sc = sc_res.scalars().first()
+                if sc and sc.config_id is None:
+                    sc.config_id = assessment.id
+                    self.session.add(sc)
+
             await self.session.commit()
             await self.session.refresh(assessment)
             return assessment

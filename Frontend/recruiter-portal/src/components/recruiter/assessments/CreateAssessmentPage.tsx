@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Sparkles, Trash2, Plus, ChevronLeft, X, Edit2, Loader2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -30,7 +30,7 @@ export function CreateAssessmentPage({
   const [title, setTitle] = useState(initialTitle || 'Technical Assessment');
   const [showAddQuestion, setShowAddQuestion] = useState(false);
 
-  const { data: templates = [], isLoading } = useQuery({
+  const { data: templates = [], isLoading } = useQuery<any[]>({
     queryKey: queryKeys.assessments.templates(),
     queryFn: () => api.recruiter.getAssessmentTemplates(),
     staleTime: 10 * 60 * 1000,

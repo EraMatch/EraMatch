@@ -94,7 +94,7 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
 
     try {
       setIsActing(true);
-      const result = await backfillPositionsMutation.mutateAsync();
+      const result = await backfillPositionsMutation.mutateAsync() as { updated_positions?: number };
       toast.success(`✓ Positions restored: ${result.updated_positions || 0} positions reassigned`);
       setShowReturnConfirm(false);
     } catch (error: any) {

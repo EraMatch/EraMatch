@@ -9,11 +9,7 @@ export function SuspectReviewWrapper() {
 
     return (
         <SuspectReviewPage
-            candidateId={4}
-            candidateName="Michael Chen"
-            groupId="101"
-            groupName="Frontend Engineering Team"
-            currentModule="Assessment"
+            candidateId="4"
             onBack={() => navigate(-1)}
             onViewCandidate={(id) => navigate(`/recruiter/candidates/${id}`)}
         />

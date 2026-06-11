@@ -878,7 +878,7 @@ class PreScoreService:
         if jd_quality_cap is not None:
             jd_quality_cap = float(jd_quality_cap)
 
-        if jd_quality_status == "ai_generation_failed":
+        if jd_quality_status == "ai_generation_failed" and not settings.PRESCORE_ALLOW_FALLBACK:
             return {
                 "version": self.VERSION,
                 "pre_score_final": 0.0,
@@ -896,6 +896,8 @@ class PreScoreService:
                     "Fix ai-service/Ollama connectivity and regenerate the HD Eval + QAG question set.",
                 ],
             }
+        # When PRESCORE_ALLOW_FALLBACK is on, a failed QAG generation falls through to the
+        # heuristic composite below (no approved questions → heuristic path) instead of a 0 score.
 
         approved_questions = jd_critic_result.get("approved_questions") if isinstance(jd_critic_result, dict) else []
         if not isinstance(approved_questions, list):
@@ -924,23 +926,46 @@ class PreScoreService:
                     candidate_payload=candidate_payload,
                 )
             except Exception as exc:
-                return {
-                    "version": self.VERSION,
-                    "pre_score_final": 0.0,
-                    "semantic_fit_score": 0.0,
-                    "skills_experience_score": 0.0,
-                    "optional_profile_boost": 0.0,
-                    "jd_quality_score": jd_quality_score,
-                    "jd_quality_status": "ai_evaluation_failed",
-                    "jd_quality_cap": jd_quality_cap,
-                    "jd_quality_cap_applied": False,
-                    "criteria_checks": [],
-                    "jd_quality_feedback": str(exc),
-                    "score_explanation": [
-                        "Scoring is blocked because AI-only candidate QAG evaluation failed.",
-                        "Fix ai-service/Ollama connectivity and re-run evaluation.",
-                    ],
-                }
+                if not settings.PRESCORE_ALLOW_FALLBACK:
+                    return {
+                        "version": self.VERSION,
+                        "pre_score_final": 0.0,
+                        "semantic_fit_score": 0.0,
+                        "skills_experience_score": 0.0,
+                        "optional_profile_boost": 0.0,
+                        "jd_quality_score": jd_quality_score,
+                        "jd_quality_status": "ai_evaluation_failed",
+                        "jd_quality_cap": jd_quality_cap,
+                        "jd_quality_cap_applied": False,
+                        "criteria_checks": [],
+                        "jd_quality_feedback": str(exc),
+                        "score_explanation": [
+                            "Scoring is blocked because AI-only candidate QAG evaluation failed.",
+                            "Fix ai-service/Ollama connectivity and re-run evaluation.",
+                        ],
+                    }
+                # Fallback enabled: re-score with the heuristic composite (drop QAG) instead of a 0 score.
+                fallback_critic = dict(jd_critic_result)
+                fallback_critic["approved_questions"] = []
+                fallback_critic["questions"] = []
+                fallback_critic["status"] = "ai_evaluation_failed_fallback"
+                fallback_result = await self.score_candidate_prescore(
+                    job_title=job_title,
+                    job_description=job_description,
+                    required_skills=required_skills,
+                    years_of_experience=years_of_experience,
+                    candidate_skills=candidate_skills,
+                    candidate_experience_years=candidate_experience_years,
+                    candidate_parsed_data=candidate_parsed_data,
+                    github_analysis_data=github_analysis_data,
+                    jd_critic_result=fallback_critic,
+                    position_experience_level=position_experience_level,
+                    position_education_level=position_education_level,
+                    jd_keywords=jd_keywords,
+                )
+                fallback_result["jd_quality_status"] = "ai_evaluation_failed_fallback_heuristic"
+                fallback_result["jd_quality_feedback"] = str(exc)
+                return fallback_result
 
             result_map = {int(r.get("id")): r for r in qag_results if isinstance(r, dict) and r.get("id") is not None}
             checks: list[dict[str, Any]] = []
@@ -977,6 +1002,31 @@ class PreScoreService:
             if jd_quality_cap is not None:
                 qag_score = round(min(qag_score, jd_quality_cap), 1)
 
+            # Dual-score: also compute the heuristic semantic fit (pure compute, no extra AI cost).
+            semantic_score = None
+            try:
+                _h_critic = dict(jd_critic_result)
+                _h_critic["approved_questions"] = []
+                _h_critic["questions"] = []
+                _h_critic["status"] = "semantic_only"
+                _h = await self.score_candidate_prescore(
+                    job_title=job_title,
+                    job_description=job_description,
+                    required_skills=required_skills,
+                    years_of_experience=years_of_experience,
+                    candidate_skills=candidate_skills,
+                    candidate_experience_years=candidate_experience_years,
+                    candidate_parsed_data=candidate_parsed_data,
+                    github_analysis_data=github_analysis_data,
+                    jd_critic_result=_h_critic,
+                    position_experience_level=position_experience_level,
+                    position_education_level=position_education_level,
+                    jd_keywords=jd_keywords,
+                )
+                semantic_score = _h.get("pre_score_final")
+            except Exception:
+                semantic_score = None
+
             explanation = [
                 f"HD Eval + QAG: {yes_count}/{len(normalized_qag)} criteria passed",
                 f"Weighted YES score = {round((weighted_yes / total_weight) * 100, 1)}%",
@@ -987,6 +1037,9 @@ class PreScoreService:
             return {
                 "version": self.VERSION,
                 "pre_score_final": qag_score,
+                # Two distinct candidate scores (dual-score model):
+                "semantic_score": semantic_score,
+                "qag_score": qag_score,
                 "semantic_fit_score": qag_score,
                 "skills_experience_score": qag_score,
                 "optional_profile_boost": 0.0,
@@ -1115,6 +1168,11 @@ class PreScoreService:
         return {
             "version": self.VERSION,
             "pre_score_final": pre_score_final,
+            # Two distinct candidate scores (Phase: dual-score model):
+            #   semantic_score = heuristic JD↔CV fit (skills/experience/keywords/…)
+            #   qag_score      = AI QAG yes/no evaluation (None until QAG approved)
+            "semantic_score": pre_score_final,
+            "qag_score": None,
             "semantic_fit_score": token_overlap_score,  # kept for backward compat
             "skills_experience_score": skills_experience_score,
             "skill_alignment": skill_alignment,

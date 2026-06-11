@@ -135,6 +135,9 @@ class PositionCandidateResponse(BaseModel):
     email: str
     score: float
     match: float
+    # Dual-score model: semantic = heuristic JD↔CV fit; qag = AI QAG evaluation (None until approved)
+    semantic_score: float | None = None
+    qag_score: float | None = None
     color: str = "#6366f1"
     starred: bool = False
     selected: bool = False

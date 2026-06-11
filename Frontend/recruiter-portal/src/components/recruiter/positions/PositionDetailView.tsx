@@ -42,6 +42,9 @@ interface Candidate {
   github_freshness_hours?: number | null;
   github_has_fallback?: boolean;
   pre_score_final?: number | null;
+  // Dual-score model: semantic = heuristic JD↔CV fit; qag = AI QAG evaluation
+  semantic_score?: number | null;
+  qag_score?: number | null;
 }
 
 interface Assessment {
@@ -195,6 +198,9 @@ export function PositionDetailView({
   initialActiveTab = 'candidates'
 }: PositionDetailViewProps) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  // Dual-score filters: minimum semantic (JD↔CV) and QAG (AI) thresholds.
+  const [minSemantic, setMinSemantic] = useState(0);
+  const [minQag, setMinQag] = useState(0);
   const [groups, setGroups] = useState<any[]>([]);
   const [archivedGroups, setArchivedGroups] = useState<any[]>([]);
   const [showArchivedGroups, setShowArchivedGroups] = useState(false);
@@ -278,6 +284,10 @@ export function PositionDetailView({
 
   // Filter Logic
   const filteredCandidates = candidates.filter(c => {
+    // Dual-score thresholds
+    if (minSemantic > 0 && (c.semantic_score ?? 0) < minSemantic) return false;
+    if (minQag > 0 && (c.qag_score ?? 0) < minQag) return false;
+
     // Keywords (Name, Email, Job Titles, Skills)
     if (filters.keywords) {
       const term = filters.keywords.toLowerCase();
@@ -1169,6 +1179,36 @@ export function PositionDetailView({
                 </div>
               </div>
 
+              {/* Dual-score filters: Semantic (JD↔CV fit) + QAG (AI evaluation) */}
+              <div className="flex flex-wrap items-center gap-4 mb-5 px-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-700">Semantic ≥</span>
+                  <input
+                    type="range" min={0} max={100} value={minSemantic}
+                    onChange={(e) => setMinSemantic(Number(e.target.value))}
+                    className="w-[120px] accent-[#6366f1]"
+                  />
+                  <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-indigo-700 w-[34px]">{minSemantic}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-['Arimo',sans-serif] text-[12px] text-violet-700">QAG ≥</span>
+                  <input
+                    type="range" min={0} max={100} value={minQag}
+                    onChange={(e) => setMinQag(Number(e.target.value))}
+                    className="w-[120px] accent-[#8b5cf6]"
+                  />
+                  <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-violet-700 w-[34px]">{minQag}%</span>
+                </div>
+                {(minSemantic > 0 || minQag > 0) && (
+                  <button
+                    onClick={() => { setMinSemantic(0); setMinQag(0); }}
+                    className="font-['Arimo',sans-serif] text-[12px] text-[#64748b] hover:text-[#0f172a] underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
               {assessmentResetMessage && (
                 <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
                   <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{assessmentResetMessage}</p>
@@ -1209,6 +1249,14 @@ export function PositionDetailView({
                               <p className="font-['Arimo',sans-serif] text-[13px] text-[#64748b]">
                                 Match: {displayMatch != null ? `${displayMatch}%` : 'N/A'}
                               </p>
+                              <div className="flex gap-1.5 justify-start lg:justify-end mt-1">
+                                <span title="Semantic — heuristic JD↔CV fit" className="px-2 py-0.5 rounded-[6px] bg-indigo-50 text-indigo-700 font-['Arimo',sans-serif] text-[11px]">
+                                  Sem {candidate.semantic_score != null ? `${Math.round(candidate.semantic_score)}%` : '—'}
+                                </span>
+                                <span title="QAG — AI question evaluation" className="px-2 py-0.5 rounded-[6px] bg-violet-50 text-violet-700 font-['Arimo',sans-serif] text-[11px]">
+                                  QAG {candidate.qag_score != null ? `${Math.round(candidate.qag_score)}%` : '—'}
+                                </span>
+                              </div>
                             </>
                           );
                         })()}
@@ -2297,7 +2345,7 @@ export function PositionDetailView({
               <button
                 onClick={() => {
                   setShowZipUploadModal(false);
-                  setZipFile(null);
+                  setZipFiles([]);
                   setUploadError(null);
                   setUploadSuccess(null);
                 }}
@@ -2405,7 +2453,7 @@ export function PositionDetailView({
                 <button
                   onClick={() => {
                     setShowZipUploadModal(false);
-                    setZipFile(null);
+                    setZipFiles([]);
                     setUploadSuccess(null);
                     if (positionId) queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
                   }}
@@ -2585,10 +2633,10 @@ export function PositionDetailView({
           groupName={groupToDelete.name}
           candidateCount={candidates.filter(c => groups.find(g => g.id === groupToDelete.id)?.candidate_ids?.includes(c.id)).length || groupToDelete.candidate_count || 0}
           availableGroups={groups.filter(g => g.id !== groupToDelete.id)}
-          onConfirm={() => {
+          onConfirm={async () => {
             setIsGroupDeleteModalOpen(false);
             setGroupToDelete(null);
-            queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+            await queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
           }}
         />
       )}

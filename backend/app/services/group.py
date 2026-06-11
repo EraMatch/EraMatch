@@ -653,7 +653,16 @@ class GroupService:
                         if stage_conf.status
                         else "not-started"
                     ),
-                    has_config=bool(gsc and gsc.config_id),
+                    has_config=bool(
+                        gsc and (
+                            gsc.config_id
+                            or (
+                                gsc.stage_type == "live_interview"
+                                and isinstance(gsc.acceptance_criteria, dict)
+                                and gsc.acceptance_criteria.get("liv2_rubric_id")
+                            )
+                        )
+                    ),
                 )
             )
 
@@ -2227,7 +2236,12 @@ class GroupService:
         stage_type_to_update = stage_type_to_update or ("live_interview" if ic_type in ("live", "live_ai") else "ai_interview")
 
         existing_stage_config = next((sc for sc in stage_configs if sc.stage_type == stage_type_to_update), None)
-        if existing_stage_config and existing_stage_config.config_id and str(existing_stage_config.config_id) != str(config_id):
+        if (
+            existing_stage_config
+            and existing_stage_config.config_id
+            and str(existing_stage_config.config_id) != str(config_id)
+            and existing_stage_config.state != "not_started"
+        ):
             raise BadRequestException("Only one interview configuration can be created for this stage")
 
         # Update the group's stage config

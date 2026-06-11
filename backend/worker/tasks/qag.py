@@ -267,7 +267,16 @@ def recompute_position_prescores(self, position_id: str, organization_id: str, u
                 parsed_data["prescore_v2"] = prescore
                 cv.parsed_data = parsed_data
                 flag_modified(cv, "parsed_data")
-                cv.match_score = prescore.get("pre_score_final", 0)
+                new_score = prescore.get("pre_score_final", 0)
+                # Defense-in-depth: never overwrite an existing valid (non-zero) score with 0.
+                existing_score = float(cv.match_score) if cv.match_score is not None else 0.0
+                if (new_score is None or float(new_score) == 0.0) and existing_score > 0.0:
+                    logger.warning(
+                        "[QAG] Skipping 0 overwrite for application_id=%s; keeping existing score=%.1f",
+                        app.id, existing_score,
+                    )
+                else:
+                    cv.match_score = new_score
                 cv.analyzed_at = datetime.now(timezone.utc)
                 session.add(cv)
                 updates += 1

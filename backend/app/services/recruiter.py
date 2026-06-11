@@ -823,6 +823,8 @@ class RecruiterService:
                 email=item["email"],
                 score=match_score,
                 match=match_score,
+                semantic_score=prescore.get("semantic_score"),
+                qag_score=prescore.get("qag_score"),
                 color="#9ca3af" if match_score < 50 else ("#10b981" if match_score >= 80 else "#f59e0b"),
                 starred=False,
                 selected=False,
@@ -1128,6 +1130,8 @@ class RecruiterService:
                 email=email,
                 score=round(float(avg_score), 1),
                 match=match_score, # Use real match score
+                semantic_score=prescore.get("semantic_score"),
+                qag_score=prescore.get("qag_score"),
                 color="#9ca3af" if match_score < 50 else ("#10b981" if match_score >= 80 else "#f59e0b"),
                 starred=False,
                 selected=False,
