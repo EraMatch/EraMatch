@@ -80,7 +80,7 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
     }
-  }, [stream, currentStep]);
+  }, [stream]);
 
   useEffect(() => {
     if (!inAssessmentSession) {

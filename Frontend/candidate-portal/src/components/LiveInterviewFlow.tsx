@@ -168,7 +168,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
     return (
         <div className="min-h-screen font-sans bg-[#F8FAFC]">
             <header className="bg-white border-b border-gray-100 px-8 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
-                <img src={logo} alt="ERAMATCH" className="h-10" />
+                <Logo size={32} />
                 <Button variant="ghost" className="text-gray-500 hover:text-gray-700 font-medium" onClick={onSignOut}>
                     Sign Out
                 </Button>
@@ -307,48 +307,6 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                                     </ul>
                                 </div>
                             </div>
-                        )}
-
-                        <div className="flex justify-between pt-2">
-                            <Button variant="outline" className="rounded-full" onClick={() => setCurrentStep(1)}>
-                                Back
-                            </Button>
-                            <Button
-                                className="text-white rounded-full bg-indigo-500 hover:bg-indigo-600 min-w-[140px]"
-                                onClick={fetchRoomToken}
-                                disabled={tokenLoading}
-                            >
-                                {tokenLoading ? (
-                                    <>
-                                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                        Connecting…
-                                    </>
-                                ) : 'Start Interview'}
-                            </Button>
-                        </div>
-                    </Card>
-                );
-
-            default:
-                return null;
-        }
-    };
-
-    return (
-        <div className="min-h-screen bg-[#EDF0F8] flex flex-col">
-            {/* Header */}
-            <header className="bg-white border-b border-gray-100 px-12 py-4 flex items-center justify-between">
-                <Logo size={32} />
-                <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-full border-gray-200 text-gray-500 hover:border-red-400 hover:text-red-500 transition-colors"
-                    onClick={onSignOut}
-                >
-                    Sign out
-                </Button>
-            </header>
-
                             <div className="pt-8 mt-auto space-y-4">
                                 {tokenError && (
                                     <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2">
@@ -365,7 +323,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                                     {tokenLoading ? (
                                         <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Connecting...</>
                                     ) : (
-                                        'Enter Assessment Environment'
+                                        'Enter Interview'
                                     )}
                                 </Button>
                                 <p className="text-center text-xs text-gray-400 mt-4">
