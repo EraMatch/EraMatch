@@ -472,7 +472,6 @@ async def repair_questions_json(content: str) -> list[dict]:
 
     repaired = await chat_completion(
         messages=[{"role": "user", "content": repair_prompt}],
-        response_format="json",
         model=QUESTION_IMPORT_MODEL,
     )
     return parse_questions_json(repaired["content"])
@@ -758,7 +757,6 @@ async def generator_critic_pipeline(
     # Step 1: Generate all questions at once
     gen_result = await chat_completion(
         messages=[{"role": "user", "content": prompt}],
-        response_format="json",
         model=QUESTION_IMPORT_MODEL,
     )
     try:
@@ -789,7 +787,6 @@ async def generator_critic_pipeline(
                 try:
                     regen_result = await chat_completion(
                         messages=[{"role": "user", "content": regen_prompt}],
-                        response_format="json",
                         model=QUESTION_IMPORT_MODEL,
                     )
                     regen_content = regen_result["content"].strip()

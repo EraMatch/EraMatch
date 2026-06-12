@@ -67,27 +67,24 @@ async def chat_completion(
 
         for attempt in range(max_retries):
             try:
-                # Acquire the asyncio semaphore BEFORE spawning a thread so that
-                # waiting for a slot is cooperative and doesn't burn timeout budget.
-                async with _ollama_semaphore:
-                    if stream:
+                if stream:
 
-                        def _stream_call() -> dict:
-                            full_content = ""
-                            for part in client.chat(**chat_kwargs):
-                                full_content += part["message"]["content"]
-                            return {"content": full_content, "model": model_name}
+                    def _stream_call() -> dict:
+                        full_content = ""
+                        for part in client.chat(**chat_kwargs):
+                            full_content += part["message"]["content"]
+                        return {"content": full_content, "model": model_name}
 
-                        return await asyncio.to_thread(_stream_call)
+                    return await asyncio.to_thread(_stream_call)
 
-                    def _sync_call() -> dict:
-                        return client.chat(**chat_kwargs)
+                def _sync_call() -> dict:
+                    return client.chat(**chat_kwargs)
 
-                    response = await asyncio.to_thread(_sync_call)
-                    return {
-                        "content": response["message"]["content"],
-                        "model": model_name,
-                    }
+                response = await asyncio.to_thread(_sync_call)
+                return {
+                    "content": response["message"]["content"],
+                    "model": model_name,
+                }
             except ResponseError as e:
                 logger.error(
                     "[Ollama] ResponseError — model=%s host=%s status=%s body=%s",

@@ -214,6 +214,8 @@ class AssessmentService:
             await self.session.rollback()
             # Log the original error internally, return general error to user.
             print(f"Error creating assessment transaction: {e}")
+            if isinstance(e, HTTPException):
+                raise e
             raise HTTPException(status_code=500, detail=f"Failed to create assessment: {str(e)}")
 
     async def get_assessment(self, assessment_id: UUID, organization_id: UUID) -> dict:

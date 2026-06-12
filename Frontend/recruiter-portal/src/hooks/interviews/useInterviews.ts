@@ -14,7 +14,7 @@ export function useAIInterviewConfig(id: string | undefined) {
 export function useAIInterviewResult(candidateId: string | undefined) {
     return useQuery({
         queryKey: queryKeys.interviews.aiResult(candidateId ?? ''),
-        queryFn: () => api.recruiter.getAIInterviewResult(candidateId!),
+        queryFn: () => api.recruiter.getAIInterviewResult(parseInt(candidateId!)),
         enabled: !!candidateId,
         staleTime: 5 * 60 * 1000,
     })

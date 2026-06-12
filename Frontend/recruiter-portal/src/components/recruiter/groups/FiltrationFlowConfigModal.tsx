@@ -46,7 +46,12 @@ const DEFAULT_MODULES: FiltrationModule[] = [
 interface FiltrationFlowConfigModalProps {
   groupData?: any;
   onClose: () => void;
-  onSave: (flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[], githubQuestionsCount: number) => void;
+  onSave: (
+    flowConfig: ('assessment' | 'ai-interview' | 'live-interview')[], 
+    githubQuestionsCount: number,
+    useGithubVideo: boolean,
+    useGithubLive: boolean
+  ) => void;
 }
 
 export function FiltrationFlowConfigModal({
@@ -66,10 +71,21 @@ export function FiltrationFlowConfigModal({
     return DEFAULT_MODULES;
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [needsGithubQuestions, setNeedsGithubQuestions] = useState<boolean>(() => {
+    const parsed = Number(groupData?.github_questions_count ?? 10);
+    return parsed > 0;
+  });
   const [githubQuestionsCount, setGithubQuestionsCount] = useState<number>(() => {
     const parsed = Number(groupData?.github_questions_count ?? 10);
-    if (!Number.isFinite(parsed)) return 10;
+    if (!Number.isFinite(parsed) || parsed === 0) return 10;
     return Math.min(30, Math.max(1, Math.round(parsed)));
+  });
+  const [useGithubVideo, setUseGithubVideo] = useState<boolean>(() => {
+    return groupData?.use_github_questions_video_interview ?? false;
+  });
+  const [useGithubLive, setUseGithubLive] = useState<boolean>(() => {
+    return groupData?.use_github_questions_live_interview ?? false;
   });
 
   const toggleModule = (moduleId: string) => {
@@ -87,19 +103,28 @@ export function FiltrationFlowConfigModal({
     try {
       setIsSaving(true);
 
+      const finalGithubCount = needsGithubQuestions ? githubQuestionsCount : 0;
+      const finalUseGithubVideo = needsGithubQuestions ? useGithubVideo : false;
+      const finalUseGithubLive = needsGithubQuestions ? useGithubLive : false;
+
       // If we have a group, persist the filtration flow to the backend
       if (groupData?.id) {
         await api.recruiter.updateGroup(groupData.id, {
           filtration_flow: enabledFlow,
           status: 'Live',
+          use_github_questions_video_interview: finalUseGithubVideo,
+          use_github_questions_live_interview: finalUseGithubLive,
         } as any);
       }
 
-      onSave(enabledFlow, githubQuestionsCount);
+      onSave(enabledFlow, finalGithubCount, finalUseGithubVideo, finalUseGithubLive);
     } catch (err) {
       console.error('Failed to save flow config:', err);
       // Still call onSave even if backend update fails
-      onSave(enabledFlow, githubQuestionsCount);
+      const finalGithubCount = needsGithubQuestions ? githubQuestionsCount : 0;
+      const finalUseGithubVideo = needsGithubQuestions ? useGithubVideo : false;
+      const finalUseGithubLive = needsGithubQuestions ? useGithubLive : false;
+      onSave(enabledFlow, finalGithubCount, finalUseGithubVideo, finalUseGithubLive);
     } finally {
       setIsSaving(false);
     }
@@ -175,28 +200,88 @@ export function FiltrationFlowConfigModal({
         </div>
 
         <div className="bg-[#f9fafb] rounded-[8px] p-4 mb-6">
-          <div className="mb-4">
-            <label className="font-['Arimo',sans-serif] text-[13px] text-[#374151] block mb-2">
-              GitHub Questions Per Candidate
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={30}
-              value={githubQuestionsCount}
-              onChange={(e) => {
-                const value = Number(e.target.value || 10);
-                if (!Number.isFinite(value)) {
-                  setGithubQuestionsCount(10);
-                  return;
-                }
-                setGithubQuestionsCount(Math.min(30, Math.max(1, Math.round(value))));
-              }}
-              className="w-full h-[40px] px-3 rounded-[8px] border border-[#d1d5db] focus:outline-none focus:border-[#6366f1]"
-            />
-            <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mt-1">
-              This count is used for auto-generated GitHub-based technical questions per candidate.
-            </p>
+          <div className="mb-4 border-b border-[#e5e7eb] pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="font-['Arimo',sans-serif] text-[13px] text-[#374151] block mb-1">
+                  Generate GitHub Questions
+                </label>
+                <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280]">
+                  Enable AI to automatically generate technical interview questions based on candidates' GitHub repositories.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNeedsGithubQuestions(!needsGithubQuestions)}
+                className={`w-[40px] h-[22px] rounded-full p-[2px] transition-colors flex-shrink-0 ${needsGithubQuestions ? 'bg-[#6366f1]' : 'bg-[#d1d5db]'}`}
+              >
+                <div className={`w-[18px] h-[18px] bg-white rounded-full transition-transform ${needsGithubQuestions ? 'translate-x-[18px]' : 'translate-x-0'}`} />
+              </button>
+            </div>
+            
+            {needsGithubQuestions && (
+              <div className="mt-4 pt-4 border-t border-[#e5e7eb]">
+                <label className="font-['Arimo',sans-serif] text-[13px] text-[#374151] block mb-2">
+                  GitHub Questions Per Candidate
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={githubQuestionsCount}
+                  onChange={(e) => {
+                    const value = Number(e.target.value || 10);
+                    if (!Number.isFinite(value)) {
+                      setGithubQuestionsCount(10);
+                      return;
+                    }
+                    setGithubQuestionsCount(Math.min(30, Math.max(1, Math.round(value))));
+                  }}
+                  className="w-full h-[40px] px-3 rounded-[8px] border border-[#d1d5db] focus:outline-none focus:border-[#6366f1]"
+                />
+                <p className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280] mt-1">
+                  This count is used for auto-generated GitHub-based technical questions per candidate.
+                </p>
+
+                {(filtrationModules.find(m => m.id === 'ai-interview')?.enabled || filtrationModules.find(m => m.id === 'live-interview')?.enabled) && (
+                  <div className="space-y-3 mt-4 pt-3 border-t border-[#e5e7eb]">
+                    <label className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] block">
+                      Integrate into specific stages
+                    </label>
+                    
+                    {filtrationModules.find(m => m.id === 'ai-interview')?.enabled && (
+                      <div className="flex items-center justify-between">
+                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
+                          Use GitHub Questions in AI Video Interview
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setUseGithubVideo(!useGithubVideo)}
+                          className={`w-[36px] h-[20px] rounded-full p-[2px] transition-colors flex-shrink-0 ${useGithubVideo ? 'bg-[#6366f1]' : 'bg-[#d1d5db]'}`}
+                        >
+                          <div className={`w-[16px] h-[16px] bg-white rounded-full transition-transform ${useGithubVideo ? 'translate-x-[16px]' : 'translate-x-0'}`} />
+                        </button>
+                      </div>
+                    )}
+                    
+                    {filtrationModules.find(m => m.id === 'live-interview')?.enabled && (
+                      <div className="flex items-center justify-between">
+                        <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
+                          Use GitHub Questions in Live Interview
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setUseGithubLive(!useGithubLive)}
+                          className={`w-[36px] h-[20px] rounded-full p-[2px] transition-colors flex-shrink-0 ${useGithubLive ? 'bg-[#6366f1]' : 'bg-[#d1d5db]'}`}
+                        >
+                          <div className={`w-[16px] h-[16px] bg-white rounded-full transition-transform ${useGithubLive ? 'translate-x-[16px]' : 'translate-x-0'}`} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2 mb-2">
             <div className="w-[6px] h-[6px] rounded-full bg-[#6366f1]" />

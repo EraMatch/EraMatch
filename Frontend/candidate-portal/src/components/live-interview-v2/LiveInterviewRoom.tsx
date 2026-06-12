@@ -30,6 +30,8 @@ import { Button } from '../ui/button';
 import { liveInterviewService } from '../../services/live-interview.service';
 import { API_URL } from '../../services/client';
 import { AIAgentOrb } from './AIAgentOrb';
+import { useExamLockdown } from '../../hooks/useExamLockdown';
+import { captureVideoFrameBase64 } from '../../utils/proctoringPayload';
 
 interface LiveInterviewRoomProps {
     token: string;
@@ -72,6 +74,12 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
     // Timer state
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [timeBudgetMin, setTimeBudgetMin] = useState(timeBudgetMinutes || 10);
+
+    // Proctoring integrity states
+    const [proctoringWarning, setProctoringWarning] = useState<string | null>(null);
+    const [livenessPrompt, setLivenessPrompt] = useState<string | null>(null);
+    const [trustScore, setTrustScore] = useState<number>(100);
+    const [isTerminated, setIsTerminated] = useState(false);
 
     useEffect(() => {
         if (timeBudgetMinutes && timeBudgetMinutes > 0) {
@@ -172,6 +180,87 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
         onExit();
     }, [room, sessionId, onExit]);
 
+    // Call useExamLockdown hook
+    useExamLockdown({
+        sessionId,
+        enabled: isConnected && !isTerminated,
+        enforceFullscreen: true,
+        onViolation: useCallback((evt: any) => {
+            setProctoringWarning(evt.message);
+            setTimeout(() => setProctoringWarning(null), 5000);
+        }, []),
+        onTerminated: useCallback((msg: any) => {
+            setIsTerminated(true);
+        }, []),
+    });
+
+    // Proctoring interval for unified frame analysis & YOLO
+    useEffect(() => {
+        if (!isConnected || isTerminated) return;
+
+        const AI_SERVICE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
+
+        const runAnalysis = async () => {
+            try {
+                const videoEl = document.querySelector('video') as HTMLVideoElement | null;
+                if (!videoEl) return;
+
+                const frameB64 = captureVideoFrameBase64(videoEl, 640, 480);
+                if (!frameB64) return;
+
+                const response = await fetch(`${AI_SERVICE_URL}/proctoring/analyze-frame`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        frame_b64: frameB64,
+                    }),
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Update trust score
+                    if (typeof data.trust_score === 'number') {
+                        setTrustScore(data.trust_score);
+                    }
+
+                    // Check for termination
+                    if (data.is_terminated) {
+                        setIsTerminated(true);
+                        return;
+                    }
+
+                    // Parse liveness challenge
+                    const challenge = data.liveness_challenge || data.challenge || null;
+                    if (challenge) {
+                        const label = challenge.toLowerCase();
+                        if (label === 'look_left') setLivenessPrompt('Please look LEFT now ⬅️');
+                        else if (label === 'look_right') setLivenessPrompt('Please look RIGHT now ➡️');
+                        else if (label === 'blink') setLivenessPrompt('Please BLINK now 👁️');
+                        else if (label === 'smile') setLivenessPrompt('Please SMILE now 😊');
+                        else if (label === 'neutral') setLivenessPrompt(null);
+                        else setLivenessPrompt(`Liveness challenge: ${challenge}`);
+                    } else {
+                        setLivenessPrompt(null);
+                    }
+
+                    // Display warning if there are violations
+                    if (data.violations && data.violations.length > 0) {
+                        const latest = data.violations[data.violations.length - 1];
+                        setProctoringWarning(latest.message || 'Cheating behavior detected.');
+                        setTimeout(() => setProctoringWarning(null), 5000);
+                    }
+                }
+            } catch (err) {
+                console.warn('[Proctoring] frame analysis failed:', err);
+            }
+        };
+
+        const interval = setInterval(runAnalysis, 4000);
+        return () => clearInterval(interval);
+    }, [isConnected, isTerminated, sessionId]);
+
     const handleRetry = useCallback(() => {
         room.disconnect();
         onComplete();
@@ -217,6 +306,37 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
             
             {/* Render agent audio */}
             <RoomAudioRenderer />
+
+            {/* Floating Proctoring Warning Banner */}
+            {proctoringWarning && (
+                <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[60] bg-red-600 border border-red-500 text-white px-6 py-2.5 rounded-full shadow-2xl flex items-center gap-2 animate-bounce font-['Arimo',sans-serif] text-xs font-semibold">
+                    <AlertCircle size={14} className="animate-pulse" />
+                    <span>{proctoringWarning}</span>
+                </div>
+            )}
+
+            {/* Blocking Terminated Overlay */}
+            {isTerminated && (
+                <div className="absolute inset-0 z-[70] bg-gray-950/95 backdrop-blur-md flex items-center justify-center rounded-xl p-6">
+                    <div className="max-w-md w-full bg-gray-900 border border-red-500/30 rounded-2xl p-8 text-center space-y-6 shadow-2xl">
+                        <div className="w-16 h-16 rounded-full flex items-center justify-center bg-red-950 border border-red-500/40 mx-auto">
+                            <AlertCircle className="w-8 h-8 text-red-400" />
+                        </div>
+                        <div className="space-y-2">
+                            <h3 className="text-xl font-bold text-red-400">Interview Terminated</h3>
+                            <p className="text-sm text-gray-400">
+                                This session has been terminated by the anti-cheating engine due to multiple lockdown or integrity violations.
+                            </p>
+                        </div>
+                        <Button
+                            className="w-full text-white bg-red-600 hover:bg-red-700 rounded-full font-semibold py-3"
+                            onClick={handleEndInterview}
+                        >
+                            Exit and Submit Session
+                        </Button>
+                    </div>
+                </div>
+            )}
 
             {agentTimeout && (
                 <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm flex items-center justify-center rounded-xl">
@@ -301,9 +421,28 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
                         </div>
                     )}
 
-                    {/* Candidate label */}
-                    <div className="absolute top-3 left-3 md:top-4 md:left-4 bg-white/10 text-white text-[10px] md:text-xs font-medium px-3 py-1 md:px-4 md:py-1.5 rounded-full backdrop-blur-md border border-white/20 shadow-sm z-20">
-                        You
+                    {/* Liveness Challenge Instruction Prompt Overlay */}
+                    {livenessPrompt && (
+                        <div className="absolute inset-0 bg-black/60 z-30 flex items-center justify-center p-4">
+                            <div className="bg-indigo-600 border-2 border-indigo-400 text-white rounded-2xl p-6 text-center shadow-2xl max-w-xs animate-bounce">
+                                <span className="font-['Arimo',sans-serif] text-[10px] uppercase tracking-widest text-indigo-200 block mb-1">Attention Required</span>
+                                <span className="font-['Arimo',sans-serif] text-base font-bold block">{livenessPrompt}</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Candidate label & dynamic Trust Score */}
+                    <div className="absolute top-3 left-3 md:top-4 md:left-4 flex gap-2 z-20">
+                        <div className="bg-white/10 text-white text-[10px] md:text-xs font-medium px-3 py-1 md:px-4 md:py-1.5 rounded-full backdrop-blur-md border border-white/20 shadow-sm">
+                            You
+                        </div>
+                        <div className={`text-white text-[10px] md:text-xs font-semibold px-3 py-1 md:px-4 md:py-1.5 rounded-full backdrop-blur-md border shadow-sm ${
+                            trustScore >= 80 ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300'
+                            : trustScore >= 60 ? 'bg-amber-500/20 border-amber-500/30 text-amber-300'
+                            : 'bg-red-500/20 border-red-500/30 text-red-300'
+                        }`}>
+                            Integrity: {trustScore}%
+                        </div>
                     </div>
 
                     {/* Timer overlay */}
@@ -346,7 +485,7 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
                     </div>
 
                     <div className="flex flex-col items-center gap-3 md:gap-6 z-10 mt-auto bg-white/60 p-4 md:p-6 rounded-2xl md:rounded-3xl backdrop-blur-sm border border-white/40 shadow-sm w-full">
-                        <AIAgentOrb agentState={agentState} />
+                        <AIAgentOrb agentState={agentState as any} />
 
                         <div className="text-center space-y-1">
                             <h2 className="text-gray-900 font-semibold text-lg">{agentLabel}</h2>

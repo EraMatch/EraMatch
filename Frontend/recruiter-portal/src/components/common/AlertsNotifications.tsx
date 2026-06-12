@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Bell, AlertTriangle, CheckCircle, UserPlus, FileCheck, Video, Github, Clock, ChevronRight, Loader2 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Logo } from './Logo';
-import { useNotifications } from '../../hooks/dashboard/useDashboardAnalytics';
+import { useNotifications, useMarkNotificationRead } from '../../hooks/dashboard/useDashboardAnalytics';
 
 interface AlertsNotificationsProps {
   onViewCandidate: (candidateId: number) => void;
@@ -19,6 +19,7 @@ interface Notification {
   read: boolean;
   action_url?: string | null;
   read_at?: string | null;
+  data?: any;
 }
 
 export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProps) {
@@ -29,6 +30,7 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
   const isRecruiter = location.pathname.startsWith('/recruiter');
 
   const { data: rawData = [], isLoading } = useNotifications();
+  const markReadMutation = useMarkNotificationRead();
 
   const notifications: Notification[] = (rawData as any[]).map((alert: any) => ({
     id: String(alert.id),
@@ -41,6 +43,7 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
     read: localReadIds.has(String(alert.id)) || alert.is_read || false,
     action_url: alert.action_url ?? null,
     read_at: alert.read_at ?? null,
+    data: alert.data,
   }));
 
   const getIcon = (type: string) => {
@@ -78,11 +81,15 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
   };
 
   const markAsRead = (id: string) => {
-    setLocalReadIds(prev => new Set(prev).add(id));
+    if (!localReadIds.has(id)) {
+      setLocalReadIds(prev => new Set(prev).add(id));
+      markReadMutation.mutate(id);
+    }
   };
 
   const markAllAsRead = () => {
     setLocalReadIds(new Set(notifications.map(n => n.id)));
+    markReadMutation.mutate(undefined);
   };
 
   const filteredNotifications = filter === 'unread'
@@ -165,7 +172,11 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
                     markAsRead(notification.id);
                     if (notification.action_url) {
                       navigate(notification.action_url);
-                    } else {
+                    } else if (notification.data?.group_id) {
+                      navigate(`/recruiter/group/${notification.data.group_id}`);
+                    } else if (notification.data?.position_id) {
+                      navigate(`/recruiter/position/${notification.data.position_id}`);
+                    } else if (notification.candidateId) {
                       onViewCandidate(notification.candidateId);
                     }
                   }}

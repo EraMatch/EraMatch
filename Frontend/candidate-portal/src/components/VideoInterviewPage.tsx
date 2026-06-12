@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Video, PlayCircle, StopCircle, RefreshCw, Send, ChevronRight, Clock, X } from 'lucide-react';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload, quantizeWaveform } from '../utils/proctoringPayload';
+import { useExamLockdown } from '../hooks/useExamLockdown';
 import '../styles/VideoInterviewPage.css';
 
 const AI_SERVICE_BASE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
@@ -63,6 +64,23 @@ export default function VideoInterviewPage() {
     const [responses, setResponses] = useState<Response[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [stream, setStream] = useState<MediaStream | null>(null);
+    const [lockdownWarning, setLockdownWarning] = useState<string | null>(null);
+
+    // --- Browser lockdown ---
+    useExamLockdown({
+        sessionId,
+        enabled: phase === 'thinking' || phase === 'recording' || phase === 'review',
+        enforceFullscreen: false,
+        onTerminated: (message) => {
+            setError(message);
+            setPhase('complete');
+            if (stream) stream.getTracks().forEach(t => t.stop());
+        },
+        onViolation: (event) => {
+            setLockdownWarning(`⚠️ ${event.message}`);
+            setTimeout(() => setLockdownWarning(null), 5000);
+        },
+    });
 
     const postProctoringSignal = useCallback(async (
         signal: 'face' | 'voice' | 'gaze' | 'emotion',
@@ -387,6 +405,46 @@ export default function VideoInterviewPage() {
                     proctoring_metadata: result.metadata,
                 }, 12000);
             }
+            // --- YOLO Environment Detection ---
+            if (frameB64) {
+                try {
+                    const envRes = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/environment`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ session_id: sessionId, frame_b64: frameB64 }),
+                    });
+                    if (envRes.ok) {
+                        const envData = await envRes.json();
+                        if (envData.risk_score > INTERVIEW_BIOMETRIC_RISK_THRESHOLD) {
+                            await emitInterviewIntegrityEvent(envData.event_type, envData.severity, {
+                                source_signal: 'environment',
+                                detected_objects: envData.metadata?.resolved_inputs?.detected_objects,
+                            }, 8000);
+                        }
+                    }
+                } catch {} // keep interview alive
+            }
+
+            // --- Unified Frame Analysis ---
+            if (frameB64) {
+                try {
+                    const unifiedRes = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/analyze-frame`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ session_id: sessionId, frame_b64: frameB64 }),
+                    });
+                    if (unifiedRes.ok) {
+                        const unified = await unifiedRes.json();
+                        if (unified.violations?.length > 0) {
+                            for (const v of unified.violations) {
+                                await emitInterviewIntegrityEvent(v.type || 'unified_violation', v.severity || 'high', {
+                                    source_signal: 'unified_analysis', violation_detail: v,
+                                }, 8000);
+                            }
+                        }
+                    }
+                } catch {} // keep interview alive
+            }
         }, INTERVIEW_BIOMETRIC_INTERVAL_MS);
 
         return () => {
@@ -443,6 +501,14 @@ export default function VideoInterviewPage() {
 
     return (
         <div className="interview-page">
+            {/* Lockdown Warning */}
+            {lockdownWarning && (
+                <div style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 60 }}>
+                    <div style={{ background: '#DC2626', color: 'white', padding: '10px 20px', borderRadius: 8, fontSize: 14, fontWeight: 500 }}>
+                        {lockdownWarning}
+                    </div>
+                </div>
+            )}
             <header className="interview-header">
                 <div className="interview-title">
                     <Video size={24} />

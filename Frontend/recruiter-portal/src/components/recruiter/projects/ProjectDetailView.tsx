@@ -1,4 +1,4 @@
-import { ChevronLeft, Plus, Pencil, Sparkles, BarChart3, Users, CheckCircle, TrendingUp, Calendar, Award, Target, Briefcase, Archive, XCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { ChevronLeft, Plus, Pencil, Sparkles, BarChart3, Users, CheckCircle, TrendingUp, Calendar, Award, Target, Briefcase, Archive, XCircle, CheckCircle2, Loader2, Lock } from 'lucide-react';
 import { Button } from '../../ui/button';
 import LoadingSpinner from '../../common/LoadingSpinner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../../ui/dialog';
@@ -22,6 +22,7 @@ interface Position {
   description?: string;
   screeningConditions?: string;
   applicants: number;
+  groupsCount?: number;
   isOpen: boolean;
   status: string;
   closureStatus?: PositionClosureStatus;
@@ -54,18 +55,31 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
   const isLoading = detailLoading || positionsLoading;
 
   const projectTitle: string = (detailData as any)?.projectName || (detailData as any)?.name || '';
+  const resolvedDescription: string = (detailData as any)?.description || projectDescription || '';
 
   const [positions, setPositions] = useState<Position[]>([]);
 
-  const mapPositions = (ps: JobPosition[]): Position[] => ps.map(p => ({
-    id: p.id,
-    title: p.jobTitle,
-    description: `Department: ${p.department}`,
-    screeningConditions: 'Standard screening requirements apply',
-    applicants: p.candidatesCount,
-    status: p.status,
-    isOpen: p.status === 'Open' || p.status === 'Interview' || p.status === 'Active',
-  }));
+  const mapPositions = (ps: JobPosition[]): Position[] => ps.map(p => {
+    let closureStatus: PositionClosureStatus | undefined = undefined;
+    const statusLower = p.status?.toLowerCase();
+    if (statusLower === 'closed') {
+      closureStatus = 'Filled';
+    } else if (statusLower === 'on hold') {
+      closureStatus = 'Cancelled';
+    }
+
+    return {
+      id: p.id,
+      title: p.jobTitle,
+      description: `Department: ${p.department}`,
+      screeningConditions: 'Standard screening requirements apply',
+      applicants: p.candidatesCount,
+      groupsCount: p.groupsCount,
+      status: p.status,
+      isOpen: statusLower === 'open' || statusLower === 'active' || statusLower === 'interview',
+      closureStatus
+    };
+  });
 
   useEffect(() => {
     if (!positionsData) return;
@@ -97,6 +111,11 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
 
   // Track internal project status — kept as state so CompleteProject can optimistically set it
   const [internalProjectStatus, setInternalProjectStatus] = useState<'Draft' | 'Active' | 'Complete' | 'Archived' | 'Pending'>(projectStatus || 'Active');
+  const hasAnalyticsData = positions.length > 0 && positions.some((position) => position.applicants > 0);
+  const isAnalyticsLocked = internalProjectStatus === 'Pending' || !hasAnalyticsData;
+  const analyticsLockMessage = internalProjectStatus === 'Pending'
+    ? 'This project is still pending technical approval. Analytics unlock once the project is approved and opened.'
+    : 'Add at least one position with candidate activity to unlock analytics.';
 
   useEffect(() => {
     const s = (detailData as any)?.status;
@@ -134,7 +153,7 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
     if (closingPosition) {
       try {
         await api.recruiter.updatePosition(closingPosition.id, {
-          status: outcome.status === 'Filled' ? 'Closed' : 'On Hold' // Map correctly
+          status: 'closed' // Backend only supports open, closed, pending, rejected, technical_review
         });
         // Show success toast
         const message = outcome.status === 'Filled'
@@ -164,25 +183,34 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
 
   const handleSaveFromPositionView = (title: string, description: string, screening: string, isOpen: boolean) => {
     if (viewingPosition) {
-      setPositions(positions.map(p =>
-        p.id === viewingPosition.id
-          ? {
-            ...p,
-            title,
-            description,
+      api.recruiter.updatePosition(viewingPosition.id, {
+        job_title: title,
+        job_description: description,
+      } as any)
+        .then((updated: any) => {
+          setPositions((previousPositions) => previousPositions.map(p =>
+            p.id === viewingPosition.id
+              ? {
+                ...p,
+                title: updated?.jobTitle || updated?.job_title || title,
+                description: updated?.jobDescription || updated?.job_description || description,
+                screeningConditions: screening,
+                isOpen
+              }
+              : p
+          ));
+          setViewingPosition({
+            ...viewingPosition,
+            title: updated?.jobTitle || updated?.job_title || title,
+            description: updated?.jobDescription || updated?.job_description || description,
             screeningConditions: screening,
             isOpen
-          }
-          : p
-      ));
-      // Update the viewing position with new values
-      setViewingPosition({
-        ...viewingPosition,
-        title,
-        description,
-        screeningConditions: screening,
-        isOpen
-      });
+          });
+        })
+        .catch((error) => {
+          console.error('Failed to save position from project view', error);
+          throw error;
+        });
     }
   };
 
@@ -212,6 +240,7 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
         projectTitle={projectTitle}
         description={viewingPosition.description}
         screeningConditions={viewingPosition.screeningConditions}
+        positionStatus={viewingPosition.status}
         isOpen={viewingPosition.isOpen}
         onBack={handleBackToPositionsList}
         onSave={handleSaveFromPositionView}
@@ -367,7 +396,7 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
 
           {/* Project Description */}
           <p className="font-['Arimo',sans-serif] text-[14px] text-[#9ca3af] mb-[24px] leading-[20px]">
-            {projectDescription || 'No description'}
+            {resolvedDescription || 'No description'}
           </p>
 
           {/* Tabs */}
@@ -551,7 +580,10 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
             <div className="bg-white rounded-[10px] shadow-sm h-[400px] flex flex-col items-center justify-center">
               <LoadingSpinner message="Loading analytics..." fullScreen={false} />
             </div>
-          ) : (() => {
+          ) : (
+            <div className="relative min-h-[640px]">
+              <div className={isAnalyticsLocked ? 'pointer-events-none select-none blur-sm opacity-40' : ''}>
+                {(() => {
             const totalApplicants = positions.reduce((sum, pos) => sum + pos.applicants, 0);
             const totalPositions = positions.length;
             const openPositions = positions.filter(p => p.isOpen).length;
@@ -774,7 +806,32 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
                 </div>
               </div>
             );
-          })())}
+          })()}
+              </div>
+
+              {isAnalyticsLocked && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center px-6">
+                  <div className="max-w-[520px] rounded-[24px] border border-white/70 bg-white/90 px-8 py-10 text-center shadow-[0px_20px_60px_rgba(15,23,42,0.18)] backdrop-blur-xl">
+                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100">
+                      <Lock size={24} className="text-amber-600" />
+                    </div>
+                    <h3 className="font-['Arimo',sans-serif] text-[20px] font-semibold text-black">
+                      Analytics locked
+                    </h3>
+                    <p className="mt-3 font-['Arimo',sans-serif] text-[14px] leading-[22px] text-[#6b7280]">
+                      {analyticsLockMessage}
+                    </p>
+                    <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-2">
+                      <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                      <span className="font-['Arimo',sans-serif] text-[13px] font-medium text-amber-700">
+                        PENDING APPROVAL
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
@@ -800,21 +857,30 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
         onConfirm={handleConfirmClosePosition}
         positionTitle={closingPosition?.title || ''}
         candidatesCount={closingPosition?.applicants || 0}
-        groupsCount={0}
+        groupsCount={closingPosition?.groupsCount || 0}
       />
 
       {/* Archive Project Modal */}
       <ArchiveProjectModal
         isOpen={isArchiveModalOpen}
         onClose={() => setIsArchiveModalOpen(false)}
-        onConfirm={() => {
-          if (onArchiveProject) {
-            onArchiveProject();
+        onConfirm={async () => {
+          try {
+            await api.recruiter.deleteProject(projectId);
+            if (onArchiveProject) {
+              onArchiveProject();
+            }
+            toast.success(`Project "${projectTitle}" has been archived.`);
+            // Since it's archived, go back to dashboard
+            if (onViewDashboard) {
+              onViewDashboard();
+            }
+          } catch (e) {
+            toast.error("Failed to archive project");
           }
-          toast.success(`Project "${projectTitle}" has been archived.`);
         }}
         projectTitle={projectTitle}
-        isCompleted={projectStatus === 'Complete'}
+        isCompleted={internalProjectStatus === 'Complete' || projectStatus === 'Complete'}
         completionDate={completionDate}
       />
 
@@ -822,15 +888,24 @@ export function ProjectDetailView({ projectId, projectDescription, projectStatus
       <CompleteProjectModal
         isOpen={isCompleteProjectModalOpen}
         onClose={() => setIsCompleteProjectModalOpen(false)}
-        onConfirm={(data) => {
-          // Update internal status to Complete
-          setInternalProjectStatus('Complete');
+        onConfirm={async (data) => {
+          try {
+            await api.recruiter.updateProject(projectId, { status: 'closed' });
+            // Update internal status to Complete
+            setInternalProjectStatus('Complete');
+            
+            // Invalidate React Query cache so it stays completed on refresh
+            queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(String(projectId)) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.projects.all() });
 
-          if (onCompleteProject) {
-            onCompleteProject(data);
+            if (onCompleteProject) {
+              onCompleteProject(data);
+            }
+            toast.success(`Project "${projectTitle}" has been marked as Complete.`);
+            setIsCompleteProjectModalOpen(false);
+          } catch (e) {
+            toast.error("Failed to complete project");
           }
-          toast.success(`Project "${projectTitle}" has been marked as Complete.`);
-          setIsCompleteProjectModalOpen(false);
         }}
         projectTitle={projectTitle}
         projectStats={{

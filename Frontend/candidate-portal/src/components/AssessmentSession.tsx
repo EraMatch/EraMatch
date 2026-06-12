@@ -5,6 +5,7 @@ import { AlertCircle, ChevronLeft, ChevronRight, Clock, CheckCircle2, Code2, Fla
 import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload, quantizeWaveform, quantizeTimestampBucket } from '../utils/proctoringPayload';
+import { useExamLockdown } from '../hooks/useExamLockdown';
 
 const AI_SERVICE_BASE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 const ENABLE_BIOMETRIC_BETA = ((import.meta as any).env?.VITE_ENABLE_BIOMETRIC_BETA ?? 'true') !== 'false';
@@ -68,6 +69,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const [integrityBlocked, setIntegrityBlocked] = useState(false);
   const [integrityReason, setIntegrityReason] = useState<string | null>(null);
   const [screenRecordingActive, setScreenRecordingActive] = useState(false);
+  const [lockdownWarning, setLockdownWarning] = useState<string | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -82,6 +84,9 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const eventThrottleRef = useRef<Record<string, number>>({});
   const proctoringStreamRef = useRef<MediaStream | null>(null);
   const proctoringVideoRef = useRef<HTMLVideoElement | null>(null);
+  const captureStartedRef = useRef(false);
+  const captureFullyInitializedRef = useRef(false);
+  const screenCaptureVideoRef = useRef<HTMLVideoElement | null>(null);
   const proctoringCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastFrameRef = useRef<Uint8ClampedArray | null>(null);
   const lastFrameDimensionsRef = useRef<{ width: number; height: number } | null>(null);
@@ -90,7 +95,6 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const audioBufferRef = useRef<Float32Array | null>(null);
   const latestAudioFrameRef = useRef<Float32Array | null>(null);
   const screenCaptureStreamRef = useRef<MediaStream | null>(null);
-  const screenCaptureVideoRef = useRef<HTMLVideoElement | null>(null);
   const screenRecorderRef = useRef<MediaRecorder | null>(null);
   const screenRecordingChunksRef = useRef<BlobPart[]>([]);
   const screenRecordingBlobRef = useRef<Blob | null>(null);
@@ -109,6 +113,27 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const initialTimerRef = useRef(initialTimer);
   const currentQuestionIdRef = useRef<string | undefined>(undefined);
   const currentQuestionIndexRef = useRef(0);
+  const audioWsRef = useRef<WebSocket | null>(null);
+
+
+  // --- Browser prevention lockdown (tab switch, fullscreen, copy/paste, devtools) ---
+  useExamLockdown({
+    sessionId,
+    enabled: !assessmentComplete && !isLoading && !!sessionId && screenRecordingActive,
+    enforceFullscreen: false,
+    onTerminated: (message) => {
+      setIntegrityBlocked(true);
+      setIntegrityReason(message);
+      if (sessionId) {
+        api.candidate.submitAssessment({ session_id: sessionId }).catch(() => {});
+      }
+      setAssessmentComplete(true);
+    },
+    onViolation: (event) => {
+      setLockdownWarning(`⚠️ ${event.message}`);
+      setTimeout(() => setLockdownWarning(null), 5000);
+    },
+  });
 
   useEffect(() => {
     assessmentTimerRef.current = assessmentTimer;
@@ -454,6 +479,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     let stopped = false;
 
     const handleBlur = () => {
+      if (!captureFullyInitializedRef.current) return;
       const now = Date.now();
       if (now - lastShiftTsRef.current < 4000) {
         rapidShiftCountRef.current += 1;
@@ -465,6 +491,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     };
 
     const handleFocus = () => {
+      if (!captureFullyInitializedRef.current) return;
       const now = Date.now();
       if (hiddenStartedAtRef.current !== null) {
         focusHiddenMsRef.current += now - hiddenStartedAtRef.current;
@@ -490,6 +517,9 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
 
     const startCapture = async () => {
       try {
+        if (captureStartedRef.current) return;
+        captureStartedRef.current = true;
+        
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 640 }, height: { ideal: 480 } },
           audio: true,
@@ -584,6 +614,13 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         screenCaptureStreamRef.current = displayStream;
         screenCaptureVideoRef.current = screenVideo;
         setScreenRecordingActive(true);
+
+        // Reset tracking to ignore the blur caused by the getDisplayMedia dialog
+        captureFullyInitializedRef.current = true;
+        sampleWindowStartRef.current = Date.now();
+        focusHiddenMsRef.current = 0;
+        rapidShiftCountRef.current = 0;
+        hiddenStartedAtRef.current = null;
       } catch (error) {
         console.error('Biometric capture init failed:', error);
         const err = error as { name?: string };
@@ -601,13 +638,41 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       }
     };
 
+    const wsUrl = `${AI_SERVICE_BASE_URL.replace(/^http/, 'ws')}/proctoring/ws/audio-stream/${sessionId}`;
+    const ws = new WebSocket(wsUrl);
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.status === 'processed') {
+          if (data.audio_spike) {
+            setLockdownWarning('⚠️ AI Proctoring Alert: Audio spike detected');
+            setTimeout(() => setLockdownWarning(null), 5000);
+          }
+          if (data.voice_switch) {
+            setLockdownWarning('⚠️ AI Proctoring Alert: Background voice detected');
+            setTimeout(() => setLockdownWarning(null), 5000);
+          }
+        }
+      } catch (e) { console.error('WebSocket message parsing failed', e); }
+    };
+    audioWsRef.current = ws;
+
     const sampleInterval = window.setInterval(() => {
       sampleAudioSilence();
       measureFaceMotion();
+      
+      if (audioWsRef.current?.readyState === WebSocket.OPEN && latestAudioFrameRef.current) {
+         const floatArr = latestAudioFrameRef.current;
+         const int16Arr = new Int16Array(floatArr.length);
+         for (let i = 0; i < floatArr.length; i++) {
+           int16Arr[i] = Math.max(-32768, Math.min(32767, floatArr[i] * 32768));
+         }
+         audioWsRef.current.send(int16Arr.buffer);
+      }
     }, BIOMETRIC_SAMPLE_INTERVAL_MS);
 
     const analysisInterval = window.setInterval(async () => {
-      if (!sessionId || assessmentComplete) return;
+      if (!sessionId || assessmentComplete || !captureFullyInitializedRef.current) return;
 
       if (hiddenStartedAtRef.current !== null) {
         const now = Date.now();
@@ -637,7 +702,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       const elapsedAssessmentSeconds = Math.max(0, initialTimerRef.current - assessmentTimerRef.current);
       const quantizedSecond = quantizeTimestampBucket(elapsedAssessmentSeconds, 5);
 
-      const [faceResult, voiceResult, gazeResult, emotionResult] = await Promise.all([
+      const [faceResult, gazeResult, emotionResult] = await Promise.all([
         postProctoringSignal('face', {
           session_id: sessionId,
           faces_detected: hasLiveVideo ? 1 : 0,
@@ -654,22 +719,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
           client_capture_second: quantizedSecond,
           suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
         }),
-        postProctoringSignal('voice', {
-          session_id: sessionId,
-          speaker_match_score: hasLiveAudio ? 0.78 : 0.2,
-          voice_switch_detected: false,
-          silence_ratio: silenceRatio,
-          background_speaker_count: 0,
-          speaker_profile_id: SPEAKER_PROFILE_ID,
-          audio_waveform: audioWaveform,
-          audio_sample_rate: audioSampleRate,
-          capture_quantization: {
-            timestamp_bucket_seconds: 5,
-            waveform_levels: 24,
-          },
-          client_capture_second: quantizedSecond,
-          suspicious_timestamp_buckets: suspiciousTimestampBucketsRef.current,
-        }),
+
         postProctoringSignal('gaze', {
           session_id: sessionId,
           off_screen_ratio: offScreenRatio,
@@ -692,7 +742,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         }),
       ]);
 
-      const results = [faceResult, voiceResult, gazeResult, emotionResult].filter(Boolean) as ProctoringSignalResult[];
+      const results = [faceResult, gazeResult, emotionResult].filter(Boolean) as ProctoringSignalResult[];
       for (const result of results) {
         if (result.risk_score < BIOMETRIC_RISK_THRESHOLD) continue;
         const suspectBucket = quantizeTimestampBucket(elapsedAssessmentSeconds, 5);
@@ -717,6 +767,82 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
           },
           12000,
         );
+        
+        // Show AI proctoring warning on the UI dashboard
+        setLockdownWarning(`⚠️ AI Proctoring Alert: ${result.event_type.replace(/_/g, ' ')}`);
+        setTimeout(() => setLockdownWarning(null), 5000);
+      }
+
+      // --- YOLO Object Detection (phone/book/person) ---
+      if (frameB64) {
+        try {
+          const envResponse = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/environment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, frame_b64: frameB64, screen_frame_b64: screenFrameB64 }),
+          });
+          if (envResponse.ok) {
+            const envResult = await envResponse.json();
+            if (envResult.risk_score > BIOMETRIC_RISK_THRESHOLD) {
+              await emitIntegrityEvent(envResult.event_type, envResult.severity, {
+                source_signal: 'environment',
+                detected_objects: envResult.metadata?.resolved_inputs?.detected_objects,
+                proctoring_risk_score: envResult.risk_score,
+                proctoring_confidence: envResult.confidence,
+              }, 8000);
+              
+              setLockdownWarning(`⚠️ Environment Alert: ${envResult.event_type.replace(/_/g, ' ')}`);
+              setTimeout(() => setLockdownWarning(null), 5000);
+            }
+          }
+        } catch (err) {
+          console.error('[Proctoring] Environment detection failed:', err);
+        }
+      }
+
+      // --- Unified Frame Analysis (objects + identity + gaze + liveness) ---
+      if (hasLiveVideo) {
+        const hiResFrame = captureVideoFrameBase64(proctoringVideoRef.current, 640, 480);
+        if (hiResFrame) {
+          try {
+              const storedFaceEncodingStr = sessionStorage.getItem('reference_face_encoding');
+              const storedFaceEncoding = storedFaceEncodingStr ? JSON.parse(storedFaceEncodingStr) : null;
+              const unifiedResponse = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/analyze-frame`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  session_id: sessionId,
+                  frame_b64: hiResFrame,
+                  stored_face_encoding: storedFaceEncoding,
+                  face_check_interval: 10.0,
+                }),
+              });
+            if (unifiedResponse.ok) {
+              const unified = await unifiedResponse.json();
+              // Report any violations from the unified analysis
+              if (unified.violations && unified.violations.length > 0) {
+                for (const v of unified.violations) {
+                  await emitIntegrityEvent(v.type || 'unified_analysis_violation', v.severity || 'high', {
+                    source_signal: 'unified_analysis',
+                    violation_detail: v,
+                    trust_score: unified.trust_score,
+                  }, 8000);
+                  
+                  setLockdownWarning(`⚠️ System Alert: ${v.description || v.type}`);
+                  setTimeout(() => setLockdownWarning(null), 5000);
+                }
+              }
+              // Check for terminated session
+              if (unified.is_terminated) {
+                setIntegrityBlocked(true);
+                setIntegrityReason('Session terminated by proctoring system.');
+                setAssessmentComplete(true);
+              }
+            }
+          } catch (err) {
+            console.error('[Proctoring] Unified frame analysis failed:', err);
+          }
+        }
       }
 
       // Reset rolling window after each analysis cycle.
@@ -738,6 +864,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       window.removeEventListener('focus', handleFocus);
       proctoringStreamRef.current?.getTracks().forEach(track => track.stop());
       proctoringStreamRef.current = null;
+      captureStartedRef.current = false;
       proctoringVideoRef.current = null;
       if (screenRecorderRef.current && screenRecorderRef.current.state !== 'inactive') {
         screenRecorderRef.current.stop();
@@ -747,11 +874,16 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       screenCaptureStreamRef.current = null;
       screenCaptureVideoRef.current = null;
       setScreenRecordingActive(false);
+      captureFullyInitializedRef.current = false;
       audioAnalyserRef.current = null;
       audioBufferRef.current = null;
       if (audioContextRef.current) {
         void audioContextRef.current.close();
         audioContextRef.current = null;
+      }
+      if (audioWsRef.current) {
+        audioWsRef.current.close();
+        audioWsRef.current = null;
       }
     };
   }, [sessionId, assessmentComplete, emitIntegrityEvent, postProctoringSignal, measureFaceMotion, sampleAudioSilence]);
@@ -1282,6 +1414,16 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       onClick={handleActivity}
       onKeyDown={handleActivity}
     >
+      {/* Lockdown Violation Warning Banner */}
+      {lockdownWarning && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] animate-pulse">
+          <div className="bg-red-600 text-white px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3 text-sm font-medium">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            {lockdownWarning}
+          </div>
+        </div>
+      )}
+
       {/* Inactivity Alert Modal */}
       {showInactivityAlert && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">

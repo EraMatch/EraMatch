@@ -479,7 +479,7 @@ def call_ai_generate(
             "essay_medium_count": essay_medium_count,
             "essay_hard_count": essay_hard_count,
         },
-        timeout=300,  # Generator + Critic per question can take time
+        timeout=900,  # Generator + Critic per question can take time
     )
     resp.raise_for_status()
     return resp.json()
@@ -490,7 +490,7 @@ def call_ai_extract(raw_text: str) -> dict:
     resp = requests.post(
         f"{AI_SERVICE_URL}/question-import/extract",
         json={"raw_text": raw_text},
-        timeout=300,
+        timeout=900,
     )
     resp.raise_for_status()
     return resp.json()

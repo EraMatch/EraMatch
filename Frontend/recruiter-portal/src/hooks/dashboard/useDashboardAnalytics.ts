@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '../../lib/queryKeys'
 import { api } from '../../services/api'
 
@@ -16,4 +16,15 @@ export function useNotifications() {
         queryFn: () => api.recruiter.getNotifications(),
         staleTime: 60 * 1000,
     })
+}
+
+export function useMarkNotificationRead() {
+    const queryClient = useQueryClient();
+    
+    return useMutation({
+        mutationFn: (notificationId?: string) => api.recruiter.markNotificationRead(notificationId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.notifications() });
+        }
+    });
 }

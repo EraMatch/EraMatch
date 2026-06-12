@@ -58,21 +58,21 @@ const PATHS: { id: ImportPath; icon: React.ReactNode; title: string; subtitle: s
     icon: <Sparkles className="w-6 h-6" />,
     title: 'Generate from Material',
     subtitle: 'Upload a PDF, DOCX — AI writes fresh questions from the content',
-    accent: 'var(--accent-purple, #8b5cf6)',
+    accent: '#6366f1',
   },
   {
     id: 'extraction',
     icon: <FileText className="w-6 h-6" />,
     title: 'Extract from Document',
     subtitle: 'Upload a PDF, MD or TXT that already has questions — AI structures them',
-    accent: 'var(--accent-blue, #3b82f6)',
+    accent: '#3b82f6',
   },
   {
     id: 'csv',
     icon: <Table2 className="w-6 h-6" />,
     title: 'Import from Spreadsheet',
     subtitle: 'Upload a CSV or XLSX — AI maps your columns to our schema automatically',
-    accent: 'var(--accent-green, #10b981)',
+    accent: '#10b981',
   },
 ];
 
@@ -337,31 +337,21 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
 
   return (
     <div
-      style={{
-        position: 'fixed', inset: 0, zIndex: 1000,
-        background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '1rem',
-      }}
+      className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{
-        background: 'var(--card-bg, #1a1a2e)', borderRadius: '1rem',
-        width: '100%', maxWidth: 580, maxHeight: '90vh',
-        overflowY: 'auto', boxShadow: '0 25px 60px rgba(0,0,0,0.5)',
-        border: '1px solid var(--border, rgba(255,255,255,0.1))',
-      }}>
+      <div className="bg-white rounded-[24px] w-full max-w-[580px] max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-100">
         {/* Header */}
-        <div style={{ padding: '1.5rem 1.5rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border, rgba(255,255,255,0.08))' }}>
+        <div className="px-6 pt-6 pb-4 flex items-center justify-between border-b border-slate-100">
           <div>
-            <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary, #fff)' }}>
+            <h2 className="m-0 text-xl font-bold text-slate-900 tracking-tight">
               Import Questions
             </h2>
-            <p style={{ margin: '0.25rem 0 0', fontSize: '0.82rem', color: 'var(--text-muted, #888)' }}>
+            <p className="m-0 mt-1 text-sm text-slate-500">
               {step === 1 ? 'Choose how you want to import' : step === 2 ? 'Configure & upload your file' : 'Job queued!'}
             </p>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted, #888)', padding: '0.25rem' }}>
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -371,44 +361,16 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
           {/* Step 1: Choose path */}
           {step === 1 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: '0.5rem',
-                  padding: '0.35rem',
-                  borderRadius: '0.65rem',
-                  border: '1px solid var(--border, rgba(255,255,255,0.1))',
-                  background: 'var(--card-bg-secondary, rgba(255,255,255,0.03))',
-                }}
-              >
+              <div className="grid grid-cols-2 gap-2 p-1.5 rounded-xl border border-slate-200 bg-slate-50">
                 <button
                   onClick={() => setSubPage('generation')}
-                  style={{
-                    padding: '0.55rem 0.65rem',
-                    borderRadius: '0.5rem',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '0.82rem',
-                    fontWeight: 600,
-                    background: subPage === 'generation' ? 'rgba(139,92,246,0.22)' : 'transparent',
-                    color: subPage === 'generation' ? '#ddd6fe' : 'var(--text-muted, #888)',
-                  }}
+                  className={`py-2 px-3 rounded-lg text-sm font-semibold transition-colors ${subPage === 'generation' ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-500 hover:text-slate-700'}`}
                 >
                   Question Generation
                 </button>
                 <button
                   onClick={() => setSubPage('existing')}
-                  style={{
-                    padding: '0.55rem 0.65rem',
-                    borderRadius: '0.5rem',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '0.82rem',
-                    fontWeight: 600,
-                    background: subPage === 'existing' ? 'rgba(59,130,246,0.22)' : 'transparent',
-                    color: subPage === 'existing' ? '#bfdbfe' : 'var(--text-muted, #888)',
-                  }}
+                  className={`py-2 px-3 rounded-lg text-sm font-semibold transition-colors ${subPage === 'existing' ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/50' : 'text-slate-500 hover:text-slate-700'}`}
                 >
                   Existing Questions Import
                 </button>
@@ -422,25 +384,17 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                 <button
                   key={path.id}
                   onClick={() => { setSelectedPath(path.id); setStep(2); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '1rem',
-                    padding: '1rem 1.25rem', borderRadius: '0.75rem',
-                    border: '1.5px solid var(--border, rgba(255,255,255,0.1))',
-                    background: 'var(--card-bg-secondary, rgba(255,255,255,0.03))',
-                    cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
-                    color: 'var(--text-primary, #fff)',
-                  }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = path.accent; (e.currentTarget as HTMLButtonElement).style.background = `${path.accent}15`; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border, rgba(255,255,255,0.1))'; (e.currentTarget as HTMLButtonElement).style.background = 'var(--card-bg-secondary, rgba(255,255,255,0.03))'; }}
+                  className="flex items-center gap-4 p-4 rounded-xl border-2 border-slate-200 bg-slate-50 cursor-pointer text-left transition-all hover:bg-indigo-50/30 hover:border-indigo-400/60"
+
                 >
                   <div style={{ width: 44, height: 44, borderRadius: '0.6rem', background: `${path.accent}20`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: path.accent, flexShrink: 0 }}>
                     {path.icon}
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{path.title}</div>
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted, #888)', marginTop: '0.2rem' }}>{path.subtitle}</div>
+                    <div style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: '0.2rem' }}>{path.subtitle}</div>
                   </div>
-                  <ChevronRight className="w-4 h-4" style={{ color: 'var(--text-muted, #888)', flexShrink: 0 }} />
+                  <ChevronRight className="w-4 h-4" style={{ color: '#6b7280', flexShrink: 0 }} />
                 </button>
               ))}
             </div>
@@ -465,7 +419,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                   setApproveChunking(false);
                   setQueuedSummary(null);
                 }}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted, #888)', fontSize: '0.82rem', padding: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '0.82rem', padding: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
               >
                 ← Back
               </button>
@@ -475,7 +429,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                     <div>
-                      <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
+                      <label className="block text-sm font-semibold text-slate-600 mb-1.5">
                         MCQ count
                       </label>
                       <input
@@ -483,11 +437,11 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                         min={0}
                         value={mcqCount}
                         onChange={e => setMcqCount(Math.max(0, Number(e.target.value) || 0))}
-                        style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                       />
                     </div>
                     <div>
-                      <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
+                      <label className="block text-sm font-semibold text-slate-600 mb-1.5">
                         Essay count
                       </label>
                       <input
@@ -495,33 +449,33 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                         min={0}
                         value={essayCount}
                         onChange={e => setEssayCount(Math.max(0, Number(e.target.value) || 0))}
-                        style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem' }}
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                       />
                     </div>
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                     <div>
-                      <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.35rem' }}>
+                      <label className="block text-sm font-semibold text-slate-600 mb-1.5">
                         MCQ difficulty split (Easy / Medium / Hard)
                       </label>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-                        <input type="number" min={0} value={mcqEasyCount} onChange={e => setMcqEasyCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Easy" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
-                        <input type="number" min={0} value={mcqMediumCount} onChange={e => setMcqMediumCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Medium" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
-                        <input type="number" min={0} value={mcqHardCount} onChange={e => setMcqHardCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Hard" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
+                        <input type="number" min={0} value={mcqEasyCount} onChange={e => setMcqEasyCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Easy" className="w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" />
+                        <input type="number" min={0} value={mcqMediumCount} onChange={e => setMcqMediumCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Medium" className="w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" />
+                        <input type="number" min={0} value={mcqHardCount} onChange={e => setMcqHardCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Hard" className="w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" />
                       </div>
                       <div style={{ fontSize: '0.72rem', color: (mcqEasyCount + mcqMediumCount + mcqHardCount) === mcqCount ? '#10b981' : '#f59e0b', marginTop: '0.3rem' }}>
                         Split total: {mcqEasyCount + mcqMediumCount + mcqHardCount} / {mcqCount}
                       </div>
                     </div>
                     <div>
-                      <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.35rem' }}>
+                      <label className="block text-sm font-semibold text-slate-600 mb-1.5">
                         Essay difficulty split (Easy / Medium / Hard)
                       </label>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-                        <input type="number" min={0} value={essayEasyCount} onChange={e => setEssayEasyCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Easy" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
-                        <input type="number" min={0} value={essayMediumCount} onChange={e => setEssayMediumCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Medium" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
-                        <input type="number" min={0} value={essayHardCount} onChange={e => setEssayHardCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Hard" style={{ width: '100%', padding: '0.55rem 0.65rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.85rem' }} />
+                        <input type="number" min={0} value={essayEasyCount} onChange={e => setEssayEasyCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Easy" className="w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" />
+                        <input type="number" min={0} value={essayMediumCount} onChange={e => setEssayMediumCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Medium" className="w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" />
+                        <input type="number" min={0} value={essayHardCount} onChange={e => setEssayHardCount(Math.max(0, Number(e.target.value) || 0))} placeholder="Hard" className="w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" />
                       </div>
                       <div style={{ fontSize: '0.72rem', color: (essayEasyCount + essayMediumCount + essayHardCount) === essayCount ? '#10b981' : '#f59e0b', marginTop: '0.3rem' }}>
                         Split total: {essayEasyCount + essayMediumCount + essayHardCount} / {essayCount}
@@ -529,24 +483,24 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                     </div>
                   </div>
 
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted, #888)' }}>
-                    Total questions to generate: <strong style={{ color: 'var(--text-primary, #fff)' }}>{mcqCount + essayCount}</strong>
+                  <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>
+                    Total questions to generate: <strong style={{ color: '#111827' }}>{mcqCount + essayCount}</strong>
                   </div>
 
                   <div>
-                    <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
+                    <label className="block text-sm font-semibold text-slate-600 mb-1.5">
                       Topic hint <span style={{ fontWeight: 400 }}>(optional)</span>
                     </label>
                     <input
                       placeholder="e.g. Python OOP, System Design, Data Structures"
                       value={contextHint}
                       onChange={e => setContextHint(e.target.value)}
-                      style={{ width: '100%', padding: '0.6rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem', boxSizing: 'border-box' }}
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                     />
                   </div>
 
                   <div>
-                    <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
+                    <label className="block text-sm font-semibold text-slate-600 mb-1.5">
                       Recruiter instructions <span style={{ fontWeight: 400 }}>(optional)</span>
                     </label>
                     <textarea
@@ -554,7 +508,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                       value={recruiterInstructions}
                       onChange={e => setRecruiterInstructions(e.target.value)}
                       rows={3}
-                      style={{ width: '100%', padding: '0.65rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem', boxSizing: 'border-box', resize: 'vertical' }}
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                     />
                   </div>
 
@@ -574,7 +528,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                       background: 'rgba(16,185,129,0.08)',
                     }}
                   >
-                    <div style={{ fontSize: '0.84rem', color: '#a7f3d0', lineHeight: 1.5 }}>
+                    <div style={{ fontSize: '0.84rem', color: '#059669', lineHeight: 1.5 }}>
                       Recommended: use the EraMatch template for deterministic import and cleaner review.
                       If headers do not match the template, we will fallback to AI-assisted mapping.
                     </div>
@@ -586,7 +540,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                         borderRadius: '0.5rem',
                         border: '1px solid rgba(16,185,129,0.45)',
                         background: 'rgba(16,185,129,0.14)',
-                        color: '#6ee7b7',
+                        color: '#059669',
                         fontSize: '0.82rem',
                         fontWeight: 600,
                         cursor: 'pointer',
@@ -603,12 +557,12 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                   {spreadsheetPreflight && (
                     <div style={{ border: '1px solid rgba(96,165,250,0.35)', background: 'rgba(59,130,246,0.08)', borderRadius: '0.7rem', padding: '0.9rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-                        <div style={{ fontSize: '0.8rem', color: '#bfdbfe' }}>
+                        <div style={{ fontSize: '0.8rem', color: '#3b82f6' }}>
                           Rows preview: <strong>{spreadsheetPreflight.valid_rows}</strong> valid / <strong>{spreadsheetPreflight.invalid_rows}</strong> invalid
                         </div>
                         {spreadsheetPreflight.sheets.length > 0 && (
                           <div>
-                            <label style={{ fontSize: '0.75rem', color: '#bfdbfe', marginRight: '0.35rem' }}>Sheet</label>
+                            <label style={{ fontSize: '0.75rem', color: '#3b82f6', marginRight: '0.35rem' }}>Sheet</label>
                             <select
                               value={csvSelectedSheet}
                               onChange={async (e) => {
@@ -618,10 +572,10 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                                   await runSpreadsheetPreflight(file, next);
                                 }
                               }}
-                              style={{ padding: '0.35rem 0.5rem', borderRadius: '0.4rem', border: '1px solid rgba(191,219,254,0.35)', background: 'rgba(255,255,255,0.04)', color: '#dbeafe', fontSize: '0.78rem' }}
+                              style={{ padding: '0.35rem 0.5rem', borderRadius: '0.4rem', border: '1px solid rgba(59,130,246,0.2)', background: '#ffffff', color: '#1e3a8a', fontSize: '0.78rem' }}
                             >
                               {spreadsheetPreflight.sheets.map((sheet) => (
-                                <option key={sheet} value={sheet} style={{ backgroundColor: '#0f172a', color: '#e2e8f0' }}>{sheet}</option>
+                                <option key={sheet} value={sheet} style={{ backgroundColor: '#ffffff', color: '#111827' }}>{sheet}</option>
                               ))}
                             </select>
                           </div>
@@ -633,18 +587,18 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                           const conf = spreadsheetPreflight.confidence[field] ?? 0;
                           const isUncertain = spreadsheetPreflight.uncertain_fields.includes(field);
                           return (
-                            <div key={field} style={{ border: '1px solid rgba(191,219,254,0.2)', borderRadius: '0.45rem', padding: '0.45rem' }}>
-                              <div style={{ fontSize: '0.72rem', color: '#bfdbfe', marginBottom: '0.25rem' }}>
+                            <div key={field} style={{ border: '1px solid rgba(59,130,246,0.1)', borderRadius: '0.45rem', padding: '0.45rem' }}>
+                              <div style={{ fontSize: '0.72rem', color: '#3b82f6', marginBottom: '0.25rem' }}>
                                 {field} {conf > 0 ? `(${Math.round(conf * 100)}%)` : ''} {isUncertain ? '⚠️' : ''}
                               </div>
                               <select
                                 value={csvMapping[field] || ''}
                                 onChange={(e) => setCsvMapping(prev => ({ ...prev, [field]: e.target.value }))}
-                                style={{ width: '100%', padding: '0.35rem 0.45rem', borderRadius: '0.35rem', border: '1px solid rgba(191,219,254,0.35)', background: 'rgba(255,255,255,0.04)', color: '#dbeafe', fontSize: '0.75rem' }}
+                                style={{ width: '100%', padding: '0.35rem 0.45rem', borderRadius: '0.35rem', border: '1px solid rgba(59,130,246,0.2)', background: '#ffffff', color: '#1e3a8a', fontSize: '0.75rem' }}
                               >
-                                <option value="" style={{ backgroundColor: '#0f172a', color: '#e2e8f0' }}>Not mapped</option>
+                                <option value="" style={{ backgroundColor: '#ffffff', color: '#111827' }}>Not mapped</option>
                                 {spreadsheetPreflight.columns.map((col) => (
-                                  <option key={`${field}-${col}`} value={col} style={{ backgroundColor: '#0f172a', color: '#e2e8f0' }}>{col}</option>
+                                  <option key={`${field}-${col}`} value={col} style={{ backgroundColor: '#ffffff', color: '#111827' }}>{col}</option>
                                 ))}
                               </select>
                             </div>
@@ -653,7 +607,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                       </div>
 
                       {spreadsheetPreflight.uncertain_fields.length > 0 && (
-                        <label style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.8rem', color: '#dbeafe' }}>
+                        <label style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.8rem', color: '#1e3a8a' }}>
                           <input
                             type="checkbox"
                             checked={confirmUncertainMapping}
@@ -665,11 +619,11 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                       )}
 
                       {spreadsheetPreflight.auto_fix_suggestions_preview.length > 0 && (
-                        <div style={{ marginTop: '0.75rem', borderTop: '1px solid rgba(191,219,254,0.25)', paddingTop: '0.6rem' }}>
-                          <div style={{ fontSize: '0.8rem', color: '#bbf7d0', marginBottom: '0.35rem' }}>
+                        <div style={{ marginTop: '0.75rem', borderTop: '1px solid rgba(59,130,246,0.15)', paddingTop: '0.6rem' }}>
+                          <div style={{ fontSize: '0.8rem', color: '#10b981', marginBottom: '0.35rem' }}>
                             Auto-fix suggestions: {spreadsheetPreflight.auto_fixable_count} fixable / {spreadsheetPreflight.unfixable_count} manual
                           </div>
-                          <label style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.78rem', color: '#d1fae5' }}>
+                          <label style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.78rem', color: '#059669' }}>
                             <input
                               type="checkbox"
                               checked={applyAutoFixes}
@@ -681,9 +635,9 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                           <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
                             {spreadsheetPreflight.auto_fix_suggestions_preview.slice(0, 8).map((s, idx) => (
                               <div key={`row-fix-${s.row}-${idx}`} style={{ fontSize: '0.74rem', marginBottom: '0.25rem' }}>
-                                <span style={{ color: '#bfdbfe' }}>Row {s.row}</span>
-                                <span style={{ color: '#fecaca' }}> · {s.error}</span>
-                                <span style={{ color: '#d1fae5' }}> · {s.suggestion}</span>
+                                <span style={{ color: '#3b82f6' }}>Row {s.row}</span>
+                                <span style={{ color: '#ef4444' }}> · {s.error}</span>
+                                <span style={{ color: '#059669' }}> · {s.suggestion}</span>
                                 <span style={{ color: s.auto_fixable ? '#86efac' : '#fcd34d' }}> ({s.auto_fixable ? 'auto-fixable' : 'manual'})</span>
                               </div>
                             ))}
@@ -692,11 +646,11 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                       )}
 
                       {spreadsheetPreflight.row_errors_preview.length > 0 && (
-                        <div style={{ marginTop: '0.75rem', borderTop: '1px solid rgba(191,219,254,0.25)', paddingTop: '0.6rem' }}>
-                          <div style={{ fontSize: '0.75rem', color: '#bfdbfe', marginBottom: '0.35rem' }}>Validation preview errors</div>
+                        <div style={{ marginTop: '0.75rem', borderTop: '1px solid rgba(59,130,246,0.15)', paddingTop: '0.6rem' }}>
+                          <div style={{ fontSize: '0.75rem', color: '#3b82f6', marginBottom: '0.35rem' }}>Validation preview errors</div>
                           <div style={{ maxHeight: '110px', overflowY: 'auto' }}>
                             {spreadsheetPreflight.row_errors_preview.slice(0, 8).map((r) => (
-                              <div key={`row-error-${r.row}-${r.error}`} style={{ fontSize: '0.74rem', color: '#fecaca', marginBottom: '0.2rem' }}>
+                              <div key={`row-error-${r.row}-${r.error}`} style={{ fontSize: '0.74rem', color: '#ef4444', marginBottom: '0.2rem' }}>
                                 Row {r.row}: {r.error}
                               </div>
                             ))}
@@ -710,7 +664,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
 
               {/* File drop zone */}
               <div>
-                <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.4rem' }}>
+                <label className="block text-sm font-semibold text-slate-600 mb-1.5">
                   Upload file <span style={{ fontSize: '0.75rem', fontWeight: 400 }}>({LIMITS[selectedPath]})</span>
                 </label>
                 <div
@@ -719,23 +673,23 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                   onDragLeave={() => setDragOver(false)}
                   onClick={() => fileInputRef.current?.click()}
                   style={{
-                    border: `2px dashed ${dragOver ? 'var(--accent-purple, #8b5cf6)' : 'var(--border, rgba(255,255,255,0.2))'}`,
+                    border: `2px dashed ${dragOver ? '#6366f1' : '#d1d5db'}`,
                     borderRadius: '0.75rem', padding: '2rem', textAlign: 'center',
                     cursor: 'pointer', transition: 'all 0.15s',
-                    background: dragOver ? 'rgba(139,92,246,0.06)' : 'var(--card-bg-secondary, rgba(255,255,255,0.02))',
+                    background: dragOver ? 'rgba(99,102,241,0.06)' : '#f9fafb',
                   }}
                 >
                   {file ? (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', color: 'var(--accent-green, #10b981)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', color: '#10b981' }}>
                       <CheckCircle2 className="w-5 h-5" />
                       <span style={{ fontWeight: 600 }}>{file.name}</span>
-                      <span style={{ color: 'var(--text-muted, #888)', fontSize: '0.8rem' }}>({(file.size / 1024).toFixed(0)} KB)</span>
+                      <span style={{ color: '#6b7280', fontSize: '0.8rem' }}>({(file.size / 1024).toFixed(0)} KB)</span>
                     </div>
                   ) : (
                     <>
-                      <FileUp className="w-8 h-8 mx-auto" style={{ color: 'var(--text-muted, #888)', marginBottom: '0.5rem' }} />
-                      <div style={{ color: 'var(--text-primary, #fff)', fontWeight: 500, fontSize: '0.9rem' }}>Drag & drop or click to browse</div>
-                      <div style={{ color: 'var(--text-muted, #888)', fontSize: '0.78rem', marginTop: '0.25rem' }}>Accepted: {ACCEPT[selectedPath]}</div>
+                      <FileUp className="w-8 h-8 mx-auto" style={{ color: '#6b7280', marginBottom: '0.5rem' }} />
+                      <div style={{ color: '#111827', fontWeight: 500, fontSize: '0.9rem' }}>Drag & drop or click to browse</div>
+                      <div style={{ color: '#6b7280', fontSize: '0.78rem', marginTop: '0.25rem' }}>Accepted: {ACCEPT[selectedPath]}</div>
                     </>
                   )}
                   <input
@@ -781,7 +735,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                     <>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                         <div>
-                          <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.35rem' }}>
+                          <label className="block text-sm font-semibold text-slate-600 mb-1.5">
                             Pages per chunk
                           </label>
                           <input
@@ -796,20 +750,20 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
                                 await runPreflight(file, nextValue);
                               }
                             }}
-                            style={{ width: '100%', padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', color: 'var(--text-primary, #fff)', fontSize: '0.9rem', boxSizing: 'border-box' }}
+                            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                           />
                         </div>
                         <div>
-                          <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted, #888)', display: 'block', marginBottom: '0.35rem' }}>
+                          <label className="block text-sm font-semibold text-slate-600 mb-1.5">
                             Estimated chunks
                           </label>
-                          <div style={{ height: '38px', borderRadius: '0.5rem', border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--input-bg, rgba(255,255,255,0.05))', display: 'flex', alignItems: 'center', padding: '0 0.7rem', color: 'var(--text-primary, #fff)', fontWeight: 700, fontSize: '0.95rem' }}>
+                          <div style={{ height: '38px', borderRadius: '0.5rem', border: '1px solid #e5e7eb', background: '#ffffff', display: 'flex', alignItems: 'center', padding: '0 0.7rem', color: '#111827', fontWeight: 700, fontSize: '0.95rem' }}>
                             {preflight.chunk_count}
                           </div>
                         </div>
                       </div>
 
-                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--text-primary, #fff)' }}>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.82rem', color: '#111827' }}>
                         <input
                           type="checkbox"
                           checked={approveChunking}
@@ -844,14 +798,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
               <button
                 onClick={handleSubmit}
                 disabled={!file || isUploading || isPreflighting || (preflight?.requires_chunking && !approveChunking) || isCsvBlocked}
-                style={{
-                  padding: '0.75rem', borderRadius: '0.6rem', border: 'none',
-                  background: !file || isUploading || isPreflighting || (preflight?.requires_chunking && !approveChunking) || isCsvBlocked
-                    ? 'var(--border, rgba(255,255,255,0.1))'
-                    : 'var(--accent-purple, #8b5cf6)',
-                  color: '#fff', fontWeight: 600, fontSize: '0.95rem', cursor: !file || isUploading ? 'not-allowed' : 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', transition: 'background 0.15s',
-                }}
+className="w-full py-3 rounded-xl font-semibold text-[15px] flex items-center justify-center gap-2 transition-all disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
               >
                 {isUploading ? (
                   <><Loader2 className="w-4 h-4 animate-spin" /> Uploading…</>
@@ -874,8 +821,8 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
               <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(16,185,129,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
                 <CheckCircle2 className="w-8 h-8" style={{ color: '#10b981' }} />
               </div>
-              <h3 style={{ margin: '0 0 0.5rem', color: 'var(--text-primary, #fff)', fontWeight: 700 }}>Import Job Queued!</h3>
-              <p style={{ margin: '0 0 1.5rem', color: 'var(--text-muted, #888)', fontSize: '0.88rem', lineHeight: 1.5 }}>
+              <h3 style={{ margin: '0 0 0.5rem', color: '#111827', fontWeight: 700 }}>Import Job Queued!</h3>
+              <p style={{ margin: '0 0 1.5rem', color: '#6b7280', fontSize: '0.88rem', lineHeight: 1.5 }}>
                 {queuedSummary?.chunked
                   ? `Your file was split into ${queuedSummary.chunkCount} chunk(s) and all chunks are now processing in the background.`
                   : 'Your file is being processed in the background.'}
@@ -884,7 +831,7 @@ export function QuestionImportModal({ onClose, onJobQueued }: Props) {
               </p>
               <button
                 onClick={onClose}
-                style={{ padding: '0.65rem 1.5rem', borderRadius: '0.5rem', border: 'none', background: 'var(--accent-purple, #8b5cf6)', color: '#fff', fontWeight: 600, cursor: 'pointer' }}
+                style={{ padding: '0.65rem 1.5rem', borderRadius: '0.5rem', border: 'none', background: '#6366f1', color: '#ffffff', fontWeight: 600, cursor: 'pointer' }}
               >
                 Got it
               </button>

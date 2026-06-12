@@ -29,7 +29,7 @@ from app.schemas.project import (
 )
 from app.schemas.analytics import (
     RecruiterAnalyticsResponse, OverviewStats, GroupStatusCount, StageCount,
-    ProjectPerformance, RecentActivity, WeeklyTrend
+    ProjectPerformance, RecentActivity, WeeklyTrend, DashboardTopStats
 )
 from app.schemas.candidate import ApplicationUpdate
 from app.services.prescore import PreScoreService
@@ -91,12 +91,12 @@ class RecruiterService:
         if self.current_user.role == "technical":
             from app.core.exceptions import UnauthorizedException
             raise UnauthorizedException("Technical recruiters cannot create projects")
-            
+
         # 1. Determine creator ID (Admins are not in organization_users table)
         creator_id = self.current_user.id
         if self.current_user.role == "admin":
             creator_id = None
-            
+
         # 2. Determine initial status
         initial_status = "active"
         if self.current_user.role != "admin":
@@ -109,7 +109,7 @@ class RecruiterService:
             name=data.name,
             description=data.description,
             target_hire_count=data.target_hire_count,
-            status=initial_status
+            status=initial_status,
         )
         self.session.add(project)
         print(f"DEBUG: Project ID before flush: {project.id}")
@@ -121,13 +121,14 @@ class RecruiterService:
             access = ProjectAccess(
                 project_id=project.id,
                 user_id=creator_id,
-                access_level="owner"
+                access_level="owner",
             )
             self.session.add(access)
 
-        # 5. Create Approval Requst if pending
+        # 5. Create Approval Request for HR-created projects and assign a technical recruiter.
         if initial_status == "pending" and creator_id:
             from app.models import ApprovalRequest
+
             print(f"DEBUG: Creating ApprovalRequest with entity_id={project.id}")
             approval_req = ApprovalRequest(
                 organization_id=self.organization_id,
@@ -135,10 +136,10 @@ class RecruiterService:
                 request_type="project",
                 data=data.model_dump(mode='json'),
                 status="pending",
-                entity_id=project.id
+                entity_id=project.id,
             )
             self.session.add(approval_req)
-        
+
         await self.session.commit()
         await self.session.refresh(project)
         return project
@@ -147,14 +148,32 @@ class RecruiterService:
         """Fetch notifications for the current user."""
         from app.models import Notification
         from sqlalchemy import desc
-        
+
         query = select(Notification).where(
             Notification.recipient_user_id == self.current_user.id
         ).order_by(desc(Notification.created_at)).offset(skip).limit(limit)
-        
+
         result = await self.session.execute(query)
         notifications = result.scalars().all()
         return notifications
+
+    async def mark_notifications_read(self, notification_id: UUID | None = None) -> int:
+        """Mark a specific notification or all notifications as read."""
+        from app.models import Notification
+        from sqlalchemy import update
+        from datetime import datetime
+
+        stmt = update(Notification).where(
+            Notification.recipient_user_id == self.current_user.id,
+            Notification.is_read == False,
+        ).values(is_read=True, read_at=datetime.utcnow().isoformat())
+
+        if notification_id:
+            stmt = stmt.where(Notification.id == notification_id)
+
+        result = await self.session.execute(stmt)
+        await self.session.commit()
+        return result.rowcount
 
     async def get_project(self, project_id: UUID) -> Project:
         """Get a project with access control."""
@@ -265,9 +284,11 @@ class RecruiterService:
         query = (
             select(
                 Position,
-                func.count(CandidateApplication.id).label("count")
+                func.count(func.distinct(CandidateApplication.id)).label("count"),
+                func.count(func.distinct(CandidateGroup.id)).label("groups_count")
             )
             .outerjoin(CandidateApplication, CandidateApplication.position_id == Position.id)
+            .outerjoin(CandidateGroup, CandidateGroup.position_id == Position.id)
             .where(
                 Position.project_id == project_id,
                 Position.is_deleted == False
@@ -286,7 +307,7 @@ class RecruiterService:
         
         # 3. Map to response
         response = []
-        for pos, count in rows:
+        for pos, count, groups_count in rows:
             # Map fields to schema
             response.append(PositionResponse(
                 id=pos.id,
@@ -300,7 +321,8 @@ class RecruiterService:
                 work_type=pos.work_type,
                 salary_min=pos.salary_min,
                 salary_max=pos.salary_max,
-                created_at=pos.created_at
+                created_at=pos.created_at,
+                groupsCount=groups_count
             ))
             
         return response
@@ -580,16 +602,12 @@ class RecruiterService:
         approval_status = "pending"
         
         if self.current_user.role != "admin":
-            # Check bypass setting
-            res_org = await self.session.execute(select(Organization).where(Organization.id == org_id))
-            org = res_org.scalar_one_or_none()
-            settings = org.settings or {}
-            if settings.get("bypass_admin_approval", False):
-                initial_status = "technical_review"
-                approval_status = "technical_review"
-                
+            # HR creations ALWAYS go to technical review first. 
+            initial_status = "technical_review"
+            approval_status = "technical_review"
+            
+            if not data.assigned_tech_id:
                 # Auto-assign Technical Recruiter: Round-robin / Least Loaded
-                # 1. Find all active technical recruiters in this organization
                 q_tech = select(OrganizationUser.id).where(
                     OrganizationUser.organization_id == org_id,
                     OrganizationUser.role == "technical", 
@@ -599,8 +617,6 @@ class RecruiterService:
                 tech_ids = res_tech.scalars().all()
                 
                 if tech_ids:
-                    # 2. Find the one with minimum active assignments (open or technical_review)
-                    # We count assignments for each tech recruiter
                     q_counts = select(
                         Position.assigned_tech_id, 
                         func.count(Position.id)
@@ -613,14 +629,8 @@ class RecruiterService:
                     res_counts = await self.session.execute(q_counts)
                     counts_map = {r[0]: r[1] for r in res_counts.all()}
                     
-                    # Sort technical recruiters by load (ascending)
-                    # For those with 0 assignments, they won't be in counts_map, giving them priority
                     best_tech_id = min(tech_ids, key=lambda tid: counts_map.get(tid, 0))
-                    
                     data.assigned_tech_id = best_tech_id
-            else:
-                initial_status = "pending"
-                approval_status = "pending"
 
         # Admin logic change:
         if self.current_user.role == "admin" and data.assigned_tech_id:
@@ -660,6 +670,21 @@ class RecruiterService:
                 assigned_tech_id=data.assigned_tech_id
             )
             self.session.add(approval_req)
+            
+            # Create Notification for Technical Recruiter
+            if data.assigned_tech_id:
+                from app.models import Notification
+                tech_notification = Notification(
+                    organization_id=self.organization_id,
+                    recipient_user_id=data.assigned_tech_id,
+                    title="Action Required: New Position Review",
+                    message=f"You have been assigned to review a newly created position: {data.job_title}.",
+                    type="approval_request",
+                    data={"reference_id": str(position.id)},
+                    action_url=f"/recruiter/positions/{position.id}",
+                    is_read=False
+                )
+                self.session.add(tech_notification)
         
         await self.session.commit()
         await self.session.refresh(position)
@@ -687,10 +712,15 @@ class RecruiterService:
                 GitHubAnalysis.analysis_data["overall_github_score"].label("gh_overall_score"),
                 GitHubAnalysis.analysis_data["repo_confidence"].label("gh_repo_confidence"),
                 GitHubAnalysis.analysis_data["data_freshness"].label("gh_data_freshness"),
+                Position.job_title.label("position"),
+                Project.name.label("project_name"),
+                Project.created_at.label("project_created_at"),
             )
             .outerjoin(CandidateApplication, CandidateProfile.id == CandidateApplication.candidate_id)
             .outerjoin(CVAnalysis, CandidateApplication.id == CVAnalysis.application_id)
             .outerjoin(GitHubAnalysis, CandidateProfile.id == GitHubAnalysis.candidate_id)
+            .outerjoin(Position, CandidateApplication.position_id == Position.id)
+            .outerjoin(Project, Position.project_id == Project.id)
             .where(
                 CandidateProfile.organization_id == self.organization_id,
                 CandidateProfile.is_deleted == False,
@@ -732,6 +762,9 @@ class RecruiterService:
                         "gh_overall_score": row.gh_overall_score,
                         "gh_repo_confidence": row.gh_repo_confidence,
                         "gh_data_freshness": row.gh_data_freshness,
+                        "position": row.position,
+                        "project_name": row.project_name,
+                        "project_created_at": row.project_created_at,
                     }
                 else:
                     if old["app_id"] is None and row.app_id is not None:
@@ -742,6 +775,10 @@ class RecruiterService:
                         old["gh_overall_score"] = row.gh_overall_score
                         old["gh_repo_confidence"] = row.gh_repo_confidence
                         old["gh_data_freshness"] = row.gh_data_freshness
+                    if old.get("position") is None and row.position is not None:
+                        old["position"] = row.position
+                        old["project_name"] = row.project_name
+                        old["project_created_at"] = row.project_created_at
             else:
                 candidates_map[cid] = {
                     "id": row.id,
@@ -760,6 +797,9 @@ class RecruiterService:
                     "gh_overall_score": row.gh_overall_score,
                     "gh_repo_confidence": row.gh_repo_confidence,
                     "gh_data_freshness": row.gh_data_freshness,
+                    "position": row.position,
+                    "project_name": row.project_name,
+                    "project_created_at": row.project_created_at,
                 }
 
         candidates = []
@@ -828,6 +868,9 @@ class RecruiterService:
                 color="#9ca3af" if match_score < 50 else ("#10b981" if match_score >= 80 else "#f59e0b"),
                 starred=False,
                 selected=False,
+                position=item.get("position"),
+                project=item.get("project_name"),
+                hiringRound=f"Q{(item.get('project_created_at').month - 1) // 3 + 1} {item.get('project_created_at').year}" if item.get("project_created_at") else None,
                 experience=experience,
                 location=location,
                 skills=skills,
@@ -1220,17 +1263,19 @@ class RecruiterService:
         """Update a position."""
         pos = await self.get_position(position_id)
         
-        # 1. HR Restrictions
-        if self.current_user.role == "hr":
-            if pos.status in ["pending", "technical_review"]:
-                 from fastapi import HTTPException
-                 raise HTTPException(status_code=400, detail="Cannot edit position while it is under review.")
-
         update_data = data.model_dump(exclude_unset=True)
         
         # Normalize status to lowercase if present to match DB constraint
         if "status" in update_data and update_data["status"]:
             update_data["status"] = update_data["status"].lower()
+
+        # 1. HR Restrictions
+        if self.current_user.role == "hr":
+            if pos.status in ["pending", "technical_review"]:
+                is_just_closing = len(update_data) == 1 and "status" in update_data and update_data["status"] in ["closed", "on hold", "rejected"]
+                if not is_just_closing:
+                     from fastapi import HTTPException
+                     raise HTTPException(status_code=400, detail="Cannot edit position while it is under review.")
 
         # Check if significant fields are changed by HR on an open position, reset to review
         trigger_review = False
@@ -1294,6 +1339,21 @@ class RecruiterService:
                 assigned_tech_id=pos.assigned_tech_id
             )
             self.session.add(approval_req)
+            
+            # Create Notification for Technical Recruiter
+            if pos.assigned_tech_id:
+                from app.models import Notification
+                tech_notification = Notification(
+                    organization_id=self.organization_id,
+                    recipient_user_id=pos.assigned_tech_id,
+                    title="Action Required: Position Update Review",
+                    message=f"A position you are assigned to has been updated and requires review: {pos.job_title}.",
+                    type="approval_request",
+                    data={"reference_id": str(pos.id)},
+                    action_url=f"/recruiter/positions/{pos.id}",
+                    is_read=False
+                )
+                self.session.add(tech_notification)
 
         await self.session.commit()
         await self.session.refresh(pos)
@@ -1909,13 +1969,16 @@ class RecruiterService:
                 flags = res_flags.scalar() or 0
                 
                 # Derive stage flags from GroupStageConfig (authoritative pipeline source)
-                stage_types_res = await self.session.execute(
-                    select(GroupStageConfig.stage_type).where(
+                stage_configs_res = await self.session.execute(
+                    select(GroupStageConfig).where(
                         GroupStageConfig.group_id == gid,
                         GroupStageConfig.state != "inactive"
-                    )
+                    ).order_by(GroupStageConfig.stage_order)
                 )
-                stage_types = {st.lower() for st in stage_types_res.scalars().all()}
+                stage_configs = stage_configs_res.scalars().all()
+                stage_types = {sc.stage_type.lower() for sc in stage_configs}
+                filtration_flow = [sc.stage_type.replace("_", "-") for sc in stage_configs]
+                
                 has_assessment = "assessment" in stage_types
                 has_ai = "ai_interview" in stage_types
                 has_live = "live_interview" in stage_types
@@ -1946,7 +2009,8 @@ class RecruiterService:
                     hasLiveInterview=has_live,
                     position_id=g.position_id,
                     assigned_hr_name=assigned_hr_name,
-                    assigned_tech_name=assigned_tech_name
+                    assigned_tech_name=assigned_tech_name,
+                    filtration_flow=filtration_flow
                 ))
             return result
         except Exception as e:
@@ -2108,131 +2172,79 @@ class RecruiterService:
 
     async def get_analytics(self, user_id: UUID) -> RecruiterAnalyticsResponse:
         """Get analytics for the recruiter dashboard."""
-        
-        # 1. Overview Stats
-        # totalProjects: Count of rows having user_id = logged in organization user id in ProjectAccess
-        q_projects = select(func.count()).where(ProjectAccess.user_id == user_id)
-        
-        # Base join for subsequent queries: ProjectAccess -> Project -> Position
-        # We need to filter by user access
-        
-        # totalPositions
-        q_positions = select(func.count()).select_from(ProjectAccess).join(
-            Project, ProjectAccess.project_id == Project.id
-        ).join(
-            Position, Project.id == Position.project_id
-        ).where(ProjectAccess.user_id == user_id)
-        
-        # totalGroups
-        q_groups = select(func.count()).select_from(ProjectAccess).join(
-            Project, ProjectAccess.project_id == Project.id
-        ).join(
-            Position, Project.id == Position.project_id
-        ).join(
-            CandidateGroup, Position.id == CandidateGroup.position_id
-        ).where(ProjectAccess.user_id == user_id)
-        
-        # totalCandidates
-        q_candidates = select(func.count()).select_from(ProjectAccess).join(
-            Project, ProjectAccess.project_id == Project.id
-        ).join(
-            Position, Project.id == Position.project_id
-        ).join(
-            CandidateApplication, Position.id == CandidateApplication.position_id
-        ).where(ProjectAccess.user_id == user_id)
-        
-        if self.current_user.role == "technical":
-            q_positions = q_positions.where(Position.assigned_tech_id == self.current_user.id)
-            q_groups = q_groups.where(Position.assigned_tech_id == self.current_user.id)
-            q_candidates = q_candidates.where(Position.assigned_tech_id == self.current_user.id)
+        org_id = self.organization_id
+
+        # Access filter logic
+        if self.current_user.role == "admin":
+            base_filter = [Project.organization_id == org_id, Project.is_deleted == False]
         elif self.current_user.role == "hr":
-            q_positions = q_positions.where(Position.assigned_hr_id == self.current_user.id)
-            q_groups = q_groups.where(Position.assigned_hr_id == self.current_user.id)
-            q_candidates = q_candidates.where(Position.assigned_hr_id == self.current_user.id)
+            base_filter = [
+                Project.organization_id == org_id,
+                Project.is_deleted == False,
+                or_(
+                    Position.assigned_hr_id == self.current_user.id,
+                    exists(select(1).where(ProjectAccess.project_id == Project.id, ProjectAccess.user_id == self.current_user.id))
+                )
+            ]
+        else:
+            base_filter = [
+                Project.organization_id == org_id,
+                Project.is_deleted == False,
+                or_(
+                    Position.assigned_tech_id == self.current_user.id,
+                    exists(select(1).where(ProjectAccess.project_id == Project.id, ProjectAccess.user_id == self.current_user.id))
+                )
+            ]
+
+        def apply_access(q):
+            for condition in base_filter:
+                q = q.where(condition)
+            return q
+
+        # 1. Overview Stats
+        q_projects = select(func.count(func.distinct(Project.id))).select_from(Project).outerjoin(Position, Project.id == Position.project_id)
+        q_projects = apply_access(q_projects)
+
+        q_positions = select(func.count(func.distinct(Position.id))).select_from(Project).join(Position, Project.id == Position.project_id)
+        q_positions = apply_access(q_positions)
+
+        q_groups = select(func.count(func.distinct(CandidateGroup.id))).select_from(Project).join(Position, Project.id == Position.project_id).join(CandidateGroup, Position.id == CandidateGroup.position_id)
+        q_groups = apply_access(q_groups)
+
+        q_candidates = select(func.count(func.distinct(CandidateApplication.id))).select_from(Project).join(Position, Project.id == Position.project_id).join(CandidateApplication, Position.id == CandidateApplication.position_id)
+        q_candidates = apply_access(q_candidates)
 
         res_overview_0 = await self.session.execute(q_projects)
         res_overview_1 = await self.session.execute(q_positions)
         res_overview_2 = await self.session.execute(q_groups)
         res_overview_3 = await self.session.execute(q_candidates)
-        
+
         overview = OverviewStats(
             totalProjects=res_overview_0.scalar() or 0,
             totalPositions=res_overview_1.scalar() or 0,
             totalGroups=res_overview_2.scalar() or 0,
             totalCandidates=res_overview_3.scalar() or 0,
         )
-        
+
         # 2. Groups By Status
-        q_group_status = select(CandidateGroup.status, func.count(CandidateGroup.id)).select_from(ProjectAccess).join(
-            Project, ProjectAccess.project_id == Project.id
-        ).join(
-            Position, Project.id == Position.project_id
-        ).join(
-            CandidateGroup, Position.id == CandidateGroup.position_id
-        ).where(
-            ProjectAccess.user_id == user_id
-        )
-        
-        if self.current_user.role == "technical":
-            q_group_status = q_group_status.where(Position.assigned_tech_id == self.current_user.id)
-        elif self.current_user.role == "hr":
-            q_group_status = q_group_status.where(Position.assigned_hr_id == self.current_user.id)
-            
-        q_group_status = q_group_status.group_by(CandidateGroup.status)
+        q_group_status = select(CandidateGroup.status, func.count(func.distinct(CandidateGroup.id))).select_from(Project).join(Position, Project.id == Position.project_id).join(CandidateGroup, Position.id == CandidateGroup.position_id)
+        q_group_status = apply_access(q_group_status).group_by(CandidateGroup.status)
         
         res_group_status = await self.session.execute(q_group_status)
-        group_status_rows = res_group_status.all()
-        
         groups_by_status = []
         status_colors = {'not_started': '#10b981', 'active': '#f59e0b', 'closed': '#6366f1'}
-        # Normalize status keys if needed
-        
-        for status, count in group_status_rows:
+        for status, count in res_group_status.all():
             st_key = status.lower() if status else "unknown"
             groups_by_status.append(GroupStatusCount(
                 status=status.replace('_', ' ').title() if status else "Unknown",
-                count=count,
-                color=status_colors.get(st_key, '#9CA3AF')
+                count=count, color=status_colors.get(st_key, '#9CA3AF')
             ))
-            
-        # 3. Candidates By Stage (Actually Groups by latest active stage based on user prompt logic)
-        # "count of group_ids came from Join ... and GroupStageConfig taking last config for each group_id based on started_at"
-        # We need a subquery to get the latest GroupStageConfig per group
+
+        # 3. Candidates By Stage
+        q_stages = select(GroupStageConfig).select_from(Project).join(Position, Project.id == Position.project_id).join(CandidateGroup, Position.id == CandidateGroup.position_id).join(GroupStageConfig, CandidateGroup.id == GroupStageConfig.group_id).where(GroupStageConfig.started_at.isnot(None))
+        q_stages = apply_access(q_stages).order_by(GroupStageConfig.group_id, GroupStageConfig.started_at.desc())
         
-        # Using a more direct approach with window function or simple assumption for now
-        # Since SQLModel/SQLAlchemy async complexity, let's try a simpler approach defined by business logic:
-        # Get all groups accessible, then for each group find latest stage config.
-        # However, doing this in DB is better.
-        
-        # Subquery to rank stages by started_at desc per group
-        # This is complex in ORM. Let's filter by "state='active'" or similar if possible.
-        # User said "taking last config... based on started_at".
-        
-        # Let's try to fetch all GroupStageConfigs for accessible groups, ordered by started_at desc
-        q_stages = select(GroupStageConfig).select_from(ProjectAccess).join(
-            Project, ProjectAccess.project_id == Project.id
-        ).join(
-            Position, Project.id == Position.project_id
-        ).join(
-            CandidateGroup, Position.id == CandidateGroup.position_id
-        ).join(
-            GroupStageConfig, CandidateGroup.id == GroupStageConfig.group_id
-        ).where(
-            ProjectAccess.user_id == user_id,
-            GroupStageConfig.started_at.isnot(None)
-        )
-        
-        if self.current_user.role == "technical":
-            q_stages = q_stages.where(Position.assigned_tech_id == self.current_user.id)
-        elif self.current_user.role == "hr":
-            q_stages = q_stages.where(Position.assigned_hr_id == self.current_user.id)
-            
-        q_stages = q_stages.order_by(GroupStageConfig.group_id, GroupStageConfig.started_at.desc())
-        
-        res_stages = await self.session.execute(q_stages)
-        all_stage_configs = res_stages.scalars().all()
-        
-        # Python-side aggregation (simulating "last config for each group")
+        all_stage_configs = (await self.session.execute(q_stages)).scalars().all()
         latest_stages = {}
         for config in all_stage_configs:
             if config.group_id not in latest_stages:
@@ -2244,223 +2256,90 @@ class RecruiterService:
             stage_counts_map[st_type] = stage_counts_map.get(st_type, 0) + 1
             
         candidates_by_stage = []
-        stage_colors = {
-            'assessment': '#6366f1', 
-            'ai_interview': '#8b5cf6', 
-            'live_interview': '#10b981', 
-            'approved': '#059669',
-            'screening': '#f59e0b'
-        }
-        
+        stage_colors = {'assessment': '#6366f1', 'ai_interview': '#8b5cf6', 'live_interview': '#10b981', 'approved': '#059669', 'screening': '#f59e0b'}
         for st_type, count in stage_counts_map.items():
-            candidates_by_stage.append(StageCount(
-                stage=st_type.replace('_', ' ').title(),
-                count=count,
-                color=stage_colors.get(st_type, '#9CA3AF')
-            ))
-            
+            candidates_by_stage.append(StageCount(stage=st_type.replace('_', ' ').title(), count=count, color=stage_colors.get(st_type, '#9CA3AF')))
+
         # 4. Project Performance
-        q_perf = select(
-            Project.name,
-            func.count(func.distinct(CandidateGroup.id)),
-            func.count(func.distinct(CandidateApplication.id))
-        ).select_from(ProjectAccess).join(
-            Project, ProjectAccess.project_id == Project.id
-        ).outerjoin(
-            Position, Project.id == Position.project_id
-        ).outerjoin(
-            CandidateGroup, Position.id == CandidateGroup.position_id
-        ).outerjoin(
-            CandidateApplication, Position.id == CandidateApplication.position_id
-        ).where(
-            ProjectAccess.user_id == user_id
-        )
+        q_perf = select(Project.name, func.count(func.distinct(CandidateGroup.id)), func.count(func.distinct(CandidateApplication.id))).select_from(Project).outerjoin(Position, Project.id == Position.project_id).outerjoin(CandidateGroup, Position.id == CandidateGroup.position_id).outerjoin(CandidateApplication, Position.id == CandidateApplication.position_id)
+        q_perf = apply_access(q_perf).group_by(Project.id, Project.name)
         
-        if self.current_user.role == "technical":
-            q_perf = q_perf.where(or_(Position.id.is_(None), Position.assigned_tech_id == self.current_user.id))
-        elif self.current_user.role == "hr":
-            q_perf = q_perf.where(or_(Position.id.is_(None), Position.assigned_hr_id == self.current_user.id))
-            
-        q_perf = q_perf.group_by(Project.id, Project.name)
-        
-        res_perf = await self.session.execute(q_perf)
-        project_performance = [
-            ProjectPerformance(project=row[0], groups=row[1], candidates=row[2])
-            for row in res_perf.all()
-        ]
-        
-        # 5. Recent Activity (from GroupStageConfig)
-        # "recent updates"
-        q_activity = select(
-            GroupStageConfig, CandidateGroup.group_name, Project.name
-        ).select_from(ProjectAccess).join(
-            Project, ProjectAccess.project_id == Project.id
-        ).join(
-            Position, Project.id == Position.project_id
-        ).join(
-            CandidateGroup, Position.id == CandidateGroup.position_id
-        ).join(
-            GroupStageConfig, CandidateGroup.id == GroupStageConfig.group_id
-        ).where(
-            ProjectAccess.user_id == user_id,
-            GroupStageConfig.started_at.isnot(None)
-        )
-        
-        if self.current_user.role == "technical":
-            q_activity = q_activity.where(Position.assigned_tech_id == self.current_user.id)
-        elif self.current_user.role == "hr":
-            q_activity = q_activity.where(Position.assigned_hr_id == self.current_user.id)
-            
-        q_activity = q_activity.order_by(GroupStageConfig.started_at.desc()).limit(5)
-        
-        res_activity = await self.session.execute(q_activity)
-        activity_rows = res_activity.all()
+        project_performance = [ProjectPerformance(project=row[0], groups=row[1], candidates=row[2]) for row in (await self.session.execute(q_perf)).all()]
+
+        # 5. Recent Activity
+        q_activity = select(GroupStageConfig, CandidateGroup.group_name, Project.name).select_from(Project).join(Position, Project.id == Position.project_id).join(CandidateGroup, Position.id == CandidateGroup.position_id).join(GroupStageConfig, CandidateGroup.id == GroupStageConfig.group_id).where(GroupStageConfig.started_at.isnot(None))
+        q_activity = apply_access(q_activity).order_by(GroupStageConfig.started_at.desc()).limit(5)
         
         recent_activity = []
         now = datetime.now(timezone.utc)
-        
-        for config, g_name, p_name in activity_rows:
-            # calc time ago
+        for config, g_name, p_name in (await self.session.execute(q_activity)).all():
             diff = now - (config.started_at or now)
             hours = int(diff.total_seconds() / 3600)
             days = diff.days
-            
             time_str = f"{hours} hours ago"
             if days > 0:
                 time_str = f"{days} day{'s' if days > 1 else ''} ago"
             elif hours == 0:
-                mins = int(diff.total_seconds() / 60)
-                time_str = f"{mins} mins ago"
-                
-            recent_activity.append(RecentActivity(
-                groupName=g_name,
-                project=p_name,
-                stage=config.stage_type.replace('_', ' ').title(),
-                time=time_str
-            ))
-            
-        # 6. Weekly Trend (CandidateApplication)
-        # Last 7 days
+                time_str = f"{int(diff.total_seconds() / 60)} mins ago"
+            recent_activity.append(RecentActivity(groupName=g_name, project=p_name, stage=config.stage_type.replace('_', ' ').title(), time=time_str))
+
+        # 6. Weekly Trend
         today = datetime.now().date()
         date_7_days_ago = today - timedelta(days=6)
-        
         truncated_date = func.date_trunc('day', CandidateApplication.applied_at).label('applied_date')
         
-        # We need counts per day.
-        # Group by applied_at date
-        q_trend = select(
-            truncated_date,
-            func.count()
-        ).select_from(ProjectAccess).join(
-            Project, ProjectAccess.project_id == Project.id
-        ).join(
-            Position, Project.id == Position.project_id
-        ).join(
-            CandidateApplication, Position.id == CandidateApplication.position_id
-        ).where(
-            ProjectAccess.user_id == user_id,
-            CandidateApplication.applied_at >= date_7_days_ago
-        )
+        q_trend = select(truncated_date, func.count(func.distinct(CandidateApplication.id))).select_from(Project).join(Position, Project.id == Position.project_id).join(CandidateApplication, Position.id == CandidateApplication.position_id).where(CandidateApplication.applied_at >= date_7_days_ago)
+        q_trend = apply_access(q_trend).group_by(truncated_date)
         
-        if self.current_user.role == "technical":
-            q_trend = q_trend.where(Position.assigned_tech_id == self.current_user.id)
-        elif self.current_user.role == "hr":
-            q_trend = q_trend.where(Position.assigned_hr_id == self.current_user.id)
-            
-        q_trend = q_trend.group_by(truncated_date)
-        
-        res_trend = await self.session.execute(q_trend)
-        trend_rows = res_trend.all()
-        
-        trend_map = {row[0].date(): row[1] for row in trend_rows if row[0]}
-        
+        trend_map = {row[0].date(): row[1] for row in (await self.session.execute(q_trend)).all() if row[0]}
         weekly_trend = []
         days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        
         for i in range(7):
             d = date_7_days_ago + timedelta(days=i)
-            cnt = trend_map.get(d, 0)
-            day_name = days[d.weekday()]
-            weekly_trend.append(WeeklyTrend(day=day_name, candidates=cnt))
-            
-        # 7. Top Stats: three CTA card counts
+            weekly_trend.append(WeeklyTrend(day=days[d.weekday()], candidates=trend_map.get(d, 0)))
 
-        # 7a. Pending approval requests assigned to this technical recruiter
+        # 7. Top Stats
+        pending_review_count = 0
         if self.current_user.role == "technical":
             from app.models import ApprovalRequest
-            q_pending_review = select(func.count()).where(
-                ApprovalRequest.organization_id == self.organization_id,
-                ApprovalRequest.assigned_tech_id == self.current_user.id,
-                ApprovalRequest.status == "technical_review",
-            )
-            res_pending = await self.session.execute(q_pending_review)
-            pending_review_count = res_pending.scalar() or 0
-        else:
-            pending_review_count = 0
+            q_pending = select(func.count()).where(ApprovalRequest.organization_id == self.organization_id, ApprovalRequest.assigned_tech_id == self.current_user.id, ApprovalRequest.status == "technical_review")
+            pending_review_count = (await self.session.execute(q_pending)).scalar() or 0
 
-        # 7b. Candidates on hold accessible to this recruiter
-        q_held = select(func.count()).select_from(ProjectAccess).join(
-            Project, ProjectAccess.project_id == Project.id
-        ).join(
-            Position, Project.id == Position.project_id
-        ).join(
-            CandidateApplication, Position.id == CandidateApplication.position_id
-        ).where(
-            ProjectAccess.user_id == user_id,
-            CandidateApplication.status == "holded",
-        )
-        if self.current_user.role == "technical":
-            q_held = q_held.where(Position.assigned_tech_id == self.current_user.id)
-        elif self.current_user.role == "hr":
-            q_held = q_held.where(Position.assigned_hr_id == self.current_user.id)
-        res_held = await self.session.execute(q_held)
-        held_candidates_count = res_held.scalar() or 0
+        q_held = select(func.count(func.distinct(CandidateApplication.id))).select_from(Project).join(Position, Project.id == Position.project_id).join(CandidateApplication, Position.id == CandidateApplication.position_id).where(CandidateApplication.status == "holded")
+        held_candidates_count = (await self.session.execute(apply_access(q_held))).scalar() or 0
 
-        # 7c. Pending proctoring flags accessible to this recruiter
-        q_suspicious = select(func.count()).select_from(ProjectAccess).join(
-            Project, ProjectAccess.project_id == Project.id
-        ).join(
-            Position, Project.id == Position.project_id
-        ).join(
-            CandidateApplication, Position.id == CandidateApplication.position_id
-        ).join(
-            ProctoringFlag, CandidateApplication.id == ProctoringFlag.application_id
-        ).where(
-            ProjectAccess.user_id == user_id,
-            ProctoringFlag.status == "pending",
-        )
-        if self.current_user.role == "technical":
-            q_suspicious = q_suspicious.where(Position.assigned_tech_id == self.current_user.id)
-        elif self.current_user.role == "hr":
-            q_suspicious = q_suspicious.where(Position.assigned_hr_id == self.current_user.id)
-        res_suspicious = await self.session.execute(q_suspicious)
-        suspicious_count = res_suspicious.scalar() or 0
+        q_suspicious = select(func.count(func.distinct(ProctoringFlag.id))).select_from(Project).join(Position, Project.id == Position.project_id).join(CandidateApplication, Position.id == CandidateApplication.position_id).join(ProctoringFlag, CandidateApplication.id == ProctoringFlag.application_id).where(ProctoringFlag.status == "pending")
+        suspicious_count = (await self.session.execute(apply_access(q_suspicious))).scalar() or 0
 
-        from app.schemas.analytics import DashboardTopStats
-        top_stats = DashboardTopStats(
-            pendingReviewCount=pending_review_count,
-            heldCandidatesCount=held_candidates_count,
-            suspiciousCount=suspicious_count,
-        )
+        top_stats = DashboardTopStats(pendingReviewCount=pending_review_count, heldCandidatesCount=held_candidates_count, suspiciousCount=suspicious_count)
 
         return RecruiterAnalyticsResponse(
-            topStats=top_stats,
             overview=overview,
             groupsByStatus=groups_by_status,
             candidatesByStage=candidates_by_stage,
             projectPerformance=project_performance,
+            weeklyTrend=weekly_trend,
             recentActivity=recent_activity,
-            weeklyTrend=weekly_trend
+            topStats=top_stats
         )
-
     async def list_assigned_requests(self) -> list[dict]:
         """List approval requests assigned to the current technical recruiter."""
         from app.models import ApprovalRequest
+        from sqlalchemy import and_
         
         query = select(ApprovalRequest).where(
             ApprovalRequest.organization_id == self.organization_id,
-            ApprovalRequest.assigned_tech_id == self.current_user.id,
-            ApprovalRequest.status == "technical_review"
+            or_(
+                and_(
+                    ApprovalRequest.assigned_tech_id == self.current_user.id,
+                    ApprovalRequest.status == "technical_review",
+                ),
+                and_(
+                    ApprovalRequest.request_type == "project",
+                    ApprovalRequest.assigned_tech_id.is_(None),
+                    ApprovalRequest.status == "pending",
+                ),
+            )
         ).order_by(desc(ApprovalRequest.created_at))
         
         result = await self.session.execute(query)
@@ -2479,6 +2358,20 @@ class RecruiterService:
                 if pos:
                     r_dict["position_title"] = pos.job_title
                     r_dict["position_data"] = pos.model_dump() # Full details for review
+            elif req.request_type == "project":
+                project_name = None
+                project_data = req.data if isinstance(req.data, dict) else {}
+                if isinstance(project_data, dict):
+                    project_name = project_data.get("name") or project_data.get("projectName")
+                if project_name:
+                    r_dict["project_title"] = project_name
+                r_dict["project_data"] = project_data
+                if req.entity_id:
+                    p_res = await self.session.execute(select(Project).where(Project.id == req.entity_id))
+                    project = p_res.scalar_one_or_none()
+                    if project:
+                        r_dict["project_title"] = project.name
+                        r_dict["project_data"] = project.model_dump()
             
             data.append(r_dict)
             
@@ -2646,17 +2539,38 @@ class RecruiterService:
     async def review_approval_request(self, request_id: UUID, status: str, review_notes: str | None = None) -> bool:
         """Process a technical review (approve/reject)."""
         from app.models import ApprovalRequest, Notification
+        from sqlalchemy import and_
         
-        query = select(ApprovalRequest).where(
-            ApprovalRequest.id == request_id,
-            ApprovalRequest.organization_id == self.organization_id,
-            ApprovalRequest.assigned_tech_id == self.current_user.id
-        )
+        if self.current_user.role == "technical":
+            query = select(ApprovalRequest).where(
+                ApprovalRequest.id == request_id,
+                ApprovalRequest.organization_id == self.organization_id,
+                or_(
+                    ApprovalRequest.assigned_tech_id == self.current_user.id,
+                    and_(
+                        ApprovalRequest.request_type == "project",
+                        ApprovalRequest.assigned_tech_id.is_(None),
+                        ApprovalRequest.status == "pending",
+                    ),
+                ),
+            )
+        else:
+            query = select(ApprovalRequest).where(
+                ApprovalRequest.id == request_id,
+                ApprovalRequest.organization_id == self.organization_id,
+                ApprovalRequest.assigned_tech_id == self.current_user.id,
+            )
         result = await self.session.execute(query)
         req = result.scalar_one_or_none()
         
         if not req:
             raise NotFoundException("Request not found or not assigned to you")
+
+        if req.request_type == "project" and req.assigned_tech_id is None and req.status == "pending":
+            req.assigned_tech_id = self.current_user.id
+            req.status = "technical_review"
+            req.updated_at = datetime.utcnow()
+            self.session.add(req)
             
         if req.status != "technical_review":
              from fastapi import HTTPException
@@ -2704,6 +2618,42 @@ class RecruiterService:
                             message=msg,
                             is_read=False,
                             created_at=datetime.utcnow()
+                        )
+                        self.session.add(notif)
+
+            # Update Project
+            elif req.request_type == "project":
+                p_res = await self.session.execute(select(Project).where(Project.id == req.entity_id))
+                project = p_res.scalar_one_or_none()
+                if project:
+                    if status == "approved":
+                        project.status = "active"
+                        project.is_deleted = False
+                        msg = f"Project '{project.name}' reviewed and approved by Technical Recruiter."
+                    else:
+                        project.status = "rejected"
+                        project.is_deleted = True
+                        msg = f"Project '{project.name}' rejected by Technical Recruiter."
+
+                    self.session.add(project)
+
+                    recipient_query = select(OrganizationUser.id).where(
+                        OrganizationUser.id == req.requester_id,
+                        OrganizationUser.organization_id == self.organization_id,
+                        OrganizationUser.is_deleted == False,
+                    )
+                    recipient_res = await self.session.execute(recipient_query)
+                    recipient_user_id = recipient_res.scalar_one_or_none()
+
+                    if recipient_user_id:
+                        notif = Notification(
+                            organization_id=self.organization_id,
+                            recipient_user_id=recipient_user_id,
+                            type="alert",
+                            title=f"Project {status.capitalize()}",
+                            message=msg,
+                            is_read=False,
+                            created_at=datetime.utcnow(),
                         )
                         self.session.add(notif)
                     

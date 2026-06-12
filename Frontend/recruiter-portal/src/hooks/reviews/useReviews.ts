@@ -13,7 +13,7 @@ export function useAssignedRequests() {
 export function useReviewRequest() {
     const qc = useQueryClient()
     return useMutation({
-        mutationFn: ({ id, action, notes }: { id: string; action: 'approved' | 'rejected'; notes?: string }) =>
+        mutationFn: ({ id, action, notes }: { id: string; action: "rejected" | "approved"; notes?: string }) =>
             api.recruiter.reviewRequest(id, action, notes),
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: queryKeys.reviews.assigned() })

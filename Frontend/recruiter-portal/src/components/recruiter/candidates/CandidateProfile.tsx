@@ -1193,7 +1193,19 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
             {activeTab === 'github' && (
               <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {/* Header Section */}
+                {!hasGithubProfile ? (
+                  <div className="flex flex-col items-center justify-center py-24 bg-white border border-[#e5e7eb] rounded-[24px] shadow-sm">
+                    <div className="w-20 h-20 bg-slate-50 border border-slate-100 rounded-full flex items-center justify-center mb-6 shadow-inner">
+                      <Lock className="w-10 h-10 text-slate-400" />
+                    </div>
+                    <h3 className="text-[22px] font-bold text-[#111827] tracking-tight mb-3">GitHub Analysis Locked</h3>
+                    <p className="text-[#6b7280] text-[15px] text-center max-w-[480px] leading-relaxed">
+                      This account don't have github url. Please add a valid GitHub profile URL to unlock technical intelligence and codebase analysis.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Header Section */}
                 <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                   <div>
                     <h3 className="text-[28px] font-bold text-[#111827] tracking-tight">Technical Intelligence</h3>
@@ -1539,7 +1551,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     </div>
                   </div>
                 </div>
-
+                  </>
+                )}
               </div>
             )}
 
@@ -1750,13 +1763,6 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     <p className="text-sm mt-1">The candidate hasn't started the live interview stage.</p>
                   </div>
                 )}
-              </div>
-            )}
-
-            {activeTab === 'github' && (
-              <div className="flex flex-col items-center justify-center py-16 text-slate-400">
-                <div className="text-5xl mb-4">📂</div>
-                <p className="text-lg font-medium text-slate-300">GitHub analysis not available</p>
               </div>
             )}
 

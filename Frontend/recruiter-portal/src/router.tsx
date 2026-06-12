@@ -36,6 +36,8 @@ import { api, PositionGroup } from './services/api';
 import { NavigationStackProvider, useNavigationStack } from './components/common/NavigationStack';
 import { ProjectDetailView } from './components/recruiter/projects/ProjectDetailView';
 import { PositionDetailView } from './components/recruiter/positions/PositionDetailView';
+import { EvidenceDashboard } from './components/recruiter/dashboard/EvidenceDashboard';
+import { toast } from 'sonner';
 
 import AdminRequests from './components/admin/AdminRequests';
 
@@ -188,6 +190,21 @@ const PositionDetailWrapper = () => {
         loadPosition();
     }, [positionId]);
 
+    const handleSavePosition = async (title: string, description: string) => {
+        if (!positionId) return;
+        const updated = await api.recruiter.updatePosition(positionId, {
+            job_title: title,
+            job_description: description,
+        } as any) as any;
+        setPositionData((previous: any) => ({
+            ...(previous || {}),
+            ...updated,
+            jobTitle: updated?.jobTitle ?? updated?.job_title ?? title,
+            jobDescription: updated?.jobDescription ?? updated?.job_description ?? description,
+        }));
+        toast.success('Position saved.');
+    };
+
     if (loading) return (
         <div className="flex items-center justify-center min-h-screen bg-[#edf0f8]">
             <p className="text-[#64748b] font-medium">Loading position details...</p>
@@ -201,9 +218,12 @@ const PositionDetailWrapper = () => {
             projectTitle={positionData?.projectName || positionData?.project_name || 'Project'}
             description={positionData?.jobDescription || positionData?.job_description || positionData?.description}
             screeningConditions={positionData?.screeningConditions || positionData?.screening_conditions}
+            positionStatus={String(positionData?.status || '').toLowerCase()}
             isOpen={String(positionData?.status || '').toLowerCase() === 'open' || String(positionData?.status || '').toLowerCase() === 'active'}
             onBack={() => goBack()}
-            onSave={() => {}}
+            onSave={async (title, description) => {
+                await handleSavePosition(title, description);
+            }}
             onCreateAssessment={() => console.log('Create Assessment')}
             onViewGroup={(groupId) => navigate(`/recruiter/group/${groupId}`)}
         />
@@ -502,6 +522,7 @@ export const router = createBrowserRouter([
             { path: "reviews/:requestId/pre-matching", element: <PositionPreMatchingReviewPage /> },
             { path: "candidates", element: <CandidatesPage onBack={() => { }} /> },
             { path: "question-bank", element: <QuestionBankPage onBack={() => window.history.back()} /> },
+            { path: "evidence-dashboard", element: <EvidenceDashboard /> },
             {
                 path: "settings",
                 element: (() => {

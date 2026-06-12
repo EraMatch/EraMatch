@@ -153,6 +153,8 @@ class GroupDetailResponse(BaseModel):
     assessments: list[GroupAssessmentItem] = []
     interviews: list[GroupInterviewItem] = []
     github_questions_count: int = 10
+    use_github_questions_video_interview: bool = False
+    use_github_questions_live_interview: bool = False
 
     class Config:
         populate_by_name = True
@@ -210,7 +212,9 @@ class GroupUpdateRequest(BaseModel):
     filtration_flow: list[str] | None = (
         None  # e.g. ["assessment", "ai-interview", "live-interview"]
     )
-    github_questions_count: int | None = Field(default=None, ge=1, le=30)
+    github_questions_count: int | None = Field(default=None, ge=0, le=30)
+    use_github_questions_video_interview: bool | None = None
+    use_github_questions_live_interview: bool | None = None
 
 
 class GroupDeleteRequest(BaseModel):

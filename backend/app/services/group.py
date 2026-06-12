@@ -561,11 +561,12 @@ class GroupService:
                     if found_id:
                         interview_config_id = found_id
 
-        # Acceptance criteria — merge from all stage configs
         criteria = AcceptanceCriteriaResponse()
         github_questions_count = 10
+        criteria_dict = {}
         for sc in stage_configs:
             if sc.acceptance_criteria and isinstance(sc.acceptance_criteria, dict):
+                criteria_dict.update(sc.acceptance_criteria)
                 if "min_technical_score" in sc.acceptance_criteria:
                     criteria.min_technical_score = sc.acceptance_criteria[
                         "min_technical_score"
@@ -850,6 +851,8 @@ class GroupService:
             assessments=assessments_data,
             interviews=interviews_data,
             github_questions_count=github_questions_count,
+            use_github_questions_video_interview=criteria_dict.get("use_github_questions_video_interview", False),
+            use_github_questions_live_interview=criteria_dict.get("use_github_questions_live_interview", False),
         )
 
     # ── 2. GET /recruiter/groups/{groupId}/stats ──────────────────────────────
@@ -3243,7 +3246,11 @@ class GroupService:
                 else 10
             )
             await self._sync_stage_configs(
-                group, data.filtration_flow, github_questions_count
+                group, 
+                data.filtration_flow, 
+                github_questions_count,
+                use_github_video=data.use_github_questions_video_interview,
+                use_github_live=data.use_github_questions_live_interview,
             )
             # Keep the denormalized cache on the group row in sync
             group.filtration_flow = data.filtration_flow
@@ -3251,13 +3258,14 @@ class GroupService:
         self.session.add(group)
         await self.session.commit()
 
-        if data.filtration_flow is not None and self.user.role == "technical":
+        if data.filtration_flow is not None:
             github_questions_count = (
                 data.github_questions_count
                 if data.github_questions_count is not None
                 else 10
             )
-            await self._queue_group_github_analysis_jobs(group, github_questions_count)
+            if github_questions_count > 0:
+                await self._queue_group_github_analysis_jobs(group, github_questions_count)
 
         return await self.get_group_details(group_id)
 
@@ -3266,6 +3274,8 @@ class GroupService:
         group: CandidateGroup,
         stage_names: list[str],
         github_questions_count: int = 10,
+        use_github_video: bool | None = None,
+        use_github_live: bool | None = None,
     ) -> None:
         """Synchronise GroupStageConfig rows with a list of stage names."""
         group_id = group.id
@@ -3320,6 +3330,10 @@ class GroupService:
                 if conf.stage_type == "assessment":
                     criteria = conf.acceptance_criteria or {}
                     criteria["github_questions_count"] = int(github_questions_count)
+                    if use_github_video is not None:
+                        criteria["use_github_questions_video_interview"] = use_github_video
+                    if use_github_live is not None:
+                        criteria["use_github_questions_live_interview"] = use_github_live
                     conf.acceptance_criteria = criteria
                 self.session.add(conf)
                 used_stage_ids.add(conf.stage_id)
@@ -3334,12 +3348,15 @@ class GroupService:
                     stage_order=idx,
                     stage_name=stage_name,
                     state="not_started",
-                    acceptance_criteria={
+                )
+                if stage_type == "assessment":
+                    new_conf.acceptance_criteria = {
                         "github_questions_count": int(github_questions_count)
                     }
-                    if stage_type == "assessment"
-                    else None,
-                )
+                    if use_github_video is not None:
+                        new_conf.acceptance_criteria["use_github_questions_video_interview"] = use_github_video
+                    if use_github_live is not None:
+                        new_conf.acceptance_criteria["use_github_questions_live_interview"] = use_github_live
                 self.session.add(new_conf)
 
         # 4. Mark all other rows as inactive with unique high orders

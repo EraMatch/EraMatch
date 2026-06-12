@@ -24,19 +24,21 @@ INSTRUCTIONS:
 - Before returning final JSON, self-check each question text: if it contains any external-reference wording, rewrite it into a fully standalone form.
 
 Respond ONLY with a valid JSON array. Each element must exactly match this schema:
-{
-  "type": "mcq" | "essay",
-  "text": "<question text>",
-  "difficulty": "Easy" | "Medium" | "Hard",
-  "category": "<inferred topic category>",
-  "tags": ["<tag1>", "<tag2>"],
-  "options": ["<opt A>", "<opt B>", "<opt C>", "<opt D>"] or null,
-  "correct_answer": <0-based index> or null,
-  "evidence": "<short evidence snippet from material supporting the answer>" or null,
-  "reference_answer": "<short model answer for recruiter review>" or null,
-  "explanation": "<why this is correct>",
-  "rubric": "<grading rubric for essay>" or null,
-  "max_words": <integer> or null
-}
+[
+  {
+    "type": "mcq" | "essay",
+    "text": "<question text>",
+    "difficulty": "Easy" | "Medium" | "Hard",
+    "category": "<inferred topic category>",
+    "tags": ["<tag1>", "<tag2>"],
+    "options": ["<opt A>", "<opt B>", "<opt C>", "<opt D>"] or null,
+    "correct_answer": <0-based index> or null,
+    "evidence": "<short evidence snippet from material supporting the answer>" or null,
+    "reference_answer": "<short model answer for recruiter review>" or null,
+    "explanation": "<why this is correct>",
+    "rubric": "<grading rubric for essay>" or null,
+    "max_words": <integer> or null
+  }
+]
 
 Output ONLY the JSON array. No preamble, no commentary.

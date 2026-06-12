@@ -127,6 +127,16 @@ async def create_drive_ingestion_schedule(
     if start_date < datetime.utcnow():
         start_date = datetime.utcnow()
 
+    from app.models import Position
+    from sqlmodel import select
+    pos_res = await db.execute(select(Position).where(Position.id == position_id, Position.organization_id == current_user.organization_id))
+    pos = pos_res.scalar_one_or_none()
+    if not pos:
+        raise HTTPException(status_code=404, detail="Position not found.")
+    if pos.status in ["pending", "technical_review"]:
+        raise HTTPException(status_code=400, detail="Cannot schedule data import while position is under review.")
+
+    # Extract actual ID if a full URL was provided in drive_folder_id or drive_folder_url
     extracted_id = drive_folder_id
     if "drive.google.com" in drive_folder_id:
         match = re.search(r"folders/([a-zA-Z0-9-_]+)", drive_folder_id)

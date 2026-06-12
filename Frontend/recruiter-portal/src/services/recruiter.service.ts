@@ -15,6 +15,11 @@ export const recruiterService = {
 
     // Notifications
     getNotifications: async () => fetchAPI<any[]>('/recruiter/notifications'),
+    markNotificationRead: async (notificationId?: string) => 
+        fetchAPI<any>('/recruiter/notifications/read', {
+            method: 'POST',
+            body: JSON.stringify({ notification_id: notificationId || null })
+        }),
 
     // Project Management
     getProjects: async (status?: string) => {
@@ -606,6 +611,14 @@ export const recruiterService = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
+        });
+    },
+
+    refactorQuestions: async (questionIds: string[], refactorType: string = 'all') => {
+        return fetchAPI<any>('/questions/bank/refactor/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question_ids: questionIds, refactor_type: refactorType })
         });
     },
 
