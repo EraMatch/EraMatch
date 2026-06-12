@@ -29,10 +29,11 @@ import {
   ClipboardCheck,
   ArrowUpDown,
   Eye,
-  Trash2, // Added
-  Edit, // Added
-  MoreHorizontal // Added
+  Trash2,
+  Edit,
+  MoreHorizontal
 } from 'lucide-react';
+import DashboardLockedOverlay from '../common/DashboardLockedOverlay';
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api, JobPosition, Project, PositionGroup } from '../../services/api';
@@ -1114,6 +1115,10 @@ ${stageRows}`;
 
   const dashboardMetrics = getDashboardMetrics();
 
+  const hasNoData = !isLoading && viewMode === 'dashboard' &&
+    projects.length === 0 &&
+    (globalStats?.totalApplicants ?? 0) === 0;
+
   return (
     <div className="px-12 py-8">
       {/* Context-Aware Header */}
@@ -1151,6 +1156,8 @@ ${stageRows}`;
           <LoadingSpinner message="Loading dashboard data..." />
         </div>
       ) : (
+        <div className="relative">
+          {hasNoData && <DashboardLockedOverlay />}
         <>
       {/* Context-Aware Stats Cards - Hidden for 'requests' view to avoid clobbering */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6 mb-12 items-stretch">
@@ -1919,6 +1926,7 @@ ${stageRows}`;
         </div>
       )}
       </>
+        </div>
       )}
 
       {/* Modals */}

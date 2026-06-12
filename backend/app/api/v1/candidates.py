@@ -1,6 +1,9 @@
 """
 Candidate endpoints.
 """
+import math
+import re
+from typing import Literal
 from uuid import UUID
 from datetime import datetime, timezone
 
@@ -451,4 +454,289 @@ async def reanalyze_github_profile(
         session=session,
         current_user=current_user,
         candidate_id=candidate_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Semantic / Keyword / Hybrid Search
+# ---------------------------------------------------------------------------
+
+class SearchCandidatePair(BaseModel):
+    candidate_id: UUID   # CandidateProfile.id — returned as ranked id
+    application_id: UUID  # CandidateApplication.id — used to look up CVAnalysis
+
+
+class CandidateSearchRequest(BaseModel):
+    query: str
+    mode: Literal["keyword", "semantic", "hybrid"] = "keyword"
+    candidates: list[SearchCandidatePair]
+
+
+class CandidateSearchResponse(BaseModel):
+    ranked_ids: list[str]         # candidate profile ids, ordered best → worst
+    scores: dict[str, float]      # candidate_id (str) → normalized score 0..1
+    mode_used: str
+
+
+def _cosine_sim(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    mag_a = math.sqrt(sum(x * x for x in a))
+    mag_b = math.sqrt(sum(x * x for x in b))
+    if mag_a == 0 or mag_b == 0:
+        return 0.0
+    return dot / (mag_a * mag_b)
+
+
+def _kw_score(tokens: list[str], cv: CVAnalysis, query: str) -> float:
+    """Port of frontend getSemanticScore() — token hit-rate across weighted fields."""
+    if not tokens:
+        return 0.0
+    parsed = cv.parsed_data or {}
+
+    skills_text = " ".join(cv.skills or []).lower()
+
+    work_exp = parsed.get("work_experience") or []
+    titles_text = " ".join(
+        str(j.get("job_title") or j.get("title") or j.get("position") or "")
+        for j in work_exp if isinstance(j, dict)
+    ).lower()
+    companies_text = " ".join(
+        str(j.get("company") or j.get("organization") or "")
+        for j in work_exp if isinstance(j, dict)
+    ).lower()
+
+    education = parsed.get("education") or []
+    edu_text = " ".join(
+        str(e.get("institution") or e.get("university") or e.get("school") or "") + " " +
+        str(e.get("degree") or e.get("qualification") or "")
+        for e in education if isinstance(e, dict)
+    ).lower()
+
+    location_text = str(parsed.get("location") or "").lower()
+
+    def score_field(text: str, weight: float) -> float:
+        if not text:
+            return 0.0
+        hits = sum(1 for t in tokens if t in text)
+        return (hits / len(tokens)) * weight
+
+    score = (
+        score_field(skills_text, 40) +
+        score_field(titles_text, 20) +
+        score_field(companies_text, 12) +
+        score_field(location_text, 10) +
+        score_field(edu_text, 8)
+    )
+
+    m = re.search(r"(\d{1,2})\s*\+?\s*(?:years?|yrs?)", query, re.IGNORECASE)
+    if m:
+        target = int(m.group(1))
+        exp = float(cv.experience_years or 0)
+        score += 10 if exp >= target else max(0.0, (exp / max(target, 1)) * 10)
+
+    return min(100.0, score)
+
+
+@router.post("/search", response_model=CandidateSearchResponse)
+async def search_candidates(
+    body: CandidateSearchRequest,
+    session: DbSession,
+    current_user: CurrentUser,
+):
+    """Rank candidates by keyword, Jina semantic embeddings, or a hybrid blend."""
+    if not body.candidates:
+        return CandidateSearchResponse(ranked_ids=[], scores={}, mode_used=body.mode)
+
+    app_ids = [p.application_id for p in body.candidates]
+    app_to_profile = {p.application_id: p.candidate_id for p in body.candidates}
+
+    stmt = (
+        select(CVAnalysis)
+        .join(CandidateApplication, CVAnalysis.application_id == CandidateApplication.id)
+        .where(
+            CVAnalysis.application_id.in_(app_ids),
+            CandidateApplication.organization_id == current_user.organization_id,
+        )
+    )
+    result = await session.execute(stmt)
+    cv_map: dict[UUID, CVAnalysis] = {cv.application_id: cv for cv in result.scalars().all()}
+
+    profile_ids = [str(p.candidate_id) for p in body.candidates]
+    tokens = [t for t in body.query.lower().split() if len(t) > 1]
+    RRF_K = 60
+
+    # ── Keyword scores (always computed) ──────────────────────────────────────
+    kw_scores: dict[str, float] = {
+        str(pair.candidate_id): _kw_score(tokens, cv_map[pair.application_id], body.query)
+        if pair.application_id in cv_map else 0.0
+        for pair in body.candidates
+    }
+
+    # ── Semantic scores via Jina ───────────────────────────────────────────────
+    sem_scores: dict[str, float] = {}
+    mode_used = body.mode
+
+    if body.mode in ("semantic", "hybrid"):
+        from app.core.config import settings as _settings
+        import httpx as _httpx
+        import logging as _logging
+
+        stored = {
+            str(app_to_profile[aid]): cv_map[aid].profile_embedding
+            for aid in app_ids
+            if aid in cv_map and cv_map[aid].profile_embedding
+        }
+        if not stored:
+            mode_used = "keyword"
+        else:
+            try:
+                async with _httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.post(
+                        f"{_settings.AI_SERVICE_URL.rstrip('/')}/llm/embed",
+                        headers={"Content-Type": "application/json"},
+                        json={"input": [body.query]},
+                    )
+                    resp.raise_for_status()
+                    embeddings = resp.json().get("embeddings", [])
+                    if not embeddings:
+                        raise ValueError("Empty embeddings response from ai-service")
+                    query_vec: list[float] = embeddings[0]
+
+                for pid, emb in stored.items():
+                    sem_scores[pid] = _cosine_sim(query_vec, emb) * 100
+
+                for pair in body.candidates:
+                    pid = str(pair.candidate_id)
+                    if pid not in sem_scores:
+                        sem_scores[pid] = kw_scores.get(pid, 0.0)
+
+            except Exception as exc:
+                mode_used = "keyword"
+                _logging.getLogger(__name__).warning(f"[Search] Embedding via ai-service failed: {exc}")
+
+    # ── Build final ranking ────────────────────────────────────────────────────
+    def rrf(ranked: list[str]) -> dict[str, float]:
+        return {cid: 1 / (RRF_K + rank + 1) for rank, cid in enumerate(ranked)}
+
+    if mode_used == "keyword":
+        final = sorted(profile_ids, key=lambda p: kw_scores.get(p, 0), reverse=True)
+        raw_scores = kw_scores
+    elif mode_used == "semantic":
+        final = sorted(profile_ids, key=lambda p: sem_scores.get(p, 0), reverse=True)
+        raw_scores = sem_scores
+    else:  # hybrid
+        kw_ranked = sorted(profile_ids, key=lambda p: kw_scores.get(p, 0), reverse=True)
+        sem_ranked = sorted(profile_ids, key=lambda p: sem_scores.get(p, 0), reverse=True)
+        rrf_scores = {
+            p: rrf(kw_ranked).get(p, 0) + rrf(sem_ranked).get(p, 0)
+            for p in profile_ids
+        }
+        final = sorted(profile_ids, key=lambda p: rrf_scores[p], reverse=True)
+        raw_scores = rrf_scores
+
+    max_s = max(raw_scores.values(), default=1) or 1
+    normalized = {k: v / max_s for k, v in raw_scores.items()}
+
+    return CandidateSearchResponse(ranked_ids=final, scores=normalized, mode_used=mode_used)
+
+
+# ---------------------------------------------------------------------------
+# Embedding Backfill
+# ---------------------------------------------------------------------------
+
+class BackfillEmbeddingsResponse(BaseModel):
+    total: int          # cv_analysis rows with no embedding found
+    succeeded: int
+    failed: int
+    skipped: int        # rows where profile text was empty
+
+
+@router.post("/backfill-embeddings", response_model=BackfillEmbeddingsResponse)
+async def backfill_embeddings(
+    session: DbSession,
+    current_user: CurrentUser,
+):
+    """
+    Generate and store Jina profile embeddings for all cv_analysis rows that
+    belong to this organisation and currently have profile_embedding = NULL.
+    Call once after deploying the embedding feature to catch previously-parsed CVs.
+    """
+    from app.core.config import settings as _settings
+    import httpx as _httpx
+    import logging as _logging
+    import asyncio as _asyncio
+
+    _log = _logging.getLogger(__name__)
+
+    # Fetch all cv_analysis rows scoped to this org that lack an embedding
+    stmt = (
+        select(CVAnalysis)
+        .join(CandidateApplication, CVAnalysis.application_id == CandidateApplication.id)
+        .where(
+            CandidateApplication.organization_id == current_user.organization_id,
+            CVAnalysis.profile_embedding.is_(None),
+        )
+    )
+    result = await session.execute(stmt)
+    rows: list[CVAnalysis] = list(result.scalars().all())
+
+    total = len(rows)
+    succeeded = failed = skipped = 0
+
+    from app.services.cv_parsing import _build_profile_text
+
+    for cv in rows:
+        parsed = cv.parsed_data or {}
+
+        work_history = cv.work_history or parsed.get("work_experience")
+        education = cv.education or parsed.get("education")
+        skills = cv.skills or parsed.get("skills") or []
+        if isinstance(skills, list) and skills and isinstance(skills[0], str):
+            skills_list = skills
+        else:
+            skills_list = []
+
+        profile_text = _build_profile_text(
+            skills_list,
+            cv.experience_years,
+            work_history,
+            education,
+        )
+
+        if not profile_text:
+            skipped += 1
+            continue
+
+        try:
+            async with _httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    f"{_settings.AI_SERVICE_URL.rstrip('/')}/llm/embed",
+                    headers={"Content-Type": "application/json"},
+                    json={"input": [profile_text]},
+                )
+                resp.raise_for_status()
+                embeddings = resp.json().get("embeddings", [])
+                if not embeddings:
+                    raise ValueError("Empty embeddings response")
+                cv.profile_embedding = embeddings[0]
+                session.add(cv)
+            succeeded += 1
+        except Exception as exc:
+            _log.warning(f"[Backfill] Failed to embed cv_analysis {cv.id}: {exc}")
+            failed += 1
+
+        # Flush every 10 rows to avoid huge transactions
+        if (succeeded + failed) % 10 == 0:
+            try:
+                await session.commit()
+            except Exception:
+                await session.rollback()
+
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+
+    return BackfillEmbeddingsResponse(
+        total=total, succeeded=succeeded, failed=failed, skipped=skipped
     )

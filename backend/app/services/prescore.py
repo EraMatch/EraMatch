@@ -195,6 +195,16 @@ class PreScoreService:
             return set()
         return {tok for tok in WORD_RE.findall(text.lower()) if len(tok) > 1}
 
+    @staticmethod
+    def _cosine_sim(a: list[float], b: list[float]) -> float:
+        """Cosine similarity → 0–100 float. Pure-Python, no numpy required."""
+        import math
+        dot = sum(x * y for x, y in zip(a, b))
+        ma = math.sqrt(sum(x * x for x in a))
+        mb = math.sqrt(sum(y * y for y in b))
+        if ma == 0 or mb == 0:
+            return 0.0
+        return round(min(100.0, (dot / (ma * mb)) * 100), 1)
     # ── Fuzzy skill matching ─────────────────────────────────────────────
 
     def _canonicalize_skill(self, skill: str) -> str:
@@ -866,11 +876,18 @@ class PreScoreService:
         candidate_parsed_data: dict[str, Any] | None,
         github_analysis_data: dict[str, Any] | None,
         jd_critic_result: dict[str, Any] | None,
+        profile_embedding: list[float] | None = None,
+        jd_embedding: list[float] | None = None,
         # ── New optional parameters for richer matching ──
         position_experience_level: str | None = None,
         position_education_level: str | None = None,
         jd_keywords: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Compute embedding-based JD similarity when both vectors are available
+        jd_embedding_similarity: float | None = None
+        if profile_embedding and jd_embedding:
+            jd_embedding_similarity = self._cosine_sim(profile_embedding, jd_embedding)
+
         jd_critic_result = jd_critic_result if isinstance(jd_critic_result, dict) else {}
         jd_quality_score = float(jd_critic_result.get("score", 0.5))
         jd_quality_status = str(jd_critic_result.get("status", "unknown"))
@@ -909,6 +926,28 @@ class PreScoreService:
         normalized_qag = self._normalize_qag_questions(
             [q for q in approved_questions if isinstance(q, dict) and q.get("question")]
         ) if approved_questions else []
+
+        # Compute semantic_fit and skills/exp independently — used by BOTH QAG and heuristic paths
+        if jd_embedding_similarity is not None:
+            semantic_fit = jd_embedding_similarity
+        else:
+            jd_text = " ".join([job_title or "", job_description or "", " ".join(required_skills or [])])
+            jd_tokens = self._tokenize(jd_text)
+            candidate_text = self._extract_candidate_text(candidate_parsed_data, candidate_skills)
+            candidate_tokens = self._tokenize(candidate_text)
+            if jd_tokens and candidate_tokens:
+                overlap = len(jd_tokens & candidate_tokens)
+                semantic_fit = round((2 * overlap / (len(jd_tokens) + len(candidate_tokens))) * 100, 1)
+            else:
+                semantic_fit = 0.0
+
+        _required = [s.lower().strip() for s in (required_skills or []) if isinstance(s, str) and s.strip()]
+        _cand_skills = {s.lower().strip() for s in (candidate_skills or []) if isinstance(s, str) and s.strip()}
+        _skill_aln = round((sum(1 for sk in _required if sk in _cand_skills) / len(_required)) * 100, 1) if _required else 60.0
+        _exp_exp = max(0, int(years_of_experience or 0))
+        _act_exp = max(0.0, float(candidate_experience_years or 0.0))
+        _exp_aln = round(min(100.0, min(_act_exp / float(_exp_exp), 1.25) * 100), 1) if _exp_exp > 0 else 70.0
+        skills_experience_score_shared = round((_skill_aln * 0.7) + (_exp_aln * 0.3), 1)
 
         if normalized_qag:
             candidate_payload = {
@@ -1037,11 +1076,11 @@ class PreScoreService:
             return {
                 "version": self.VERSION,
                 "pre_score_final": qag_score,
+                "semantic_fit_score": semantic_fit,
+                "skills_experience_score": skills_experience_score_shared,
                 # Two distinct candidate scores (dual-score model):
                 "semantic_score": semantic_score,
                 "qag_score": qag_score,
-                "semantic_fit_score": qag_score,
-                "skills_experience_score": qag_score,
                 "optional_profile_boost": 0.0,
                 "jd_quality_score": jd_quality_score,
                 "jd_quality_status": jd_quality_status,
@@ -1050,8 +1089,19 @@ class PreScoreService:
                 "criteria_checks": checks,
                 "jd_quality_feedback": jd_critic_result.get("feedback"),
                 "score_explanation": explanation,
+                "jd_embedding_similarity": jd_embedding_similarity,
             }
 
+        # semantic_fit and skills_experience_score_shared already computed in shared block above
+        # Keep skill_alignment / experience_alignment breakdown for explanation string
+        required = [s.lower().strip() for s in (required_skills or []) if isinstance(s, str) and s.strip()]
+        candidate_skill_set = {s.lower().strip() for s in (candidate_skills or []) if isinstance(s, str) and s.strip()}
+
+        if required:
+            matched = sum(1 for skill in required if skill in candidate_skill_set)
+            skill_alignment = round((matched / len(required)) * 100, 1)
+        else:
+            skill_alignment = 60.0
         # ═══════════════════════════════════════════════════════════════════
         # HEURISTIC MODE — multi-signal composite (no QAG)
         # ═══════════════════════════════════════════════════════════════════
@@ -1078,7 +1128,7 @@ class PreScoreService:
             ratio = min(actual_exp / float(expected_exp), 1.25)
             experience_alignment = round(min(100.0, ratio * 100), 1)
 
-        skills_experience_score = round((skill_alignment * 0.7) + (experience_alignment * 0.3), 1)
+        skills_experience_score = skills_experience_score_shared
 
         # ── 3. Keyword coverage (if jd_keywords available) ──────────────
         kw_score = 0.0
@@ -1151,7 +1201,10 @@ class PreScoreService:
             min(weighted_base, jd_quality_cap) if jd_quality_cap is not None else weighted_base, 1
         )
 
+        semantic_source = "JD embedding similarity" if jd_embedding_similarity is not None else "JD/CV token overlap"
         explanation = [
+            f"Semantic fit {semantic_fit}% from {semantic_source}",
+            f"Skills+experience {skills_experience_score}% (skills {skill_alignment}%, experience {experience_alignment}%)",
             f"Skills match {skill_alignment}% (fuzzy synonym matching, {len(required_skills or [])} required skills)",
             f"Experience alignment {experience_alignment}% (candidate {actual_exp}y vs required {expected_exp}y)",
             f"Keyword coverage {keyword_coverage}% (JD/CV content alignment)",
@@ -1192,4 +1245,5 @@ class PreScoreService:
                 else jd_critic_result.get("feedback")
             ),
             "score_explanation": explanation,
+            "jd_embedding_similarity": jd_embedding_similarity,
         }

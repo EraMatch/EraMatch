@@ -637,38 +637,6 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => {
-                      if (!assignedGroupId) return;
-                      navigate(`/recruiter/group/${encodeURIComponent(String(assignedGroupId))}`);
-                    }}
-                    disabled={!assignedGroupId}
-                    title={assignedGroupId ? `Open ${assignedGroupName || 'assigned group'}` : 'Candidate is not assigned to a group yet'}
-                    className="flex items-center gap-2 h-[40px] px-[14px] rounded-[8px] border border-[#c7d2fe] bg-[#eef2ff] hover:bg-[#e0e7ff] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#3730a3]">
-                      View Assigned Group
-                    </span>
-                  </button>
-                  <button
-                    onClick={handleReanalyzeGitHub}
-                    disabled={!candidate?.github_url || githubReanalysisLoading}
-                    title={candidate?.github_url ? 'Reanalyze GitHub profile' : 'Candidate does not have a GitHub profile'}
-                    className="flex items-center gap-2 h-[40px] px-[14px] rounded-[8px] border border-[#dbeafe] bg-[#f0f9ff] hover:bg-[#e0f2fe] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#0369a1]">
-                      {githubReanalysisLoading ? 'Reanalyzing...' : 'Reanalyze GitHub'}
-                    </span>
-                  </button>
-                  <button
-                    onClick={handleResetAssessmentTrial}
-                    disabled={!resolvedApplicationId || assessmentResetLoading}
-                    className="flex items-center gap-2 h-[40px] px-[14px] rounded-[8px] border border-[#fecaca] bg-[#fff1f2] hover:bg-[#ffe4e6] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#b91c1c]">
-                      {assessmentResetLoading ? 'Resetting...' : 'Reset Trial'}
-                    </span>
-                  </button>
-                  <button 
-                    onClick={() => {
                       const resumeUrl = resolveBackendMediaUrl(candidate.resumeUrl);
                       if (resumeUrl) {
                         window.open(resumeUrl, '_blank');
@@ -905,7 +873,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                       </p>
                     ) : (
                       <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                          {/* Row 1 */}
                           <div className="bg-[#f9fafb] rounded-[8px] p-3">
                             <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Final Pre-Score</p>
                             <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.pre_score_final ?? scoreBreakdown.match_score, 1)}</p>
@@ -917,6 +886,31 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                           <div className="bg-[#f9fafb] rounded-[8px] p-3">
                             <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Skills + Experience</p>
                             <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.skills_experience_score, 1)}</p>
+                          </div>
+                          {/* Row 2 */}
+                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">JD Embedding Match</p>
+                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">
+                              {scoreBreakdown.jd_embedding_similarity != null ? formatScore(scoreBreakdown.jd_embedding_similarity, 1) : '—'}
+                            </p>
+                            {scoreBreakdown.jd_embedding_similarity == null && (
+                              <p className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af] mt-0.5">Save JD keywords to enable</p>
+                            )}
+                          </div>
+                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Keyword Coverage</p>
+                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">
+                              {scoreBreakdown.keyword_match_score != null ? formatScore(scoreBreakdown.keyword_match_score, 1) : '—'}
+                            </p>
+                            {scoreBreakdown.keyword_match_score == null && (
+                              <p className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af] mt-0.5">Generate JD keywords to enable</p>
+                            )}
+                          </div>
+                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
+                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">GitHub Boost</p>
+                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">
+                              {scoreBreakdown.optional_profile_boost != null ? `${formatScore(scoreBreakdown.optional_profile_boost, 1)}/10` : '—'}
+                            </p>
                           </div>
                         </div>
 

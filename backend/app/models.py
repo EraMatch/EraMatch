@@ -334,6 +334,7 @@ class Position(SQLModel, table=True):
     jd_keywords: dict | None = Field(
         default=None, sa_column=Column(JSONB)
     )  # LLM-extracted keyword groups
+    jd_embedding: list | None = Field(default=None, sa_column=Column(JSONB))
     status: str = Field(default="open", max_length=20)
     assigned_hr_id: UUID | None = Field(
         default=None, foreign_key="organization_users.user_id"
@@ -1000,6 +1001,7 @@ class CVAnalysis(BaseModel, table=True):
     keyword_match_score: Decimal | None = Field(
         default=None
     )  # 0-100, computed from jd_keywords vs parsed_data
+    profile_embedding: list | None = Field(default=None, sa_column=Column(JSONB))
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)
 
 

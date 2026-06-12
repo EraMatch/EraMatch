@@ -32,6 +32,7 @@ async def _run_prescore_async(
     job_title, job_description, required_skills, years_of_experience,
     candidate_skills, candidate_experience_years, candidate_parsed_data,
     github_analysis_data, jd_critic_result,
+    profile_embedding=None, jd_embedding=None,
     position_experience_level=None, position_education_level=None, jd_keywords=None,
 ):
     scorer = PreScoreService()
@@ -46,6 +47,8 @@ async def _run_prescore_async(
             candidate_parsed_data=candidate_parsed_data,
             github_analysis_data=github_analysis_data,
             jd_critic_result=jd_critic_result,
+            profile_embedding=profile_embedding,
+            jd_embedding=jd_embedding,
             position_experience_level=position_experience_level,
             position_education_level=position_education_level,
             jd_keywords=jd_keywords,
@@ -247,6 +250,8 @@ def recompute_position_prescores(self, position_id: str, organization_id: str, u
                                 "repo_count": gh.repo_count if gh else None,
                             },
                             jd_critic_result=jd_critic_result,
+                            profile_embedding=cv.profile_embedding,
+                            jd_embedding=position.jd_embedding,
                             position_experience_level=getattr(position, "experience_level", None),
                             position_education_level=getattr(position, "education_level", None),
                             jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,

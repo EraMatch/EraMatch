@@ -135,6 +135,7 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
       return;
     }
 
+    setIsActing(true);
     try {
       await api.admin.registerEmployee({
         email: employeeEmail,
@@ -156,6 +157,8 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
 
     } catch (error) {
       toast.error('Failed to register employee');
+    } finally {
+      setIsActing(false);
     }
   };
 
@@ -497,7 +500,15 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
         ) : activeTab === 'register' ? (
           <>
             {/* Register Employee Tab Content */}
-            <div className="max-w-3xl mx-auto">
+            <div className="max-w-3xl mx-auto relative">
+            {isActing && (
+              <div className="absolute inset-0 backdrop-blur-sm bg-white/60 rounded-xl z-20 flex items-center justify-center">
+                <div className="bg-white rounded-2xl shadow-xl px-8 py-6 flex flex-col items-center gap-3">
+                  <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin" />
+                  <p className="text-gray-500 text-sm font-medium">Registering employee…</p>
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-3 mb-6">
               <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#EEF2FF' }}>
                 <UserPlus className="w-5 h-5" style={{ color: '#6366F1' }} />
@@ -567,11 +578,12 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
 
             <div className="flex justify-end mt-6">
               <Button
-                className="text-white rounded-full px-6"
+                className="text-white rounded-full px-6 disabled:opacity-60 disabled:cursor-not-allowed"
                 style={{ backgroundColor: '#6366F1' }}
                 onClick={handleRegisterEmployee}
+                disabled={isActing}
               >
-                Register Employee
+                {isActing ? 'Registering…' : 'Register Employee'}
               </Button>
             </div>
             </div>

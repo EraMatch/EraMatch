@@ -1231,6 +1231,30 @@ class RecruiterService:
         await self.session.commit()
         await self.session.refresh(position)
 
+        # Generate JD embedding for embedding-based semantic candidate matching
+        try:
+            import httpx as _httpx
+            import logging as _log
+            jd_text = " | ".join(filter(None, [
+                position.job_title or "",
+                position.job_description or "",
+                ", ".join(position.required_skills or []) if isinstance(position.required_skills, list) else "",
+            ]))
+            async with _httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(
+                    f"{settings.AI_SERVICE_URL.rstrip('/')}/llm/embed",
+                    headers={"Content-Type": "application/json"},
+                    json={"input": [jd_text]},
+                )
+                resp.raise_for_status()
+                embs = resp.json().get("embeddings", [])
+                if embs:
+                    position.jd_embedding = embs[0]
+                    self.session.add(position)
+                    await self.session.commit()
+        except Exception as e:
+            _log.getLogger(__name__).warning(f"[Prescore] JD embedding generation failed for position {position_id}: {e}")
+
         # Recompute keyword_match_score for all candidates in this position
         from app.models import CVAnalysis
         from app.services.prescore import PreScoreService
@@ -1524,6 +1548,8 @@ class RecruiterService:
             score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
             criteria_checks=criteria_checks if isinstance(criteria_checks, list) else [],
             jd_quality_feedback=jd_quality_feedback,
+            keyword_match_score=float(cv.keyword_match_score) if cv and cv.keyword_match_score is not None else None,
+            jd_embedding_similarity=float(prescore.get("jd_embedding_similarity")) if prescore.get("jd_embedding_similarity") is not None else None,
         )
 
     # Application management
@@ -2472,6 +2498,8 @@ class RecruiterService:
                         "repo_count": gh.repo_count if gh else None,
                     },
                     jd_critic_result=jd_critic_result,
+                    profile_embedding=cv.profile_embedding,
+                    jd_embedding=position.jd_embedding,
                     position_experience_level=getattr(position, "experience_level", None),
                     position_education_level=getattr(position, "education_level", None),
                     jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,

@@ -1027,6 +1027,8 @@ class CandidateService:
                     "repo_count": github.repo_count if github else None,
                 },
                 jd_critic_result=jd_critic_result,
+                profile_embedding=cv.profile_embedding,
+                jd_embedding=position.jd_embedding,
                 position_experience_level=getattr(position, "experience_level", None),
                 position_education_level=getattr(position, "education_level", None),
                 jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,

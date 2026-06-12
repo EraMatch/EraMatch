@@ -247,6 +247,8 @@ class ApplicationScoreBreakdownResponse(BaseModel):
     jd_quality_feedback: str | None = None
     score_explanation: list[str] = Field(default_factory=list)
     criteria_checks: list[dict] = Field(default_factory=list)
+    keyword_match_score: float | None = None
+    jd_embedding_similarity: float | None = None
 
 class ProjectSummaryResponse(BaseModel):
     openPositions: int

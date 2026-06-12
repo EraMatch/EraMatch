@@ -1049,4 +1049,15 @@ export const recruiterService = {
             `/ingestion/drive-schedule/${scheduleId}`,
             { method: 'DELETE' }
         ),
+
+    /** Rank candidates via keyword, Jina semantic, or hybrid search. */
+    searchCandidates: async (payload: {
+        query: string;
+        mode: 'keyword' | 'semantic' | 'hybrid';
+        candidates: Array<{ candidate_id: string; application_id: string }>;
+    }) =>
+        fetchAPI<{ ranked_ids: string[]; scores: Record<string, number>; mode_used: string }>(
+            '/candidates/search',
+            { method: 'POST', body: JSON.stringify(payload) }
+        ),
 };
