@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Sparkles, Video, Clock, User, Camera, Mic, Play, Square, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw } from 'lucide-react';
+import { Sparkles, Video, Clock, User, Camera, Mic, Play, Square, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, AlertCircle, Users, Loader2, RefreshCw } from 'lucide-react';
 import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload } from '../utils/proctoringPayload';
