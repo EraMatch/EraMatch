@@ -24,6 +24,7 @@ export function AdvancedFilterDrawer({ onClose, onApply, activeFilters = {}, hid
     major: activeFilters.major || '',
     gradYearMin: activeFilters.gradYearMin || 2010,
     gradYearMax: activeFilters.gradYearMax || 2025,
+    gpaMin: activeFilters.gpaMin || 0,
 
     // Work Experience
     company: activeFilters.company || '',
@@ -111,7 +112,7 @@ export function AdvancedFilterDrawer({ onClose, onApply, activeFilters = {}, hid
   const handleReset = () => {
     setFilters({
       fullName: '', email: '', location: '', isRemote: false, languages: [],
-      school: '', faculty: '', degree: [], major: '', gradYearMin: 2010, gradYearMax: 2025,
+      school: '', faculty: '', degree: [], major: '', gradYearMin: 2010, gradYearMax: 2025, gpaMin: 0,
       company: '', jobTitle: '', yearsMin: 0, yearsMax: 20, seniority: [], employmentType: [],
       hasEmploymentGaps: false, maxGapMonths: 6,
       techStack: [], skillProficiency: {}, certifications: '', hasGitHub: null,
@@ -298,6 +299,21 @@ export function AdvancedFilterDrawer({ onClose, onApply, activeFilters = {}, hid
                   className="flex-1 h-[40px] px-[12px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
                 />
               </div>
+            </div>
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-2">
+                GPA Threshold (Minimum)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                max="5"
+                value={filters.gpaMin || ''}
+                onChange={(e) => setFilters({ ...filters, gpaMin: parseFloat(e.target.value) || 0 })}
+                placeholder="e.g. 3.0"
+                className="w-full h-[40px] px-[12px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+              />
             </div>
           </div>
         </div>

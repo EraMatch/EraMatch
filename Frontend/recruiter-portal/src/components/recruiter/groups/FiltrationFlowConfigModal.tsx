@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, FileText, Video, MessageSquare, GripVertical, CheckCircle, Loader2 } from 'lucide-react';
+import { X, FileText, Video, MessageSquare, CheckCircle, Loader2 } from 'lucide-react';
 import { api } from '../../../services/api';
 
 interface FiltrationModule {
@@ -57,33 +57,20 @@ export function FiltrationFlowConfigModal({
   const [filtrationModules, setFiltrationModules] = useState<FiltrationModule[]>(() => {
     if (groupData?.filtration_flow && Array.isArray(groupData.filtration_flow)) {
       const activeFlowIds = groupData.filtration_flow;
-
-      const orderedActiveModules = activeFlowIds.map((id: string, index: number) => {
-        const mod = DEFAULT_MODULES.find(m => m.id === id || m.type === id);
-        return mod ? { ...mod, enabled: true, order: index } : null;
-      }).filter(Boolean) as FiltrationModule[];
-
-      const inactiveModules = DEFAULT_MODULES.filter(
-        m => !activeFlowIds.includes(m.id) && !activeFlowIds.includes(m.type)
-      ).map((m, index) => ({
+      return DEFAULT_MODULES.map((m, index) => ({
         ...m,
-        enabled: false,
-        order: orderedActiveModules.length + index
+        enabled: activeFlowIds.includes(m.id) || activeFlowIds.includes(m.type),
+        order: index
       }));
-
-      return [...orderedActiveModules, ...inactiveModules];
     }
     return DEFAULT_MODULES;
   });
   const [isSaving, setIsSaving] = useState(false);
-  const [orderError, setOrderError] = useState<string | null>(null);
   const [githubQuestionsCount, setGithubQuestionsCount] = useState<number>(() => {
     const parsed = Number(groupData?.github_questions_count ?? 10);
     if (!Number.isFinite(parsed)) return 10;
     return Math.min(30, Math.max(1, Math.round(parsed)));
   });
-
-  const [draggedModule, setDraggedModule] = useState<string | null>(null);
 
   const toggleModule = (moduleId: string) => {
     setFiltrationModules(filtrationModules.map(m =>
@@ -91,61 +78,11 @@ export function FiltrationFlowConfigModal({
     ));
   };
 
-  const handleDragStart = (moduleId: string) => {
-    setDraggedModule(moduleId);
-  };
-
-  const handleDragOver = (e: React.DragEvent, targetModuleId: string) => {
-    e.preventDefault();
-    if (!draggedModule || draggedModule === targetModuleId) return;
-
-    const draggedIndex = filtrationModules.findIndex(m => m.id === draggedModule);
-    const targetIndex = filtrationModules.findIndex(m => m.id === targetModuleId);
-
-    const newModules = [...filtrationModules];
-    const [removed] = newModules.splice(draggedIndex, 1);
-    newModules.splice(targetIndex, 0, removed);
-
-    // Update order
-    const reorderedModules = newModules.map((m, index) => ({ ...m, order: index }));
-    setFiltrationModules(reorderedModules);
-  };
-
-  const handleDragEnd = () => {
-    setDraggedModule(null);
-    // After drag, validate ordering constraint
-    setOrderError(null);
-  };
-
-  /**
-   * Validate that live-interview (if enabled) is always the last enabled stage.
-   * This is a hard constraint — the Live Interview must be final so the agent
-   * has access to all prior stage context (assessment scores, recorded answers).
-   */
-  const validateOrdering = (modules: FiltrationModule[]): string | null => {
-    const enabled = modules
-      .filter(m => m.enabled)
-      .sort((a, b) => a.order - b.order);
-    const liveIdx = enabled.findIndex(m => m.type === 'live-interview');
-    if (liveIdx !== -1 && liveIdx !== enabled.length - 1) {
-      return 'Live Interview must always be the last stage — the AI interviewer uses prior stage context to tailor questions.';
-    }
-    return null;
-  };
-
   const handleSave = async () => {
     const enabledFlow = filtrationModules
       .filter(m => m.enabled)
       .sort((a, b) => a.order - b.order)
       .map(m => m.type);
-
-    // Ordering constraint: live-interview must be last
-    const error = validateOrdering(filtrationModules);
-    if (error) {
-      setOrderError(error);
-      return;
-    }
-    setOrderError(null);
 
     try {
       setIsSaving(true);
@@ -192,28 +129,18 @@ export function FiltrationFlowConfigModal({
 
         <div className="mb-6">
           <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280] mb-4">
-            Select and order the filtration stages for this candidate group. Enable stages and drag to reorder.
+            Select the filtration stages for this candidate group. Enabled stages will execute in their standard sequence.
           </p>
 
           <div className="space-y-3">
             {filtrationModules.map((module) => (
               <div
                 key={module.id}
-                draggable={module.enabled}
-                onDragStart={() => handleDragStart(module.id)}
-                onDragOver={(e) => handleDragOver(e, module.id)}
-                onDragEnd={handleDragEnd}
                 className={`flex items-center gap-4 p-4 rounded-[12px] border-2 transition-all ${module.enabled
-                  ? 'border-[#6366f1] bg-[#eef2ff] cursor-move'
+                  ? 'border-[#6366f1] bg-[#eef2ff]'
                   : 'border-[#e5e7eb] bg-white'
-                  } ${draggedModule === module.id ? 'opacity-50 scale-95' : ''}`}
+                  }`}
               >
-                {module.enabled ? (
-                  <GripVertical size={20} className="text-[#6b7280] flex-shrink-0" />
-                ) : (
-                  <div className="w-[20px]" />
-                )}
-
                 <div className={`flex items-center justify-center w-[40px] h-[40px] rounded-[8px] flex-shrink-0 ${module.enabled ? 'bg-[#6366f1]' : 'bg-[#e5e7eb]'
                   }`}>
                   <module.icon size={20} className={module.enabled ? 'text-white' : 'text-[#6b7280]'} />
@@ -227,8 +154,8 @@ export function FiltrationFlowConfigModal({
                     {module.description}
                   </p>
                   {module.enabled && (
-                    <p className="font-['Arimo',sans-serif] text-[12px] text-[#6366f1] mt-1">
-                      Stage {module.order + 1}
+                    <p className="font-['Arimo',sans-serif] text-[12px] text-[#6366f1] mt-1 font-medium">
+                      Sequence Position: {filtrationModules.filter(m => m.enabled && m.order < module.order).length + 1}
                     </p>
                   )}
                 </div>
@@ -289,14 +216,6 @@ export function FiltrationFlowConfigModal({
             )}
           </p>
         </div>
-
-        {/* Ordering constraint error */}
-        {orderError && (
-          <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-[8px] mb-3 text-amber-800">
-            <span className="text-amber-500 mt-0.5 flex-shrink-0">⚠</span>
-            <p className="font-['Arimo',sans-serif] text-[12px]">{orderError}</p>
-          </div>
-        )}
 
         <div className="flex gap-3">
           <button

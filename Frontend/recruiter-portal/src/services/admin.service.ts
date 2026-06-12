@@ -171,7 +171,7 @@ export const adminService = {
 
     // 5. Return: Restore/backfill unassigned positions to available recruiters
     backfillPositionAssignments: async () => {
-        return fetchAPI('/admin/positions/backfill-assignments', {
+        return fetchAPI<{ updated_positions?: number }>('/admin/positions/backfill-assignments', {
             method: 'PATCH'
         });
     },

@@ -19,6 +19,103 @@ def _load_prompt(filename: str) -> str:
 
 WORD_RE = re.compile(r"[a-z0-9+#.]+")
 
+# ── Skill synonym table for fuzzy matching ──────────────────────────────────
+SKILL_SYNONYMS: dict[str, set[str]] = {
+    "react": {"react", "react.js", "reactjs", "react js"},
+    "node": {"node", "node.js", "nodejs", "node js"},
+    "next": {"next", "next.js", "nextjs", "next js"},
+    "vue": {"vue", "vue.js", "vuejs", "vue js"},
+    "angular": {"angular", "angular.js", "angularjs"},
+    "typescript": {"typescript", "ts"},
+    "javascript": {"javascript", "js", "es6", "ecmascript"},
+    "python": {"python", "python3"},
+    "c++": {"c++", "cpp"},
+    "c#": {"c#", "csharp", "c sharp"},
+    ".net": {".net", "dotnet", "dot net"},
+    "postgresql": {"postgresql", "postgres", "psql"},
+    "mongodb": {"mongodb", "mongo"},
+    "mysql": {"mysql"},
+    "docker": {"docker", "containerization"},
+    "kubernetes": {"kubernetes", "k8s"},
+    "aws": {"aws", "amazon web services"},
+    "gcp": {"gcp", "google cloud", "google cloud platform"},
+    "azure": {"azure", "microsoft azure"},
+    "ci/cd": {"ci/cd", "cicd", "ci cd", "continuous integration", "continuous deployment"},
+    "redux": {"redux", "redux toolkit"},
+    "graphql": {"graphql", "graph ql"},
+    "rest": {"rest", "rest api", "rest apis", "restful"},
+    "sql": {"sql"},
+    "nosql": {"nosql", "no sql"},
+    "terraform": {"terraform"},
+    "git": {"git", "version control"},
+    "agile": {"agile", "scrum", "kanban"},
+    "machine learning": {"machine learning", "ml"},
+    "deep learning": {"deep learning", "dl"},
+    "tensorflow": {"tensorflow"},
+    "pytorch": {"pytorch", "torch"},
+    "pandas": {"pandas"},
+    "numpy": {"numpy"},
+    "scikit-learn": {"scikit-learn", "sklearn", "scikit learn"},
+    "fastapi": {"fastapi", "fast api"},
+    "django": {"django"},
+    "flask": {"flask"},
+    "express": {"express", "express.js", "expressjs"},
+    "spring": {"spring", "spring boot", "springboot"},
+    "html": {"html", "html5"},
+    "css": {"css", "css3"},
+    "sass": {"sass", "scss"},
+    "webpack": {"webpack"},
+    "vite": {"vite"},
+    "cypress": {"cypress"},
+    "jest": {"jest"},
+    "selenium": {"selenium"},
+    "tailwind": {"tailwind", "tailwindcss", "tailwind css"},
+    "redis": {"redis"},
+    "kafka": {"kafka", "apache kafka"},
+    "elasticsearch": {"elasticsearch", "elastic search", "es"},
+    "linux": {"linux", "unix"},
+    "java": {"java"},
+    "go": {"go", "golang"},
+    "rust": {"rust"},
+    "swift": {"swift"},
+    "kotlin": {"kotlin"},
+    "php": {"php"},
+    "ruby": {"ruby"},
+    "r": {"r"},
+}
+
+# Build reverse lookup: synonym string -> canonical key
+_SYNONYM_TO_CANONICAL: dict[str, str] = {}
+for _canonical, _synonyms in SKILL_SYNONYMS.items():
+    for _syn in _synonyms:
+        _SYNONYM_TO_CANONICAL[_syn] = _canonical
+
+# ── Seniority / experience level mapping ────────────────────────────────────
+SENIORITY_LEVEL_MAP: dict[str, int] = {
+    "intern": 0, "internship": 0, "trainee": 0,
+    "entry": 1, "entry level": 1, "entry-level": 1, "entry_level": 1,
+    "junior": 1, "junior level": 1, "junior-level": 1,
+    "mid": 2, "mid level": 2, "mid-level": 2, "mid_level": 2,
+    "intermediate": 2, "associate": 2,
+    "senior": 3, "senior level": 3, "senior-level": 3, "senior_level": 3, "sr": 3,
+    "lead": 4, "staff": 4,
+    "principal": 5,
+    "executive": 6, "director": 6, "vp": 6, "c-level": 6, "management": 6,
+}
+
+# ── Education level mapping ─────────────────────────────────────────────────
+EDUCATION_LEVEL_MAP: dict[str, int] = {
+    "any": 0, "none": 0,
+    "high school": 1, "high_school": 1, "secondary": 1, "diploma": 1,
+    "associate": 2, "associate's": 2, "associates": 2,
+    "bachelor": 3, "bachelor's": 3, "bachelors": 3,
+    "bsc": 3, "ba": 3, "bs": 3, "b.sc": 3, "b.a": 3, "undergraduate": 3, "b.s": 3,
+    "master": 4, "master's": 4, "masters": 4,
+    "msc": 4, "ma": 4, "ms": 4, "m.sc": 4, "m.a": 4, "mba": 4,
+    "graduate": 4, "postgraduate": 4, "m.s": 4,
+    "phd": 5, "ph.d": 5, "doctorate": 5, "doctoral": 5, "dr": 5,
+}
+
 
 class PreScoreService:
     """Pre-score engine with LLM-based HD Eval + QAG style JD critic."""
@@ -97,6 +194,173 @@ class PreScoreService:
         if not text:
             return set()
         return {tok for tok in WORD_RE.findall(text.lower()) if len(tok) > 1}
+
+    # ── Fuzzy skill matching ─────────────────────────────────────────────
+
+    def _canonicalize_skill(self, skill: str) -> str:
+        """Map a skill string to its canonical form via the synonym table."""
+        s = skill.lower().strip()
+        return _SYNONYM_TO_CANONICAL.get(s, s)
+
+    def fuzzy_skill_match(
+        self,
+        required_skills: list[str],
+        candidate_skills: list[str],
+    ) -> float:
+        """Return 0-100 score comparing required vs candidate skills with synonym expansion."""
+        if not required_skills:
+            return 60.0  # no requirement → neutral
+
+        req_canonical = {self._canonicalize_skill(s) for s in required_skills if s.strip()}
+        cand_canonical = {self._canonicalize_skill(s) for s in candidate_skills if s.strip()}
+
+        if not req_canonical:
+            return 60.0
+
+        matched = len(req_canonical & cand_canonical)
+        return round((matched / len(req_canonical)) * 100, 1)
+
+    # ── Seniority alignment ──────────────────────────────────────────────
+
+    def seniority_alignment(
+        self,
+        position_level: str | None,
+        candidate_seniority: str | None,
+    ) -> float:
+        """Return 0-100 alignment score between position level and candidate seniority."""
+        if not position_level or not candidate_seniority:
+            return 60.0  # unknown → neutral
+
+        pos = SENIORITY_LEVEL_MAP.get(position_level.lower().strip(), None)
+        cand = SENIORITY_LEVEL_MAP.get(candidate_seniority.lower().strip(), None)
+
+        if pos is None or cand is None:
+            return 60.0
+
+        diff = abs(pos - cand)
+        if diff == 0:
+            return 100.0
+        if diff == 1:
+            return 80.0  # adjacent level — good fit
+        if diff == 2:
+            return 45.0  # 2 levels apart — stretch
+        return 15.0      # 3+ levels — clear mismatch
+
+    # ── Education alignment ──────────────────────────────────────────────
+
+    def _extract_highest_education(self, parsed_data: dict[str, Any] | None) -> str | None:
+        """Extract the highest education level from CV parsed_data.education list."""
+        if not isinstance(parsed_data, dict):
+            return None
+
+        education = parsed_data.get("education")
+        if not isinstance(education, list):
+            return None
+
+        max_level = -1
+        max_label = None
+        for entry in education:
+            if not isinstance(entry, dict):
+                continue
+            degree = str(entry.get("degree") or "").lower().strip()
+            if not degree:
+                continue
+            # Try matching each word in the degree string
+            for token in degree.replace(".", " ").replace("'", "").split():
+                level = EDUCATION_LEVEL_MAP.get(token)
+                if level is not None and level > max_level:
+                    max_level = level
+                    max_label = token
+            # Also try the full string
+            level = EDUCATION_LEVEL_MAP.get(degree)
+            if level is not None and level > max_level:
+                max_level = level
+                max_label = degree
+
+        return max_label if max_level > 0 else None
+
+    def education_alignment(
+        self,
+        required_level: str | None,
+        candidate_parsed_data: dict[str, Any] | None,
+    ) -> float:
+        """Return 0-100 education alignment score."""
+        if not required_level:
+            return 60.0  # not specified → neutral
+
+        req_rank = EDUCATION_LEVEL_MAP.get(required_level.lower().strip())
+        if req_rank is None or req_rank == 0:  # "any"
+            return 80.0
+
+        highest = self._extract_highest_education(candidate_parsed_data)
+        if not highest:
+            return 40.0  # can't determine → slight penalty
+
+        cand_rank = EDUCATION_LEVEL_MAP.get(highest, 0)
+        diff = cand_rank - req_rank  # positive = over-qualified, negative = under
+        if diff >= 0:
+            return 100.0  # meets or exceeds
+        if diff == -1:
+            return 65.0   # one level below — acceptable
+        return 30.0       # significantly under-qualified
+
+    # ── YoE fallback from work history dates ─────────────────────────────
+
+    def calculate_yoe_from_work_history(
+        self, parsed_data: dict[str, Any] | None
+    ) -> float | None:
+        """Calculate total years of experience from work_experience date ranges."""
+        if not isinstance(parsed_data, dict):
+            return None
+
+        work_exp = parsed_data.get("work_experience")
+        if not isinstance(work_exp, list) or not work_exp:
+            return None
+
+        from app.utils.date_parser import parse_date_range, calculate_duration_months, parse_single_date
+        from datetime import datetime as dt
+
+        total_months = 0
+        for entry in work_exp:
+            if not isinstance(entry, dict):
+                continue
+
+            if "duration_months" in entry:
+                total_months += entry["duration_months"]
+                continue
+
+            start_str = entry.get("start_date")
+            end_str = entry.get("end_date")
+            is_current = entry.get("is_current", False)
+            duration_str = entry.get("duration") or entry.get("dates")
+
+            start_dt = None
+            end_dt = None
+
+            if duration_str and (not start_str or not end_str):
+                start_dt, end_dt, is_current = parse_date_range(duration_str)
+
+            if not start_dt and start_str:
+                if any(sep in str(start_str) for sep in ["-", "to", "until", "–", "—"]):
+                    start_dt, end_dt, is_current = parse_date_range(str(start_str))
+                else:
+                    start_dt, start_is_curr = parse_single_date(str(start_str))
+                    if start_is_curr:
+                        is_current = True
+
+            if not end_dt and end_str:
+                end_dt, end_is_curr = parse_single_date(str(end_str))
+                if end_is_curr:
+                    is_current = True
+
+            if is_current and not end_dt:
+                end_dt = dt.utcnow()
+
+            months = calculate_duration_months(start_dt, end_dt, is_current)
+            total_months += months
+
+        return round(total_months / 12, 1) if total_months > 0 else None
+
 
     def compute_keyword_match_score(
         self,
@@ -602,6 +866,10 @@ class PreScoreService:
         candidate_parsed_data: dict[str, Any] | None,
         github_analysis_data: dict[str, Any] | None,
         jd_critic_result: dict[str, Any] | None,
+        # ── New optional parameters for richer matching ──
+        position_experience_level: str | None = None,
+        position_education_level: str | None = None,
+        jd_keywords: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         jd_critic_result = jd_critic_result if isinstance(jd_critic_result, dict) else {}
         jd_quality_score = float(jd_critic_result.get("score", 0.5))
@@ -610,7 +878,7 @@ class PreScoreService:
         if jd_quality_cap is not None:
             jd_quality_cap = float(jd_quality_cap)
 
-        if jd_quality_status == "ai_generation_failed":
+        if jd_quality_status == "ai_generation_failed" and not settings.PRESCORE_ALLOW_FALLBACK:
             return {
                 "version": self.VERSION,
                 "pre_score_final": 0.0,
@@ -628,6 +896,8 @@ class PreScoreService:
                     "Fix ai-service/Ollama connectivity and regenerate the HD Eval + QAG question set.",
                 ],
             }
+        # When PRESCORE_ALLOW_FALLBACK is on, a failed QAG generation falls through to the
+        # heuristic composite below (no approved questions → heuristic path) instead of a 0 score.
 
         approved_questions = jd_critic_result.get("approved_questions") if isinstance(jd_critic_result, dict) else []
         if not isinstance(approved_questions, list):
@@ -656,23 +926,46 @@ class PreScoreService:
                     candidate_payload=candidate_payload,
                 )
             except Exception as exc:
-                return {
-                    "version": self.VERSION,
-                    "pre_score_final": 0.0,
-                    "semantic_fit_score": 0.0,
-                    "skills_experience_score": 0.0,
-                    "optional_profile_boost": 0.0,
-                    "jd_quality_score": jd_quality_score,
-                    "jd_quality_status": "ai_evaluation_failed",
-                    "jd_quality_cap": jd_quality_cap,
-                    "jd_quality_cap_applied": False,
-                    "criteria_checks": [],
-                    "jd_quality_feedback": str(exc),
-                    "score_explanation": [
-                        "Scoring is blocked because AI-only candidate QAG evaluation failed.",
-                        "Fix ai-service/Ollama connectivity and re-run evaluation.",
-                    ],
-                }
+                if not settings.PRESCORE_ALLOW_FALLBACK:
+                    return {
+                        "version": self.VERSION,
+                        "pre_score_final": 0.0,
+                        "semantic_fit_score": 0.0,
+                        "skills_experience_score": 0.0,
+                        "optional_profile_boost": 0.0,
+                        "jd_quality_score": jd_quality_score,
+                        "jd_quality_status": "ai_evaluation_failed",
+                        "jd_quality_cap": jd_quality_cap,
+                        "jd_quality_cap_applied": False,
+                        "criteria_checks": [],
+                        "jd_quality_feedback": str(exc),
+                        "score_explanation": [
+                            "Scoring is blocked because AI-only candidate QAG evaluation failed.",
+                            "Fix ai-service/Ollama connectivity and re-run evaluation.",
+                        ],
+                    }
+                # Fallback enabled: re-score with the heuristic composite (drop QAG) instead of a 0 score.
+                fallback_critic = dict(jd_critic_result)
+                fallback_critic["approved_questions"] = []
+                fallback_critic["questions"] = []
+                fallback_critic["status"] = "ai_evaluation_failed_fallback"
+                fallback_result = await self.score_candidate_prescore(
+                    job_title=job_title,
+                    job_description=job_description,
+                    required_skills=required_skills,
+                    years_of_experience=years_of_experience,
+                    candidate_skills=candidate_skills,
+                    candidate_experience_years=candidate_experience_years,
+                    candidate_parsed_data=candidate_parsed_data,
+                    github_analysis_data=github_analysis_data,
+                    jd_critic_result=fallback_critic,
+                    position_experience_level=position_experience_level,
+                    position_education_level=position_education_level,
+                    jd_keywords=jd_keywords,
+                )
+                fallback_result["jd_quality_status"] = "ai_evaluation_failed_fallback_heuristic"
+                fallback_result["jd_quality_feedback"] = str(exc)
+                return fallback_result
 
             result_map = {int(r.get("id")): r for r in qag_results if isinstance(r, dict) and r.get("id") is not None}
             checks: list[dict[str, Any]] = []
@@ -709,6 +1002,31 @@ class PreScoreService:
             if jd_quality_cap is not None:
                 qag_score = round(min(qag_score, jd_quality_cap), 1)
 
+            # Dual-score: also compute the heuristic semantic fit (pure compute, no extra AI cost).
+            semantic_score = None
+            try:
+                _h_critic = dict(jd_critic_result)
+                _h_critic["approved_questions"] = []
+                _h_critic["questions"] = []
+                _h_critic["status"] = "semantic_only"
+                _h = await self.score_candidate_prescore(
+                    job_title=job_title,
+                    job_description=job_description,
+                    required_skills=required_skills,
+                    years_of_experience=years_of_experience,
+                    candidate_skills=candidate_skills,
+                    candidate_experience_years=candidate_experience_years,
+                    candidate_parsed_data=candidate_parsed_data,
+                    github_analysis_data=github_analysis_data,
+                    jd_critic_result=_h_critic,
+                    position_experience_level=position_experience_level,
+                    position_education_level=position_education_level,
+                    jd_keywords=jd_keywords,
+                )
+                semantic_score = _h.get("pre_score_final")
+            except Exception:
+                semantic_score = None
+
             explanation = [
                 f"HD Eval + QAG: {yes_count}/{len(normalized_qag)} criteria passed",
                 f"Weighted YES score = {round((weighted_yes / total_weight) * 100, 1)}%",
@@ -719,6 +1037,9 @@ class PreScoreService:
             return {
                 "version": self.VERSION,
                 "pre_score_final": qag_score,
+                # Two distinct candidate scores (dual-score model):
+                "semantic_score": semantic_score,
+                "qag_score": qag_score,
                 "semantic_fit_score": qag_score,
                 "skills_experience_score": qag_score,
                 "optional_profile_boost": 0.0,
@@ -731,43 +1052,76 @@ class PreScoreService:
                 "score_explanation": explanation,
             }
 
-        jd_text = " ".join(
-            [
-                job_title or "",
-                job_description or "",
-                " ".join(required_skills or []),
-            ]
+        # ═══════════════════════════════════════════════════════════════════
+        # HEURISTIC MODE — multi-signal composite (no QAG)
+        # ═══════════════════════════════════════════════════════════════════
+
+        # ── 1. Skill match (fuzzy, with synonym expansion) ──────────────
+        skill_alignment = self.fuzzy_skill_match(
+            required_skills=list(required_skills or []),
+            candidate_skills=list(candidate_skills or []),
         )
-        jd_tokens = self._tokenize(jd_text)
 
-        candidate_text = self._extract_candidate_text(candidate_parsed_data, candidate_skills)
-        candidate_tokens = self._tokenize(candidate_text)
-
-        if jd_tokens and candidate_tokens:
-            overlap = len(jd_tokens & candidate_tokens)
-            semantic_fit = round((2 * overlap / (len(jd_tokens) + len(candidate_tokens))) * 100, 1)
-        else:
-            semantic_fit = 0.0
-
-        required = [s.lower().strip() for s in (required_skills or []) if isinstance(s, str) and s.strip()]
-        candidate_skill_set = {s.lower().strip() for s in (candidate_skills or []) if isinstance(s, str) and s.strip()}
-
-        if required:
-            matched = sum(1 for skill in required if skill in candidate_skill_set)
-            skill_alignment = round((matched / len(required)) * 100, 1)
-        else:
-            skill_alignment = 60.0
-
+        # ── 2. Experience alignment ─────────────────────────────────────
         expected_exp = max(0, int(years_of_experience or 0))
         actual_exp = max(0.0, float(candidate_experience_years or 0.0))
+
+        # Fallback: compute YoE from work-history dates if the column is 0
+        if actual_exp <= 0.0 and isinstance(candidate_parsed_data, dict):
+            computed_yoe = self.calculate_yoe_from_work_history(candidate_parsed_data)
+            if computed_yoe is not None and computed_yoe > 0:
+                actual_exp = computed_yoe
+
         if expected_exp <= 0:
-            experience_alignment = 70.0
+            experience_alignment = 70.0  # no requirement → neutral
         else:
             ratio = min(actual_exp / float(expected_exp), 1.25)
             experience_alignment = round(min(100.0, ratio * 100), 1)
 
         skills_experience_score = round((skill_alignment * 0.7) + (experience_alignment * 0.3), 1)
 
+        # ── 3. Keyword coverage (if jd_keywords available) ──────────────
+        kw_score = 0.0
+        if isinstance(jd_keywords, dict) and jd_keywords:
+            kw_score = self.compute_keyword_match_score(
+                jd_keywords=jd_keywords,
+                candidate_parsed_data=candidate_parsed_data,
+                candidate_skills=list(candidate_skills or []),
+            )
+        # Fallback: basic token overlap (kept as secondary signal)
+        jd_text = " ".join([
+            job_title or "",
+            job_description or "",
+            " ".join(required_skills or []),
+        ])
+        jd_tokens = self._tokenize(jd_text)
+        candidate_text = self._extract_candidate_text(candidate_parsed_data, candidate_skills)
+        candidate_tokens = self._tokenize(candidate_text)
+        if jd_tokens and candidate_tokens:
+            overlap = len(jd_tokens & candidate_tokens)
+            token_overlap_score = round((2 * overlap / (len(jd_tokens) + len(candidate_tokens))) * 100, 1)
+        else:
+            token_overlap_score = 0.0
+
+        # Use whichever keyword signal is richer
+        keyword_coverage = max(kw_score, token_overlap_score)
+
+        # ── 4. Seniority alignment ──────────────────────────────────────
+        candidate_seniority = None
+        if isinstance(candidate_parsed_data, dict):
+            candidate_seniority = candidate_parsed_data.get("seniority_level")
+        seniority_score = self.seniority_alignment(
+            position_level=position_experience_level,
+            candidate_seniority=candidate_seniority,
+        )
+
+        # ── 5. Education alignment ──────────────────────────────────────
+        edu_score = self.education_alignment(
+            required_level=position_education_level,
+            candidate_parsed_data=candidate_parsed_data,
+        )
+
+        # ── 6. GitHub profile boost (additive, max 5 pts) ──────────────
         boost = 0.0
         if isinstance(github_analysis_data, dict):
             contribution = github_analysis_data.get("contribution_score")
@@ -778,18 +1132,34 @@ class PreScoreService:
             q_val = float(code_quality) if code_quality is not None else 0.0
             r_val = float(repo_count) if repo_count is not None else 0.0
 
-            boost = min(10.0, (c_val * 0.05) + (q_val * 0.05) + min(4.0, r_val * 0.2))
+            boost = min(5.0, (c_val * 0.03) + (q_val * 0.03) + min(2.0, r_val * 0.1))
 
-        weighted_base = round((semantic_fit * 0.55) + (skills_experience_score * 0.35) + (boost * 10 * 0.10), 1)
+        # ── Composite score ─────────────────────────────────────────────
+        # Weights:  skills 35% | experience 20% | keywords 20% | seniority 10% | education 10% | github 5%
+        weighted_base = round(
+            (skill_alignment * 0.35)
+            + (experience_alignment * 0.20)
+            + (keyword_coverage * 0.20)
+            + (seniority_score * 0.10)
+            + (edu_score * 0.10)
+            + (boost * 20 * 0.05),  # boost is 0-5, scale to 0-100 range
+            1,
+        )
+
         capped = jd_quality_cap is not None and weighted_base > jd_quality_cap
-        pre_score_final = round(min(weighted_base, jd_quality_cap) if jd_quality_cap is not None else weighted_base, 1)
+        pre_score_final = round(
+            min(weighted_base, jd_quality_cap) if jd_quality_cap is not None else weighted_base, 1
+        )
 
         explanation = [
-            f"Semantic fit {semantic_fit}% from JD/CV token overlap",
-            f"Skills+experience {skills_experience_score}% (skills {skill_alignment}%, experience {experience_alignment}%)",
+            f"Skills match {skill_alignment}% (fuzzy synonym matching, {len(required_skills or [])} required skills)",
+            f"Experience alignment {experience_alignment}% (candidate {actual_exp}y vs required {expected_exp}y)",
+            f"Keyword coverage {keyword_coverage}% (JD/CV content alignment)",
+            f"Seniority fit {seniority_score}%",
+            f"Education fit {edu_score}%",
         ]
         if boost > 0:
-            explanation.append(f"Optional profile boost +{round(boost, 1)} points from GitHub signals")
+            explanation.append(f"GitHub boost +{round(boost, 1)} points")
         if capped:
             explanation.append(f"JD quality gate applied: capped to {jd_quality_cap}% (quality={jd_quality_status})")
         if pending_qag_approval:
@@ -798,8 +1168,18 @@ class PreScoreService:
         return {
             "version": self.VERSION,
             "pre_score_final": pre_score_final,
-            "semantic_fit_score": semantic_fit,
+            # Two distinct candidate scores (Phase: dual-score model):
+            #   semantic_score = heuristic JD↔CV fit (skills/experience/keywords/…)
+            #   qag_score      = AI QAG yes/no evaluation (None until QAG approved)
+            "semantic_score": pre_score_final,
+            "qag_score": None,
+            "semantic_fit_score": token_overlap_score,  # kept for backward compat
             "skills_experience_score": skills_experience_score,
+            "skill_alignment": skill_alignment,
+            "experience_alignment": experience_alignment,
+            "keyword_coverage": keyword_coverage,
+            "seniority_score": seniority_score,
+            "education_score": edu_score,
             "optional_profile_boost": round(boost, 1),
             "jd_quality_score": jd_quality_score,
             "jd_quality_status": "pending_qag_approval" if pending_qag_approval else jd_quality_status,

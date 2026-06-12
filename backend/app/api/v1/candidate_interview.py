@@ -86,6 +86,42 @@ def _resolve_rubric(questions_data, question_id: str, question_text: str) -> str
     return None
 
 
+def _resolve_rubric_checks(questions_data, question_id: str, question_text: str) -> list[dict] | None:
+    """Extract rubric_yes_no_checks from the matching question in the config JSONB."""
+    if isinstance(questions_data, dict):
+        questions_list = questions_data.get("questions", questions_data.get("items", []))
+    elif isinstance(questions_data, list):
+        questions_list = questions_data
+    else:
+        return None
+
+    for index, q in enumerate(questions_list, start=1):
+        if not isinstance(q, dict):
+            continue
+        qid = str(q.get("id", q.get("question_id", f"q{index}")))
+        matched = (
+            qid == question_id
+            or (question_id.startswith("q") and question_id[1:].isdigit() and int(question_id[1:]) == index)
+            or q.get("text", "").strip() == question_text.strip()
+        )
+        if not matched:
+            continue
+        checks = q.get("rubric_yes_no_checks") or q.get("rubricYesNoChecks")
+        if not isinstance(checks, list) or not checks:
+            return None
+        normalized = []
+        for c in checks:
+            if isinstance(c, dict) and c.get("check"):
+                normalized.append({
+                    "check": str(c["check"]),
+                    "weight": float(c.get("weight", 0.1)),
+                })
+            elif isinstance(c, str) and c.strip():
+                normalized.append({"check": c.strip(), "weight": 0.1})
+        return normalized if normalized else None
+    return None
+
+
 def _parse_feedback_value(value) -> str | None:
     if value is None:
         return None
@@ -734,6 +770,12 @@ async def submit_video_response(
         question_text,
     )
 
+    rubric_checks = _resolve_rubric_checks(
+        session_row["questions"] or {},
+        question_id,
+        question_text,
+    )
+
     response_id = str(uuid4())
     
     # Save uploaded video to disk
@@ -801,6 +843,7 @@ async def submit_video_response(
         question_text=question_text,
         reference_answer=reference_answer,
         rubric=rubric,
+        rubric_checks=rubric_checks,
     )
     task_id = f"bg-{response_id[:8]}"
     
@@ -878,6 +921,12 @@ async def get_processing_status(
         elif derived_status == "completed":
             completed_count += 1
 
+        ai_feedback_raw = row[7]
+        feedback_text = _parse_feedback_value(ai_feedback_raw)
+        criteria_scores = None
+        if isinstance(ai_feedback_raw, dict):
+            criteria_scores = ai_feedback_raw.get("criteria_scores")
+
         responses.append({
             "response_id": str(row[0]),
             "question_id": row[1],
@@ -886,7 +935,8 @@ async def get_processing_status(
             "video_url": row[4],
             "transcript": row[5],
             "score": float(row[6]) if row[6] is not None else None,
-            "feedback": _parse_feedback_value(row[7]),
+            "feedback": feedback_text,
+            "criteria_scores": criteria_scores,
             "status": derived_status,
         })
     

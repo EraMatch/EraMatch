@@ -1,5 +1,49 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { ChevronLeft, Github, Mail, Phone, MapPin, Calendar, AlertTriangle, FileText, Video, BarChart3, MessageSquare, Download, CheckCircle, XCircle, TrendingUp, Play, Clock, ThumbsUp, ThumbsDown, Activity, Eye, MessageCircle, ExternalLink, FileCheck, Smile, Frown, Meh, Loader2, Lock, ShieldCheck, Award, Zap, Code2, Cpu, Layers, Globe, Terminal, Briefcase, Users } from 'lucide-react';
+
+interface CriterionScore {
+  check: string;
+  weight: number;
+  score_1_5: number;
+  cited_quote: string | null;
+  reasoning: string;
+}
+
+function CriteriaBreakdown({ criteriaScores }: { criteriaScores: CriterionScore[] }) {
+  const cardClass = (s: number) =>
+    s >= 4 ? 'bg-green-50 border-green-200' : s === 3 ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200';
+  const badgeClass = (s: number) =>
+    s >= 4 ? 'bg-green-100 text-green-700' : s === 3 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-700';
+  const quoteClass = (s: number) =>
+    s >= 4 ? 'border-green-300 text-green-800' : s === 3 ? 'border-yellow-300 text-yellow-800' : 'border-red-300 text-red-800';
+
+  return (
+    <div className="space-y-2 mt-3">
+      <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Rubric Breakdown</div>
+      {criteriaScores.map((c, i) => (
+        <div key={i} className={`rounded-lg border p-3 ${cardClass(c.score_1_5)}`}>
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <span className="text-[12px] font-medium text-gray-800 flex-1">{c.check}</span>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="text-[10px] text-gray-400">w={c.weight?.toFixed(2)}</span>
+              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${badgeClass(c.score_1_5)}`}>
+                {c.score_1_5} / 5
+              </span>
+            </div>
+          </div>
+          {c.cited_quote && (
+            <div className={`text-[11px] italic border-l-2 pl-2 mb-1 ${quoteClass(c.score_1_5)}`}>
+              "{c.cited_quote}"
+            </div>
+          )}
+          {c.reasoning && (
+            <div className="text-[11px] text-gray-500">{c.reasoning}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 import LoadingSpinner from '../../common/LoadingSpinner';
 import { EnhancedAssessmentReport } from '../assessments/EnhancedAssessmentReport';
 import { EnhancedAIInterviewReport } from '../interviews/EnhancedAIInterviewReport';
@@ -12,17 +56,81 @@ import { LiveInterviewResults } from '../live-interview-v2/LiveInterviewResults'
 import type { ApplicationScoreBreakdown } from '../../../services/types';
 import { useNavigate } from 'react-router-dom';
 import { useCandidateDetail, useCandidateScoreBreakdown } from '../../../hooks/candidates/useCandidates';
+import { CandidateRail } from '../groups/results/CandidateRail';
+import type { RailCandidate } from '../groups/results/CandidateRail';
+import { AnswerReviewWithHITL } from '../assessments/AnswerReviewWithHITL';
+import { ModuleDetailAssessment } from '../assessments/ModuleDetailAssessment';
+import { ModuleDetailAIInterview } from '../interviews/ModuleDetailAIInterview';
+
+export type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'integrity' | 'interview' | 'live-interview' | 'notes' | 'final-report';
+
+export function getRailTabForStage(stageKey: string): TabType {
+  const map: Record<string, TabType> = {
+    'assessment': 'assessment',
+    'ai-interview': 'interview',
+    'live-interview': 'live-interview',
+  };
+  return map[stageKey] ?? 'overview';
+}
 
 interface CandidateProfileProps {
   candidateId: string;
   applicationId?: string;
   onBack: () => void;
   showFinalReport?: boolean;
+  // Phase 3: deep-link + candidate rail (optional, backward-compatible)
+  initialTab?: TabType;
+  rail?: {
+    candidates: RailCandidate[];
+    activeApplicationId: string;
+    onSelect: (candidateId: string, applicationId: string) => void;
+  };
+  // Embedded mode: render inside another panel (e.g. group Review detail) —
+  // hides the Back button and tightens padding. No own rail/chrome.
+  embedded?: boolean;
 }
 
-type TabType = 'overview' | 'resume' | 'github' | 'assessment' | 'interview' | 'live-interview' | 'notes' | 'final-report';
+// =========================================================
+// Integrity tab content — Phase 3
+// =========================================================
+interface IntegrityTabContentProps {
+  candidate: any;
+}
 
-export function CandidateProfile({ candidateId, applicationId, onBack, showFinalReport = false }: CandidateProfileProps) {
+function IntegrityTabContent({ candidate }: IntegrityTabContentProps) {
+  const hitlAnswers: any[] = (candidate as any)?.hitl_answers ?? [];
+
+  if (hitlAnswers.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <ShieldCheck size={40} className="mb-3 text-emerald-400" />
+        <p className="text-[15px] font-medium text-gray-700">No integrity flags</p>
+        <p className="text-[13px] text-gray-400 mt-1">
+          No answers were flagged for human review on this candidate.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-[13px] text-gray-500">
+        {hitlAnswers.length} answer{hitlAnswers.length !== 1 ? 's' : ''} flagged for review
+      </p>
+      {hitlAnswers.map((answer: any) => (
+        <AnswerReviewWithHITL
+          key={answer.answer_id}
+          answer={answer}
+          onApprove={(_id, _fb) => { /* Phase 4: wire to API */ }}
+          onReject={(_id, _fb) => { /* Phase 4: wire to API */ }}
+          onEscalate={(_ansId) => { /* Phase 4: wire to API */ }}
+        />
+      ))}
+    </div>
+  );
+}
+
+export function CandidateProfile({ candidateId, applicationId, onBack, showFinalReport = false, initialTab, rail, embedded = false }: CandidateProfileProps) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [showTranscript, setShowTranscript] = useState<number | null>(null);
@@ -33,6 +141,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [showLiveInterviewTranscript, setShowLiveInterviewTranscript] = useState(false);
   const [showGithubAssignedQuestions, setShowGithubAssignedQuestions] = useState(false);
   const [githubQuestionTypeFilter, setGithubQuestionTypeFilter] = useState<'all' | 'mcq' | 'essay' | 'coding'>('all');
+  const [showModuleDetail, setShowModuleDetail] = useState(false);
+  const [showAIInterviewDetail, setShowAIInterviewDetail] = useState(false);
 
   const [assessmentResetLoading, setAssessmentResetLoading] = useState(false);
   const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
@@ -40,6 +150,14 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [githubReanalysisLoading, setGithubReanalysisLoading] = useState(false);
   const [githubReanalysisMessage, setGithubReanalysisMessage] = useState<string | null>(null);
   const [githubReanalysisError, setGithubReanalysisError] = useState<string | null>(null);
+
+  const initialTabApplied = useRef(false);
+  useEffect(() => {
+    if (!initialTabApplied.current && initialTab) {
+      setActiveTab(initialTab);
+      initialTabApplied.current = true;
+    }
+  }, [initialTab]);
 
   const { data: candidate, isLoading } = useCandidateDetail(candidateId);
 
@@ -198,6 +316,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
   if (activeFlow.includes('assessment')) {
     baseTabs.push({ id: 'assessment', label: 'Assessment', icon: BarChart3, locked: !isStageAccessible('assessment') });
+    baseTabs.push({ id: 'integrity', label: 'Integrity', icon: ShieldCheck, locked: !isStageAccessible('assessment') });
   }
 
   if (activeFlow.includes('ai_interview') || activeFlow.includes('ai-interview') || activeFlow.includes('aiInterview')) {
@@ -465,9 +584,19 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const assignedGroupName = candidate?.groupName || candidate?.group_name || null;
 
   return (
-    <div className="h-full w-full overflow-auto bg-[#f9fafb] relative">
-      <div className="max-w-[1400px] mx-auto px-[48px] py-[24px]">
+    <div className="flex h-full min-h-0">
+      {rail && (
+        <CandidateRail
+          candidates={rail.candidates}
+          activeApplicationId={rail.activeApplicationId}
+          onSelect={rail.onSelect}
+        />
+      )}
+      <div className={rail ? 'flex-1 min-w-0' : 'w-full'}>
+        <div className={`h-full w-full overflow-auto relative ${embedded ? 'bg-white' : 'bg-[#f9fafb]'}`}>
+      <div className={embedded ? 'w-full px-1 py-1' : 'max-w-[1400px] mx-auto px-[48px] py-[24px]'}>
         {/* Header */}
+        {!embedded && (
         <button
           onClick={onBack}
           className="flex items-center gap-2 mb-6 text-[#6b7280] hover:text-[#111827] transition-colors"
@@ -475,6 +604,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
           <ChevronLeft size={20} />
           <span className="font-['Arimo',sans-serif] text-[14px]">Back</span>
         </button>
+        )}
 
         {/* Profile Header */}
         <div className="bg-white rounded-[12px] border border-[#e5e7eb] p-8 mb-6">
@@ -1484,7 +1614,33 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     ))}
                   </div>
                 </div>
+
+                {/* Per-question analysis — Phase 3 */}
+                {!showModuleDetail ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowModuleDetail(true)}
+                    className="w-full rounded-[10px] border border-dashed border-indigo-200 py-3 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+                  >
+                    View Per-Question Analysis
+                  </button>
+                ) : (
+                  <div className="rounded-[12px] border border-gray-200 overflow-hidden">
+                    <ModuleDetailAssessment
+                      candidateId={Number(candidateId)}
+                      candidateName={(candidate as any)?.name ?? ''}
+                      score={(candidate as any)?.scores?.assessment ?? 0}
+                      completedDate={(candidate as any)?.pipelineStatus?.assessment?.completedAt ?? '—'}
+                      onClose={() => setShowModuleDetail(false)}
+                      onMoveToNextStage={() => {}}
+                    />
+                  </div>
+                )}
               </div>
+            )}
+
+            {activeTab === 'integrity' && (
+              <IntegrityTabContent candidate={candidate} />
             )}
 
             {activeTab === 'interview' && (
@@ -1555,6 +1711,28 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     </p>
                   </div>
                 </div>
+
+                {/* Interview analysis — Phase 3 */}
+                {!showAIInterviewDetail ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAIInterviewDetail(true)}
+                    className="w-full rounded-[10px] border border-dashed border-indigo-200 py-3 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+                  >
+                    View Interview Analysis
+                  </button>
+                ) : (
+                  <div className="rounded-[12px] border border-gray-200 overflow-hidden">
+                    <ModuleDetailAIInterview
+                      candidateId={Number(candidateId)}
+                      candidateName={(candidate as any)?.name ?? ''}
+                      score={(candidate as any)?.scores?.aiInterview ?? 0}
+                      completedDate={(candidate as any)?.pipelineStatus?.aiInterview?.completedAt ?? '—'}
+                      onClose={() => setShowAIInterviewDetail(false)}
+                      onMoveToNextStage={() => {}}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -1988,20 +2166,39 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     </div>
                   </div>
                 )}
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                    <div className="text-sm text-indigo-700 font-medium">Score</div>
-                    <div className="text-2xl font-bold text-indigo-900">{formatInterviewScore(videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.score)}/10</div>
-                  </div>
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <div className="text-sm text-gray-700 font-medium">Duration</div>
-                    <div className="text-2xl font-bold text-gray-900">{videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.duration}</div>
-                  </div>
-                </div>
-                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                  <h4 className="font-medium text-indigo-900 mb-2">Question</h4>
-                  <p className="text-indigo-800">{videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.question}</p>
-                </div>
+                {(() => {
+                  const vq = videoInterviewQuestions.find((q: any) => q.id === showVideoResponse);
+                  return (
+                    <>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                          <div className="text-sm text-indigo-700 font-medium">Score</div>
+                          <div className="text-2xl font-bold text-indigo-900">{formatInterviewScore(vq?.score)}/10</div>
+                        </div>
+                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                          <div className="text-sm text-gray-700 font-medium">Duration</div>
+                          <div className="text-2xl font-bold text-gray-900">{vq?.duration}</div>
+                        </div>
+                      </div>
+                      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-3">
+                        <h4 className="font-medium text-indigo-900 mb-2">Question</h4>
+                        <p className="text-indigo-800">{vq?.question}</p>
+                      </div>
+                      {/* Criteria breakdown (G-eval) or fallback feedback */}
+                      {vq?.criteriaScores?.length
+                        ? <CriteriaBreakdown criteriaScores={vq.criteriaScores} />
+                        : vq?.feedback
+                          ? (
+                            <div className="bg-violet-50 border border-violet-200 rounded-lg p-4">
+                              <div className="text-sm font-medium text-violet-900 mb-1">AI Feedback</div>
+                              <div className="text-sm text-violet-800">{vq.feedback}</div>
+                            </div>
+                          )
+                          : null
+                      }
+                    </>
+                  );
+                })()}
               </div>
             )}
           </DialogContent>
@@ -2206,6 +2403,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
           </div>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }

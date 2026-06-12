@@ -31,7 +31,8 @@ PER_CANDIDATE_TIMEOUT_SECONDS = 120
 async def _run_prescore_async(
     job_title, job_description, required_skills, years_of_experience,
     candidate_skills, candidate_experience_years, candidate_parsed_data,
-    github_analysis_data, jd_critic_result
+    github_analysis_data, jd_critic_result,
+    position_experience_level=None, position_education_level=None, jd_keywords=None,
 ):
     scorer = PreScoreService()
     return await asyncio.wait_for(
@@ -45,6 +46,9 @@ async def _run_prescore_async(
             candidate_parsed_data=candidate_parsed_data,
             github_analysis_data=github_analysis_data,
             jd_critic_result=jd_critic_result,
+            position_experience_level=position_experience_level,
+            position_education_level=position_education_level,
+            jd_keywords=jd_keywords,
         ),
         timeout=PER_CANDIDATE_TIMEOUT_SECONDS,
     )
@@ -52,42 +56,23 @@ async def _run_prescore_async(
 
 def _heuristic_prescore(position, cv, gh):
     """Fast fallback scoring based purely on token overlap and skills (no LLM)."""
-    import re
-    WORD_RE = re.compile(r"[a-z]{2,}")
-
-    def _tokenize(text):
-        return {tok for tok in WORD_RE.findall((text or "").lower()) if len(tok) > 1}
-
-    jd_text = " ".join([
-        position.job_title or "",
-        position.job_description or "",
-        " ".join(position.required_skills or []),
-    ])
-    jd_tokens = _tokenize(jd_text)
+    scorer = PreScoreService()
 
     parsed = cv.parsed_data if isinstance(cv.parsed_data, dict) else {}
-    candidate_text = " ".join([
-        str(parsed.get("summary") or ""),
-        " ".join(cv.skills or []),
-    ])
-    candidate_tokens = _tokenize(candidate_text)
 
-    if jd_tokens and candidate_tokens:
-        overlap = len(jd_tokens & candidate_tokens)
-        semantic_fit = round((2 * overlap / (len(jd_tokens) + len(candidate_tokens))) * 100, 1)
-    else:
-        semantic_fit = 0.0
+    # 1. Fuzzy skill match
+    skill_alignment = scorer.fuzzy_skill_match(
+        required_skills=list(position.required_skills or []) if isinstance(position.required_skills, list) else [],
+        candidate_skills=list(cv.skills or []),
+    )
 
-    required = [s.lower().strip() for s in (position.required_skills or []) if isinstance(s, str)]
-    candidate_skill_set = {s.lower().strip() for s in (cv.skills or []) if isinstance(s, str)}
-    if required:
-        matched = sum(1 for sk in required if sk in candidate_skill_set)
-        skill_alignment = round((matched / len(required)) * 100, 1)
-    else:
-        skill_alignment = 60.0
-
+    # 2. Experience alignment
     expected_exp = max(0, int(position.years_of_experience or 0))
     actual_exp = max(0.0, float(cv.experience_years or 0.0))
+    if actual_exp <= 0.0:
+        computed_yoe = scorer.calculate_yoe_from_work_history(parsed)
+        if computed_yoe is not None and computed_yoe > 0:
+            actual_exp = computed_yoe
     if expected_exp <= 0:
         experience_alignment = 70.0
     else:
@@ -95,13 +80,59 @@ def _heuristic_prescore(position, cv, gh):
         experience_alignment = round(min(100.0, ratio * 100), 1)
 
     skills_experience_score = round((skill_alignment * 0.7) + (experience_alignment * 0.3), 1)
-    pre_score_final = round((semantic_fit * 0.55) + (skills_experience_score * 0.35), 1)
+
+    # 3. Token overlap
+    import re
+    WORD_RE = re.compile(r"[a-z]{2,}")
+    def _tokenize(text):
+        return {tok for tok in WORD_RE.findall((text or "").lower()) if len(tok) > 1}
+
+    jd_text = " ".join([
+        position.job_title or "",
+        position.job_description or "",
+        " ".join(position.required_skills or []) if isinstance(position.required_skills, list) else "",
+    ])
+    jd_tokens = _tokenize(jd_text)
+    candidate_text = " ".join([str(parsed.get("summary") or ""), " ".join(cv.skills or [])])
+    candidate_tokens = _tokenize(candidate_text)
+    if jd_tokens and candidate_tokens:
+        overlap = len(jd_tokens & candidate_tokens)
+        token_overlap = round((2 * overlap / (len(jd_tokens) + len(candidate_tokens))) * 100, 1)
+    else:
+        token_overlap = 0.0
+
+    # 4. Seniority alignment
+    seniority_score = scorer.seniority_alignment(
+        position_level=getattr(position, "experience_level", None),
+        candidate_seniority=parsed.get("seniority_level"),
+    )
+
+    # 5. Education alignment
+    edu_score = scorer.education_alignment(
+        required_level=getattr(position, "education_level", None),
+        candidate_parsed_data=parsed,
+    )
+
+    # Composite
+    pre_score_final = round(
+        (skill_alignment * 0.35)
+        + (experience_alignment * 0.20)
+        + (token_overlap * 0.20)
+        + (seniority_score * 0.10)
+        + (edu_score * 0.10),
+        1,
+    )
 
     return {
-        "version": "heuristic_fallback_v1",
+        "version": "heuristic_fallback_v2",
         "pre_score_final": pre_score_final,
-        "semantic_fit_score": semantic_fit,
+        "semantic_fit_score": token_overlap,
         "skills_experience_score": skills_experience_score,
+        "skill_alignment": skill_alignment,
+        "experience_alignment": experience_alignment,
+        "keyword_coverage": token_overlap,
+        "seniority_score": seniority_score,
+        "education_score": edu_score,
         "optional_profile_boost": 0.0,
         "jd_quality_score": 0.5,
         "jd_quality_status": "llm_timeout_fallback",
@@ -110,8 +141,11 @@ def _heuristic_prescore(position, cv, gh):
         "criteria_checks": [],
         "score_explanation": [
             "LLM timed out — heuristic score used.",
-            f"Semantic fit {semantic_fit}% from JD/CV token overlap",
-            f"Skills+experience {skills_experience_score}%",
+            f"Skills match {skill_alignment}% (fuzzy synonym matching)",
+            f"Experience alignment {experience_alignment}%",
+            f"Keyword coverage {token_overlap}%",
+            f"Seniority fit {seniority_score}%",
+            f"Education fit {edu_score}%",
         ],
     }
 
@@ -213,6 +247,9 @@ def recompute_position_prescores(self, position_id: str, organization_id: str, u
                                 "repo_count": gh.repo_count if gh else None,
                             },
                             jd_critic_result=jd_critic_result,
+                            position_experience_level=getattr(position, "experience_level", None),
+                            position_education_level=getattr(position, "education_level", None),
+                            jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,
                         )
                     )
                     logger.info(
@@ -230,7 +267,16 @@ def recompute_position_prescores(self, position_id: str, organization_id: str, u
                 parsed_data["prescore_v2"] = prescore
                 cv.parsed_data = parsed_data
                 flag_modified(cv, "parsed_data")
-                cv.match_score = prescore.get("pre_score_final", 0)
+                new_score = prescore.get("pre_score_final", 0)
+                # Defense-in-depth: never overwrite an existing valid (non-zero) score with 0.
+                existing_score = float(cv.match_score) if cv.match_score is not None else 0.0
+                if (new_score is None or float(new_score) == 0.0) and existing_score > 0.0:
+                    logger.warning(
+                        "[QAG] Skipping 0 overwrite for application_id=%s; keeping existing score=%.1f",
+                        app.id, existing_score,
+                    )
+                else:
+                    cv.match_score = new_score
                 cv.analyzed_at = datetime.now(timezone.utc)
                 session.add(cv)
                 updates += 1

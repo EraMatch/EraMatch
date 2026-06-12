@@ -10,6 +10,18 @@ interface CandidateQAGAuditPageProps {
   applicationId?: string;
 }
 
+interface AuditCheck {
+  id: number;
+  criterion: string;
+  passed: boolean | null;
+  verdict: string;
+  reason: string;
+  evidence: string;
+  weight: number;
+  mustHave: boolean;
+  pending: boolean;
+}
+
 const MUST_HAVE_RE = /(must|required|mandatory|at\s+least|minimum|\bmin\b)/i;
 
 export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQAGAuditPageProps) {
@@ -50,9 +62,9 @@ export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQ
       : 'Generated questions awaiting technical approval/evaluation';
   }, [qagArtifact]);
 
-  const checks = useMemo(() => {
+  const checks = useMemo<AuditCheck[]>(() => {
     const items = Array.isArray(data?.criteria_checks) ? data!.criteria_checks : [];
-    const mappedChecks = items.map((item: any) => {
+    const mappedChecks = items.map((item: any): AuditCheck => {
       const verdict = String(item.verdict || (item.passed ? 'YES' : 'NO')).toUpperCase();
       const passed = item.passed != null ? Boolean(item.passed) : verdict === 'YES';
       const criterion = String(item.criterion || '');
@@ -72,7 +84,7 @@ export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQ
 
     if (mappedChecks.length > 0) return mappedChecks;
 
-    return (pendingQuestions || []).map((q: any, idx: number) => {
+    return (pendingQuestions || []).map((q: any, idx: number): AuditCheck => {
       const criterion = String(q?.question || q?.criterion || '').trim();
       const mustHave = MUST_HAVE_RE.test(criterion);
       return {
@@ -190,7 +202,7 @@ export function CandidateQAGAuditPage({ candidateId, applicationId }: CandidateQ
                 </tr>
               </thead>
               <tbody>
-                {filteredChecks.map((row) => (
+                {filteredChecks.map((row: AuditCheck) => (
                   <tr key={`${row.id}-${row.criterion}`} className="border-b border-[#e5e7eb] align-top">
                     <td className="px-4 py-3 text-[12px] text-[#6b7280]">{row.id}</td>
                     <td className="px-4 py-3 text-[13px] text-[#111827]">

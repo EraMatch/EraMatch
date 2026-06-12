@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, Save, Plus, Trash2, AlertCircle, Loader2, Clock, ChevronRight } from 'lucide-react';
 import { fetchAPI } from '../../../services/client';
+import { recruiterService } from '../../../services/recruiter.service';
 
 interface Dimension {
   name: string;
@@ -28,6 +29,7 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
   const [timeBudget, setTimeBudget] = useState<number>(10);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [enhancingKey, setEnhancingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -90,6 +92,24 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
     const newDims = [...dimensions];
     newDims[index] = { ...newDims[index], [field]: value };
     setDimensions(newDims);
+  };
+
+  const enhanceDimensionField = async (index: number, field: 'name' | 'description') => {
+    const current = dimensions[index]?.[field] || '';
+    if (!current.trim()) return;
+    const key = `${index}-${field}`;
+    try {
+      setEnhancingKey(key);
+      const response = await recruiterService.enhanceText(current, {
+        useCase: 'live_interview_dimension',
+        metadata: { field, group_id: groupId },
+      });
+      updateDimension(index, field, (response?.enhancedText || current).trim() || current);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to fix text');
+    } finally {
+      setEnhancingKey(null);
+    }
   };
 
   const totalWeight = dimensions.reduce((sum, d) => sum + (Number(d.weight) || 0), 0);
@@ -219,7 +239,20 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
             <div className="flex-1 space-y-3">
               <div className="flex items-center gap-4">
                 <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Dimension Name</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-medium text-gray-700">Dimension Name</label>
+                    {!isFrozen && (
+                      <button
+                        type="button"
+                        onClick={() => void enhanceDimensionField(idx, 'name')}
+                        disabled={!dim.name.trim() || enhancingKey === `${idx}-name`}
+                        className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                      >
+                        {enhancingKey === `${idx}-name` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                        Fix text
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={dim.name}
@@ -242,7 +275,20 @@ export function DimensionSelector({ groupId, rubricId, isFrozen, onSave }: Dimen
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Description (Reasoning)</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-medium text-gray-700">Description (Reasoning)</label>
+                  {!isFrozen && (
+                    <button
+                      type="button"
+                      onClick={() => void enhanceDimensionField(idx, 'description')}
+                      disabled={!dim.description.trim() || enhancingKey === `${idx}-description`}
+                      className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                    >
+                      {enhancingKey === `${idx}-description` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      Fix text
+                    </button>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={dim.description}

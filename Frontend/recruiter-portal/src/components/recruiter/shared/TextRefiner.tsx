@@ -26,13 +26,16 @@ export function TextRefiner({ originalText, onApply, onClose, context = "text" }
         rubric: 'assessment_rubric',
         option: 'assessment_question',
         explanation: 'assessment_rubric',
+        evidence: 'assessment_essay_rubric',
+        reference_answer: 'assessment_essay_rubric',
+        critic_feedback: 'assessment_essay_rubric',
         text: 'assessment_question',
       };
-      const response = await recruiterService.refineAIQuestion(originalText, {
+      const response = await recruiterService.enhanceText(originalText, {
         useCase: useCaseMap[context] || 'assessment_question',
         metadata: { context },
       });
-      setRefinedText((response?.refinedText || originalText).trim() || originalText);
+      setRefinedText((response?.enhancedText || originalText).trim() || originalText);
       setShowResult(true);
     } catch (error) {
       console.error('Failed to refine text with AI:', error);

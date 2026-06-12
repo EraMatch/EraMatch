@@ -16,19 +16,23 @@ import asyncio
 from sqlalchemy import select, func, or_, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.models import (
     AssessmentSection,
+    CandidateAnswer,
     CandidateApplication,
     CandidateGroup,
     CandidateProfile,
     CandidateStageProgress,
     GroupStageConfig,
+    QuestionBank,
     LiV2Bank,
     LiV2Evaluation,
     LiV2Rubric,
     LiV2Session,
+    InterviewResponse,
     OngoingAssessment,
     OngoingInterview,
     OrganizationUser,
@@ -78,6 +82,7 @@ from app.schemas.group import (
     GroupStatsResponse,
     IntegrityFlag,
     IntegrityFlagDetail,
+    IntegritySummary,
     IntegrityFlagsResponse,
     LiveInterviewData,
     GroupIntegrityDecisionsResponse,
@@ -634,6 +639,8 @@ class GroupService:
 
             total_c = len(active_candidates)
 
+            # Locate the GroupStageConfig for this stage to expose has_config
+            gsc = next((sc for sc in stage_configs if sc.stage_type == st_type), None)
             pipeline_stages.append(
                 PipelineStage(
                     id=st_type.replace("_", "-"),
@@ -645,6 +652,16 @@ class GroupService:
                         stage_conf.status.replace("_", "-")
                         if stage_conf.status
                         else "not-started"
+                    ),
+                    has_config=bool(
+                        gsc and (
+                            gsc.config_id
+                            or (
+                                gsc.stage_type == "live_interview"
+                                and isinstance(gsc.acceptance_criteria, dict)
+                                and gsc.acceptance_criteria.get("liv2_rubric_id")
+                            )
+                        )
                     ),
                 )
             )
@@ -798,7 +815,7 @@ class GroupService:
                 interviews_data.append(
                     GroupInterviewItem(
                         id=liv2_rubric.id,
-                        title=f"AI Live Interview V2 – {dim_count} dimension{'s' if dim_count != 1 else ''}",
+                        title=f"AI Live Interview - {dim_count} dimension{'s' if dim_count != 1 else ''}",
                         interview_type="live_ai_v2",
                         max_retakes=1,
                         questions_count=q_count,
@@ -816,6 +833,11 @@ class GroupService:
             position_id=group.position_id,
             project_id=position.project_id,
             organization_id=group.organization_id,
+            position_title=position.job_title,
+            job_description=position.job_description,
+            required_skills=position.required_skills if isinstance(position.required_skills, list) else [],
+            experience_level=position.experience_level,
+            years_of_experience=position.years_of_experience,
             assigned_hr=assigned_hr,
             created_date=group.created_at,
             status=group.status,
@@ -1782,6 +1804,7 @@ class GroupService:
         pending = 0
         scores: list[float] = []
         candidates: list[AssessmentMonitoringCandidate] = []
+        integrity_counts = {"clean": 0, "monitoring": 0, "suspicious_review": 0, "confirmed_cheating": 0}
 
         app_ids = [app.id for app, _, _ in rows]
 
@@ -1800,6 +1823,113 @@ class GroupService:
         if flag_res:
             for f in flag_res.scalars().all():
                 flag_map.setdefault(f.application_id, []).append(f)
+
+        # --- AI interview signals (bulk, only for ai_interview stage) ---
+        ai_interview_map: dict[UUID, dict] = {}
+        if stage_type == "ai_interview" and app_ids:
+            oi_res = await self.session.execute(
+                select(OngoingInterview).where(
+                    OngoingInterview.application_id.in_(app_ids),
+                )
+            )
+            def _to_pct(v) -> float:
+                # Scores may be stored 0–1 or 0–100; normalize to 0–100.
+                f = float(v)
+                return round(f * 100.0, 1) if f <= 1.0 else round(f, 1)
+
+            for oi in oi_res.scalars().all():
+                # Per-type sub-scores: technical / communication / confidence (0–100)
+                oi_sub: dict[str, float] = {}
+                if oi.technical_score is not None:
+                    oi_sub["technical"] = _to_pct(oi.technical_score)
+                if oi.communication_score is not None:
+                    oi_sub["communication"] = _to_pct(oi.communication_score)
+                if oi.confidence_score is not None:
+                    oi_sub["confidence"] = _to_pct(oi.confidence_score)
+                ai_interview_map[oi.application_id] = {
+                    "ai_recommendation": oi.ai_recommendation,
+                    "retakes_used": 0,
+                    "sub_scores": oi_sub or None,
+                }
+            # Count retakes per application (= number of InterviewResponse rows per session)
+            if ai_interview_map:
+                retake_res = await self.session.execute(
+                    select(
+                        OngoingInterview.application_id,
+                        func.count(InterviewResponse.response_id).label("retakes_used"),
+                    )
+                    .outerjoin(
+                        InterviewResponse,
+                        InterviewResponse.session_id == OngoingInterview.session_id,
+                    )
+                    .where(OngoingInterview.application_id.in_(app_ids))
+                    .group_by(OngoingInterview.application_id)
+                )
+                for row in retake_res.all():
+                    if row.application_id in ai_interview_map:
+                        ai_interview_map[row.application_id]["retakes_used"] = row.retakes_used
+
+        # --- Live interview signals (bulk, only for live_interview stage) ---
+        live_signals_map: dict[UUID, dict] = {}
+        if stage_type == "live_interview" and app_ids:
+            lev_res = await self.session.execute(
+                select(
+                    LiV2Session.application_id,
+                    LiV2Evaluation.auto_verdict,
+                    LiV2Evaluation.overall_score_pct,
+                    LiV2Evaluation.dimension_scores,
+                )
+                .join(
+                    LiV2Evaluation,
+                    LiV2Evaluation.session_id == LiV2Session.id,
+                )
+                .where(
+                    LiV2Session.application_id.in_(app_ids),
+                )
+                .order_by(LiV2Evaluation.judged_at.desc())
+            )
+            for row in lev_res.all():
+                # First row per application = most recent evaluation (desc order)
+                if row.application_id not in live_signals_map:
+                    # Per-dimension sub-scores (0–100). dimension_scores is a JSONB map
+                    # of dimension_id -> {score (1-3), dimension_name, ...}.
+                    dim_sub: dict[str, float] = {}
+                    if isinstance(row.dimension_scores, dict):
+                        for dim in row.dimension_scores.values():
+                            if not isinstance(dim, dict):
+                                continue
+                            name = dim.get("dimension_name") or dim.get("name")
+                            raw = dim.get("score")
+                            if name is not None and isinstance(raw, (int, float)):
+                                # anchors are 1-3; normalize to 0-100
+                                dim_sub[str(name)] = round(float(raw) / 3.0 * 100.0, 1)
+                    live_signals_map[row.application_id] = {
+                        "auto_verdict": row.auto_verdict,
+                        "overall_score_pct": float(row.overall_score_pct) if row.overall_score_pct is not None else None,
+                        "sub_scores": dim_sub or None,
+                    }
+
+        # --- Assessment per-type sub-scores (bulk, only for assessment stage) ---
+        # Aggregate earned/max points grouped by question type per session.
+        assessment_sub_map: dict[UUID, dict[str, float]] = {}
+        if stage_type == "assessment":
+            assess_session_ids = [prog.session_id for _, _, prog in rows if prog.session_id]
+            if assess_session_ids:
+                sub_res = await self.session.execute(
+                    select(
+                        CandidateAnswer.session_id,
+                        QuestionBank.question_type,
+                        func.sum(CandidateAnswer.points_earned).label("earned"),
+                        func.sum(CandidateAnswer.points_max).label("max_pts"),
+                    )
+                    .join(QuestionBank, QuestionBank.id == CandidateAnswer.question_id)
+                    .where(CandidateAnswer.session_id.in_(assess_session_ids))
+                    .group_by(CandidateAnswer.session_id, QuestionBank.question_type)
+                )
+                for r in sub_res.all():
+                    if r.max_pts and float(r.max_pts) > 0:
+                        pct = round(float(r.earned or 0) / float(r.max_pts) * 100.0, 1)
+                        assessment_sub_map.setdefault(r.session_id, {})[str(r.question_type)] = pct
 
         for app, cand, prog in rows:
             status = prog.status
@@ -1828,6 +1958,30 @@ class GroupService:
                 for f in app_flags
             ]
 
+            high_cnt = sum(1 for f in app_flags if f.severity.lower() == "high")
+            medium_cnt = sum(1 for f in app_flags if f.severity.lower() == "medium")
+            integrity_verdict, _ = self._decision_from_counts(
+                total_flags=len(app_flags),
+                high_cnt=high_cnt,
+                medium_cnt=medium_cnt,
+                critical_cnt=0,
+                fusion_cnt=0,
+            )
+            integrity_counts[integrity_verdict] = integrity_counts.get(integrity_verdict, 0) + 1
+
+            ai_signals = ai_interview_map.get(app.id, {})
+            live_signals = live_signals_map.get(app.id, {})
+
+            # Per-type sub-scores depend on the stage being viewed
+            if stage_type == "assessment":
+                sub_scores = assessment_sub_map.get(prog.session_id) if prog.session_id else None
+            elif stage_type == "ai_interview":
+                sub_scores = ai_signals.get("sub_scores")
+            elif stage_type == "live_interview":
+                sub_scores = live_signals.get("sub_scores")
+            else:
+                sub_scores = None
+
             candidates.append(
                 AssessmentMonitoringCandidate(
                     application_id=app.id,
@@ -1837,8 +1991,15 @@ class GroupService:
                     score=score,
                     meets_criteria=meets,
                     verdict=verdict,
+                    integrity_verdict=integrity_verdict,
                     flags=mon_flags,
                     completion_time=prog.completed_at,
+                    session_id=prog.session_id,
+                    sub_scores=sub_scores,
+                    ai_recommendation=ai_signals.get("ai_recommendation"),
+                    retakes_used=ai_signals.get("retakes_used"),
+                    auto_verdict=live_signals.get("auto_verdict"),
+                    overall_score_pct=live_signals.get("overall_score_pct"),
                 )
             )
 
@@ -1852,6 +2013,7 @@ class GroupService:
             flagged=flagged,
             avg_score=avg_score,
             pass_threshold=pass_threshold,
+            integrity_summary=IntegritySummary(**integrity_counts),
             candidates=candidates,
         )
 
@@ -2053,12 +2215,15 @@ class GroupService:
                     cfg.instructions = ic.get("instructions", cfg.instructions)
                     cfg.max_retakes = ic.get("max_retakes", cfg.max_retakes)
                     cfg.questions = ic.get("questions", cfg.questions)
+                    flag_modified(cfg, "questions")  # JSONB reassignment is not auto-tracked
                     cfg.live_interview_context = ic.get("live_interview_context", cfg.live_interview_context)
                     cfg.difficulty = ic.get("difficulty", cfg.difficulty)
                     cfg.total_duration_minutes = ic.get("duration", cfg.total_duration_minutes)
                     cfg.show_ai_feedback = ic.get("showAIFeedback", cfg.show_ai_feedback)
                     cfg.recording_required = ic.get("recordingRequired", cfg.recording_required)
                     cfg.live_flow_config = ic.get("live_flow_config", cfg.live_flow_config)
+                    if cfg.live_flow_config is not None:
+                        flag_modified(cfg, "live_flow_config")
                     cfg.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     self.session.add(cfg)
                 
@@ -2071,7 +2236,12 @@ class GroupService:
         stage_type_to_update = stage_type_to_update or ("live_interview" if ic_type in ("live", "live_ai") else "ai_interview")
 
         existing_stage_config = next((sc for sc in stage_configs if sc.stage_type == stage_type_to_update), None)
-        if existing_stage_config and existing_stage_config.config_id and str(existing_stage_config.config_id) != str(config_id):
+        if (
+            existing_stage_config
+            and existing_stage_config.config_id
+            and str(existing_stage_config.config_id) != str(config_id)
+            and existing_stage_config.state != "not_started"
+        ):
             raise BadRequestException("Only one interview configuration can be created for this stage")
 
         # Update the group's stage config
@@ -3045,6 +3215,22 @@ class GroupService:
     async def update_group(self, group_id: UUID, data: GroupUpdateRequest) -> GroupDetailResponse:
         """Update a group."""
         group = await self._get_group(group_id)
+
+        # Only technical recruiters can modify the filtration flow
+        if data.filtration_flow is not None:
+            if self.user.role != "technical":
+                from app.core.exceptions import ForbiddenException
+
+                raise ForbiddenException(
+                    "Only technical recruiters can configure the filtration flow"
+                )
+            if group.filtration_flow is not None and len(group.filtration_flow) > 0:
+                from app.core.exceptions import BadRequestException
+
+                raise BadRequestException(
+                    "Filtration flow has already been configured and cannot be modified."
+                )
+
         if data.name:
             group.group_name = data.name
         if data.status:

@@ -2604,13 +2604,18 @@ try {{
                 "time": "10.0"
             }
 
-    # Extract function name from candidate code
-    func_name = _extract_function_name_python(request.code) if is_python else _extract_function_name_js(request.code)
+    # Extract function name — prefer stored config, regex only as fallback
+    func_name = q_config.get("function_name") or (
+        _extract_function_name_python(request.code) if is_python
+        else _extract_function_name_js(request.code)
+    )
     
     try:
         for tc in test_cases:
             test_input = tc.get("input", "")
-            expected = tc.get("expected_output", "").strip() if tc.get("expected_output") else str(tc.get("expected", "")).strip()
+            # Prefer 'expected' (new schema), fall back to 'expected_output' (legacy)
+            raw_expected = tc.get("expected") or tc.get("expected_output") or ""
+            expected = str(raw_expected).strip()
             is_hidden = tc.get("is_hidden", False)
 
             # Use function-based execution if we can extract function name
@@ -2645,9 +2650,14 @@ try {{
 
     # 5. Increment attempt count and save
     new_attempt = current_attempt + 1
-    total_tests = len(test_cases)
-    passed_tests = len([r for r in visible_results if r["passed"]]) + hidden_passed
-    score_ratio = passed_tests / total_tests if total_tests > 0 else 0
+    visible_passed = len([r for r in visible_results if r["passed"]])
+    visible_total = len(visible_results)
+    # Score only on hidden tests (visible tests are feedback-only).
+    # Fall back to visible tests if the question has none hidden.
+    if hidden_total > 0:
+        score_ratio = hidden_passed / hidden_total
+    else:
+        score_ratio = visible_passed / visible_total if visible_total > 0 else 0
     points_earned = round(q_points * score_ratio, 2)
 
     answer_data = {
@@ -2783,8 +2793,31 @@ async def auto_grade_answers(session_id: UUID, db_session):
         points_earned = None
         feedback_data = {}
 
+        # ── MCQ GRADING (snapshot-based safety net) ───────────────────
+        # MCQ is normally graded in save_answer. This branch handles the
+        # rare case where save_answer couldn't find the question in
+        # question_bank and left points_earned NULL.
+        if q_type == "mcq":
+            selected = None
+            if isinstance(answer_data, dict):
+                selected = answer_data.get("selected_option")
+            ca = correct_answer or {}
+            correct_index = ca.get("correct_index")
+            if correct_index is None and ca.get("correct_option"):
+                opt = ca.get("correct_option")
+                if isinstance(opt, str) and len(opt) == 1:
+                    correct_index = ord(opt.lower()) - ord("a")
+            if selected is not None and correct_index is not None:
+                is_correct = selected == correct_index
+                points_earned = float(points_max) if is_correct else 0.0
+                feedback_data = {"is_correct": is_correct}
+            else:
+                points_earned = 0.0
+                feedback_data = {"ai_feedback": "Could not determine correct answer for MCQ."}
+            logger.info(f"[auto_grade] MCQ {answer_id}: correct={points_earned > 0}, pts={points_earned}/{points_max}")
+
         # ── ESSAY GRADING (via AI service) ────────────────────────────
-        if q_type == "essay":
+        elif q_type == "essay":
             essay_text = answer_data.get("text", answer_data.get("essay_text", ""))
             if isinstance(answer_data, str):
                 essay_text = answer_data
@@ -2801,37 +2834,77 @@ async def auto_grade_answers(session_id: UUID, db_session):
                 logger.info(f"[auto_grade] Essay {answer_id}: too short ({len(essay_text.strip())} chars), pts=0")
             else:
                 reference = correct_answer.get("reference_answer", "")
-                rubric = q_config.get("rubric")  # Get rubric from question_config
+                rubric = q_config.get("rubric")
+                rubric_checks = q_config.get("rubric_yes_no_checks") or []
+                # Extract check strings for v2 endpoint
+                rubric_criteria = [
+                    c.get("check", "") for c in rubric_checks
+                    if isinstance(c, dict) and c.get("check")
+                ]
 
                 try:
-                    async with httpx.AsyncClient(timeout=30) as client:
-                        resp = await client.post(
-                            f"{settings.AI_SERVICE_URL}/evaluate/grade-essay",
-                            json={
-                                "question_text": q_text,
-                                "essay_response": essay_text,
-                                "reference_answer": reference,
-                                "rubric": rubric,  # Include rubric for better grading
-                                "max_points": points_max,
-                            },
-                        )
-                        if resp.status_code == 200:
-                            grade = resp.json()
-                            points_earned = float(grade["points_earned"])
-                            feedback_data = {
-                                "ai_score": grade["score"],
-                                "ai_feedback": grade["feedback"],
-                                "ai_strengths": grade.get("strengths", []),
-                                "ai_improvements": grade.get("improvements", []),
-                            }
-                            logger.info(f"[auto_grade] Essay {answer_id}: score={grade['score']}, pts={points_earned}/{points_max}")
+                    async with httpx.AsyncClient(timeout=45) as client:
+                        if rubric_criteria:
+                            # ── G-eval path: per-criterion scoring with evidence quotes ──
+                            resp = await client.post(
+                                f"{settings.AI_SERVICE_URL}/evaluate/grade-essay-v2",
+                                json={
+                                    "question_text": q_text,
+                                    "essay_response": essay_text,
+                                    "reference_answer": reference,
+                                    "rubric_criteria": rubric_criteria,
+                                    "max_points": points_max,
+                                },
+                            )
+                            if resp.status_code == 200:
+                                grade = resp.json()
+                                points_earned = float(grade["points_earned"])
+                                feedback_data = {
+                                    "ai_score": round(grade.get("percentage", 0) / 100, 3),
+                                    "ai_feedback": grade["feedback"],
+                                    "ai_strengths": grade.get("strengths", []),
+                                    "ai_improvements": grade.get("improvements", []),
+                                    "criteria_judgments": grade.get("judgments", []),
+                                    "partial_credit_awarded": grade.get("partial_credit_awarded", False),
+                                }
+                                logger.info(
+                                    f"[auto_grade] Essay {answer_id} (v2): "
+                                    f"score={grade.get('percentage')}%, "
+                                    f"pts={points_earned}/{points_max}, "
+                                    f"criteria={len(rubric_criteria)}"
+                                )
+                            else:
+                                logger.warning(f"[auto_grade] grade-essay-v2 returned {resp.status_code}: {resp.text[:200]}")
+                                points_earned = round(points_max * 0.5, 2)
+                                feedback_data = {"ai_feedback": "AI grading unavailable – partial credit assigned."}
                         else:
-                            logger.warning(f"[auto_grade] AI service returned {resp.status_code}: {resp.text[:200]}")
-                            # Fallback: give partial credit
-                            points_earned = round(points_max * 0.5, 2)
-                            feedback_data = {"ai_feedback": "AI grading unavailable – partial credit assigned."}
+                            # ── Legacy path: plain rubric text ─────────────────────────
+                            resp = await client.post(
+                                f"{settings.AI_SERVICE_URL}/evaluate/grade-essay",
+                                json={
+                                    "question_text": q_text,
+                                    "essay_response": essay_text,
+                                    "reference_answer": reference,
+                                    "rubric": rubric,
+                                    "max_points": points_max,
+                                },
+                            )
+                            if resp.status_code == 200:
+                                grade = resp.json()
+                                points_earned = float(grade["points_earned"])
+                                feedback_data = {
+                                    "ai_score": grade["score"],
+                                    "ai_feedback": grade["feedback"],
+                                    "ai_strengths": grade.get("strengths", []),
+                                    "ai_improvements": grade.get("improvements", []),
+                                }
+                                logger.info(f"[auto_grade] Essay {answer_id} (v1): score={grade['score']}, pts={points_earned}/{points_max}")
+                            else:
+                                logger.warning(f"[auto_grade] grade-essay returned {resp.status_code}: {resp.text[:200]}")
+                                points_earned = round(points_max * 0.5, 2)
+                                feedback_data = {"ai_feedback": "AI grading unavailable – partial credit assigned."}
                 except Exception as e:
-                    logger.error(f"[auto_grade] AI service error: {e}")
+                    logger.error(f"[auto_grade] AI service essay error: {e}")
                     points_earned = round(points_max * 0.5, 2)
                     feedback_data = {"ai_feedback": f"AI grading error – partial credit assigned. Error: {str(e)[:100]}"}
 
@@ -2883,7 +2956,14 @@ async def auto_grade_answers(session_id: UUID, db_session):
                 try:
                     for i, tc in enumerate(test_cases):
                         tc_input = tc.get("input", "")
-                        expected_output = tc.get("expected_output", tc.get("output", ""))
+                        # Test cases are stored with key "expected" (QB/seed flow),
+                        # but legacy data may use "expected_output" or "output".
+                        expected_output = (
+                            tc.get("expected")
+                            or tc.get("expected_output")
+                            or tc.get("output")
+                            or ""
+                        )
                         if isinstance(expected_output, str):
                             expected_output = expected_output.strip()
                         else:
@@ -2899,29 +2979,37 @@ import ast
 # Candidate's code
 {code}
 
-# Parse the test input
-try:
-    test_input = ast.literal_eval({repr(tc_input)})
-except:
-    test_input = {repr(tc_input)}
+# Parse test input: newline-separated positional args (LeetCode format)
+# e.g. "[2,7,11,15]\\n9" → args = [[2,7,11,15], 9]
+_raw_input = {repr(tc_input)}
+_lines = [ln for ln in _raw_input.strip().split("\\n") if ln.strip()]
+_args = []
+for _ln in _lines:
+    try:
+        _args.append(ast.literal_eval(_ln))
+    except Exception:
+        _args.append(_ln)
 
-func = locals().get({repr(func_name)})
+func = globals().get({repr(func_name)})
 if func is None:
     print("ERROR:FUNCTION_NOT_FOUND", file=sys.stderr)
     sys.exit(1)
 
-# Call the function - pass input as single argument
 try:
-    result = func(test_input)
-    
+    result = func(*_args) if len(_args) != 1 else func(_args[0])
+
+    _expected_raw = {repr(expected_output)}
     if isinstance(result, (list, dict)):
         result_str = json.dumps(result, sort_keys=True)
-        expected_str = json.dumps(json.loads({repr(expected_output)}), sort_keys=True)
+        try:
+            expected_str = json.dumps(json.loads(_expected_raw), sort_keys=True)
+        except Exception:
+            expected_str = _expected_raw.strip()
         print(result_str)
         sys.exit(0 if result_str == expected_str else 1)
     else:
         result_str = str(result)
-        expected_str = {repr(expected_output)}
+        expected_str = _expected_raw.strip()
         print(result_str)
         sys.exit(0 if result_str == expected_str else 1)
 except Exception as e:
@@ -2947,18 +3035,14 @@ except Exception as e:
 // Candidate's code
 {code}
 
-// Test input
-const test_input_str = {repr(tc_input)};
-let test_input;
-try {{
-    test_input = JSON.parse(test_input_str);
-}} catch (e) {{
-    try {{
-        test_input = eval(test_input_str);
-    }} catch (e2) {{
-        test_input = test_input_str;
+// Parse test input: newline-separated args (LeetCode format)
+const _rawInput = {repr(tc_input)};
+const _lines = _rawInput.trim().split("\\n").filter(l => l.trim());
+const _args = _lines.map(l => {{
+    try {{ return JSON.parse(l); }} catch(e) {{
+        try {{ return eval(l); }} catch(e2) {{ return l; }}
     }}
-}}
+}});
 
 const func = eval({repr(func_name)});
 if (typeof func !== 'function') {{
@@ -2967,18 +3051,12 @@ if (typeof func !== 'function') {{
 }}
 
 try {{
-    let result;
-    if (Array.isArray(test_input)) {{
-        result = func(...test_input);
-    }} else if (typeof test_input === 'object' && test_input !== null) {{
-        result = func({{...test_input}});
-    }} else {{
-        result = func(test_input);
-    }}
-    
+    const result = _args.length === 1 ? func(_args[0]) : func(..._args);
     const resultStr = JSON.stringify(result);
-    const expectedStr = JSON.stringify(JSON.parse({repr(expected_output)}));
-    
+    let expectedStr;
+    try {{ expectedStr = JSON.stringify(JSON.parse({repr(expected_output)})); }}
+    catch(e) {{ expectedStr = {repr(expected_output)}.trim(); }}
+
     console.log(resultStr);
     process.exit(resultStr === expectedStr ? 0 : 1);
 }} catch (e) {{
@@ -3032,13 +3110,28 @@ try {{
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
 
-                ratio = passed / total if total > 0 else 0
+                # Score on hidden tests only; fall back to visible if none exist.
+                hidden_results = [r for r in test_results if test_cases[r["test_case"] - 1].get("is_hidden") or test_cases[r["test_case"] - 1].get("isHidden")]
+                hidden_passed = sum(1 for r in hidden_results if r["passed"])
+                hidden_total = len(hidden_results)
+                visible_results = [r for r in test_results if r not in hidden_results]
+                visible_passed = sum(1 for r in visible_results if r["passed"])
+                visible_total = len(visible_results)
+
+                if hidden_total > 0:
+                    ratio = hidden_passed / hidden_total
+                else:
+                    ratio = visible_passed / visible_total if visible_total > 0 else 0
+
                 points_earned = round(ratio * points_max, 2)
                 feedback_data = {
                     "ai_feedback": f"{passed}/{total} test cases passed.",
                     "test_results": test_results,
                 }
-                logger.info(f"[auto_grade] Coding {answer_id}: {passed}/{total} passed, pts={points_earned}/{points_max}")
+                logger.info(
+                    f"[auto_grade] Coding {answer_id}: {passed}/{total} passed "
+                    f"(hidden {hidden_passed}/{hidden_total}), pts={points_earned}/{points_max}"
+                )
 
         # ── UPDATE the answer row ─────────────────────────────────────
         if points_earned is not None:

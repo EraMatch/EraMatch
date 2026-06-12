@@ -1,7 +1,17 @@
 import React from 'react';
 import { Bot } from 'lucide-react';
 
-export type AgentState = 'speaking' | 'listening' | 'thinking' | 'idle' | undefined;
+export type AgentState =
+    | 'disconnected'
+    | 'connecting'
+    | 'pre-connect-buffering'
+    | 'initializing'
+    | 'idle'
+    | 'listening'
+    | 'thinking'
+    | 'speaking'
+    | 'failed'
+    | undefined;
 
 interface AIAgentOrbProps {
     agentState: AgentState;
@@ -60,7 +70,7 @@ export function AIAgentOrb({ agentState }: AIAgentOrbProps) {
                 className={`relative z-10 flex items-center justify-center w-full h-full rounded-full transition-all duration-700 shadow-xl
                     ${currentState === 'speaking' ? 'bg-gradient-to-tr from-indigo-600 to-indigo-400 shadow-indigo-500/50 scale-105' :
                       currentState === 'listening' ? 'bg-gradient-to-tr from-emerald-500 to-emerald-400 shadow-emerald-500/40 orb-listening' :
-                      currentState === 'thinking' ? 'bg-gradient-to-tr from-gray-400 to-gray-300 shadow-gray-400/20' :
+                      currentState === 'thinking' || currentState === 'failed' ? 'bg-gradient-to-tr from-gray-400 to-gray-300 shadow-gray-400/20' :
                       'bg-gradient-to-tr from-gray-300 to-gray-200 shadow-gray-300/20'}
                 `}
             >

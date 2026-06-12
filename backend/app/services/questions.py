@@ -49,7 +49,7 @@ class QuestionService:
         response_items = []
         # DB Mappings
         diff_map = {1: "Easy", 2: "Medium", 3: "Hard"}
-        type_map = {"mcq": "Multiple Choice", "essay": "Essay", "code": "Code"}
+        type_map = {"mcq": "Multiple Choice", "essay": "Essay", "coding": "Code"}
 
         for qb in questions:
             # Map specific config fields to root response items
@@ -93,6 +93,16 @@ class QuestionService:
                 testCases=config.get("test_cases"),
                 timeLimit=config.get("time_limit"),
                 memoryLimit=config.get("memory_limit"),
+                starterCode=config.get("starter_code"),
+                functionName=config.get("function_name"),
+                inputFormat=config.get("input_format"),
+                outputFormat=config.get("output_format"),
+                examples=config.get("examples"),
+                constraints=config.get("constraints"),
+                topics=config.get("topics"),
+                referenceAnswerCode=(config.get("reference_solution") or (
+                    (qb.correct_answer or {}).get("reference_solution")
+                )),
                 maxWords=config.get("max_words"),
                 expectedKeywords=config.get("expected_keywords"),
                 rubric=config.get("rubric"),
@@ -128,7 +138,7 @@ class QuestionService:
         elif q_type == "Essay":
             q_type = "essay"
         elif q_type == "Code":
-            q_type = "code"
+            q_type = "coding"
 
         config = {}
         correct_answer = None
@@ -150,12 +160,22 @@ class QuestionService:
             config["explanation"] = data.explanation
             if data.correctAnswer is not None:
                 correct_answer = {"answer": data.correctAnswer}
-        elif q_type == "code":
+        elif q_type == "coding":
             config["language"] = data.codeLanguage
             config["code_template"] = data.codeTemplate
             config["test_cases"] = data.testCases
             config["time_limit"] = data.timeLimit
             config["memory_limit"] = data.memoryLimit
+            # NEW
+            config["starter_code"] = data.starterCode
+            config["function_name"] = data.functionName
+            config["input_format"] = data.inputFormat
+            config["output_format"] = data.outputFormat
+            config["examples"] = data.examples
+            config["constraints"] = data.constraints
+            config["topics"] = data.topics
+            if data.referenceAnswerCode:
+                correct_answer = {"reference_solution": data.referenceAnswerCode}
         elif q_type == "essay":
             config["max_words"] = data.maxWords
             config["expected_keywords"] = data.expectedKeywords
@@ -202,6 +222,14 @@ class QuestionService:
             testCases=data.testCases,
             timeLimit=data.timeLimit,
             memoryLimit=data.memoryLimit,
+            starterCode=data.starterCode,
+            functionName=data.functionName,
+            inputFormat=data.inputFormat,
+            outputFormat=data.outputFormat,
+            examples=data.examples,
+            constraints=data.constraints,
+            topics=data.topics,
+            referenceAnswerCode=data.referenceAnswerCode,
             maxWords=data.maxWords,
             expectedKeywords=data.expectedKeywords,
             rubric=data.rubric,
@@ -273,7 +301,117 @@ class QuestionService:
         qb = q.scalars().first()
         if not qb:
             raise NotFoundException("Question not found")
-        
+
         qb.is_deleted = True
         self.session.add(qb)
         await self.session.commit()
+
+    async def generate_variant(self, question_id: UUID) -> QuestionBankResponseItem:
+        """
+        Create a text-only variant of a coding question.
+        Keeps test_cases, starter_code, function_name, constraints identical.
+        Rewrites question_text and examples via LLM.
+        """
+        import json
+        import re as re_mod
+        from pathlib import Path
+        from app.integrations.llm import get_llm
+        from app.core.config import settings
+        from app.core.exceptions import BadRequestException
+
+        result = await self.session.execute(
+            select(QuestionBank).where(
+                QuestionBank.id == question_id,
+                QuestionBank.organization_id == self.org_id,
+                QuestionBank.is_deleted == False,
+            )
+        )
+        original = result.scalar_one_or_none()
+        if not original:
+            raise NotFoundException("Question not found")
+        if original.question_type != "coding":
+            raise BadRequestException("Variant generation only supported for coding questions")
+
+        # Find the prompt template
+        prompt_path = (
+            Path(__file__).parent.parent.parent.parent.parent
+            / "ai-service" / "prompts" / "llm" / "coding_variant.md"
+        )
+        if prompt_path.exists():
+            template = prompt_path.read_text(encoding="utf-8")
+        else:
+            template = (
+                "Rewrite this coding question in a different real-world domain framing, "
+                "keeping the same algorithm and test cases. "
+                "Original: {{ORIGINAL_QUESTION_TEXT}}\nExamples: {{ORIGINAL_EXAMPLES_JSON}}\n"
+                "Return JSON with questionText and examples."
+            )
+
+        orig_config = original.question_config or {}
+        orig_examples = orig_config.get("examples", [])
+        prompt = template.replace("{{ORIGINAL_QUESTION_TEXT}}", original.question_text)
+        prompt = prompt.replace("{{ORIGINAL_EXAMPLES_JSON}}", json.dumps(orig_examples, ensure_ascii=False))
+
+        provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+        model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
+        llm = get_llm(provider, model=model)
+        response = await llm.ainvoke(prompt)
+        content = getattr(response, "content", "")
+
+        json_match = re_mod.search(r'\{.*\}', content, re_mod.DOTALL)
+        llm_payload = {}
+        if json_match:
+            try:
+                llm_payload = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+
+        variant_text = llm_payload.get("questionText") or f"[Variant] {original.question_text[:100]}"
+        variant_examples = llm_payload.get("examples") or orig_examples
+
+        new_config = {**orig_config, "examples": variant_examples}
+
+        variant = QuestionBank(
+            organization_id=self.org_id,
+            question_type="coding",
+            question_text=variant_text,
+            question_config=new_config,
+            correct_answer=original.correct_answer,
+            category=original.category,
+            difficulty=original.difficulty,
+            tags=original.tags,
+            points=original.points,
+            created_by_user_id=self.user.id,
+            is_base_question=False,
+            parent_question_id=original.id,
+            source=original.source,
+            is_deleted=False,
+        )
+        self.session.add(variant)
+        await self.session.commit()
+        await self.session.refresh(variant)
+
+        diff_map = {1: "Easy", 2: "Medium", 3: "Hard"}
+        cfg = variant.question_config or {}
+        return QuestionBankResponseItem(
+            id=variant.id,
+            text=variant.question_text,
+            category=variant.category or "Uncategorized",
+            difficulty=diff_map.get(variant.difficulty, "Medium"),
+            type="Code",
+            tags=variant.tags or [],
+            usageCount=0,
+            avgScore=0,
+            createdAt=variant.created_at.strftime("%Y-%m-%d"),
+            createdBy="You",
+            isFavorite=False,
+            starterCode=cfg.get("starter_code"),
+            functionName=cfg.get("function_name"),
+            inputFormat=cfg.get("input_format"),
+            outputFormat=cfg.get("output_format"),
+            examples=cfg.get("examples"),
+            constraints=cfg.get("constraints"),
+            topics=cfg.get("topics"),
+            testCases=cfg.get("test_cases"),
+            timeLimit=cfg.get("time_limit"),
+        )

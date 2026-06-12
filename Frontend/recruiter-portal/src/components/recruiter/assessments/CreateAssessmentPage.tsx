@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Sparkles, Trash2, Plus, ChevronLeft, X, Edit2, Loader2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../services/api';
@@ -30,7 +30,7 @@ export function CreateAssessmentPage({
   const [title, setTitle] = useState(initialTitle || 'Technical Assessment');
   const [showAddQuestion, setShowAddQuestion] = useState(false);
 
-  const { data: templates = [], isLoading } = useQuery({
+  const { data: templates = [], isLoading } = useQuery<any[]>({
     queryKey: queryKeys.assessments.templates(),
     queryFn: () => api.recruiter.getAssessmentTemplates(),
     staleTime: 10 * 60 * 1000,
@@ -48,6 +48,7 @@ export function CreateAssessmentPage({
   const [editQuestionText, setEditQuestionText] = useState('');
   const [editQuestionOptions, setEditQuestionOptions] = useState<string[]>([]);
   const [enhancingQuestionId, setEnhancingQuestionId] = useState<string | null>(null);
+  const [enhancingField, setEnhancingField] = useState<'title' | 'newQuestion' | null>(null);
 
   // Sync fetched templates into questions state (only when not using initialQuestions)
   useEffect(() => {
@@ -93,6 +94,26 @@ export function CreateAssessmentPage({
       console.error('Failed to enhance question with AI:', error);
     } finally {
       setEnhancingQuestionId(null);
+    }
+  };
+
+  const handleEnhanceField = async (
+    field: 'title' | 'newQuestion',
+    value: string,
+    apply: (next: string) => void,
+  ) => {
+    if (!value.trim()) return;
+    setEnhancingField(field);
+    try {
+      const response = await recruiterService.enhanceText(value, {
+        useCase: field === 'title' ? 'assessment_question' : 'assessment_essay_question',
+        metadata: { field, question_type: newQuestionType },
+      });
+      apply((response?.enhancedText || value).trim() || value);
+    } catch (error) {
+      console.error('Failed to enhance text with AI:', error);
+    } finally {
+      setEnhancingField(null);
     }
   };
 
@@ -207,9 +228,20 @@ export function CreateAssessmentPage({
         </h1>
 
         <div>
-          <label className="font-['Arimo',sans-serif] text-[14px] text-black mb-2 block">
-            Assessment Title
-          </label>
+          <div className="flex items-center justify-between mb-2">
+            <label className="font-['Arimo',sans-serif] text-[14px] text-black block">
+              Assessment Title
+            </label>
+            <button
+              type="button"
+              onClick={() => void handleEnhanceField('title', title, setTitle)}
+              disabled={!title.trim() || enhancingField === 'title'}
+              className="inline-flex items-center gap-1.5 text-[12px] text-[#6366f1] hover:text-[#4f46e5] disabled:opacity-50"
+            >
+              {enhancingField === 'title' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              Fix text
+            </button>
+          </div>
           <input
             type="text"
             value={title}
@@ -261,9 +293,20 @@ export function CreateAssessmentPage({
               </div>
 
               <div className="mb-4">
-                <label className="font-['Arimo',sans-serif] text-[14px] text-black mb-2 block">
-                  Question
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="font-['Arimo',sans-serif] text-[14px] text-black block">
+                    Question
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void handleEnhanceField('newQuestion', newQuestionText, setNewQuestionText)}
+                    disabled={!newQuestionText.trim() || enhancingField === 'newQuestion'}
+                    className="inline-flex items-center gap-1.5 text-[12px] text-[#6366f1] hover:text-[#4f46e5] disabled:opacity-50"
+                  >
+                    {enhancingField === 'newQuestion' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                    Fix text
+                  </button>
+                </div>
                 <textarea
                   value={newQuestionText}
                   onChange={(e) => setNewQuestionText(e.target.value)}
@@ -402,7 +445,7 @@ export function CreateAssessmentPage({
                         onClick={() => void handleEnhanceQuestion(question.id, 'draft')}
                         disabled={enhancingQuestionId === question.id}
                         className="flex items-center gap-2 h-[36px] px-[16px] rounded-[8px] border border-[#6366f1] bg-white hover:bg-[#f9fafb] transition-colors disabled:opacity-60"
-                        title="Enhance with AI"
+                        title="Fix text with AI"
                       >
                         {enhancingQuestionId === question.id ? (
                           <Loader2 size={16} className="text-[#6366f1] animate-spin" />
@@ -410,7 +453,7 @@ export function CreateAssessmentPage({
                           <Sparkles size={16} className="text-[#6366f1]" />
                         )}
                         <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
-                          Enhance
+                          Fix text
                         </span>
                       </button>
                     </div>
@@ -437,7 +480,7 @@ export function CreateAssessmentPage({
                           onClick={() => void handleEnhanceQuestion(question.id)}
                           disabled={enhancingQuestionId === question.id}
                           className="flex items-center justify-center w-[36px] h-[36px] rounded-[6px] hover:bg-white transition-colors disabled:opacity-60"
-                          title="Enhance with AI"
+                          title="Fix text with AI"
                         >
                           {enhancingQuestionId === question.id ? (
                             <Loader2 size={18} className="text-[#6366f1] animate-spin" />

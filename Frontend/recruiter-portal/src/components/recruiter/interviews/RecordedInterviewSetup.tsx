@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { ChevronLeft, Mic } from 'lucide-react';
+import { ChevronLeft, Loader2, Mic, Sparkles } from 'lucide-react';
+import { recruiterService } from '../../../services/recruiter.service';
+import { toast } from 'sonner';
 
 interface RecordedInterviewSetupProps {
     groupName: string;
@@ -18,6 +20,33 @@ export function RecordedInterviewSetup({ groupName, activeFlow, onBack, onSetupQ
     const [maxRetakes, setMaxRetakes] = useState(initialData?.max_retakes || 0);
     const [showAIFeedback, setShowAIFeedback] = useState(initialData?.show_ai_feedback !== false);
     const [recordingRequired, setRecordingRequired] = useState(initialData?.recording_required !== false);
+    const [enhancingField, setEnhancingField] = useState<'title' | 'systemPrompt' | 'description' | null>(null);
+
+    const enhanceField = async (
+        field: 'title' | 'systemPrompt' | 'description',
+        value: string,
+        apply: (next: string) => void,
+    ) => {
+        if (!value.trim()) return;
+        setEnhancingField(field);
+        try {
+            const response = await recruiterService.enhanceText(value, {
+                useCase: field === 'title'
+                    ? 'recorded_interview_title'
+                    : field === 'systemPrompt'
+                        ? 'recorded_interview_instructions'
+                        : 'recorded_interview_description',
+                metadata: { group_name: groupName },
+            });
+            apply((response?.enhancedText || value).trim() || value);
+            toast.success('Text fixed');
+        } catch (error) {
+            console.error('Failed to enhance text:', error);
+            toast.error('Failed to fix text');
+        } finally {
+            setEnhancingField(null);
+        }
+    };
 
     return (
         <div className="h-full w-full overflow-auto bg-[#f9fafb]">
@@ -43,7 +72,18 @@ export function RecordedInterviewSetup({ groupName, activeFlow, onBack, onSetupQ
                     <div className="space-y-6">
                         {/* Interview Title */}
                         <div>
-                            <label className="block text-[12px] font-medium text-[#374151] mb-1.5">Interview Title *</label>
+                            <div className="flex items-center justify-between mb-1.5">
+                                <label className="block text-[12px] font-medium text-[#374151]">Interview Title *</label>
+                                <button
+                                    type="button"
+                                    onClick={() => void enhanceField('title', title, setTitle)}
+                                    disabled={!title.trim() || enhancingField === 'title'}
+                                    className="inline-flex items-center gap-1.5 text-[12px] text-[#10b981] hover:text-[#059669] disabled:opacity-50"
+                                >
+                                    {enhancingField === 'title' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                    Fix text
+                                </button>
+                            </div>
                             <input
                                 type="text"
                                 value={title}
@@ -55,7 +95,18 @@ export function RecordedInterviewSetup({ groupName, activeFlow, onBack, onSetupQ
 
                         {/* System Prompt */}
                         <div>
-                            <label className="block text-[12px] font-medium text-[#374151] mb-1.5">System Prompt (Optional LLM Judge Instructions)</label>
+                            <div className="flex items-center justify-between mb-1.5">
+                                <label className="block text-[12px] font-medium text-[#374151]">System Prompt (Optional LLM Judge Instructions)</label>
+                                <button
+                                    type="button"
+                                    onClick={() => void enhanceField('systemPrompt', systemPrompt, setSystemPrompt)}
+                                    disabled={!systemPrompt.trim() || enhancingField === 'systemPrompt'}
+                                    className="inline-flex items-center gap-1.5 text-[12px] text-[#10b981] hover:text-[#059669] disabled:opacity-50"
+                                >
+                                    {enhancingField === 'systemPrompt' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                    Fix text
+                                </button>
+                            </div>
                             <textarea
                                 value={systemPrompt}
                                 onChange={e => setSystemPrompt(e.target.value)}
@@ -67,7 +118,18 @@ export function RecordedInterviewSetup({ groupName, activeFlow, onBack, onSetupQ
 
                         {/* Description */}
                         <div>
-                            <label className="block text-[12px] font-medium text-[#374151] mb-1.5">Description</label>
+                            <div className="flex items-center justify-between mb-1.5">
+                                <label className="block text-[12px] font-medium text-[#374151]">Description</label>
+                                <button
+                                    type="button"
+                                    onClick={() => void enhanceField('description', description, setDescription)}
+                                    disabled={!description.trim() || enhancingField === 'description'}
+                                    className="inline-flex items-center gap-1.5 text-[12px] text-[#10b981] hover:text-[#059669] disabled:opacity-50"
+                                >
+                                    {enhancingField === 'description' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                    Fix text
+                                </button>
+                            </div>
                             <textarea
                                 value={description}
                                 onChange={e => setDescription(e.target.value)}

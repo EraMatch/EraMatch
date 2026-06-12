@@ -51,6 +51,7 @@ class PipelineStage(BaseModel):
     total: int = 0
     pending: int = 0
     state: str = "not-started"
+    has_config: bool = False   # True when this stage has an assessment/interview config assigned
     start_date: datetime | None = None
     expected_end_date: datetime | None = None
     actual_end_date: datetime | None = None
@@ -131,6 +132,11 @@ class GroupDetailResponse(BaseModel):
     position_id: UUID
     project_id: UUID
     organization_id: UUID
+    position_title: str | None = None
+    job_description: str | None = None
+    required_skills: list = Field(default_factory=list)
+    experience_level: str | None = None
+    years_of_experience: int | None = None
     assigned_hr: AssignedHRResponse | None = None
     created_date: datetime
     status: str
@@ -286,6 +292,13 @@ class MonitoringFlag(BaseModel):
     severity: str
 
 
+class IntegritySummary(BaseModel):
+    clean: int = 0
+    monitoring: int = 0
+    suspicious_review: int = 0
+    confirmed_cheating: int = 0
+
+
 class AssessmentMonitoringCandidate(BaseModel):
     application_id: UUID
     candidate_id: UUID
@@ -294,6 +307,19 @@ class AssessmentMonitoringCandidate(BaseModel):
     score: float | None = None
     meets_criteria: bool = False
     verdict: str = "pending"
+    integrity_verdict: str = "clean"  # clean | monitoring | suspicious_review | confirmed_cheating
+    # Per-stage optional signals (None for stages that don't supply them)
+    ai_recommendation: str | None = None       # ai_interview only: pass | borderline | fail | None
+    retakes_used: int | None = None            # ai_interview only
+    auto_verdict: str | None = None            # live_interview only: pass | fail | None
+    overall_score_pct: float | None = None     # live_interview only (0–100)
+    # Session backing this candidate's stage attempt (assessment/interview/live session id)
+    session_id: UUID | None = None
+    # Per-type breakdown for quick-filters. Keys differ by stage:
+    #   assessment    -> {"mcq": 82.0, "coding": 60.0, "essay": 74.0}
+    #   ai_interview  -> {"technical": 80.0, "communication": 70.0, "confidence": 65.0}
+    #   live_interview-> {"<dimension name>": 0-100, ...}
+    sub_scores: dict[str, float] | None = None
     flags: list[MonitoringFlag] = []
     completion_time: datetime | None = None
 
@@ -305,6 +331,7 @@ class AssessmentMonitoringResponse(BaseModel):
     flagged: int = 0
     avg_score: float = 0.0
     pass_threshold: float = 70.0
+    integrity_summary: IntegritySummary = IntegritySummary()
     candidates: list[AssessmentMonitoringCandidate] = []
 
 

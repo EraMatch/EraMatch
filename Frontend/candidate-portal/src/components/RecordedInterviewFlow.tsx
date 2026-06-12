@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Sparkles, Video, Clock, User, Camera, Mic, Play, Square, Info, Scan, CheckCircle2, Target, Copy, X, AlertTriangle, Users, Loader2, RefreshCw } from 'lucide-react';
-import logo from '../imports/image-eramatch.png';
+import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload } from '../utils/proctoringPayload';
 import { queryKeys } from '../lib/queryKeys';
@@ -102,8 +102,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   const lastFrameDimensionsRef = useRef<{ width: number; height: number } | null>(null);
   const analysisAudioContextRef = useRef<AudioContext | null>(null);
   const analysisAudioAnalyserRef = useRef<AnalyserNode | null>(null);
-  const analysisAudioBufferRef = useRef<Float32Array | null>(null);
-  const latestAudioFrameRef = useRef<Float32Array | null>(null);
+  const analysisAudioBufferRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const latestAudioFrameRef = useRef<Float32Array<ArrayBuffer> | null>(null);
   const silentSamplesRef = useRef(0);
   const totalAudioSamplesRef = useRef(0);
   const sampleWindowStartRef = useRef(Date.now());
@@ -359,15 +359,15 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
       source.connect(analyser);
       analysisAudioContextRef.current = ctx;
       analysisAudioAnalyserRef.current = analyser;
-      analysisAudioBufferRef.current = new Float32Array(analyser.fftSize);
+      analysisAudioBufferRef.current = new Float32Array(analyser.fftSize) as Float32Array<ArrayBuffer>;
     }
 
     const analyser = analysisAudioAnalyserRef.current;
     const buffer = analysisAudioBufferRef.current;
     if (!analyser || !buffer) return 0;
 
-    analyser.getFloatTimeDomainData(buffer as unknown as Float32Array<ArrayBufferLike>);
-    latestAudioFrameRef.current = new Float32Array(buffer);
+    analyser.getFloatTimeDomainData(buffer);
+    latestAudioFrameRef.current = new Float32Array(buffer) as Float32Array<ArrayBuffer>;
 
     let sum = 0;
     for (let i = 0; i < buffer.length; i += 1) {
@@ -2304,7 +2304,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
           <header className="px-12 py-6">
             <div className="flex items-center justify-between">
               <div>
-                <img src={logo} alt="ERAMATCH - A Smarter Recruitment System" className="h-12" />
+                <Logo size="md" />
               </div>
               <div>
                 <Button

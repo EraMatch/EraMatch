@@ -1,8 +1,8 @@
 import { Bell, CheckCircle2, Clock, FileText, Video, Calendar, ArrowRight, AlertCircle, Wrench, Loader2, Lock } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
-import logo from '../imports/image-eramatch.png';
+import { Logo } from './ui/Logo';
 import { useCandidateHome } from '../hooks/candidate/useCandidateHome';
 
 interface CandidateHomePageProps {
@@ -55,10 +55,15 @@ export function CandidateHomePage({
   const navigate = useNavigate();
   const { data: rawHomeData, isLoading } = useCandidateHome();
   const homeData = rawHomeData as HomeData | null ?? null;
-  const notifications: Notification[] = (homeData?.notifications || []).map((n: any) => ({
+  const remoteNotifications: Notification[] = (homeData?.notifications || []).map((n: any) => ({
     ...n,
     type: n.type as 'success' | 'info' | 'warning',
   }));
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  useEffect(() => {
+    setNotifications(remoteNotifications);
+  }, [rawHomeData]);
 
   if (isLoading) {
     return (
@@ -117,11 +122,7 @@ export function CandidateHomePage({
       <div className="bg-white border-b border-[#e5e7eb]">
         <div className="max-w-[1200px] mx-auto px-[48px] py-[20px] flex items-center justify-between">
           <div className="flex items-center gap-[12px]">
-            <img
-              src={logo}
-              alt="ERAMATCH - A Smarter Recruitment System"
-              className="h-[40px] w-[201.188px] object-cover"
-            />
+            <Logo size={40} />
           </div>
 
           {/* Notifications Bell */}
