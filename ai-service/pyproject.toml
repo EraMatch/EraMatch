@@ -5,7 +5,7 @@ description = "EraMatch AI Service for transcription and LLM evaluation"
 authors = [
     { name = "Anas Ahmed" }
 ]
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     # Web framework
     "fastapi>=0.109.0",
