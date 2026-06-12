@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Clock, Award, TrendingUp, MessageSquare, RefreshCw, MinusCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, AlertCircle, Clock, Award, TrendingUp, MessageSquare, RefreshCw, MinusCircle, Activity } from 'lucide-react';
 import { fetchAPI } from '../../../services/client';
 
 interface Anchor {
@@ -70,6 +70,16 @@ interface Evaluation {
     };
     evaluation_confidence: 'high' | 'medium' | 'low';
     judged_at: string;
+    behavioral_analysis?: BehavioralAnalysis;
+}
+
+interface EmotionPoint { t_pct: number; emotion: string; intensity: number; }
+interface BehavioralAnalysis {
+    traits: { confidence: number; engagement: number; clarity: number; composure: number; positivity: number; };
+    speech: { wpm: number; filler_rate_per_min: number; talk_listen_ratio: number; avg_pause_s: number; };
+    attention: { eye_contact_pct: number; off_screen_events: number; };
+    emotion_timeline: EmotionPoint[];
+    summary: string;
 }
 
 interface TranscriptTurn {
@@ -339,6 +349,140 @@ function TranscriptAccordion({ turns }: { turns: TranscriptTurn[] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Behavioral Analysis (mock preview)
+// ---------------------------------------------------------------------------
+
+// Contract for future backend: behavioral_analysis will be included in
+// GET /live-interview-v2/session/{id} response once proctoring pipeline connects.
+const MOCK_BEHAVIORAL: BehavioralAnalysis = {
+    traits: { confidence: 74, engagement: 82, clarity: 68, composure: 71, positivity: 65 },
+    speech: { wpm: 148, filler_rate_per_min: 2.3, talk_listen_ratio: 0.72, avg_pause_s: 1.4 },
+    attention: { eye_contact_pct: 78, off_screen_events: 3 },
+    emotion_timeline: [
+        { t_pct: 0,  emotion: 'neutral',   intensity: 0.5 },
+        { t_pct: 15, emotion: 'engaged',   intensity: 0.8 },
+        { t_pct: 30, emotion: 'confident', intensity: 0.7 },
+        { t_pct: 45, emotion: 'nervous',   intensity: 0.6 },
+        { t_pct: 60, emotion: 'neutral',   intensity: 0.5 },
+        { t_pct: 75, emotion: 'confident', intensity: 0.9 },
+        { t_pct: 90, emotion: 'positive',  intensity: 0.8 },
+    ],
+    summary: 'Candidate showed strong engagement throughout, with brief nervousness mid-interview that resolved. Communication was clear and purposeful.',
+};
+
+const EMOTION_COLOR: Record<string, string> = {
+    confident: '#10b981',
+    positive:  '#22c55e',
+    engaged:   '#3b82f6',
+    neutral:   '#94a3b8',
+    nervous:   '#f59e0b',
+    anxious:   '#f97316',
+    stressed:  '#ef4444',
+};
+
+function TraitBar({ label, value }: { label: string; value: number }) {
+    const color = value >= 70 ? 'bg-emerald-500' : value >= 50 ? 'bg-blue-500' : 'bg-amber-500';
+    return (
+        <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-600 w-20 shrink-0 capitalize">{label}</span>
+            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div className={`h-full rounded-full ${color} transition-all duration-500`} style={{ width: `${value}%` }} />
+            </div>
+            <span className="text-xs font-semibold text-gray-700 w-8 text-right">{value}</span>
+        </div>
+    );
+}
+
+function EmotionTimeline({ points }: { points: EmotionPoint[] }) {
+    const sorted = [...points].sort((a, b) => a.t_pct - b.t_pct);
+    return (
+        <div className="relative h-5 w-full rounded-full overflow-hidden flex" role="img" aria-label="Emotion timeline">
+            {sorted.map((pt, i) => {
+                const nextPct = sorted[i + 1]?.t_pct ?? 100;
+                const width = nextPct - pt.t_pct;
+                const color = EMOTION_COLOR[pt.emotion] || '#94a3b8';
+                return (
+                    <div
+                        key={i}
+                        style={{ width: `${width}%`, backgroundColor: color, opacity: 0.7 + pt.intensity * 0.3 }}
+                        className="relative group"
+                        title={`${pt.emotion} (${Math.round(pt.intensity * 100)}%)`}
+                    />
+                );
+            })}
+        </div>
+    );
+}
+
+function BehavioralAnalysisSection({ data }: { data: BehavioralAnalysis }) {
+    const [open, setOpen] = useState(true);
+    return (
+        <div className="border border-amber-200 rounded-xl overflow-hidden bg-white">
+            <button
+                className="w-full flex items-center justify-between px-5 py-4 hover:bg-amber-50/50 transition-colors"
+                onClick={() => setOpen(v => !v)}
+            >
+                <div className="flex items-center gap-3">
+                    <Activity className="w-4 h-4 text-amber-600" />
+                    <span className="text-sm font-semibold text-gray-700">Behavioral Analysis</span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300">
+                        Preview — mock data
+                    </span>
+                </div>
+                {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+            </button>
+
+            {open && (
+                <div className="border-t border-amber-100 bg-gray-50/50 px-5 py-5 space-y-6">
+                    <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Behavioral Traits</p>
+                        <div className="space-y-2.5">
+                            {(Object.entries(data.traits) as [string, number][]).map(([trait, val]) => (
+                                <TraitBar key={trait} label={trait} value={val} />
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        {([
+                            { label: 'WPM',          value: data.speech.wpm },
+                            { label: 'Fillers/min',  value: data.speech.filler_rate_per_min.toFixed(1) },
+                            { label: 'Talk ratio',   value: `${Math.round(data.speech.talk_listen_ratio * 100)}%` },
+                            { label: 'Avg pause',    value: `${data.speech.avg_pause_s}s` },
+                            { label: 'Eye contact',  value: `${data.attention.eye_contact_pct}%` },
+                            { label: 'Off-screen',   value: data.attention.off_screen_events },
+                        ] as { label: string; value: string | number }[]).map(stat => (
+                            <div key={stat.label} className="bg-white rounded-lg border border-gray-200 px-3 py-2.5 text-center">
+                                <p className="text-xs text-gray-400 mb-0.5">{stat.label}</p>
+                                <p className="text-sm font-bold text-gray-800">{stat.value}</p>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Emotion Timeline</p>
+                        <EmotionTimeline points={data.emotion_timeline} />
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
+                            {Object.entries(EMOTION_COLOR).map(([emotion, color]) => (
+                                <div key={emotion} className="flex items-center gap-1">
+                                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                                    <span className="text-[10px] text-gray-500 capitalize">{emotion}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Summary</p>
+                        <p className="text-sm text-gray-700">{data.summary}</p>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResultsProps) {
@@ -575,6 +719,9 @@ export function LiveInterviewResults({ sessionId, onClose }: LiveInterviewResult
                                         </div>
                                     </div>
                                 )}
+
+                                {/* Behavioral Analysis */}
+                                <BehavioralAnalysisSection data={ev.behavioral_analysis ?? MOCK_BEHAVIORAL} />
 
                                 {/* Auto-tags */}
                                 {ev.auto_tags && Object.keys(ev.auto_tags).length > 0 && (

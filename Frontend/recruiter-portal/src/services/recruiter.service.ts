@@ -246,6 +246,9 @@ export const recruiterService = {
 
     getGroupOverviewV2: async (groupId: string) => fetchAPI(`/recruiter/groups/${groupId}`),
 
+    getStageMonitoring: async (groupId: string, stage: string) =>
+        fetchAPI<any>(`/recruiter/groups/${groupId}/stages/${stage}/monitoring`),
+
     getGroupCreationConfig: async () => fetchAPI('/groups/config/creation'),
 
     // Pipeline & Modules
@@ -274,7 +277,7 @@ export const recruiterService = {
 
     getAssessmentDetails: async (candidateId: number) => fetchAPI(`/candidates/${candidateId}/assessment-details`),
 
-    getAssessmentTemplates: async () => fetchAPI('/assessments/templates'),
+    getAssessmentTemplates: async () => fetchAPI<any[]>('/assessments/templates'),
 
     getAssessmentSession: async (sessionId: string) => fetchAPI(`/assessments/sessions/${sessionId}`),
 
@@ -290,7 +293,7 @@ export const recruiterService = {
     getQuestionBank: async () => fetchAPI('/questions/bank'),
 
     createQuestionBank: async (data: any) => {
-        return fetchAPI('/questions/bank', {
+        return fetchAPI<any>('/questions/bank', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -300,6 +303,9 @@ export const recruiterService = {
     toggleQuestionFavorite: async (questionId: string) => fetchAPI(`/questions/bank/${questionId}/favorite`, { method: 'POST' }),
 
     deleteQuestionBank: async (questionId: string) => fetchAPI(`/questions/bank/${questionId}`, { method: 'DELETE' }),
+
+    generateQuestionVariant: async (questionId: string) =>
+        fetchAPI<any>(`/questions/bank/${questionId}/variant`, { method: 'POST' }),
 
     getQuestionBankVariants: async (type: string) => fetchAPI(`/questions/variants?type=${type}`),
 
@@ -311,9 +317,9 @@ export const recruiterService = {
     },
 
     // Interview Management
-    getAIInterviewResult: async (candidateId: number) => fetchAPI(`/candidates/${candidateId}/ai-interview-result`),
+    getAIInterviewResult: async (candidateId: number | string) => fetchAPI(`/candidates/${candidateId}/ai-interview-result`),
 
-    getAIInterviewConfig: async (interviewId: string) => fetchAPI(`/interviews/${interviewId}/config`),
+    getAIInterviewConfig: async (interviewId: string) => fetchAPI<any>(`/interviews/${interviewId}/config`),
 
     getLiveInterviewQuestions: async (interviewId: string) => fetchAPI(`/interviews/${interviewId}/questions`),
 
@@ -323,7 +329,7 @@ export const recruiterService = {
     getAssignedRequests: async () => fetchAPI<any[]>('/recruiter/requests/assigned'),
 
     reviewRequest: async (requestId: string, status: 'approved' | 'rejected', reviewNotes?: string) => {
-        return fetchAPI(`/recruiter/requests/${requestId}/review`, {
+        return fetchAPI<any>(`/recruiter/requests/${requestId}/review`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status, review_notes: reviewNotes })
@@ -344,6 +350,12 @@ export const recruiterService = {
 
     approvePositionHDEvalQAG: async (positionId: string) => {
         return fetchAPI<any>(`/recruiter/positions/${positionId}/hdeval-qag/approve`, {
+            method: 'POST'
+        });
+    },
+
+    regeneratePositionHDEvalQAG: async (positionId: string) => {
+        return fetchAPI<any>(`/recruiter/positions/${positionId}/hdeval-qag/regenerate`, {
             method: 'POST'
         });
     },
@@ -374,10 +386,12 @@ export const recruiterService = {
     },
 
     // Candidate Import & Group Creation
-    uploadZipCandidates: async (positionId: string, file: File) => {
+    uploadZipCandidates: async (positionId: string, files: File[]) => {
         const formData = new FormData();
         formData.append('position_id', positionId);
-        formData.append('file', file);
+        files.forEach(file => {
+            formData.append('files', file);
+        });
 
         const token = localStorage.getItem('token');
         const res = await fetch(`${API_URL}/ingestion/zip`, {
@@ -556,6 +570,7 @@ export const recruiterService = {
     bulkProgressCandidates: async (groupId: string, data: {
         application_ids: string[];
         action: 'progress' | 'reject' | 'hold';
+        current_stage_type?: string;
         reason?: string;
     }) => {
         return fetchAPI<any>(`/recruiter/groups/${groupId}/candidates/bulk-progress`, {
@@ -693,6 +708,71 @@ export const recruiterService = {
                 question_text: questionText,
                 use_case: options?.useCase || '',
                 metadata: options?.metadata || undefined,
+            })
+        });
+    },
+
+    enhanceText: async (
+        text: string,
+        options?: { useCase?: string; metadata?: Record<string, any> }
+    ) => {
+        return fetchAPI<{ enhancedText: string }>('/recruiter/ai/enhance-text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text,
+                use_case: options?.useCase || '',
+                metadata: options?.metadata || undefined,
+            })
+        });
+    },
+
+    suggestQuestionRubric: async (
+        questionText: string,
+        options?: {
+            referenceAnswer?: string;
+            context?: {
+                position_title?: string;
+                job_description?: string;
+                group_name?: string;
+                experience_level?: string;
+            };
+        }
+    ) => {
+        return fetchAPI<{ rubric_checks: Array<{ id: number; check: string; weight: number }> }>(
+            '/recruiter/ai/suggest-question-rubric',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    question_text: questionText,
+                    reference_answer: options?.referenceAnswer || undefined,
+                    context: options?.context || undefined,
+                }),
+            }
+        );
+    },
+
+    suggestJDEnrichment: async (data: {
+        job_title?: string;
+        gaps_and_roles: string;
+        required_skills?: string[];
+    }) => {
+        return fetchAPI<{
+            suggested_job_title: string;
+            suggested_job_description: string;
+            suggested_skills: string[];
+            suggested_experience_level: string;
+            suggested_years_of_experience: number;
+            suggested_education_level: string;
+            suggested_traits: string[];
+        }>('/recruiter/ai/suggest-jd-enrichment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                job_title: data.job_title,
+                gaps_and_roles: data.gaps_and_roles,
+                required_skills: data.required_skills,
             })
         });
     },

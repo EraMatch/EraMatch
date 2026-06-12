@@ -36,8 +36,9 @@ def candidate_token():
     Fails the entire session immediately if login fails.
     """
     with httpx.Client(base_url=BASE_URL, timeout=30.0) as client:
+        # Candidate login uses 'username' field (not 'email') — matches frontend auth.service.ts
         resp = client.post("/candidate/login", json={
-            "email": CANDIDATE_EMAIL,
+            "username": CANDIDATE_EMAIL,
             "password": CANDIDATE_PASSWORD
         })
         assert resp.status_code == 200, (

@@ -7,6 +7,8 @@ export function useGroupDetail(groupId: string | undefined) {
         queryKey: queryKeys.groups.detail(groupId ?? ''),
         queryFn: () => api.recruiter.getGroupDetails(groupId!),
         enabled: !!groupId,
+        staleTime: 30 * 1000,
+        refetchOnWindowFocus: false,
     })
 }
 
@@ -90,6 +92,16 @@ export function usePreviewBulkProgress() {
     return useMutation({
         mutationFn: ({ groupId, payload }: { groupId: string; payload: any }) =>
             api.recruiter.previewBulkProgress(groupId, payload),
+    })
+}
+
+export function useStageMonitoring(groupId: string | undefined, stage: string | undefined) {
+    return useQuery({
+        queryKey: queryKeys.groups.stageMonitoring(groupId ?? '', stage ?? ''),
+        queryFn: () => api.recruiter.getStageMonitoring(groupId!, stage!),
+        enabled: !!groupId && !!stage,
+        staleTime: 6 * 1000,
+        refetchOnWindowFocus: false,
     })
 }
 

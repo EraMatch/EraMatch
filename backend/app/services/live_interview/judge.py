@@ -36,11 +36,14 @@ from app.models import (
     GroupStageConfig,
 )
 from app.integrations.llm import get_llm
+from app.core.config import settings
 
 logger = logging.getLogger("eramatch.live_interview.judge")
 
-_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "gemini-2.5-flash-lite")
-_FALLBACK_JUDGE_MODEL = os.getenv("FALLBACK_JUDGE_MODEL", "gemma3:4b-cloud")
+_JUDGE_PROVIDER = settings.JUDGE_PRIMARY_PROVIDER or "ollama"
+_JUDGE_MODEL = settings.JUDGE_PRIMARY_MODEL or os.getenv("JUDGE_MODEL", "gemma3:12b-cloud")
+_FALLBACK_JUDGE_PROVIDER = settings.JUDGE_SECONDARY_PROVIDER or "ollama"
+_FALLBACK_JUDGE_MODEL = settings.FALLBACK_JUDGE_MODEL or os.getenv("FALLBACK_JUDGE_MODEL", "gemma3:4b-cloud")
 
 
 # =============================================================================
@@ -529,8 +532,8 @@ async def _execute_pipeline(db, session_id: str):
             session_id,
         )
 
-    llm = get_llm("gemini", model=_JUDGE_MODEL, temperature=0.1)
-    fallback_llm = get_llm("ollama", model=_FALLBACK_JUDGE_MODEL, temperature=0.1)
+    llm = get_llm(_JUDGE_PROVIDER, model=_JUDGE_MODEL, temperature=0.1)
+    fallback_llm = get_llm(_FALLBACK_JUDGE_PROVIDER, model=_FALLBACK_JUDGE_MODEL, temperature=0.1)
 
     transcript_text = _format_transcript(transcript)
 

@@ -28,6 +28,15 @@ class QuestionBankCreateRequest(BaseModel):
     testCases: list[dict] | None = None
     timeLimit: int | None = None
     memoryLimit: int | None = None
+    # NEW coding fields
+    starterCode: str | None = None
+    functionName: str | None = None
+    inputFormat: str | None = None
+    outputFormat: str | None = None
+    examples: list[dict] | None = None       # [{input, output, explanation}]
+    constraints: list[str] | None = None
+    topics: list[str] | None = None
+    referenceAnswerCode: str | None = None   # complete correct Python solution
     # Essay
     maxWords: int | None = None
     expectedKeywords: list[str] | None = None
@@ -67,6 +76,15 @@ class QuestionBankResponseItem(BaseModel):
     testCases: list[dict] | None = None
     timeLimit: int | None = None
     memoryLimit: int | None = None
+    # NEW coding fields
+    starterCode: str | None = None
+    functionName: str | None = None
+    inputFormat: str | None = None
+    outputFormat: str | None = None
+    examples: list[dict] | None = None
+    constraints: list[str] | None = None
+    topics: list[str] | None = None
+    referenceAnswerCode: str | None = None
     # Essay specific
     maxWords: int | None = None
     expectedKeywords: list[str] | None = None

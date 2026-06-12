@@ -266,17 +266,21 @@ echo "   PID: $CANDIDATE_PID → $LOG_DIR/candidate.log"
 # ── 6. CELERY WORKERS ─────────────────────────────────────────────────────────
 log "${C_MAGENTA}[START]" "Starting Celery Workers..."
 
-CELERY_WORKER_POOL_ARGS=()
+CELERY_WORKER_POOL_ARG=""
 case "$(uname -s 2>/dev/null || echo "")" in
+    Darwin)
+        # macOS: fork() + OMP causes SIGABRT in child processes — use solo pool
+        CELERY_WORKER_POOL_ARG="--pool=solo"
+        ;;
     MINGW*|MSYS*|CYGWIN*|Windows_NT)
-        CELERY_WORKER_POOL_ARGS+=(--pool=solo)
+        CELERY_WORKER_POOL_ARG="--pool=solo"
         ;;
 esac
 (
     cd "$BACKEND_DIR"
     CELERY_BROKER_URL="redis://localhost:6379/0" \
     CELERY_RESULT_BACKEND="redis://localhost:6379/0" \
-    exec uv run celery -A worker.celery_app worker --loglevel=info "${CELERY_WORKER_POOL_ARGS[@]}"
+    exec uv run celery -A worker.celery_app worker --loglevel=info $CELERY_WORKER_POOL_ARG
 ) > "$LOG_DIR/celery-backend.log" 2>&1 &
 CELERY_BACKEND_PID=$!
 stream_log "celery-be" "$C_MAGENTA" "$LOG_DIR/celery-backend.log"
@@ -285,7 +289,7 @@ stream_log "celery-be" "$C_MAGENTA" "$LOG_DIR/celery-backend.log"
     cd "$AI_DIR"
     CELERY_BROKER_URL="redis://localhost:6379/1" \
     CELERY_RESULT_BACKEND="redis://localhost:6379/1" \
-    exec uv run celery -A worker.celery_app worker --loglevel=info "${CELERY_WORKER_POOL_ARGS[@]}"
+    exec uv run celery -A worker.celery_app worker --loglevel=info $CELERY_WORKER_POOL_ARG
 ) > "$LOG_DIR/celery-ai.log" 2>&1 &
 CELERY_AI_PID=$!
 stream_log "celery-ai" "$C_CYAN" "$LOG_DIR/celery-ai.log"

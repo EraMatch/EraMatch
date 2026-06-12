@@ -374,6 +374,16 @@ async def refactor_questions_batch_api(
         return MessageResponse(message="Successfully queued questions for refactoring")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+@router.post("/bank/{question_id}/variant", response_model=QuestionBankResponseItem)
+async def generate_question_variant(
+    question_id: UUID,
+    current_user: RecruiterUser,
+    session: DbSession,
+):
+    """Generate a text-only variant of a coding question (same test cases, new story)."""
+    svc = QuestionService(session, current_user)
+    return await svc.generate_variant(question_id)
+
 
 # =============================================================================
 # QUESTION IMPORT ENDPOINTS

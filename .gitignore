@@ -112,11 +112,27 @@ backend/static
 backend/logs
 # EraMatch Project Metadata
 AGENTS.md
+**/AGENTS.md
 **/*.json
 .serena/
 LIV2_TEST_CREDENTIALS.md
+
+# Dev-phase artifacts — plans, specs, brainstorm sessions (go to Dev_temp_files instead)
+.superpowers/
+docs/superpowers/
+version_documentations/
+Documentation/
+CODEBASE_MAP.md
+backend/DEVELOPER.md
 
 # Debug scripts (one-off)
 backend/check_cv.py
 backend/check_cv2.py
 backend/test_cv_db.py
+
+
+Development_temp_files/
+
+
+
+claude.md

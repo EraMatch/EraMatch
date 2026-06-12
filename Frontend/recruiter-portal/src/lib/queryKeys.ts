@@ -20,6 +20,8 @@ export const queryKeys = {
         integrityMetrics: (id: string) => ['groups', id, 'integrity', 'metrics'] as const,
         integrityDecisions:(id: string) => ['groups', id, 'integrity', 'decisions'] as const,
         alerts:           (id: string) => ['groupAlerts', id] as const,
+        stageMonitoring:  (groupId: string, stage: string) =>
+            ['groups', groupId, 'stage-monitoring', stage] as const,
     },
     candidates: {
         all:            ()   => ['candidates'] as const,

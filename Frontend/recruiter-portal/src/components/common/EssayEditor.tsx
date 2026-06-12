@@ -47,6 +47,9 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
 
   const [showQuestionRefiner, setShowQuestionRefiner] = useState(false);
   const [showRubricRefiner, setShowRubricRefiner] = useState(false);
+  const [showEvidenceRefiner, setShowEvidenceRefiner] = useState(false);
+  const [showReferenceRefiner, setShowReferenceRefiner] = useState(false);
+  const [showCriticFeedbackRefiner, setShowCriticFeedbackRefiner] = useState(false);
 
   const addRubricCheck = () => {
     const checks = [...(questionData.rubricYesNoChecks || [])];
@@ -165,7 +168,7 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
               >
                 <Sparkles size={16} className="text-[#6366f1]" />
                 <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
-                  Refine
+                  Fix text
                 </span>
               </button>
               {showQuestionRefiner && (
@@ -214,7 +217,7 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
               >
                 <Sparkles size={16} className="text-[#6366f1]" />
                 <span className="font-['Arimo',sans-serif] text-[14px] text-[#6366f1]">
-                  Refine
+                  Fix text
                 </span>
               </button>
               {showRubricRefiner && (
@@ -269,9 +272,19 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
             </div>
 
             <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Evidence (Optional)
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151]">
+                  Evidence (Optional)
+                </label>
+                <button
+                  onClick={() => setShowEvidenceRefiner(true)}
+                  disabled={!questionData.evidence?.trim()}
+                  className="flex items-center gap-1.5 text-[12px] text-[#6366f1] hover:text-[#4f46e5] disabled:opacity-50"
+                >
+                  <Sparkles size={13} />
+                  Fix text
+                </button>
+              </div>
               <textarea
                 value={questionData.evidence || ''}
                 onChange={(e) => setQuestionData({ ...questionData, evidence: e.target.value })}
@@ -279,12 +292,33 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
                 rows={3}
                 className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
               />
+              {showEvidenceRefiner && (
+                <TextRefiner
+                  originalText={questionData.evidence || ''}
+                  onApply={(refinedText) => {
+                    setQuestionData({ ...questionData, evidence: refinedText });
+                    setShowEvidenceRefiner(false);
+                  }}
+                  onClose={() => setShowEvidenceRefiner(false)}
+                  context="evidence"
+                />
+              )}
             </div>
 
             <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Reference Answer (Optional)
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151]">
+                  Reference Answer (Optional)
+                </label>
+                <button
+                  onClick={() => setShowReferenceRefiner(true)}
+                  disabled={!questionData.referenceAnswer?.trim()}
+                  className="flex items-center gap-1.5 text-[12px] text-[#6366f1] hover:text-[#4f46e5] disabled:opacity-50"
+                >
+                  <Sparkles size={13} />
+                  Fix text
+                </button>
+              </div>
               <textarea
                 value={questionData.referenceAnswer || ''}
                 onChange={(e) => setQuestionData({ ...questionData, referenceAnswer: e.target.value })}
@@ -292,10 +326,31 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
                 rows={3}
                 className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
               />
+              {showReferenceRefiner && (
+                <TextRefiner
+                  originalText={questionData.referenceAnswer || ''}
+                  onApply={(refinedText) => {
+                    setQuestionData({ ...questionData, referenceAnswer: refinedText });
+                    setShowReferenceRefiner(false);
+                  }}
+                  onClose={() => setShowReferenceRefiner(false)}
+                  context="reference_answer"
+                />
+              )}
             </div>
 
             <div className="rounded-[8px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
-              <div className="font-['Arimo',sans-serif] text-[13px] text-[#374151] mb-3">Critic Signals (Optional)</div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">Critic Signals (Optional)</div>
+                <button
+                  onClick={() => setShowCriticFeedbackRefiner(true)}
+                  disabled={!questionData.criticFeedback?.trim()}
+                  className="flex items-center gap-1.5 text-[12px] text-[#6366f1] hover:text-[#4f46e5] disabled:opacity-50"
+                >
+                  <Sparkles size={13} />
+                  Fix feedback
+                </button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                 <input
                   type="number"
@@ -333,6 +388,17 @@ export function EssayEditor({ variant, onSave, onCancel }: EssayEditorProps) {
                 rows={2}
                 className="w-full px-3 py-2 rounded-[8px] border border-[#e5e7eb] bg-white font-['Arimo',sans-serif] text-[13px] resize-none"
               />
+              {showCriticFeedbackRefiner && (
+                <TextRefiner
+                  originalText={questionData.criticFeedback || ''}
+                  onApply={(refinedText) => {
+                    setQuestionData({ ...questionData, criticFeedback: refinedText });
+                    setShowCriticFeedbackRefiner(false);
+                  }}
+                  onClose={() => setShowCriticFeedbackRefiner(false)}
+                  context="critic_feedback"
+                />
+              )}
             </div>
 
             {/* Expected Keywords */}

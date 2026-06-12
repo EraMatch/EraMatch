@@ -23,6 +23,24 @@ def process_zip_ingestion(self, job_id: str, organization_id: str, position_id: 
             )
         except Exception as e:
             logger.exception(f"ZIP ingestion task failed for job {job_id}: {e}")
+
+
+@celery_app.task(bind=True, name="cv_ingestion.process_pdf")
+def process_pdf_ingestion(self, job_id: str, organization_id: str, position_id: str, pdf_name: str, pdf_content: str):
+    """Processes an uploaded single PDF file of CV using synchronous psycopg2."""
+    logger.info(f"Starting PDF ingestion task for job {job_id}")
+    with sync_session_factory() as session:
+        try:
+            service = CVIngestionWorkerService(session)
+            service.process_pdf_ingestion(
+                UUID(job_id), 
+                UUID(organization_id), 
+                UUID(position_id), 
+                pdf_name, 
+                pdf_content
+            )
+        except Exception as e:
+            logger.exception(f"PDF Ingestion task failed for job {job_id}: {e}")
             # The service.process_zip_ingestion already handles updating status to 'failed' 
             # for internal errors, but we catch top-level task errors here just in case.
 

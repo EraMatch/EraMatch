@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Video, Mic, CheckCircle2, AlertCircle, Play, Square, Loader2, Sparkles, Settings } from 'lucide-react';
+import { Activity, AlertCircle, AlertTriangle, Camera, CheckCircle2, Clock, Copy, FileText, Globe, Info, Laptop, Layers, Loader2, Mic, Monitor, Network, Play, Scan, Settings, Sparkles, Square, Target, User, Users, Video, X } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { AssessmentSession } from './AssessmentSession';
 
@@ -306,6 +306,93 @@ export function TechnicalAssessmentFlow({ onSignOut, onExit, onCompletion }: Tec
                   style={{ backgroundColor: '#6366F1' }}
                 >
                   Enter Assessment Environment
+                </Button>
+              </div>
+            </div>
+          </Card>
+        );
+
+      case 9:
+        return (
+          <Card className="max-w-5xl mx-auto p-12">
+            <div className="flex flex-col items-center text-center space-y-8">
+              <div className="w-24 h-24 rounded-full flex items-center justify-center" style={{ backgroundColor: '#10B981' }}>
+                <CheckCircle2 className="w-16 h-16 text-white" />
+              </div>
+
+              <h2 className="text-gray-700">All Set!</h2>
+
+              <p className="text-gray-600">
+                You've completed all the setup steps
+              </p>
+
+              <Button
+                className="text-white rounded-full px-12 py-6 text-lg"
+                style={{ backgroundColor: '#6366F1' }}
+                onClick={() => {
+                  sessionStorage.setItem('assessment_checks_done', 'true');
+                  setInAssessmentSession(true);
+                }}
+              >
+                Start Session →
+              </Button>
+
+              <p className="text-gray-700 text-sm max-w-xl">
+                Remember: Stay focused, remain alone in frame, and avoid any prohibited actions
+              </p>
+            </div>
+          </Card>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="min-h-screen" style={{ backgroundColor: '#EDF0F8' }}>
+      {inAssessmentSession ? (
+        <AssessmentSession
+          onSignOut={() => {
+            sessionStorage.removeItem('assessment_checks_done');
+            onSignOut();
+          }}
+          onComplete={() => {
+            sessionStorage.removeItem('assessment_checks_done');
+            onCompletion();
+          }}
+        />
+      ) : (
+        <>
+          <header className="px-12 py-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <Logo size="md" />
+              </div>
+              <div className="flex items-center gap-4">
+                <Button
+                  variant="outline"
+                  className="rounded-full px-6"
+                  onClick={onExit}
+                >
+                  Exit Assessment
+                </Button>
+                <Button
+                  className="rounded-full px-6 transition-colors duration-200 border"
+                  style={{ backgroundColor: '#EDF0F8', color: '#EF4444', borderColor: '#EF4444' }}
+                  onMouseEnter={(e: React.MouseEvent<HTMLButtonElement>) => {
+                    e.currentTarget.style.backgroundColor = '#EF4444';
+                    e.currentTarget.style.color = '#FFFFFF';
+                    e.currentTarget.style.borderColor = '#EF4444';
+                  }}
+                  onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => {
+                    e.currentTarget.style.backgroundColor = '#EDF0F8';
+                    e.currentTarget.style.color = '#EF4444';
+                    e.currentTarget.style.borderColor = '#EF4444';
+                  }}
+                  onClick={onSignOut}
+                >
+                  Sign out
                 </Button>
                 <p className="text-center text-xs text-gray-400 mt-4">
                   By entering, you agree to our proctoring and privacy guidelines.

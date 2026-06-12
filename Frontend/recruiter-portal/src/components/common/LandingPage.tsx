@@ -1,6 +1,6 @@
 import { Users, Shield } from 'lucide-react';
 import { Button } from '../ui/button';
-import logo from '../../imports/image-eramatch.png';
+import { Logo } from './Logo';
 
 interface LandingPageProps {
   onAdminLogin: () => void;
@@ -12,7 +12,7 @@ export function LandingPage({ onAdminLogin, onRecruiterLogin }: LandingPageProps
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#EDF0F8' }}>
       {/* Navigation */}
       <nav className="px-12 py-6 flex items-center justify-center border-b border-gray-200 bg-white">
-        <img src={logo} alt="ERAMATCH" className="h-12" />
+        <Logo size="md" />
       </nav>
 
       {/* Main Content */}

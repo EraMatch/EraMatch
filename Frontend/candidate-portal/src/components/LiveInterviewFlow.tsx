@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Video, Mic, CheckCircle2, AlertCircle, Play, Loader2, Sparkles, Settings } from 'lucide-react';
-import logo from '../imports/image-eramatch.png';
+import { Video, Mic, CheckCircle2, AlertCircle, Play, Loader2, Sparkles, Settings, Camera, PhoneOff } from 'lucide-react';
+import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { LiveInterviewRoom } from './live-interview-v2/LiveInterviewRoom';
 
@@ -307,6 +307,47 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                                     </ul>
                                 </div>
                             </div>
+                        )}
+
+                        <div className="flex justify-between pt-2">
+                            <Button variant="outline" className="rounded-full" onClick={() => setCurrentStep(1)}>
+                                Back
+                            </Button>
+                            <Button
+                                className="text-white rounded-full bg-indigo-500 hover:bg-indigo-600 min-w-[140px]"
+                                onClick={fetchRoomToken}
+                                disabled={tokenLoading}
+                            >
+                                {tokenLoading ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                        Connecting…
+                                    </>
+                                ) : 'Start Interview'}
+                            </Button>
+                        </div>
+                    </Card>
+                );
+
+            default:
+                return null;
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-[#EDF0F8] flex flex-col">
+            {/* Header */}
+            <header className="bg-white border-b border-gray-100 px-12 py-4 flex items-center justify-between">
+                <Logo size={32} />
+                <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full border-gray-200 text-gray-500 hover:border-red-400 hover:text-red-500 transition-colors"
+                    onClick={onSignOut}
+                >
+                    Sign out
+                </Button>
+            </header>
 
                             <div className="pt-8 mt-auto space-y-4">
                                 {tokenError && (

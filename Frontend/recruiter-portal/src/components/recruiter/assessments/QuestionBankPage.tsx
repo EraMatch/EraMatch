@@ -69,12 +69,12 @@ interface QuestionVariant {
   // Imported metadata
   evidence?: string;
   referenceAnswer?: string;
-  rubricYesNoChecks?: { id: number; check: string; weight: number }[];
+  rubricYesNoChecks?: Array<{ id?: number; check?: string; weight?: number }>;
   needsReview?: boolean;
   criticScore?: number;
   criticWeightedScore?: number;
   criticFeedback?: string;
-  criticChecks?: { id?: number; criterion: string; verdict: "YES" | "NO"; weight?: number; weighted_value?: number }[];
+  criticChecks?: Array<{ id?: number; criterion: string; verdict: 'YES' | 'NO'; reason?: string; weight?: number; weighted_value?: number }>;
   retryCount?: number;
   importType?: string;
   importJobId?: string;
@@ -144,7 +144,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
   // changed. Without this, .map() creates a new reference every render, which
   // causes the selectedQuestionIds cleanup effect to fire on every render and
   // triggers an infinite re-render loop.
-  const questions: Question[] = useMemo(() =>
+  const normalizedQuestions: Question[] = useMemo(() =>
     (rawQuestions as any[]).map(q => ({
       ...q,
       options: q.options || [],
@@ -157,7 +157,12 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
     })),
     [rawQuestions]
   );
+  const [questions, setQuestions] = useState<Question[]>(normalizedQuestions);
   const importJobs: any[] = filterPendingReviewJobs(rawImportJobs as any[]);
+
+  useEffect(() => {
+    setQuestions(normalizedQuestions);
+  }, [normalizedQuestions]);
 
   // Auto-open review when arriving from Background Tasks link.
   useEffect(() => {
@@ -222,7 +227,14 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       criticScore: q.criticScore,
       criticWeightedScore: q.criticWeightedScore,
       criticFeedback: q.criticFeedback,
-      criticChecks: q.criticChecks,
+      criticChecks: q.criticChecks?.map((check: any) => ({
+        id: check?.id,
+        criterion: check?.criterion || '',
+        verdict: check?.verdict === 'YES' ? 'YES' : 'NO',
+        reason: check?.reason,
+        weight: check?.weight,
+        weighted_value: check?.weighted_value,
+      })),
       retryCount: q.retryCount,
       importType: q.importType,
       importJobId: q.importJobId,
@@ -837,8 +849,8 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
           </div>
         )}
         {editorType === 'mcq' && <MCQEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />}
-        {editorType === 'essay' && <EssayEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />}
-        {editorType === 'code' && <CodeEditor variant={currentVariant} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />}
+        {editorType === 'essay' && <EssayEditor variant={currentVariant as any} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />}
+        {editorType === 'code' && <CodeEditor variant={currentVariant as any} onSave={handleEditorSave} onCancel={() => setViewMode('list')} />}
       </div>
     );
   }
@@ -1304,7 +1316,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
                           aria-label="Select question"
                           className="w-4 h-4 rounded border-gray-300"
                         />
-                        <h3 className="text-[16px] font-medium font-['Arimo',sans-serif] text-[#111827]">{question.text}</h3>
+                        <h3 className="text-[16px] font-medium font-['Arimo',sans-serif] text-[#111827] line-clamp-2 overflow-hidden">{question.text}</h3>
                         <button
                           onClick={() => handleToggleFavorite(question.id)}
                           disabled={togglingFavorites[question.id]}

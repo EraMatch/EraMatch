@@ -36,7 +36,7 @@ import {
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api, JobPosition, Project, PositionGroup } from '../../services/api';
-import EraMatchLogo from '../../assets/image-eramatch.png';
+import { Logo } from '../common/Logo';
 import { AdminProjectModal } from './AdminProjectModal';
 import { AdminPositionModal } from './AdminPositionModal';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -71,7 +71,7 @@ export function AdminDashboard({ onSignOut, initialView = 'dashboard' }: AdminDa
   const projects: Project[] = (dashboardStats?.projects ?? []) as Project[];
   const jobPositions: JobPosition[] = (dashboardStats?.jobPositions ?? []) as JobPosition[];
   const positionGroups: PositionGroup[] = (dashboardStats?.positionGroups ?? []) as PositionGroup[];
-  const pipelineData: any[] = dashboardStats?.pipelineData ?? [];
+  const [pipelineData, setPipelineData] = useState<any[]>([]);
   const pendingRequestsCount: number = pendingRequests?.length ?? 0;
 
   // Local state kept for group analytics (conditional, view-dependent)
@@ -107,6 +107,10 @@ export function AdminDashboard({ onSignOut, initialView = 'dashboard' }: AdminDa
   }, [viewMode, selectedGroup]);
 
   // Project/Position-specific pipeline data
+  useEffect(() => {
+    setPipelineData(dashboardStats?.pipelineData ?? []);
+  }, [dashboardStats]);
+
   useEffect(() => {
     const fetchFunnel = async () => {
       try {
@@ -418,7 +422,7 @@ ${stageRows}`;
               </p>
             </div>
           </div>
-          <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
+          <Logo size="md" className="mt-1 mr-6" />
         </div>
 
         {/* Overview Stats Grid */}
@@ -1139,7 +1143,7 @@ ${stageRows}`;
             <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">{dashboardMetrics.subtitle}</p>
           </>
         </div>
-        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
+        <Logo size="md" className="mt-1 mr-6" />
       </div>
 
       {isLoading ? (

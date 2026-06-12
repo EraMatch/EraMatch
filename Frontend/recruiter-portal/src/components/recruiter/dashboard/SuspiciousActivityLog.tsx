@@ -57,8 +57,8 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
 
         const titleizeIssue = (eventType: string) => {
             return (eventType || 'unknown_event')
-                .replaceAll('_', ' ')
-                .replace(/\b\w/g, (m) => m.toUpperCase());
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, (m: string) => m.toUpperCase());
         };
 
         const normalizeStatus = (status: string): 'Pending' | 'Resolved' | 'Dismissed' => {
@@ -88,7 +88,7 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
             if (!incoming?.length) return;
 
             setRecords((prev) => {
-                const byCandidate = new Map(prev.map((r) => [r.id, { ...r }]));
+                const byCandidate = new Map<string, SuspiciousRecord>(prev.map((r) => [r.id, { ...r }]));
                 for (const row of incoming) {
                     const flagId = String(row.flag_id);
                     const candidateId = String(row.candidate_id || 'unknown');
@@ -99,7 +99,7 @@ export function SuspiciousActivityLog({ onBack }: SuspiciousActivityLogProps) {
                     const nextStatus = normalizeStatus(row.status);
                     const nextDetectedAt = String(row.created_at || new Date().toISOString());
 
-                    const existing = byCandidate.get(aggregateKey) || {
+                    const existing: SuspiciousRecord = byCandidate.get(aggregateKey) || {
                         id: aggregateKey,
                         candidateId,
                         applicationId: String(row.application_id || ''),

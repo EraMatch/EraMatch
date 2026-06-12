@@ -5,24 +5,45 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import LoadingSpinner from '../../common/LoadingSpinner';
 
 interface QuestionVariant {
-  id: string;
-  questionText: string;
-  type: 'mcq' | 'essay' | 'code';
-  difficulty?: 'Easy' | 'Medium' | 'Hard';
-  category?: string;
-  tags?: string[];
-  semanticScore?: number;
-  options?: string[];
-  correctAnswer?: number;
-  multipleCorrect?: boolean;
-  maxWords?: number;
-  rubric?: string;
-  language?: string;
-  codeTemplate?: string;
-  testCases?: any[];
-  usageCount?: number;
-  isFavorite?: boolean;
-  [key: string]: any;
+    id: string;
+    questionText: string;
+    type: 'mcq' | 'essay' | 'code';
+    difficulty?: 'Easy' | 'Medium' | 'Hard';
+    category?: string;
+    tags?: string[];
+    semanticScore?: number;
+    options?: string[];
+    correctAnswer?: number;
+    multipleCorrect?: boolean;
+    maxWords?: number;
+    rubric?: string;
+    language?: string;
+    codeTemplate?: string;
+    testCases?: any[];
+    usageCount?: number;
+    isFavorite?: boolean;
+    // New coding fields
+    starterCode?: string;
+    functionName?: string;
+    inputFormat?: string;
+    outputFormat?: string;
+    questionExamples?: any[];
+    questionConstraints?: string[];
+    topics?: string[];
+    // Reviewer metadata
+    evidence?: string;
+    referenceAnswer?: string;
+    rubricYesNoChecks?: any[];
+    needsReview?: boolean;
+    criticScore?: number;
+    criticWeightedScore?: number;
+    criticFeedback?: string;
+    criticChecks?: any[];
+    retryCount?: number;
+    importType?: string;
+    importJobId?: string;
+    sourceFilename?: string;
+    [key: string]: any;
 }
 
 interface QuestionBankModalProps {
@@ -98,6 +119,7 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedTag, setSelectedTag] = useState<string>('all');
   const [favoriteOnly, setFavoriteOnly] = useState<boolean>(false);
   const [usageSort, setUsageSort] = useState<string>('none');
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
@@ -144,6 +166,14 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
             criticFeedback: q.criticFeedback,
             criticChecks: q.criticChecks,
             retryCount: q.retryCount,
+            // Coding fields
+            starterCode: q.starterCode,
+            functionName: q.functionName,
+            inputFormat: q.inputFormat,
+            outputFormat: q.outputFormat,
+            questionExamples: q.examples,
+            questionConstraints: q.constraints,
+            topics: q.topics,
           } as QuestionVariant;
         });
 
@@ -180,6 +210,21 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
     return ['all', ...Array.from(cats)] as string[];
   }, [questions]);
 
+  // Extract dynamic tags
+  const allTags = useMemo(() => {
+    const tags = new Set<string>();
+    questions.forEach((q) => q.tags?.forEach((t: string) => tags.add(t)));
+    return ['all', ...Array.from(tags).sort()];
+  }, [questions]);
+
+  // Relevance scoring shared by both search modes (replaces fake random shuffling)
+  const scoreQuestion = (q: QuestionVariant, query: string): number => {
+    const textScore = q.questionText.toLowerCase().includes(query) ? 2 : 0;
+    const tagScore = q.tags?.some((t: string) => t.toLowerCase().includes(query)) ? 1 : 0;
+    const catScore = q.category?.toLowerCase().includes(query) ? 1 : 0;
+    return textScore + tagScore + catScore;
+  };
+
   // Use useMemo to memoize filtered questions
   const filteredQuestions = useMemo(() => {
     if (!questions.length) return [];
@@ -192,6 +237,9 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
     // Filter by category
     result = result.filter(q => selectedCategory === 'all' || q.category === selectedCategory);
 
+    // Filter by tag
+    result = result.filter(q => selectedTag === 'all' || q.tags?.includes(selectedTag));
+
     // Filter by favorites
     if (favoriteOnly) {
       result = result.filter(q => q.isFavorite);
@@ -199,17 +247,18 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
 
     // Search query filtering
     if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+
       if (searchType === 'semantic') {
-        // Simulate semantic matching
+        // Semantic mode: rank all by relevance score, normalized for the match badge
         result = result
-          .map(q => ({
-            ...q,
-            semanticScore: Math.random() * 0.4 + 0.6
-          }))
+          .map(q => {
+            const raw = scoreQuestion(q, query);
+            return { ...q, semanticScore: raw > 0 ? Math.min(1, 0.6 + raw * 0.1) : 0 };
+          })
           .sort((a, b) => (b.semanticScore || 0) - (a.semanticScore || 0));
       } else {
-        // Traditional match
-        const query = searchQuery.toLowerCase();
+        // Traditional match: keep only questions that match
         result = result.filter(q =>
           q.questionText.toLowerCase().includes(query) ||
           q.tags?.some((tag: string) => tag.toLowerCase().includes(query)) ||
@@ -226,7 +275,7 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
     }
 
     return result;
-  }, [searchQuery, searchType, selectedDifficulty, selectedCategory, favoriteOnly, usageSort, questions]);
+  }, [searchQuery, searchType, selectedDifficulty, selectedCategory, selectedTag, favoriteOnly, usageSort, questions]);
 
   const selectedQuestions = useMemo(
     () => questions.filter((question) => selectedQuestionIds.includes(question.id)),
@@ -350,6 +399,18 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
                 {categories.map(cat => (
                   <option key={cat} value={cat}>
                     {cat === 'all' ? 'All Categories' : cat}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={selectedTag}
+                onChange={(e) => setSelectedTag(e.target.value)}
+                className="h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent bg-white"
+              >
+                {allTags.map(tag => (
+                  <option key={tag} value={tag}>
+                    {tag === 'all' ? 'All Tags' : tag}
                   </option>
                 ))}
               </select>
@@ -507,65 +568,201 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
                       </div>
                     </div>
 
-                    {/* Preview based on type */}
-                    {question.type === 'mcq' && question.options && (
-                      <div className="mt-3 space-y-1">
-                        {question.options.slice(0, 2).map((opt: string, idx: number) => (
-                          <div key={idx} className="text-[13px] text-[#6b7280]">
-                            {String.fromCharCode(65 + idx)}. {opt}
-                          </div>
-                        ))}
-                        {question.options.length > 2 && (
-                          <div className="text-[13px] text-[#6b7280]">
-                            ... and {question.options.length - 2} more options
-                          </div>
+                    {/* Filters */}
+                    <div className="flex flex-wrap items-center gap-3 mt-4">
+                        <div className="flex items-center gap-2">
+                            <Filter size={16} className="text-[#6b7280]" />
+                            <span className="text-[13px] font-medium text-[#374151]">Filters:</span>
+                        </div>
+
+                        <select
+                            value={selectedCategory}
+                            onChange={e => setSelectedCategory(e.target.value)}
+                            className="h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] bg-white"
+                        >
+                            {categories.map(cat => (
+                                <option key={cat} value={cat}>{cat === 'all' ? 'All Categories' : cat}</option>
+                            ))}
+                        </select>
+
+                        <select
+                            value={selectedDifficulty}
+                            onChange={e => setSelectedDifficulty(e.target.value)}
+                            className="h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] bg-white"
+                        >
+                            <option value="all">All Difficulties</option>
+                            <option value="Easy">Easy</option>
+                            <option value="Medium">Medium</option>
+                            <option value="Hard">Hard</option>
+                        </select>
+
+                        {allTags.length > 1 && (
+                            <select
+                                value={selectedTag}
+                                onChange={e => setSelectedTag(e.target.value)}
+                                className="h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] bg-white"
+                            >
+                                {allTags.map(tag => (
+                                    <option key={tag} value={tag}>{tag === 'all' ? 'All Tags' : tag}</option>
+                                ))}
+                            </select>
                         )}
-                      </div>
-                    )}
 
-                    {question.type === 'code' && (
-                      <div className="mt-3 text-[13px] text-[#6b7280]">
-                        Language: {question.language} • {question.testCases?.length || 0} test cases
-                      </div>
-                    )}
+                        <select
+                            value={usageSort}
+                            onChange={e => setUsageSort(e.target.value)}
+                            className="h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] bg-white"
+                        >
+                            <option value="none">Sort by Usage</option>
+                            <option value="most">Most Used</option>
+                            <option value="least">Least Used</option>
+                        </select>
 
-                    {question.type === 'essay' && question.maxWords && (
-                      <div className="mt-3 text-[13px] text-[#6b7280]">
-                        Max words: {question.maxWords}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {/* Can't find what you want CTA */}
-              {onSwitchToAI && (
-                <div className="mt-6 p-4 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-[12px]">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <p className="font-['Arimo',sans-serif] text-[14px] text-purple-900 mb-1">
-                        Can't find exactly what you're looking for?
-                      </p>
-                      <p className="font-['Arimo',sans-serif] text-[12px] text-purple-700">
-                        Generate a custom question tailored to your specific needs using AI
-                      </p>
+                        <label className="flex items-center gap-2 h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] bg-white cursor-pointer hover:bg-[#f9fafb]">
+                            <input
+                                type="checkbox"
+                                checked={favoriteOnly}
+                                onChange={e => setFavoriteOnly(e.target.checked)}
+                                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span className="text-[13px] text-[#374151]">Favorites Only</span>
+                        </label>
                     </div>
-                    <Button
-                      onClick={() => {
-                        onClose();
-                        onSwitchToAI();
-                      }}
-                      className="ml-4 rounded-[8px] bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
-                    >
-                      <Sparkles size={16} className="mr-2" />
-                      Generate with AI
-                    </Button>
-                  </div>
                 </div>
-              )}
-            </>
-          )}
-        </div>
+
+                {/* Questions List */}
+                <div className="flex-1 overflow-y-auto p-8">
+                    {loading ? (
+                        <div className="text-center py-12 text-[#6b7280]">Loading questions...</div>
+                    ) : filteredQuestions.length === 0 ? (
+                        <div className="text-center py-12">
+                            <Database size={48} className="text-[#d1d5db] mx-auto mb-4" />
+                            <p className="font-['Arimo',sans-serif] text-[16px] text-[#374151] mb-2">No matching questions found</p>
+                            <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280] mb-6">
+                                Try adjusting your filters or search query
+                            </p>
+                            {onSwitchToAI && (
+                                <Button
+                                    onClick={() => { onClose(); onSwitchToAI(); }}
+                                    className="rounded-[8px] bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
+                                >
+                                    <Sparkles size={16} className="mr-2" />
+                                    Generate Question with AI Instead
+                                </Button>
+                            )}
+                        </div>
+                    ) : (
+                        <>
+                            <div className="space-y-4">
+                                {filteredQuestions.map(question => {
+                                    return (
+                                        <div key={question.id} className="border border-[#e5e7eb] rounded-[12px] overflow-hidden hover:border-[#6366f1]/40 transition-colors">
+                                            <div className="p-6 hover:bg-[#fafafa] transition-colors">
+                                                <div className="flex items-start justify-between mb-3">
+                                                    <div className="flex-1">
+                                                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                                                            {question.difficulty && (
+                                                                <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${question.difficulty === 'Easy' ? 'bg-green-100 text-green-700' : question.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                                                                    {question.difficulty}
+                                                                </span>
+                                                            )}
+                                                            {question.category && (
+                                                                <span className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-medium border border-indigo-100">
+                                                                    {question.category}
+                                                                </span>
+                                                            )}
+                                                            <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-gray-50 text-gray-600 text-[11px] border border-gray-200">
+                                                                Used {question.usageCount || 0}×
+                                                            </span>
+                                                            {question.tags?.slice(0, 4).map((tag: string) => (
+                                                                <span
+                                                                    key={tag}
+                                                                    onClick={() => setSelectedTag(tag)}
+                                                                    className="px-2 py-1 rounded-full bg-[#f3f4f6] text-[#6b7280] text-[11px] cursor-pointer hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+                                                                    title="Filter by this tag"
+                                                                >
+                                                                    {tag}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                        <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] pr-4 line-clamp-3">
+                                                            {question.questionText}
+                                                        </p>
+                                                    </div>
+
+                                                    <div className="flex flex-col items-end gap-2 shrink-0 ml-4">
+                                                        <Button
+                                                            onClick={() => onSelect(question)}
+                                                            className="rounded-[8px] bg-[#6366f1] hover:bg-[#4f46e5] text-white text-[13px] h-9 px-4"
+                                                        >
+                                                            Select
+                                                        </Button>
+                                                        {question.isFavorite && (
+                                                            <span className="text-red-500 text-[11px] font-medium">♥ Favorite</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                {/* Type-specific preview */}
+                                                {question.type === 'mcq' && question.options && (
+                                                    <div className="mt-3 space-y-1">
+                                                        {question.options.slice(0, 2).map((opt: string, idx: number) => (
+                                                            <div key={idx} className="text-[13px] text-[#6b7280]">
+                                                                {String.fromCharCode(65 + idx)}. {opt}
+                                                            </div>
+                                                        ))}
+                                                        {question.options.length > 2 && (
+                                                            <div className="text-[13px] text-[#6b7280]">… and {question.options.length - 2} more options</div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {question.type === 'code' && (
+                                                    <div className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-[#6b7280]">
+                                                        {question.functionName && (
+                                                            <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-[12px]">{question.functionName}()</span>
+                                                        )}
+                                                        <span>{question.testCases?.length || 0} test cases</span>
+                                                        {question.topics?.slice(0, 3).map((t: string) => (
+                                                            <span key={t} className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 text-[11px]">{t}</span>
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                {question.type === 'essay' && question.maxWords && (
+                                                    <div className="mt-3 text-[13px] text-[#6b7280]">Max words: {question.maxWords}</div>
+                                                )}
+                                            </div>
+
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {onSwitchToAI && (
+                                <div className="mt-6 p-4 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-[12px]">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex-1">
+                                            <p className="font-['Arimo',sans-serif] text-[14px] text-purple-900 mb-1">
+                                                Can't find exactly what you're looking for?
+                                            </p>
+                                            <p className="font-['Arimo',sans-serif] text-[12px] text-purple-700">
+                                                Generate a custom question tailored to your specific needs using AI
+                                            </p>
+                                        </div>
+                                        <Button
+                                            onClick={() => { onClose(); onSwitchToAI(); }}
+                                            className="ml-4 rounded-[8px] bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
+                                        >
+                                            <Sparkles size={16} className="mr-2" />
+                                            Generate with AI
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
 
         <Dialog open={!!previewQuestion} onOpenChange={(open) => { if (!open) closePreview(); }}>
           <DialogContent className="sm:max-w-3xl max-h-[88vh] overflow-hidden p-0 bg-white/90 backdrop-blur-xl border-white/30 shadow-2xl rounded-[24px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-bottom-2 duration-300">
@@ -716,7 +913,5 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
             </div>
           </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 }

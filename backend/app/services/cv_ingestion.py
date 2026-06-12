@@ -115,11 +115,11 @@ class CVIngestionService:
         self.session.add(job)
         await self.session.commit()
 
-    async def create_zip_ingestion_job(self, organization_id: UUID, position_id: UUID, user_id: UUID, filename: str) -> CVIngestionJob:
+    async def create_zip_ingestion_job(self, organization_id: UUID, position_id: UUID, user_id: UUID | None, filename: str) -> CVIngestionJob:
         job = CVIngestionJob(
             organization_id=organization_id,
             position_id=position_id,
-            created_by_user_id=user_id,
+            created_by_user_id=user_id if (user_id and user_id != organization_id) else None,
             status="pending",
             source_type="zip_upload",
             source_filename=filename
@@ -129,11 +129,11 @@ class CVIngestionService:
         await self.session.refresh(job)
         return job
 
-    async def create_drive_schedule(self, organization_id: UUID, position_id: UUID, user_id: UUID, drive_folder_id: str, drive_folder_url: str, start_date: datetime, frequency_days: int, frequency_hours: int) -> DriveIngestionSchedule:
+    async def create_drive_schedule(self, organization_id: UUID, position_id: UUID, user_id: UUID | None, drive_folder_id: str, drive_folder_url: str, start_date: datetime, frequency_days: int, frequency_hours: int) -> DriveIngestionSchedule:
         schedule = DriveIngestionSchedule(
             organization_id=organization_id,
             position_id=position_id,
-            created_by_user_id=user_id,
+            created_by_user_id=user_id if (user_id and user_id != organization_id) else None,
             drive_folder_id=drive_folder_id,
             drive_folder_url=drive_folder_url,
             start_date=start_date,
@@ -313,6 +313,9 @@ class CVIngestionService:
                             candidate_parsed_data=parsed_data,
                             github_analysis_data={},
                             jd_critic_result=jd_critic_result,
+                            position_experience_level=getattr(position, "experience_level", None),
+                            position_education_level=getattr(position, "education_level", None),
+                            jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,
                         )
                 except Exception as score_exc:
                     logger.warning(f"Prescore computation skipped for app {app_id}: {score_exc}")
@@ -717,6 +720,37 @@ class CVIngestionWorkerService:
             
         except Exception as e:
             logger.exception(f"ZIP Ingestion Failed: {job_id}")
+            try:
+                self.session.rollback()
+                self.update_job_status(job_id, "failed", error_message=str(e))
+            except Exception as inner_e:
+                logger.error(f"Failed to update job status to failed: {inner_e}")
+                raise e
+
+    def process_pdf_ingestion(self, job_id: UUID, organization_id: UUID, position_id: UUID, pdf_name: str, pdf_content: str):
+        """Processes an uploaded single PDF file of a CV."""
+        logger.info(f"Starting PDF ingestion for Job {job_id} (Sync)")
+        file_bytes = base64.b64decode(pdf_content)
+        try:
+            self.update_job_status(job_id, "processing")
+            res = self.process_cv_file(organization_id, position_id, pdf_name, file_bytes, source="pdf_upload")
+            
+            if res["status"] == "staged":
+                processed = 1
+                skipped = 0
+            else:
+                processed = 0
+                skipped = 1
+                
+            self.update_job_status(
+                job_id, "completed", 
+                processed_files=processed, 
+                skipped_files=skipped, 
+                total_files=1,
+                processing_log=[res]
+            )
+        except Exception as e:
+            logger.exception(f"PDF Ingestion Failed: {job_id}")
             try:
                 self.session.rollback()
                 self.update_job_status(job_id, "failed", error_message=str(e))
