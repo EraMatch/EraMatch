@@ -274,7 +274,7 @@ export function QuestionBankPage({ onBack }: QuestionBankPageProps) {
       rubric: v.rubric,
       evidence: v.evidence,
       referenceAnswer: v.referenceAnswer,
-      rubricYesNoChecks: v.rubricYesNoChecks,
+      rubricYesNoChecks: v.rubricYesNoChecks as { id: number; check: string; weight: number }[] | undefined,
       needsReview: v.needsReview,
       criticScore: v.criticScore,
       criticWeightedScore: v.criticWeightedScore,

@@ -89,7 +89,7 @@ export function AlertsNotifications({ onViewCandidate }: AlertsNotificationsProp
 
   const markAllAsRead = () => {
     setLocalReadIds(new Set(notifications.map(n => n.id)));
-    markReadMutation.mutate();
+    markReadMutation.mutate(undefined);
   };
 
   const filteredNotifications = filter === 'unread'
