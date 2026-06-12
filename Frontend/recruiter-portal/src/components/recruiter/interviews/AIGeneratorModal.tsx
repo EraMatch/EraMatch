@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X, Wand2, Sparkles } from 'lucide-react';
+import { X, Wand2, Sparkles, Check } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { AIQuestionPreview } from './AIQuestionPreview';
 import { recruiterService } from '../../../services/recruiter.service';
@@ -14,7 +14,7 @@ interface QuestionVariant {
 
 interface AIGeneratorModalProps {
   questionType?: 'mcq' | 'essay' | 'code' | 'interview';
-  onGenerate: (question: any) => void;
+  onGenerate: (question: QuestionVariant | QuestionVariant[]) => void;
   onClose: () => void;
   context?: any;
 }
@@ -34,18 +34,17 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
   const [generationStatus, setGenerationStatus] = useState('');
   const [generatedQuestion, setGeneratedQuestion] = useState<QuestionVariant | null>(null);
   const [generatedVariants, setGeneratedVariants] = useState<QuestionVariant[]>([]);
-  const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
   const [normalizationWarnings, setNormalizationWarnings] = useState<string[]>([]);
   const [showPreview, setShowPreview] = useState(false);
+  const [savingToQB, setSavingToQB] = useState(false);
+  // Multi-variant review state
+  const [previewingIndex, setPreviewingIndex] = useState<number | null>(null);
+  // index → approved (and possibly edited) variant
+  const [approvedVariants, setApprovedVariants] = useState<Map<number, QuestionVariant>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const topicError = topicTouched && !topic.trim() ? 'Topic is required.' : null;
   const canGenerate = !!topic.trim() && !isGenerating;
-
-  const metadataLabel = useMemo(
-    () => `Using AI | Type: ${effectiveType.toUpperCase()} | Difficulty: ${difficulty} | Variants: ${variantCount}`,
-    [effectiveType, difficulty, variantCount]
-  );
 
   const normalizeGeneratedQuestion = useCallback(
     (rawQuestion: any): { question: QuestionVariant; warnings: string[] } => {
@@ -92,10 +91,11 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
           warnings.push('Code test cases was normalized to an empty array.');
           normalized.testCases = [];
         }
-        if (typeof normalized.codeTemplate !== 'string') {
-          warnings.push('Code template was normalized to an empty template.');
-          normalized.codeTemplate = '';
-        }
+        // Map backend field names to frontend conventions
+        normalized.starterCode = normalized.starterCode || normalized.codeTemplate || '';
+        normalized.codeTemplate = normalized.starterCode;
+        normalized.questionExamples = normalized.questionExamples || normalized.examples || [];
+        normalized.questionConstraints = normalized.questionConstraints || normalized.constraints || [];
       }
 
       return { question: normalized as QuestionVariant, warnings };
@@ -180,7 +180,8 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
 
       setNormalizationWarnings(combinedWarnings);
       setGeneratedVariants(variants);
-      setSelectedVariantIndex(0);
+      setApprovedVariants(new Map());
+      setPreviewingIndex(null);
       setGeneratedQuestion(variants[0] || null);
 
       if (combinedWarnings.length > 0) {
@@ -195,8 +196,8 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
           setShowPreview(true);
         }
       } else {
-        toast.success(`Generated ${variants.length} variants. Select one to preview.`);
-        setGenerationStatus(`Generated ${variants.length} variants. Select your preferred draft.`);
+        toast.success(`${variants.length} variants generated — preview and approve each one.`);
+        setGenerationStatus(`${variants.length} variants ready. Preview and approve each before adding.`);
       }
     } catch (error: any) {
       if (error?.name === 'AbortError') {
@@ -248,12 +249,87 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [generateQuestion, handleClose, isGenerating, showPreview]);
 
-  const handleAcceptQuestion = (question: QuestionVariant) => {
-    onGenerate(question);
+  const TYPE_LABEL: Record<string, string> = {
+    code: 'Code',
+    essay: 'Essay',
+    mcq: 'Multiple Choice',
+    interview: 'Multiple Choice',
+  };
+
+  const saveToQB = async (question: QuestionVariant): Promise<QuestionVariant> => {
+    const qtype = effectiveType;
+    try {
+      const payload: Record<string, any> = {
+        text: question.questionText,
+        type: TYPE_LABEL[qtype] || 'Multiple Choice',
+        difficulty: question.difficulty || 'Medium',
+        category: question.category || '',
+        tags: question.tags || [],
+      };
+
+      if (qtype === 'code') {
+        payload.codeLanguage = (question.language || 'python').toLowerCase();
+        payload.codeTemplate = question.starterCode || question.codeTemplate || '';
+        payload.starterCode = question.starterCode || question.codeTemplate || '';
+        payload.functionName = question.functionName || '';
+        payload.testCases = question.testCases || [];
+        payload.inputFormat = question.inputFormat || '';
+        payload.outputFormat = question.outputFormat || '';
+        payload.constraints = question.questionConstraints || (question as any).constraints || [];
+        payload.examples = question.questionExamples || (question as any).examples || [];
+        payload.topics = question.topics || [];
+      } else if (qtype === 'essay') {
+        payload.maxWords = question.maxWords || 500;
+        payload.rubric = question.rubric || '';
+        payload.expectedKeywords = question.expectedKeywords || [];
+        payload.rubricYesNoChecks = question.rubricYesNoChecks || [];
+        payload.evidence = question.evidence || '';
+        payload.referenceAnswer = question.referenceAnswer || '';
+      } else if (qtype === 'mcq') {
+        payload.options = question.options || [];
+        payload.correctAnswer = question.correctAnswer ?? 0;
+        payload.multipleCorrect = question.multipleCorrect || false;
+        payload.explanation = question.explanation || '';
+      }
+
+      const saved = await recruiterService.createQuestionBank(payload);
+      return { ...question, id: saved.id };
+    } catch {
+      return question;
+    }
+  };
+
+  // Single variant accepted from preview — close modal
+  const handleAcceptQuestion = async (question: QuestionVariant) => {
+    setSavingToQB(true);
+    const final = await saveToQB(question);
+    setSavingToQB(false);
+    onGenerate(final);
     setShowPreview(false);
     setGeneratedQuestion(null);
     setGeneratedVariants([]);
-    setSelectedVariantIndex(0);
+  };
+
+  // Called from approve-mode preview — mark variant approved + return to list
+  const handleApproveVariant = (index: number, question: QuestionVariant) => {
+    setApprovedVariants(prev => new Map(prev).set(index, question));
+    setPreviewingIndex(null);
+  };
+
+  // Add all approved variants — saves code types to QB, then calls onGenerate for each
+  const handleAddApproved = async () => {
+    if (approvedVariants.size === 0) return;
+    setSavingToQB(true);
+    const toAdd: QuestionVariant[] = [];
+    for (const [, q] of approvedVariants) {
+      toAdd.push(await saveToQB(q));
+    }
+    setSavingToQB(false);
+    // Pass all approved at once so SectionEditor adds them all before closing the modal
+    onGenerate(toAdd);
+    setGeneratedVariants([]);
+    setApprovedVariants(new Map());
+    setPreviewingIndex(null);
   };
 
   const handleRegenerate = () => {
@@ -262,22 +338,10 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
     void generateQuestion();
   };
 
-  const handleClosePreview = () => {
-    setShowPreview(false);
-  };
+  const handleClosePreview = () => setShowPreview(false);
+  const handleRetry = () => void generateQuestion();
 
-  const handleRetry = () => {
-    void generateQuestion();
-  };
-
-  const handlePreviewSelectedVariant = () => {
-    if (!generatedVariants[selectedVariantIndex]) {
-      return;
-    }
-    setGeneratedQuestion(generatedVariants[selectedVariantIndex]);
-    setShowPreview(true);
-  };
-
+  // Single-variant auto-preview (count=1) → accept closes modal
   if (showPreview && generatedQuestion) {
     return (
       <AIQuestionPreview
@@ -285,51 +349,74 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
         onAccept={handleAcceptQuestion}
         onRegenerate={handleRegenerate}
         onClose={handleClosePreview}
-        references={[
-          `${topic} - Official Documentation`,
-          'Industry Best Practices and Standards',
-          'Academic Research and Technical Papers',
-          'Community Guidelines and Recommendations'
-        ]}
       />
     );
   }
 
+  // Multi-variant per-card preview → approve marks it, returns to list
+  if (previewingIndex !== null && generatedVariants[previewingIndex]) {
+    return (
+      <AIQuestionPreview
+        question={generatedVariants[previewingIndex]}
+        onAccept={(q) => handleApproveVariant(previewingIndex, q)}
+        onClose={() => setPreviewingIndex(null)}
+        approveMode
+      />
+    );
+  }
+
+  const typeConfig = {
+    mcq: { label: 'Multiple Choice', color: 'blue', hint: '4 options · correct answer · explanation' },
+    essay: { label: 'Essay', color: 'purple', hint: 'rubric · keywords · word limit' },
+    code: { label: 'Coding (Python)', color: 'emerald', hint: 'problem · starter code · 6+ test cases · function name' },
+    interview: { label: 'Interview', color: 'orange', hint: 'question · evaluation criteria · key points' },
+  }[effectiveType] || { label: effectiveType, color: 'gray', hint: '' };
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" aria-busy={isGenerating}>
-      <div className="bg-white rounded-[16px] shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-[16px] shadow-2xl max-w-xl w-full flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="px-8 py-6 border-b border-[#e5e7eb] flex-shrink-0">
+        <div className="px-6 py-5 border-b border-[#e5e7eb] flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center">
-                <Wand2 size={20} className="text-white" />
+              <div className="w-9 h-9 rounded-[10px] bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center">
+                <Wand2 size={17} className="text-white" />
               </div>
               <div>
-                <h2 className="text-[#111827]">AI Question Generator</h2>
-                <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                  Generate a {effectiveType === 'mcq' ? 'multiple choice' : effectiveType} question with AI
+                <div className="flex items-center gap-2">
+                  <h2 className="text-[#111827] text-[16px]">Generate with AI</h2>
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
+                    effectiveType === 'code' ? 'bg-emerald-100 text-emerald-700' :
+                    effectiveType === 'mcq' ? 'bg-blue-100 text-blue-700' :
+                    effectiveType === 'essay' ? 'bg-purple-100 text-purple-700' :
+                    'bg-gray-100 text-gray-700'
+                  }`}>
+                    {typeConfig.label}
+                  </span>
+                </div>
+                <p className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af] mt-0.5">
+                  {typeConfig.hint}
                 </p>
               </div>
             </div>
             <button
               onClick={handleClose}
               disabled={isGenerating}
-              className="w-10 h-10 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
+              className="w-8 h-8 rounded-[8px] flex items-center justify-center hover:bg-[#f9fafb] transition-colors"
               aria-label="Close AI generator"
             >
-              <X size={20} className="text-[#6b7280]" />
+              <X size={18} className="text-[#6b7280]" />
             </button>
           </div>
         </div>
 
         {/* Content */}
-        <div className="p-8 overflow-y-auto flex-1">
-          <div className="space-y-6">
+        <div className="px-6 py-5 overflow-y-auto flex-1">
+          <div className="space-y-5">
             {/* Topic */}
             <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Topic or Concept *
+              <label className="block font-['Arimo',sans-serif] text-[13px] font-medium text-[#374151] mb-1.5">
+                Topic *
               </label>
               <input
                 type="text"
@@ -337,133 +424,103 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
                 onChange={(e) => setTopic(e.target.value)}
                 onBlur={() => setTopicTouched(true)}
                 disabled={isGenerating}
-                placeholder="e.g., React Hooks, Database Normalization, Binary Search..."
-                className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                placeholder={effectiveType === 'code'
+                  ? 'e.g., Two Sum, Sliding Window, Binary Search...'
+                  : 'e.g., React Hooks, Database Normalization, REST APIs...'}
+                className="w-full h-[42px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
                 autoFocus
               />
               {topicError && (
-                <p className="mt-2 font-['Arimo',sans-serif] text-[12px] text-red-700" role="alert">{topicError}</p>
+                <p className="mt-1.5 font-['Arimo',sans-serif] text-[12px] text-red-600" role="alert">{topicError}</p>
               )}
             </div>
 
-            {/* Difficulty */}
-            <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-3">
-                Difficulty Level
-              </label>
-              <div className="grid grid-cols-3 gap-3">
-                {(['Easy', 'Medium', 'Hard'] as const).map((level) => (
-                  <button
-                    key={level}
-                    onClick={() => setDifficulty(level)}
-                    disabled={isGenerating}
-                    className={`h-[44px] rounded-[8px] border-2 transition-all font-['Arimo',sans-serif] text-[14px] ${difficulty === level
-                      ? level === 'Easy'
-                        ? 'border-green-500 bg-green-50 text-green-700'
-                        : level === 'Medium'
-                          ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
+            {/* Difficulty + Count row */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block font-['Arimo',sans-serif] text-[13px] font-medium text-[#374151] mb-1.5">
+                  Difficulty
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(['Easy', 'Medium', 'Hard'] as const).map((level) => (
+                    <button
+                      key={level}
+                      onClick={() => setDifficulty(level)}
+                      disabled={isGenerating}
+                      className={`h-[36px] rounded-[7px] border-2 transition-all font-['Arimo',sans-serif] text-[12px] font-medium ${difficulty === level
+                        ? level === 'Easy' ? 'border-green-500 bg-green-50 text-green-700'
+                          : level === 'Medium' ? 'border-yellow-500 bg-yellow-50 text-yellow-700'
                           : 'border-red-500 bg-red-50 text-red-700'
-                      : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-purple-300'
+                        : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]/40'
                       }`}
-                  >
-                    {level}
-                  </button>
-                ))}
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Generation Mode
-              </label>
-              <div className="flex items-center gap-2">
-                {[1, 2, 3].map((count) => (
-                  <button
-                    key={count}
-                    onClick={() => setVariantCount(count as 1 | 2 | 3)}
-                    disabled={isGenerating}
-                    className={`h-[36px] px-4 rounded-[8px] border text-[13px] font-['Arimo',sans-serif] transition-colors ${
-                      variantCount === count
-                        ? 'border-purple-500 bg-purple-50 text-purple-700'
-                        : 'border-[#e5e7eb] text-[#6b7280] hover:border-purple-300'
-                    }`}
-                  >
-                    {count} Variant{count > 1 ? 's' : ''}
-                  </button>
-                ))}
+              <div>
+                <label className="block font-['Arimo',sans-serif] text-[13px] font-medium text-[#374151] mb-1.5">
+                  Generate
+                </label>
+                <div className="flex gap-1.5">
+                  {[1, 2, 3].map((count) => (
+                    <button
+                      key={count}
+                      onClick={() => setVariantCount(count as 1 | 2 | 3)}
+                      disabled={isGenerating}
+                      className={`flex-1 h-[36px] rounded-[7px] border-2 text-[12px] font-medium font-['Arimo',sans-serif] transition-colors ${
+                        variantCount === count
+                          ? 'border-[#6366f1] bg-[#ede9fe] text-[#6366f1]'
+                          : 'border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#6366f1]/40'
+                      }`}
+                    >
+                      {count}×
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-
-            <div className="px-3 py-2 rounded-[8px] border border-[#e5e7eb] bg-[#f9fafb]">
-              <p className="font-['Arimo',sans-serif] text-[12px] text-[#4b5563]">{metadataLabel}</p>
             </div>
 
             {/* Additional Context */}
             <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Additional Context (Optional)
+              <label className="block font-['Arimo',sans-serif] text-[13px] font-medium text-[#374151] mb-1.5">
+                Context <span className="text-[#9ca3af] font-normal">(optional)</span>
               </label>
               <textarea
                 value={context}
                 onChange={(e) => setContext(e.target.value)}
                 disabled={isGenerating}
-                placeholder="Provide any specific requirements, focus areas, or constraints..."
-                rows={3}
-                className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                placeholder={effectiveType === 'code'
+                  ? 'e.g., Focus on O(n) time complexity, avoid sorting...'
+                  : 'e.g., For senior engineers, focus on distributed systems...'}
+                rows={2}
+                className="w-full px-4 py-2.5 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
               />
             </div>
 
-            {/* AI Info Box */}
-            <div className="p-4 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-[12px]">
-              <div className="flex items-start gap-3">
-                <Sparkles size={20} className="text-purple-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-['Arimo',sans-serif] text-[13px] text-purple-900 mb-1">
-                    <strong>AI will generate:</strong>
-                  </p>
-                  <ul className="font-['Arimo',sans-serif] text-[13px] text-purple-800 list-disc list-inside space-y-1">
-                    {effectiveType === 'mcq' && (
-                      <>
-                        <li>A relevant multiple-choice question</li>
-                        <li>4 plausible options with marked correct answer</li>
-                        <li>An explanation for the correct answer</li>
-                        <li>References from trusted sources</li>
-                      </>
-                    )}
-                    {effectiveType === 'essay' && (
-                      <>
-                        <li>A thought-provoking essay question</li>
-                        <li>Grading rubric with key evaluation criteria</li>
-                        <li>Expected keywords and concepts</li>
-                        <li>References from academic sources</li>
-                      </>
-                    )}
-                    {effectiveType === 'code' && (
-                      <>
-                        <li>A coding problem with clear requirements</li>
-                        <li>Code template in your preferred language</li>
-                        <li>Test cases for validation</li>
-                        <li>References to relevant documentation</li>
-                      </>
-                    )}
-                    {effectiveType === 'interview' && (
-                      <>
-                        <li>Relevant interview questions</li>
-                        <li>Evaluation criteria and key points</li>
-                        <li>Tailored to the selected difficulty</li>
-                      </>
-                    )}
-                  </ul>
-                </div>
-              </div>
+            {/* AI will generate — compact */}
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-[8px] bg-[#f9fafb] border border-[#e5e7eb]">
+              <Sparkles size={14} className="text-[#6366f1] flex-shrink-0" />
+              <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                {effectiveType === 'code'
+                  ? 'AI generates: problem statement · Python function stub · I/O format · examples · constraints · 6+ test cases (hidden + visible) · reference solution'
+                  : effectiveType === 'mcq'
+                  ? 'AI generates: question text · 4 answer options · correct answer · explanation'
+                  : effectiveType === 'essay'
+                  ? 'AI generates: question text · grading rubric · 10 yes/no rubric checks · expected keywords'
+                  : 'AI generates: interview questions · evaluation criteria'
+                }
+              </p>
             </div>
 
             {isGenerating && (
-              <div className="p-4 border border-indigo-200 bg-indigo-50 rounded-[12px]" role="status" aria-live="polite">
+              <div className="p-3 border border-[#6366f1]/20 bg-[#f5f3ff] rounded-[10px]" role="status" aria-live="polite">
                 <div className="flex items-center gap-3">
-                  <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                  <p className="font-['Arimo',sans-serif] text-[13px] text-indigo-900">
-                    Generating question with AI. This may take a few seconds.
+                  <div className="w-4 h-4 border-2 border-[#6366f1] border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                  <p className="font-['Arimo',sans-serif] text-[13px] text-[#4f46e5]">
+                    Generating{variantCount > 1 ? ` ${variantCount} variants` : ''}… this takes a few seconds.
                   </p>
                 </div>
               </div>
@@ -492,38 +549,85 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
             )}
 
             {!isGenerating && generatedVariants.length > 1 && (
-              <div className="p-4 border border-[#e5e7eb] rounded-[12px] bg-[#fcfcff]">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">Select a Variant</h3>
-                  <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{generatedVariants.length} generated</span>
+              <div className="rounded-[12px] border border-[#e5e7eb] bg-[#fcfcff] overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-[#e5e7eb]">
+                  <h3 className="font-['Arimo',sans-serif] text-[13px] font-medium text-[#111827]">
+                    {generatedVariants.length} variants generated
+                  </h3>
+                  <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                    Preview each, then approve
+                  </span>
                 </div>
-                <div className="space-y-2 mb-4">
-                  {generatedVariants.map((variant, index) => (
-                    <button
-                      key={`variant-${index}`}
-                      onClick={() => setSelectedVariantIndex(index)}
-                      className={`w-full p-3 rounded-[8px] border text-left transition-colors ${
-                        selectedVariantIndex === index
-                          ? 'border-purple-500 bg-purple-50'
-                          : 'border-[#e5e7eb] hover:border-purple-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Variant {index + 1}</span>
-                        {selectedVariantIndex === index && (
-                          <span className="font-['Arimo',sans-serif] text-[11px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">Selected</span>
-                        )}
+                <div className="divide-y divide-[#f3f4f6]">
+                  {generatedVariants.map((variant, index) => {
+                    const isApproved = approvedVariants.has(index);
+                    return (
+                      <div
+                        key={`variant-${index}`}
+                        className={`flex items-start gap-3 px-4 py-3 transition-colors ${
+                          isApproved ? 'bg-emerald-50/60' : 'bg-white hover:bg-[#f9fafb]'
+                        }`}
+                      >
+                        {/* Approve toggle */}
+                        <button
+                          onClick={() => {
+                            if (isApproved) {
+                              setApprovedVariants(prev => {
+                                const n = new Map(prev); n.delete(index); return n;
+                              });
+                            } else {
+                              setApprovedVariants(prev => new Map(prev).set(index, variant));
+                            }
+                          }}
+                          className={`mt-0.5 w-5 h-5 rounded-[4px] border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
+                            isApproved
+                              ? 'border-emerald-500 bg-emerald-500'
+                              : 'border-[#d1d5db] hover:border-[#6366f1]'
+                          }`}
+                          title={isApproved ? 'Remove approval' : 'Approve without preview'}
+                        >
+                          {isApproved && (
+                            <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                              <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </button>
+
+                        {/* Question preview */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-['Arimo',sans-serif] text-[11px] text-[#9ca3af]">
+                              Variant {index + 1}
+                            </span>
+                            {isApproved && (
+                              <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-medium">
+                                Approved
+                              </span>
+                            )}
+                          </div>
+                          <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151] line-clamp-2">
+                            {variant.questionText}
+                          </p>
+                        </div>
+
+                        {/* Preview button */}
+                        <button
+                          onClick={() => setPreviewingIndex(index)}
+                          className="flex-shrink-0 h-7 px-3 rounded-[6px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[12px] text-[#6b7280] hover:border-[#6366f1] hover:text-[#6366f1] transition-colors"
+                        >
+                          Preview
+                        </button>
                       </div>
-                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#111827] line-clamp-2">
-                        {variant.questionText}
-                      </p>
-                    </button>
-                  ))}
+                    );
+                  })}
                 </div>
-                <div className="flex items-center justify-end">
-                  <Button className="rounded-[8px]" onClick={handlePreviewSelectedVariant}>
-                    Preview Selected
-                  </Button>
+                {/* Status bar — action is in the modal footer */}
+                <div className="px-4 py-2.5 border-t border-[#e5e7eb] bg-[#f9fafb]">
+                  <span className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                    {approvedVariants.size > 0
+                      ? `${approvedVariants.size} of ${generatedVariants.length} approved — click "Add approved to section" below`
+                      : `Approve variants to enable adding them to the section`}
+                  </span>
                 </div>
               </div>
             )}
@@ -532,35 +636,108 @@ export function AIGeneratorModal({ questionType, onGenerate, onClose, context: e
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="px-8 py-4 border-t border-[#e5e7eb] flex-shrink-0">
-          <div className="flex items-center justify-end gap-3">
-            <Button
-              variant="outline"
-              onClick={handleClose}
-              className="rounded-[8px]"
-              disabled={isGenerating}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void generateQuestion()}
-              className="rounded-[8px] bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
-              disabled={!canGenerate}
-            >
-              {isGenerating ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Wand2 size={16} className="mr-2" />
-                  {variantCount === 1 ? 'Generate Question' : `Generate ${variantCount} Variants`}
-                </>
-              )}
-            </Button>
-          </div>
+        {/* Footer — adapts based on state */}
+        <div className="px-6 py-4 border-t border-[#e5e7eb] flex-shrink-0">
+          {approvedVariants.size > 0 ? (
+            /* Approved variants ready → "Add" is the primary CTA */
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleClose}
+                  className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                  disabled={savingToQB}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void generateQuestion()}
+                  className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                  disabled={!canGenerate || savingToQB}
+                >
+                  <Wand2 size={13} className="mr-1.5" />
+                  Regenerate
+                </Button>
+              </div>
+              <Button
+                onClick={() => void handleAddApproved()}
+                disabled={savingToQB}
+                className="rounded-[8px] h-[38px] px-5 bg-emerald-600 hover:bg-emerald-700 text-white text-[13px]"
+              >
+                {savingToQB ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Check size={14} className="mr-2" />
+                    Add {approvedVariants.size} approved to section
+                  </>
+                )}
+              </Button>
+            </div>
+          ) : generatedVariants.length > 0 ? (
+            /* Variants shown but none approved yet → hint + regenerate secondary */
+            <div className="flex items-center justify-between">
+              <p className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af]">
+                Preview variants above, then approve to add
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleClose}
+                  className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void generateQuestion()}
+                  className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                  disabled={!canGenerate}
+                >
+                  <Wand2 size={13} className="mr-1.5" />
+                  Regenerate
+                </Button>
+              </div>
+            </div>
+          ) : (
+            /* Default state → Generate is primary */
+            <div className="flex items-center justify-between">
+              <p className="font-['Arimo',sans-serif] text-[12px] text-[#9ca3af]">
+                Press Enter to generate
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleClose}
+                  className="rounded-[8px] h-[38px] px-4 text-[13px]"
+                  disabled={isGenerating}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => void generateQuestion()}
+                  className="rounded-[8px] h-[38px] px-5 bg-[#6366f1] hover:bg-[#4f46e5] text-white text-[13px]"
+                  disabled={!canGenerate}
+                >
+                  {isGenerating ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 size={14} className="mr-2" />
+                      {variantCount === 1 ? 'Generate' : `Generate ${variantCount}×`}
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

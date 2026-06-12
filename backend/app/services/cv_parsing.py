@@ -79,6 +79,39 @@ class CVParsingWorkerService:
         experience_years: float | None,
     ):
         """Create or update CVAnalysis with parsed data using SQLAlchemy."""
+        from app.utils.date_parser import normalize_work_experience, normalize_education
+
+        if isinstance(parsed_data, dict):
+            # Normalize work experience
+            work_exp = parsed_data.get("work_experience")
+            if isinstance(work_exp, list):
+                normalized_work = []
+                for entry in work_exp:
+                    if isinstance(entry, dict):
+                        normalized_work.append(normalize_work_experience(entry))
+                    else:
+                        normalized_work.append(entry)
+                parsed_data["work_experience"] = normalized_work
+
+                # Calculate experience years from normalized work history
+                computed_exp_years = sum(
+                    job.get("duration_years", 0.0)
+                    for job in normalized_work
+                    if isinstance(job, dict)
+                )
+                experience_years = round(computed_exp_years, 1)
+
+            # Normalize education
+            edu = parsed_data.get("education")
+            if isinstance(edu, list):
+                normalized_edu = []
+                for entry in edu:
+                    if isinstance(entry, dict):
+                        normalized_edu.append(normalize_education(entry))
+                    else:
+                        normalized_edu.append(entry)
+                parsed_data["education"] = normalized_edu
+
         prescore = parsed_data.get("prescore_v2") if isinstance(parsed_data, dict) else {}
         match_score = None
         if isinstance(prescore, dict) and prescore.get("pre_score_final") is not None:
@@ -89,6 +122,7 @@ class CVParsingWorkerService:
 
         education_list = parsed_data.get("education") if isinstance(parsed_data, dict) else None
         work_history_list = parsed_data.get("work_experience") if isinstance(parsed_data, dict) else None
+
 
         stmt = select(CVAnalysis).where(CVAnalysis.application_id == application_id)
         analysis = self.session.execute(stmt).scalars().first()

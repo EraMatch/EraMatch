@@ -107,6 +107,11 @@ export interface ApplicationScoreBreakdown {
     semantic_fit_score?: number | null;
     skills_experience_score?: number | null;
     optional_profile_boost?: number | null;
+    skill_alignment?: number | null;
+    experience_alignment?: number | null;
+    keyword_coverage?: number | null;
+    seniority_score?: number | null;
+    education_score?: number | null;
     jd_quality_score?: number | null;
     jd_quality_status?: string | null;
     jd_quality_cap?: number | null;

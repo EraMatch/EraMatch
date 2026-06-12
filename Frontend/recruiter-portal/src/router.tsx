@@ -24,6 +24,7 @@ import { CandidateGitHubAnalysisReviewPage } from './components/recruiter/candid
 import { CandidateQAGAuditPage } from './components/recruiter/candidates/CandidateQAGAuditPage';
 import { AlertsNotifications } from './components/common/AlertsNotifications';
 import { EnhancedGroupOverviewV2 } from './components/recruiter/groups/EnhancedGroupOverviewV2';
+import { GroupPageShell } from './components/recruiter/groups/results/GroupPageShell';
 import { LandingPage } from './components/common/LandingPage';
 import { SuspectReviewWrapper } from './components/recruiter/candidates/SuspectReviewWrapper';
 import { RecruiterSettings } from './components/recruiter/settings/RecruiterSettings';
@@ -68,8 +69,16 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
 // Protected Route Guards
 const AdminProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     const token = localStorage.getItem('token');
-    const user = localStorage.getItem('user');
-    if (!token || !user) {
+    const userStr = localStorage.getItem('user');
+    if (!token || !userStr) {
+        return <Navigate to="/admin/login" replace />;
+    }
+    try {
+        const user = JSON.parse(userStr);
+        if (user.role?.toLowerCase() !== 'admin') {
+            return <Navigate to="/recruiter/dashboard" replace />;
+        }
+    } catch (e) {
         return <Navigate to="/admin/login" replace />;
     }
     return <>{children}</>;
@@ -224,6 +233,7 @@ const PositionDetailWrapper = () => {
 const GroupOverviewWrapper = () => {
     const { groupId } = useParams();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const [group, setGroup] = React.useState<any | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
@@ -288,11 +298,26 @@ const GroupOverviewWrapper = () => {
         });
     }
 
+    // Default is the full-featured EnhancedGroupOverviewV2 cockpit (per-stage config,
+    // correct back-nav, scheduling, offers). The newer results-oriented GroupPageShell
+    // is opt-in via ?shell=1 until it reaches feature parity.
+    const useShell = searchParams.get('shell') === '1';
+
+    if (useShell) {
+        return (
+            <GroupPageShell
+                groupId={groupId ?? ''}
+                onBack={() => navigate(-1)}
+                onOpenCandidate={(_appId, candId) => navigate(`/recruiter/candidates/${candId}`)}
+            />
+        );
+    }
+
     return (
         <EnhancedGroupOverviewV2
             groupId={group.id}
             groupName={group.name}
-            description={group.description || "High-performing candidates filtered by criteria"}
+            description={group.position_title || group.description || "High-performing candidates filtered by criteria"}
             assignedRecruiter={group.assigned_hr?.name || "Unassigned"}
             candidateIds={[]} // We'll let EnhancedGroupOverviewV2 fetch candidates if needed, or pass empty
             recruiterType={recruiterType}

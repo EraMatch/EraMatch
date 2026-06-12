@@ -10,7 +10,7 @@ import { RecruiterWorkloadChart } from './RecruiterWorkloadChart';
 
 import { toast } from 'sonner';
 import { api, Member } from '../../services/api';
-import EraMatchLogo from '../../assets/image-eramatch.png';
+import { Logo } from '../common/Logo';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAdminMembers, useAdminMemberStats } from '../../hooks/admin/useAdminDashboard';
@@ -94,7 +94,7 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
 
     try {
       setIsActing(true);
-      const result = await backfillPositionsMutation.mutateAsync();
+      const result = await backfillPositionsMutation.mutateAsync() as { updated_positions?: number };
       toast.success(`✓ Positions restored: ${result.updated_positions || 0} positions reassigned`);
       setShowReturnConfirm(false);
     } catch (error: any) {
@@ -188,7 +188,7 @@ export function AdminOrganizationMembers({ onSignOut }: AdminOrganizationMembers
           <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Organization Members</h1>
           <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Overview of your organization's team and access</p>
         </div>
-        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
+        <Logo size="md" className="mt-1 mr-6" />
       </div>
 
       {isLoading ? (

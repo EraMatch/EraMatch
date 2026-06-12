@@ -143,7 +143,7 @@ export function ModuleMonitoringDashboard({
   const droppedRateLimited = Number(inProcessTotals?.dropped_rate_limited || 0);
   const droppedDuplicate = Number(inProcessTotals?.dropped_duplicate || 0);
 
-  const normalizeStageKey = (value: string) => (value || '').toLowerCase().replaceAll('-', '_');
+  const normalizeStageKey = (value: string) => (value || '').toLowerCase().replace(/-/g, '_');
   const visibleStageAggregates = Array.isArray(integrityDecisions?.stage_aggregates)
     ? integrityDecisions.stage_aggregates.filter((agg: any) => {
       const stageKey = normalizeStageKey(agg?.stage || '');
@@ -209,7 +209,7 @@ export function ModuleMonitoringDashboard({
   };
 
   const formatDecision = (decision: string) => {
-    return String(decision || '').replaceAll('_', ' ').replace(/\b\w/g, (m) => m.toUpperCase());
+    return String(decision || '').replace(/_/g, ' ').replace(/\b\w/g, (m: string) => m.toUpperCase());
   };
 
   const resolveCandidateActionId = (row: any) => {

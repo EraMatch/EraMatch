@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, Plus, Trash2, Play, Eye, EyeOff, Sparkles } from 'lucide-react';
+import { ChevronLeft, Plus, Trash2, Eye, EyeOff, Sparkles } from 'lucide-react';
 import { Button } from '../ui/button';
 import { TextRefiner } from '../recruiter/shared/TextRefiner';
 
@@ -16,6 +16,13 @@ interface QuestionVariant {
   questionText: string;
   type: 'mcq' | 'essay' | 'code';
   codeTemplate?: string;
+  starterCode?: string;
+  functionName?: string;
+  inputFormat?: string;
+  outputFormat?: string;
+  questionExamples?: Array<{input: string; output: string; explanation: string}>;
+  questionConstraints?: string[];
+  topics?: string[];
   testCases?: TestCase[];
   language?: string;
   timeLimit?: number;
@@ -45,17 +52,37 @@ const LANGUAGES = [
   'Swift'
 ];
 
+// Normalize incoming test case — backend/QB data uses `expected` + `is_hidden` (snake_case)
+// while the editor form works with `expectedOutput` + `isHidden` (camelCase).
+function normalizeIncoming(tc: any): TestCase {
+  return {
+    id: tc.id || `testcase-${Date.now()}-${Math.random()}`,
+    input: tc.input ?? '',
+    expectedOutput: tc.expectedOutput ?? tc.expected ?? '',
+    isHidden: tc.isHidden ?? tc.is_hidden ?? false,
+    points: tc.points ?? 10,
+  };
+}
+
 export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
   const [questionData, setQuestionData] = useState<QuestionVariant>({
     ...variant,
-    testCases: variant.testCases || [],
-    language: variant.language || 'JavaScript',
+    testCases: (variant.testCases || []).map(normalizeIncoming),
+    language: variant.language || 'Python',
     timeLimit: variant.timeLimit || 5,
     memoryLimit: variant.memoryLimit || 256,
     difficulty: variant.difficulty || 'Medium',
     category: variant.category || '',
-    tags: variant.tags || []
+    tags: variant.tags || [],
+    starterCode: variant.starterCode || variant.codeTemplate || '',
+    functionName: variant.functionName || '',
+    inputFormat: variant.inputFormat || '',
+    outputFormat: variant.outputFormat || '',
+    questionExamples: variant.questionExamples || [],
+    questionConstraints: variant.questionConstraints || [],
+    topics: variant.topics || [],
   });
+  const [newConstraint, setNewConstraint] = useState('');
 
   const [newTag, setNewTag] = useState('');
   const [showQuestionRefiner, setShowQuestionRefiner] = useState(false);
@@ -104,6 +131,58 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
     });
   };
 
+  const extractFunctionName = (code: string): string => {
+    const match = code.match(/def\s+(\w+)\s*\(/);
+    return match ? match[1] : '';
+  };
+
+  const handleStarterCodeChange = (code: string) => {
+    const extracted = extractFunctionName(code);
+    setQuestionData({
+      ...questionData,
+      starterCode: code,
+      codeTemplate: code,
+      functionName: extracted || questionData.functionName || '',
+    });
+  };
+
+  const handleAddExample = () => {
+    setQuestionData({
+      ...questionData,
+      questionExamples: [...(questionData.questionExamples || []), {input: '', output: '', explanation: ''}],
+    });
+  };
+
+  const handleUpdateExample = (index: number, field: 'input' | 'output' | 'explanation', value: string) => {
+    const updated = [...(questionData.questionExamples || [])];
+    updated[index] = {...updated[index], [field]: value};
+    setQuestionData({...questionData, questionExamples: updated});
+  };
+
+  const handleRemoveExample = (index: number) => {
+    setQuestionData({
+      ...questionData,
+      questionExamples: (questionData.questionExamples || []).filter((_, i) => i !== index),
+    });
+  };
+
+  const handleAddConstraint = () => {
+    if (newConstraint.trim()) {
+      setQuestionData({
+        ...questionData,
+        questionConstraints: [...(questionData.questionConstraints || []), newConstraint.trim()],
+      });
+      setNewConstraint('');
+    }
+  };
+
+  const handleRemoveConstraint = (index: number) => {
+    setQuestionData({
+      ...questionData,
+      questionConstraints: (questionData.questionConstraints || []).filter((_, i) => i !== index),
+    });
+  };
+
   const handleSave = () => {
     if (!questionData.questionText.trim()) {
       alert('Please enter a question');
@@ -120,7 +199,19 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
       return;
     }
 
-    onSave(questionData);
+    // Emit test cases with both field-name conventions so downstream
+    // consumers (SectionEditor display, backend create_question) all work.
+    const normalizedTestCases = (questionData.testCases || []).map(tc => ({
+      ...tc,
+      expected: tc.expectedOutput,
+      is_hidden: tc.isHidden,
+    }));
+
+    onSave({
+      ...questionData,
+      testCases: normalizedTestCases,
+      codeTemplate: questionData.starterCode || questionData.codeTemplate || '',
+    });
   };
 
   return (
@@ -222,21 +313,160 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
               </div>
             </div>
 
-            {/* Code Template */}
+            {/* Starter Code */}
             <div>
               <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Code Template (Optional)
+                Starter Code
               </label>
               <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] mb-2">
-                Provide a starting template for candidates
+                Python function stub shown to candidates. Function name is auto-extracted.
               </p>
               <textarea
-                value={questionData.codeTemplate || ''}
-                onChange={(e) => setQuestionData({ ...questionData, codeTemplate: e.target.value })}
-                placeholder={`// Example for ${questionData.language}:\nfunction solution(input) {\n  // Your code here\n  return output;\n}`}
+                value={questionData.starterCode || ''}
+                onChange={(e) => handleStarterCodeChange(e.target.value)}
+                placeholder={`def solution(nums: list[int]) -> int:\n    # Your code here\n    pass`}
                 rows={8}
                 className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none font-mono bg-[#1e1e1e] text-[#d4d4d4]"
               />
+            </div>
+
+            {/* Function Name */}
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Function Name
+              </label>
+              <input
+                type="text"
+                value={questionData.functionName || ''}
+                onChange={(e) => setQuestionData({...questionData, functionName: e.target.value})}
+                placeholder="e.g., twoSum"
+                className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-mono text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+              />
+            </div>
+
+            {/* Input / Output Format */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                  Input Format
+                </label>
+                <textarea
+                  value={questionData.inputFormat || ''}
+                  onChange={(e) => setQuestionData({...questionData, inputFormat: e.target.value})}
+                  placeholder="Describe the input parameters..."
+                  rows={3}
+                  className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
+                />
+              </div>
+              <div>
+                <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                  Output Format
+                </label>
+                <textarea
+                  value={questionData.outputFormat || ''}
+                  onChange={(e) => setQuestionData({...questionData, outputFormat: e.target.value})}
+                  placeholder="Describe the return value..."
+                  rows={3}
+                  className="w-full px-4 py-3 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Examples */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151]">
+                    Examples (Visible)
+                  </label>
+                  <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] mt-1">
+                    Shown to candidates as part of the problem description
+                  </p>
+                </div>
+                <button
+                  onClick={handleAddExample}
+                  className="flex items-center gap-2 h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors"
+                >
+                  <Plus size={14} className="text-[#6366f1]" />
+                  <span className="font-['Arimo',sans-serif] text-[13px] text-[#6366f1]">Add Example</span>
+                </button>
+              </div>
+              <div className="space-y-3">
+                {(questionData.questionExamples || []).map((ex, i) => (
+                  <div key={i} className="border border-[#e5e7eb] rounded-[10px] p-4 bg-[#f9fafb]">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] font-medium">Example {i + 1}</span>
+                      <button onClick={() => handleRemoveExample(i)} className="w-7 h-7 rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-red-50 flex items-center justify-center">
+                        <Trash2 size={13} className="text-red-500" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mb-2">
+                      <div>
+                        <label className="block font-['Arimo',sans-serif] text-[12px] text-[#374151] mb-1">Input</label>
+                        <textarea
+                          value={ex.input}
+                          onChange={(e) => handleUpdateExample(i, 'input', e.target.value)}
+                          rows={2}
+                          className="w-full px-3 py-2 rounded-[6px] border border-[#e5e7eb] font-mono text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-['Arimo',sans-serif] text-[12px] text-[#374151] mb-1">Output</label>
+                        <textarea
+                          value={ex.output}
+                          onChange={(e) => handleUpdateExample(i, 'output', e.target.value)}
+                          rows={2}
+                          className="w-full px-3 py-2 rounded-[6px] border border-[#e5e7eb] font-mono text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent resize-none bg-white"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block font-['Arimo',sans-serif] text-[12px] text-[#374151] mb-1">Explanation (Optional)</label>
+                      <input
+                        type="text"
+                        value={ex.explanation}
+                        onChange={(e) => handleUpdateExample(i, 'explanation', e.target.value)}
+                        className="w-full h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent bg-white"
+                      />
+                    </div>
+                  </div>
+                ))}
+                {(!questionData.questionExamples || questionData.questionExamples.length === 0) && (
+                  <div className="text-center py-4 border border-dashed border-[#e5e7eb] rounded-[10px]">
+                    <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">No examples yet. Click "Add Example" to add one.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Constraints */}
+            <div>
+              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
+                Constraints
+              </label>
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  type="text"
+                  value={newConstraint}
+                  onChange={(e) => setNewConstraint(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddConstraint())}
+                  placeholder="e.g., 1 ≤ n ≤ 10^5"
+                  className="flex-1 h-[40px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                />
+                <Button onClick={handleAddConstraint} variant="outline" className="h-[40px] px-4">Add</Button>
+              </div>
+              {(questionData.questionConstraints || []).length > 0 && (
+                <ul className="space-y-1">
+                  {(questionData.questionConstraints || []).map((c, i) => (
+                    <li key={i} className="flex items-center gap-2 px-3 py-2 rounded-[6px] bg-[#f9fafb] border border-[#e5e7eb]">
+                      <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151] flex-1 font-mono">{c}</span>
+                      <button onClick={() => handleRemoveConstraint(i)} className="w-6 h-6 rounded flex items-center justify-center hover:bg-red-50">
+                        <Trash2 size={12} className="text-red-500" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             {/* Test Cases */}
@@ -382,20 +612,6 @@ export function CodeEditor({ variant, onSave, onCancel }: CodeEditorProps) {
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* Category */}
-            <div>
-              <label className="block font-['Arimo',sans-serif] text-[14px] text-[#374151] mb-2">
-                Category (Optional)
-              </label>
-              <input
-                type="text"
-                value={questionData.category || ''}
-                onChange={(e) => setQuestionData({ ...questionData, category: e.target.value })}
-                placeholder="e.g., Algorithms, Data Structures..."
-                className="w-full h-[44px] px-4 rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
-              />
             </div>
 
             {/* Tags */}

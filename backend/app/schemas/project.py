@@ -136,6 +136,9 @@ class PositionCandidateResponse(BaseModel):
     email: str
     score: float
     match: float
+    # Dual-score model: semantic = heuristic JD↔CV fit; qag = AI QAG evaluation (None until approved)
+    semantic_score: float | None = None
+    qag_score: float | None = None
     color: str = "#6366f1"
     starred: bool = False
     selected: bool = False
@@ -158,6 +161,8 @@ class PositionCandidateResponse(BaseModel):
     job_titles: list[str] = []
     universities: list[str] = []
     degrees: list[str] = []
+    gpa: float | None = None
+
 
     # GitHub analytics for cross-module filtering and segmentation
     github_overall_score: float | None = None
@@ -229,6 +234,12 @@ class ApplicationScoreBreakdownResponse(BaseModel):
     semantic_fit_score: float | None = None
     skills_experience_score: float | None = None
     optional_profile_boost: float | None = None
+    # New composite signal scores
+    skill_alignment: float | None = None
+    experience_alignment: float | None = None
+    keyword_coverage: float | None = None
+    seniority_score: float | None = None
+    education_score: float | None = None
     jd_quality_score: float | None = None
     jd_quality_status: str | None = None
     jd_quality_cap: float | None = None

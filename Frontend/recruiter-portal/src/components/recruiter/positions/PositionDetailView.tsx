@@ -1,10 +1,11 @@
 import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../services/api';
 import { usePositionDetail, usePositionInsights } from '../../../hooks/positions/usePositions';
+import { useBackgroundTasksPolling } from '../../../hooks/backgroundTasks/useBackgroundTasks';
 import { queryKeys } from '../../../lib/queryKeys';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../ui/dialog';
 import { Switch } from '../../ui/switch';
@@ -41,6 +42,9 @@ interface Candidate {
   github_freshness_hours?: number | null;
   github_has_fallback?: boolean;
   pre_score_final?: number | null;
+  // Dual-score model: semantic = heuristic JD↔CV fit; qag = AI QAG evaluation
+  semantic_score?: number | null;
+  qag_score?: number | null;
 }
 
 interface Assessment {
@@ -196,6 +200,9 @@ export function PositionDetailView({
   positionStatus = 'open'
 }: PositionDetailViewProps) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  // Dual-score filters: minimum semantic (JD↔CV) and QAG (AI) thresholds.
+  const [minSemantic, setMinSemantic] = useState(0);
+  const [minQag, setMinQag] = useState(0);
   const [groups, setGroups] = useState<any[]>([]);
   const [archivedGroups, setArchivedGroups] = useState<any[]>([]);
   const [showArchivedGroups, setShowArchivedGroups] = useState(false);
@@ -281,6 +288,10 @@ export function PositionDetailView({
 
   // Filter Logic
   const filteredCandidates = candidates.filter(c => {
+    // Dual-score thresholds
+    if (minSemantic > 0 && (c.semantic_score ?? 0) < minSemantic) return false;
+    if (minQag > 0 && (c.qag_score ?? 0) < minQag) return false;
+
     // Keywords (Name, Email, Job Titles, Skills)
     if (filters.keywords) {
       const term = filters.keywords.toLowerCase();
@@ -370,6 +381,52 @@ export function PositionDetailView({
     setKeywordsVisible(hasAnyKeywords(kw));
   }, [detailData]);
 
+  // ── Scoring progress tracking ────────────────────────────────────────────
+  // lastUploadAt: set on upload, drives polling for 8 min regardless of DB state.
+  // bgPendingCount: from background-tasks, non-zero while DB has unscored applications.
+  // Both independently trigger auto-refetch so the list updates without manual refresh.
+  const [lastUploadAt, setLastUploadAt] = useState<number | null>(null);
+
+  const { data: bgTasks } = useBackgroundTasksPolling(true);
+  const bgPendingCount = (() => {
+    if (!Array.isArray(bgTasks) || !positionId) return 0;
+    const positionJobs = bgTasks.filter(
+      (t: any) => t.task_category === 'cv_ingestion' && t.position_id === positionId
+    );
+    if (positionJobs.length === 0) return 0;
+    return Number(positionJobs[0]?.pending_count ?? 0);
+  })();
+
+  const UPLOAD_POLL_WINDOW_MS = 8 * 60 * 1000; // 8 min after upload
+  const isRecentUpload = lastUploadAt != null && (Date.now() - lastUploadAt) < UPLOAD_POLL_WINDOW_MS;
+
+  // shouldPoll = recent upload OR DB still has unscored candidates
+  const shouldPoll = isRecentUpload || bgPendingCount > 0;
+
+  // Count from visible candidates — always accurate to what the user sees
+  const scoredCandidateCount = candidates.filter((c: any) => (c.score ?? 0) > 0 || (c.match ?? 0) > 0).length;
+  const totalCandidateCount = candidates.length;
+
+  // Show the chip: processing started (shouldPoll) and we have candidates to display, OR some are still N/A
+  const unscoredVisible = totalCandidateCount > 0 && scoredCandidateCount < totalCandidateCount;
+  const showScoringChip = shouldPoll && (totalCandidateCount > 0 || isRecentUpload);
+
+  // Auto-refetch position detail the whole time — picks up new candidates + score updates
+  useEffect(() => {
+    if (!shouldPoll || !positionId) return;
+    const interval = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [shouldPoll, positionId, queryClient]);
+
+  // Stop the recent-upload window if all candidates are scored (no more work to do)
+  useEffect(() => {
+    if (isRecentUpload && totalCandidateCount > 0 && !unscoredVisible && bgPendingCount === 0) {
+      setLastUploadAt(null);
+    }
+  }, [isRecentUpload, totalCandidateCount, unscoredVisible, bgPendingCount]);
+
   useEffect(() => {
     if (!insightsData) return;
     const i = insightsData as any;
@@ -388,14 +445,15 @@ export function PositionDetailView({
 
   // Auth / Role Check
   const user = JSON.parse(localStorage.getItem('user') || '{}');
-  const isHR = user.role === 'hr' || user.role === 'admin';
-  const canManageQAG = user.role === 'technical' || user.role === 'admin';
+  const userRole = String(user.role || '').toLowerCase();
+  const isHR = userRole === 'hr' || userRole === 'admin';
+  const canManageQAG = userRole === 'technical' || userRole === 'admin';
   const isUnderReview = positionStatus === 'pending' || positionStatus === 'technical_review';
   const canUseCandidateActions = !isUnderReview;
   const navigate = useNavigate();
 
   // Upload Logic
-  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [zipFiles, setZipFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
@@ -466,18 +524,15 @@ export function PositionDetailView({
   };
 
   const handleZipUpload = async () => {
-    if (!zipFile || !positionId) return;
+    if (zipFiles.length === 0 || !positionId) return;
 
     setIsUploading(true);
     setUploadError(null);
     try {
-      const formData = new FormData();
-      formData.append('file', zipFile);
-      formData.append('position_id', positionId);
-
-      const res = await api.recruiter.importZipCandidates(positionId, formData);
-      setUploadSuccess(`Successfully processed ${res.job_id ? 'ZIP ingestion job started' : 'files'}. Background job is running.`);
-      // Optionally refresh candidates list here
+      const res = await api.recruiter.uploadZipCandidates(positionId, zipFiles);
+      setUploadSuccess(`Upload accepted. Scoring progress will update automatically below.`);
+      setLastUploadAt(Date.now()); // start polling immediately, before any DB state
+      setZipFiles([]); // clear after successful upload
     } catch (err: any) {
       setUploadError(err.message || "Upload failed");
     } finally {
@@ -549,9 +604,8 @@ export function PositionDetailView({
       queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.positions.insights(positionId) });
 
-      setRecomputeMessage(
-        result?.message ?? 'Score recomputation started in the background. Refresh in a moment.'
-      );
+      const scheduled = Number(result?.applications_scheduled ?? result?.applications_scored ?? 0);
+      setRecomputeMessage(`Scheduled score recomputation for ${scheduled} candidate${scheduled === 1 ? '' : 's'}.`);
     } catch (error) {
       console.error('Failed to recompute prescores:', error);
       setRecomputeError(error instanceof Error ? error.message : 'Failed to recompute scores');
@@ -635,9 +689,9 @@ export function PositionDetailView({
       queryClient.invalidateQueries({ queryKey: queryKeys.positions.insights(positionId) });
 
       setQagStatus('approved');
-      const scored = Number(recomputeResult?.applications_scored ?? 0);
-      setQagMessage(`QAG approved and recomputed for ${scored} candidate${scored === 1 ? '' : 's'}.`);
-      setRecomputeMessage(`Recomputed scores for ${scored} candidate${scored === 1 ? '' : 's'}.`);
+      const scheduled = Number(recomputeResult?.applications_scheduled ?? recomputeResult?.applications_scored ?? 0);
+      setQagMessage(`QAG approved and recomputation scheduled for ${scheduled} candidate${scheduled === 1 ? '' : 's'}.`);
+      setRecomputeMessage(`Scheduled score recomputation for ${scheduled} candidate${scheduled === 1 ? '' : 's'}.`);
 
       // Auto-trigger keyword extraction after QAG approval
       setKeywordsVisible(true);   // show panel immediately
@@ -833,12 +887,39 @@ export function PositionDetailView({
 
 {/* Candidates Tab Content */}
         {activeTab === 'candidates' && (
-          <div className="w-full space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+<div className="w-full space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            {/* ── Scoring progress bar — prominent, visible top of tab ── */}
+            {showScoringChip && (
+              <div className="flex items-center gap-3 rounded-[10px] bg-[#4f46e5] px-4 py-3 text-white shadow-sm">
+                <Loader2 size={15} className="animate-spin shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold">Scoring candidates</span>
+                  {totalCandidateCount > 0 && (
+                    <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-200 ml-2">
+                      {scoredCandidateCount} of {totalCandidateCount} analyzed
+                    </span>
+                  )}
+                  {totalCandidateCount === 0 && (
+                    <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-200 ml-2">
+                      Processing CVs, candidates will appear shortly…
+                    </span>
+                  )}
+                </div>
+                {totalCandidateCount > 0 && (
+                  <div className="shrink-0 text-right">
+                    <span className="font-['Arimo',sans-serif] text-[20px] font-bold">
+                      {scoredCandidateCount}/{totalCandidateCount}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Header & Workspace Actions */}
             <div className="relative overflow-hidden rounded-3xl bg-white p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100">
               <div className="absolute top-0 right-0 -mr-20 -mt-20 h-64 w-64 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 blur-3xl mix-blend-multiply"></div>
               <div className="absolute bottom-0 left-0 -ml-20 -mb-20 h-64 w-64 rounded-full bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 blur-3xl mix-blend-multiply"></div>
-              
+
               <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <h2 className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent">
@@ -913,22 +994,46 @@ export function PositionDetailView({
               </div>
             )}
 
+{/* Import Candidates Section */}
+            <div className="bg-white rounded-[14px] p-6 shadow-sm mb-6 border border-[#eef2ff]">
+              <h3 className="font-['Arimo',sans-serif] text-[19px] text-black mb-4">
+                Import Candidates
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button
+                  onClick={() => setShowZipUploadModal(true)}
+                  className="flex items-center gap-3 p-4 rounded-[8px] border-2 border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-all"
+                >
+                  <Upload size={20} className="text-[#6366f1]" />
+                  <div className="text-left">
+                    <div className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
+                      Upload CVs (.zip / .pdf)
+                    </div>
+                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
+                      Drag & drop or browse
+                    </div>
+                  </div>
+                </button>
+                {/* ...rest of Anas's Import Candidates buttons / content... */}
+              </div>
+            </div>
+
             {/* Quick Data Board */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
               {[
                 { title: 'Total Candidates', value: filteredCandidates.length, icon: Users, color: 'indigo', total: null },
                 { title: 'Groups Created', value: groups.length, icon: Users, color: 'emerald', total: null },
-                { 
-                  title: 'Assigned', 
-                  value: groups.reduce((sum, g) => sum + g.candidateCount, 0), 
-                  icon: Users, 
+                {
+                  title: 'Assigned',
+                  value: groups.reduce((sum, g) => sum + g.candidateCount, 0),
+                  icon: Users,
                   color: 'teal',
-                  total: candidates.length 
+                  total: candidates.length
                 },
-                { 
-                  title: 'Unassigned', 
-                  value: (candidates as any[]).filter(c => !c.groupId).length, 
-                  icon: Users, 
+                {
+                  title: 'Unassigned',
+                  value: (candidates as any[]).filter(c => !c.groupId).length,
+                  icon: Users,
                   color: 'amber',
                   total: candidates.length
                 }
@@ -1088,12 +1193,55 @@ export function PositionDetailView({
                       </button>
                     </div>
 
-                    {keywordsMessage && (
-                      <p className="mb-3 text-[13px] font-medium text-emerald-600 bg-emerald-50 px-3 py-2 rounded-lg">{keywordsMessage}</p>
-                    )}
-                    {keywordsError && (
-                      <p className="mb-3 text-[13px] font-medium text-rose-600 bg-rose-50 px-3 py-2 rounded-lg">{keywordsError}</p>
-                    )}
+{/* Dual-score filters: Semantic (JD↔CV fit) + QAG (AI evaluation) */}
+              <div className="flex flex-wrap items-center gap-4 mb-5 px-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-700">Semantic ≥</span>
+                  <input
+                    type="range" min={0} max={100} value={minSemantic}
+                    onChange={(e) => setMinSemantic(Number(e.target.value))}
+                    className="w-[120px] accent-[#6366f1]"
+                  />
+                  <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-indigo-700 w-[34px]">{minSemantic}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-['Arimo',sans-serif] text-[12px] text-violet-700">QAG ≥</span>
+                  <input
+                    type="range" min={0} max={100} value={minQag}
+                    onChange={(e) => setMinQag(Number(e.target.value))}
+                    className="w-[120px] accent-[#8b5cf6]"
+                  />
+                  <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-violet-700 w-[34px]">{minQag}%</span>
+                </div>
+                {(minSemantic > 0 || minQag > 0) && (
+                  <button
+                    onClick={() => { setMinSemantic(0); setMinQag(0); }}
+                    className="font-['Arimo',sans-serif] text-[12px] text-[#64748b] hover:text-[#0f172a] underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {/* Keyword operation feedback */}
+              {keywordsMessage && (
+                <p className="mb-3 text-[13px] font-medium text-emerald-600 bg-emerald-50 px-3 py-2 rounded-lg">{keywordsMessage}</p>
+              )}
+              {keywordsError && (
+                <p className="mb-3 text-[13px] font-medium text-rose-600 bg-rose-50 px-3 py-2 rounded-lg">{keywordsError}</p>
+              )}
+
+              {/* Assessment reset feedback */}
+              {assessmentResetMessage && (
+                <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{assessmentResetMessage}</p>
+                </div>
+              )}
+              {assessmentResetError && (
+                <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
+                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{assessmentResetError}</p>
+                </div>
+              )}
 
                     {!hasAnyKeywords(jdKeywords) ? (
                       <div className="flex flex-col items-center justify-center py-6 text-center border-2 border-dashed border-slate-100 rounded-xl">
@@ -2014,8 +2162,35 @@ export function PositionDetailView({
                   Loading QAG questions...
                 </div>
               ) : qagQuestions.length === 0 ? (
-                <div className="h-[180px] flex items-center justify-center text-[#9ca3af]">
-                  No QAG questions found for this position.
+                <div className="h-[180px] flex flex-col items-center justify-center gap-3 text-[#9ca3af]">
+                  {qagStatus === 'ai_generation_failed' ? (
+                    <>
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#ef4444]">QAG generation failed — AI service was unavailable.</p>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setQagLoading(true);
+                          setQagError(null);
+                          try {
+                            await api.recruiter.regeneratePositionHDEvalQAG(positionId);
+                            setQagStatus('pending');
+                            setQagMessage('Regeneration started in the background. Reload in a moment.');
+                          } catch (e) {
+                            setQagError('Regeneration failed. Check AI service connectivity.');
+                          } finally {
+                            setQagLoading(false);
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-[6px] bg-[#6366f1] text-white font-['Arimo',sans-serif] text-[12px] hover:bg-[#4f46e5]"
+                      >
+                        Regenerate QAG Questions
+                      </button>
+                    </>
+                  ) : qagStatus === 'pending' ? (
+                    <p className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">QAG generation in progress — check back in a moment.</p>
+                  ) : (
+                    <p className="font-['Arimo',sans-serif] text-[13px]">No QAG questions found for this position.</p>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -2305,16 +2480,16 @@ export function PositionDetailView({
         />
       )}
 
-      {/* ZIP Upload Modal */}
+      {/* ZIP/PDF Upload Modal */}
       {showZipUploadModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-[16px] w-full max-w-[600px] p-8">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-[#111827] text-[20px]">Upload CVs (.zip)</h3>
+              <h3 className="text-[#111827] text-[20px]">Upload CVs (.zip / .pdf)</h3>
               <button
                 onClick={() => {
                   setShowZipUploadModal(false);
-                  setZipFile(null);
+                  setZipFiles([]);
                   setUploadError(null);
                   setUploadSuccess(null);
                 }}
@@ -2327,26 +2502,27 @@ export function PositionDetailView({
             {!uploadSuccess ? (
               <>
                 <div
-                  className={`border-2 border-dashed rounded-[12px] p-12 text-center mb-6 transition-colors cursor-pointer relative ${zipFile ? 'border-[#6366f1] bg-[#eef2ff]' : 'border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb]'
+                  className={`border-2 border-dashed rounded-[12px] p-12 text-center mb-6 transition-colors cursor-pointer relative ${zipFiles.length > 0 ? 'border-[#6366f1] bg-[#eef2ff]' : 'border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb]'
                     }`}
                 >
                   <input
                     type="file"
-                    accept=".zip"
+                    multiple
+                    accept=".zip,.pdf"
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        setZipFile(e.target.files[0]);
+                      if (e.target.files && e.target.files.length > 0) {
+                        setZipFiles(Array.from(e.target.files));
                         setUploadError(null);
                       }
                     }}
                   />
-                  <Upload size={48} className={`mx-auto mb-4 ${zipFile ? 'text-[#6366f1]' : 'text-[#6b7280]'}`} />
+                  <Upload size={48} className={`mx-auto mb-4 ${zipFiles.length > 0 ? 'text-[#6366f1]' : 'text-[#6b7280]'}`} />
                   <p className="font-['Arimo',sans-serif] text-[14px] text-[#111827] mb-2">
-                    {zipFile ? zipFile.name : "Drag and drop your ZIP file here, or click to browse"}
+                    {zipFiles.length > 0 ? `${zipFiles.length} file(s) selected` : "Drag and drop your ZIP or PDF files here, or click to browse"}
                   </p>
                   <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                    Supported format: .zip (max 100MB)
+                    Supported formats: .zip, .pdf (max 100MB)
                   </p>
                 </div>
 
@@ -2377,7 +2553,7 @@ export function PositionDetailView({
                   <button
                     onClick={() => {
                       setShowZipUploadModal(false);
-                      setZipFile(null);
+                      setZipFiles([]);
                     }}
                     className="flex-1 h-[44px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[14px] text-[#374151] transition-colors"
                   >
@@ -2385,7 +2561,7 @@ export function PositionDetailView({
                   </button>
                   <button
                     onClick={handleZipUpload}
-                    disabled={!zipFile || isUploading}
+                    disabled={zipFiles.length === 0 || isUploading}
                     className="flex-1 h-[44px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] disabled:bg-[#e5e7eb] disabled:cursor-not-allowed font-['Arimo',sans-serif] text-[14px] text-white transition-colors flex items-center justify-center gap-2"
                   >
                     {isUploading ? <Loader2 size={16} className="animate-spin" /> : null}
@@ -2399,14 +2575,31 @@ export function PositionDetailView({
                   <CheckCircle size={32} className="text-green-600" />
                 </div>
                 <h4 className="text-lg font-medium text-gray-900 mb-2">Upload Complete!</h4>
-                <p className="text-sm text-gray-500 mb-6">{uploadSuccess}</p>
+                <p className="text-sm text-gray-500 mb-3">{uploadSuccess}</p>
+
+                {/* Live scoring progress inside the modal */}
+                {showScoringChip ? (
+                  <div className="flex items-center justify-center gap-2 text-sm text-indigo-600 font-medium mb-6">
+                    <Loader2 size={14} className="animate-spin" />
+                    {totalCandidateCount === 0
+                      ? 'Processing CVs — candidates will appear shortly…'
+                      : `Scoring ${scoredCandidateCount} / ${totalCandidateCount} candidates…`}
+                  </div>
+                ) : totalCandidateCount > 0 ? (
+                  <div className="flex items-center justify-center gap-2 text-sm text-green-600 font-medium mb-6">
+                    <CheckCircle size={14} />
+                    {scoredCandidateCount}/{totalCandidateCount} candidates scored
+                  </div>
+                ) : (
+                  <div className="mb-6" />
+                )}
+
                 <button
                   onClick={() => {
                     setShowZipUploadModal(false);
-                    setZipFile(null);
+                    setZipFiles([]);
                     setUploadSuccess(null);
-                    // Refresh data
-                    window.location.reload(); // Quick refresh or re-fetch
+                    if (positionId) queryClient.invalidateQueries({ queryKey: queryKeys.positions.detail(positionId) });
                   }}
                   className="px-6 py-2 bg-[#6366f1] text-white rounded-lg hover:bg-[#5558e3]"
                 >

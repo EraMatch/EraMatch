@@ -33,6 +33,7 @@ export function Sidebar() {
   const location = useLocation();
   const [unreadCount, setUnreadCount] = useState(0);
   const [technicalReviewCount, setTechnicalReviewCount] = useState(0);
+  const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [runningTasks, setRunningTasks] = useState<SidebarTask[]>([]);
   const [showTaskCategoryPopover, setShowTaskCategoryPopover] = useState(false);
@@ -42,8 +43,9 @@ export function Sidebar() {
     const userStr = localStorage.getItem('user');
     if (userStr) {
       try {
-        const user = JSON.parse(userStr);
-        setUserRole(user.role?.toLowerCase());
+        const parsedUser = JSON.parse(userStr);
+        setUser(parsedUser);
+        setUserRole(parsedUser.role?.toLowerCase());
       } catch (e) {
         console.error("Failed to parse user from local storage", e);
       }
@@ -98,8 +100,10 @@ export function Sidebar() {
     fetchRunningTasks();
     const taskInterval = setInterval(fetchRunningTasks, 10000);
     return () => {
-      clearInterval(taskInterval);
-      clearInterval(reviewInterval);
+      oncleanup: {
+        clearInterval(taskInterval);
+        clearInterval(reviewInterval);
+      }
     };
   }, [userRole]);
 
@@ -146,7 +150,54 @@ export function Sidebar() {
     }`;
 
   return (
-    <div className="fixed left-0 top-0 h-full w-20 bg-white border-r border-gray-200 flex flex-col items-center gap-8 rounded-r-3xl py-8 z-[100] shadow-xl">
+    <div className="fixed left-0 top-0 h-full w-20 bg-white border-r border-gray-200 flex flex-col items-center gap-6 rounded-r-3xl py-8 z-[100] shadow-xl">
+      
+      {/* Profile & Role Badge Section */}
+      {user && (
+        <div className="flex flex-col items-center gap-1.5 pb-4 border-b border-gray-100 w-full px-2">
+          <div className="relative group cursor-pointer">
+            {/* Avatar Container */}
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border-2 shadow-sm font-semibold text-sm transition-all duration-300 ${
+              userRole === 'admin'
+                ? 'border-indigo-500 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                : userRole === 'technical'
+                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                  : 'border-blue-500 bg-blue-50 text-blue-700 hover:bg-blue-100'
+            }`}>
+              {user.avatar_url ? (
+                <img src={user.avatar_url} alt="Profile" className="w-full h-full rounded-2xl object-cover" />
+              ) : (
+                <span>
+                  {((user.first_name?.[0] || '') + (user.last_name?.[0] || '')).toUpperCase() || 'UR'}
+                </span>
+              )}
+            </div>
+
+            {/* Role indicator status dot */}
+            <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-white shadow-sm flex items-center justify-center ${
+              userRole === 'admin'
+                ? 'bg-indigo-500'
+                : userRole === 'technical'
+                  ? 'bg-emerald-500'
+                  : 'bg-blue-500'
+            }`} />
+          </div>
+
+          {/* Role text badge */}
+          <div className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider text-center ${
+            userRole === 'admin'
+              ? 'bg-indigo-50 text-indigo-600 border border-indigo-200'
+              : userRole === 'technical'
+                ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                : 'bg-blue-50 text-blue-600 border border-blue-200'
+          }`}
+          title={`${user.first_name || ''} ${user.last_name || ''} (${user.email || ''})`}
+          >
+            {userRole === 'technical' ? 'Tech' : userRole === 'admin' ? 'Admin' : 'HR'}
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 flex flex-col gap-4 w-full items-center justify-center">
 
         {/* Home Button */}

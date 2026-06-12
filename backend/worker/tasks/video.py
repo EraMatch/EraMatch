@@ -95,6 +95,7 @@ def process_video_logic(
     question_text: str,
     reference_answer: str | None = None,
     rubric: str | None = None,
+    rubric_checks: list[dict] | None = None,
 ) -> dict:
     """
     Core logic for video processing.
@@ -156,31 +157,38 @@ def process_video_logic(
             "response_id": response_id,
             "has_reference": bool(reference_answer),
             "has_rubric": bool(rubric),
+            "has_rubric_checks": bool(rubric_checks),
         })
-        
+
+        eval_payload: dict = {
+            "transcript": transcript,
+            "reference_answer": reference_answer,
+            "question": question_text,
+            "rubric": rubric,
+        }
+        if rubric_checks:
+            eval_payload["rubric_checks"] = rubric_checks
+
         with httpx.Client(timeout=120.0) as client:
             evaluate_response = client.post(
                 f"{AI_SERVICE_URL}/llm/evaluate",
-                json={
-                    "transcript": transcript,
-                    "reference_answer": reference_answer,
-                    "question": question_text,
-                    "rubric": rubric,
-                },
+                json=eval_payload,
             )
-            
+
             if evaluate_response.status_code == 200:
                 eval_result = evaluate_response.json()
                 score = eval_result.get("score", 50.0)
                 feedback = eval_result.get("feedback", "Evaluation completed")
+                criteria_scores = eval_result.get("criteria_scores") or None
             else:
                 score = 50.0
                 feedback = f"Evaluation error: {evaluate_response.status_code}"
-        
+                criteria_scores = None
+
         log_debug("evaluation_completed", {
             "response_id": response_id,
             "score": score,
-            "feedback": feedback[:100],
+            "has_criteria_scores": bool(criteria_scores),
         })
 
         if _is_cancelled(response_id):
@@ -194,6 +202,10 @@ def process_video_logic(
         conn = _get_db_conn()
         cursor = conn.cursor()
         
+        ai_feedback_payload: dict = {"feedback": feedback}
+        if criteria_scores:
+            ai_feedback_payload["criteria_scores"] = criteria_scores
+
         cursor.execute(
             """
             UPDATE interview_responses
@@ -204,7 +216,7 @@ def process_video_logic(
                 processing_status = %s
             WHERE response_id = %s AND processing_status <> 'cancelled'
             """,
-            (transcript, confidence, score, json.dumps({"feedback": feedback}), 'completed', response_id)
+            (transcript, confidence, score, json.dumps(ai_feedback_payload), 'completed', response_id)
         )
         conn.commit()
         if cursor.rowcount == 0:
@@ -306,10 +318,16 @@ def process_video_response(
     video_url: str,
     question_text: str,
     reference_answer: str | None = None,
+    rubric_checks: list[dict] | None = None,
 ) -> dict:
     """Wrapper for Celery task."""
     try:
-        return process_video_logic(response_id, video_url, question_text, reference_answer)
+        return process_video_logic(
+            response_id,
+            video_url,
+            question_text,
+            reference_answer=reference_answer,
+            rubric_checks=rubric_checks,
+        )
     except Exception as exc:
-        # Retry on failure
         self.retry(exc=exc, countdown=2**self.request.retries)

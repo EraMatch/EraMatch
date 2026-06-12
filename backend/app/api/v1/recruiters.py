@@ -36,6 +36,10 @@ from app.schemas import (
     FilterTemplateCreate,
     AIGenerateQuestionRequest,
     AIRefineQuestionRequest,
+    AIEnhanceTextRequest,
+    SuggestQuestionRubricRequest,
+    JDEnrichmentRequest,
+    JDEnrichmentResponse,
 )
 from app.services import CandidateService, GroupService
 from app.models import CandidateApplication, CandidateProfile, CVAnalysis, Position, GitHubAnalysisJob
@@ -228,11 +232,16 @@ async def delete_position(
 
 @router.get("/positions/{position_id}/details", response_model=PositionDetailsResponse)
 async def get_position_details(
-    position_id: UUID, session: DbSession, current_user: RecruiterUser
+    position_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+    school: str | None = None,
+    degree: str | None = None,
+    gpa: float | None = None,
 ):
     """Get position details (candidates and groups)."""
     service = RecruiterService(session, current_user)
-    return await service.get_position_details(position_id)
+    return await service.get_position_details(position_id, school=school, degree=degree, gpa=gpa)
 
 
 @router.get("/positions/{position_id}/insights", response_model=PositionInsightsResponse)
@@ -302,6 +311,17 @@ async def approve_position_hdeval_qag(
     """Approve yes/no QAG set and recompute candidate scores."""
     service = RecruiterService(session, current_user)
     return await service.approve_position_hdeval_qag(position_id)
+
+
+@router.post("/positions/{position_id}/hdeval-qag/regenerate", response_model=dict)
+async def regenerate_position_hdeval_qag(
+    position_id: UUID,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Force-regenerate QAG questions (e.g. after ai_generation_failed)."""
+    service = RecruiterService(session, current_user)
+    return await service.regenerate_position_hdeval_qag(position_id)
 
 
 @router.post("/positions/{position_id}/prescore/recompute", response_model=dict)
@@ -705,14 +725,14 @@ async def get_analytics(
 from fastapi import UploadFile, File
 
 @router.post("/positions/{position_id}/candidates/upload", response_model=CandidateUploadResponse)
-async def upload_candidates_zip(
+async def upload_candidates_files(
     position_id: UUID,
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     session: DbSession = ...,
     current_user: RecruiterUser = ...,
 ):
     """
-    Upload a zip file of CVs/Resumes.
+    Upload a zip file or multiple CVs/Resumes.
     Only HR can perform this action.
     """
     # RBAC Check
@@ -720,24 +740,26 @@ async def upload_candidates_zip(
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Only HR users can import candidates.")
 
-    if not file.filename.endswith('.zip'):
+    if not files:
         from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="Only .zip files are supported.")
-        
-    pos_res = await session.execute(select(Position).where(Position.id == position_id))
-    pos = pos_res.scalar_one_or_none()
-    if not pos:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Position not found.")
-    if pos.status in ["pending", "technical_review"]:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="Cannot import candidates while position is under review.")
-    
-    content = await file.read()
+        raise HTTPException(status_code=400, detail="No files provided.")
     
     # Use CandidateService
     service = CandidateService(session, current_user.organization_id)
-    result = await service.process_zip_upload(content, position_id)
+    
+    if len(files) == 1 and files[0].filename.endswith('.zip'):
+        content = await files[0].read()
+        result = await service.process_zip_upload(content, position_id)
+    else:
+        # Validate that all files are supported (e.g., pdf, docx)
+        for file in files:
+            if file.filename.endswith('.zip'):
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail="ZIP files must be uploaded individually.")
+        
+        # Read contents
+        file_contents = [(file.filename, await file.read()) for file in files]
+        result = await service.process_multiple_files_upload(file_contents, position_id)
 
     queued_jobs: list[tuple[str, str, str, str, list[dict]]] = []
     for created in result.created_candidates:
@@ -1006,3 +1028,48 @@ async def refine_question_with_ai(
     service = RecruiterService(session, current_user)
     refined_text = await service.refine_question_with_ai(data.question_text, data.use_case, data.metadata)
     return {"refinedText": refined_text}
+
+
+@router.post("/ai/enhance-text")
+async def enhance_text_with_ai(
+    data: AIEnhanceTextRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Improve recruiter-authored text while preserving its meaning."""
+    service = RecruiterService(session, current_user)
+    enhanced_text = await service.enhance_text_with_ai(data.text, data.use_case, data.metadata)
+    return {"enhancedText": enhanced_text}
+
+
+@router.post("/ai/suggest-question-rubric")
+async def suggest_question_rubric(
+    data: SuggestQuestionRubricRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """Suggest weighted rubric criteria for a recorded video interview question."""
+    service = RecruiterService(session, current_user)
+    checks = await service.suggest_question_rubric(
+        data.question_text,
+        reference_answer=data.reference_answer,
+        context=data.context,
+    )
+    return {"rubric_checks": checks}
+
+
+@router.post("/ai/suggest-jd-enrichment", response_model=JDEnrichmentResponse)
+async def suggest_jd_enrichment(
+    data: JDEnrichmentRequest,
+    session: DbSession,
+    current_user: RecruiterUser,
+):
+    """AI-powered JD builder: suggests structured title, description, skills, experience, education, and traits."""
+    service = RecruiterService(session, current_user)
+    suggestions = await service.suggest_jd_enrichment(
+        gaps_and_roles=data.gaps_and_roles,
+        job_title=data.job_title,
+        required_skills=data.required_skills,
+    )
+    return suggestions
+

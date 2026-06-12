@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import EraMatchLogo from '../../../assets/image-eramatch.png';
+import { Logo } from '../../common/Logo';
 import { recruiterService } from '../../../services/recruiter.service';
 import { fetchAPI } from '../../../services/client';
 
@@ -282,7 +282,7 @@ export function RecruiterSettings({ userRole }: RecruiterSettingsProps) {
                     <h1 className="text-[#111827] text-[32px] font-['Arimo',sans-serif] mb-2">Settings</h1>
                     <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">Manage your account settings and preferences</p>
                 </div>
-                <img src={EraMatchLogo} alt="EraMatch" className="h-[72px] w-auto object-contain mt-1 mr-6" />
+                <Logo size="md" className="mt-1 mr-6" />
             </div>
 
             <div className="grid grid-cols-[240px,1fr] gap-10">

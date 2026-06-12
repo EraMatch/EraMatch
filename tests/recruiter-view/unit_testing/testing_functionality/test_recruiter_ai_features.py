@@ -20,7 +20,7 @@ class TestAIGenerateQuestion:
         resp = client.post("/recruiter/ai/generate-question", json={
             "topic": "Python programming",
             "difficulty": "medium",
-            "type": "mcq"
+            "question_type": "mcq"
         })
         # Allow 200 (success), or 503/500 if Ollama is down
         assert resp.status_code in (200, 500, 502, 503), (
@@ -39,20 +39,22 @@ class TestAIGenerateQuestion:
         resp = client.post("/recruiter/ai/generate-question", json={
             "topic": "Data structures",
             "difficulty": "easy",
-            "type": "essay"
+            "question_type": "essay"
         })
         if resp.status_code != 200:
             pytest.skip("AI service not available")
         data = resp.json()
         has_question = any(k in data for k in [
-            "question", "text", "question_text", "generated_question"
+            "question", "text", "question_text", "generated_question", "questionText"
         ])
         assert has_question, f"AI response missing question text: {data}"
 
     def test_generate_question_unauthenticated_blocked(self, raw_client):
         """POST generate-question without token returns 401/403."""
         resp = raw_client.post("/recruiter/ai/generate-question", json={
-            "topic": "Test"
+            "topic": "Test",
+            "difficulty": "medium",
+            "question_type": "mcq"
         })
         assert resp.status_code in (401, 403, 422), (
             f"Expected 401/403 without token, got {resp.status_code}"
@@ -66,7 +68,7 @@ class TestAIRefineQuestion:
         """POST /recruiter/ai/refine-question with valid data returns 200."""
         resp = client.post("/recruiter/ai/refine-question", json={
             "question_text": "What is Python?",
-            "instruction": "Make it more technical and specific"
+            "use_case": "Make it more technical and specific"
         })
         # Allow 200 (success), or 503/500 if Ollama is down
         assert resp.status_code in (200, 500, 502, 503), (
@@ -84,13 +86,13 @@ class TestAIRefineQuestion:
         """If AI is available, response includes refined question text."""
         resp = client.post("/recruiter/ai/refine-question", json={
             "question_text": "What is OOP?",
-            "instruction": "Add more depth and include examples"
+            "use_case": "Add more depth and include examples"
         })
         if resp.status_code != 200:
             pytest.skip("AI service not available")
         data = resp.json()
         has_refined = any(k in data for k in [
-            "question", "text", "refined_question", "refined_text"
+            "question", "text", "refined_question", "refined_text", "refinedText"
         ])
         assert has_refined, f"Refined response missing question text: {data}"
 
@@ -98,7 +100,7 @@ class TestAIRefineQuestion:
         """POST refine-question without token returns 401/403."""
         resp = raw_client.post("/recruiter/ai/refine-question", json={
             "question_text": "Test",
-            "instruction": "Test"
+            "use_case": "Test"
         })
         assert resp.status_code in (401, 403, 422), (
             f"Expected 401/403 without token, got {resp.status_code}"

@@ -3,6 +3,7 @@ import { ChevronLeft, Plus, Settings, Save, Wand2, Database, Pencil, Copy, Trash
 import { Button } from '../../ui/button';
 import { AssessmentSettings } from './AssessmentSettings';
 import { SectionEditor } from '../interviews/SectionEditor';
+import type { Section as EditorSection } from '../interviews/SectionEditor';
 
 interface AssessmentConfig {
   title: string;
@@ -16,48 +17,7 @@ interface AssessmentConfig {
   proctoring: boolean;
 }
 
-interface Section {
-  id: string;
-  order: number;
-  type: 'mcq' | 'essay' | 'code';
-  variants: QuestionVariant[];
-  points: number;
-  selectionStrategy?: 'random' | 'sequential';
-  variantsToSelect?: number;
-}
-
-interface QuestionVariant {
-  id: string;
-  questionText: string;
-  type: 'mcq' | 'essay' | 'code';
-  // MCQ specific
-  options?: string[];
-  correctAnswer?: number | number[]; // index or indices
-  multipleCorrect?: boolean;
-  // Essay specific
-  expectedKeywords?: string[];
-  maxWords?: number;
-  rubric?: string;
-  // Code specific
-  codeTemplate?: string;
-  testCases?: TestCase[];
-  language?: string;
-  timeLimit?: number;
-  memoryLimit?: number;
-  // Common
-  explanation?: string;
-  category?: string;
-  difficulty?: 'Easy' | 'Medium' | 'Hard';
-  tags?: string[];
-}
-
-interface TestCase {
-  id: string;
-  input: string;
-  expectedOutput: string;
-  isHidden: boolean;
-  points: number;
-}
+type Section = EditorSection;
 
 interface CreateAdvancedAssessmentProps {
   onBack: () => void;

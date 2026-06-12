@@ -65,7 +65,8 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
 
     # Default LLM provider: "ollama", "gemini", "groq", "openai"
-    DEFAULT_LLM_PROVIDER: str = "gemini"
+    DEFAULT_LLM_PROVIDER: str = "ollama"
+    DEFAULT_LLM_MODEL: str = "gemini-3-flash-preview:cloud"
     DEFAULT_EMBEDDING_PROVIDER: str = "gemini"
 
     # PreScore HD Eval + QAG runtime controls
@@ -96,30 +97,30 @@ class Settings(BaseSettings):
     # Each role can use a different provider/model with fallback chain
     # =========================================================================
     # Interviewer (live conversation — needs fast model)
-    INTERVIEWER_PRIMARY_PROVIDER: str = "gemini"
-    INTERVIEWER_PRIMARY_MODEL: str = "gemini-2.5-flash-lite"
+    INTERVIEWER_PRIMARY_PROVIDER: str = "ollama"
+    INTERVIEWER_PRIMARY_MODEL: str = "gemini-3-flash-preview:cloud"
     INTERVIEWER_SECONDARY_PROVIDER: str = ""
     INTERVIEWER_SECONDARY_MODEL: str = ""
     INTERVIEWER_TERTIARY_PROVIDER: str = ""
     INTERVIEWER_TERTIARY_MODEL: str = ""
 
     # Judge (async scoring — needs strong reasoning)
-    JUDGE_PRIMARY_PROVIDER: str = "gemini"
-    JUDGE_PRIMARY_MODEL: str = "gemini-2.5-pro"
+    JUDGE_PRIMARY_PROVIDER: str = "ollama"
+    JUDGE_PRIMARY_MODEL: str = "gemma3:12b-cloud"
     JUDGE_SECONDARY_PROVIDER: str = ""
     JUDGE_SECONDARY_MODEL: str = ""
     # Fallback model when primary judge model (e.g. gemini-2.5-flash-lite) is quota-exhausted
     FALLBACK_JUDGE_MODEL: str = "gemma3:4b-cloud"
 
     # Helper (classification, tags — needs fast model)
-    HELPER_PRIMARY_PROVIDER: str = "gemini"
-    HELPER_PRIMARY_MODEL: str = "gemini-2.5-flash-lite"
+    HELPER_PRIMARY_PROVIDER: str = "ollama"
+    HELPER_PRIMARY_MODEL: str = "gemini-3-flash-preview:cloud"
     HELPER_SECONDARY_PROVIDER: str = ""
     HELPER_SECONDARY_MODEL: str = ""
 
     # Rubric builder (one-time generation — needs strong model)
-    RUBRIC_BUILDER_PRIMARY_PROVIDER: str = "gemini"
-    RUBRIC_BUILDER_PRIMARY_MODEL: str = "gemini-2.5-pro"
+    RUBRIC_BUILDER_PRIMARY_PROVIDER: str = "ollama"
+    RUBRIC_BUILDER_PRIMARY_MODEL: str = "gemma3:12b-cloud"
     RUBRIC_BUILDER_SECONDARY_PROVIDER: str = ""
     RUBRIC_BUILDER_SECONDARY_MODEL: str = ""
 

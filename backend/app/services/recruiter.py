@@ -863,6 +863,8 @@ class RecruiterService:
                 email=item["email"],
                 score=match_score,
                 match=match_score,
+                semantic_score=prescore.get("semantic_score"),
+                qag_score=prescore.get("qag_score"),
                 color="#9ca3af" if match_score < 50 else ("#10b981" if match_score >= 80 else "#f59e0b"),
                 starred=False,
                 selected=False,
@@ -916,9 +918,21 @@ class RecruiterService:
 
         artifact = position.jd_hdeval_qag if isinstance(position.jd_hdeval_qag, dict) else None
         if not artifact:
+            # First time: trigger generation
             artifact = await self._evaluate_position_hdeval_qag(position, force=True)
             await self.session.commit()
             await self.session.refresh(position)
+        # ai_generation_failed: return as-is — let the UI show a Regenerate button
+        return artifact or {}
+
+    async def regenerate_position_hdeval_qag(self, position_id: UUID) -> dict:
+        """Force-regenerate QAG questions regardless of current status."""
+        position = await self.get_position(position_id)
+        if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
+            raise UnauthorizedException("You are not assigned to this position")
+        artifact = await self._evaluate_position_hdeval_qag(position, force=True)
+        await self.session.commit()
+        await self.session.refresh(position)
         return artifact
 
     async def update_position_hdeval_qag(self, position_id: UUID, questions: list[dict]) -> dict:
@@ -1003,11 +1017,24 @@ class RecruiterService:
         if self.current_user.role == "technical" and position.assigned_tech_id != self.current_user.id:
             raise UnauthorizedException("You are not assigned to this position")
 
+        # Count applications
+        from sqlmodel import select
+        from app.models import CandidateApplication
+        apps_res = await self.session.execute(
+            select(CandidateApplication).where(
+                CandidateApplication.position_id == position_id,
+                CandidateApplication.organization_id == self.organization_id,
+                CandidateApplication.is_deleted == False
+            )
+        )
+        apps = apps_res.scalars().all()
+        app_count = len(apps)
+
         # Start tracking job for background task
         job = await self._start_qag_job(
             position=position,
             job_type="qag_resume_correction",
-            total_items=0,
+            total_items=app_count,
             source_provider="ai-service:ollama",
         )
         await self.session.commit()
@@ -1028,13 +1055,20 @@ class RecruiterService:
 
         return {
             "position_id": str(position.id),
-            "applications_scored": 0,
+            "applications_scheduled": app_count,
+            "applications_scored": app_count,
             "qag_status": artifact.get("status"),
             "approved_question_count": len(approved_questions),
             "message": "Recompute started successfully in the background",
         }
 
-    async def get_position_details(self, position_id: UUID) -> PositionDetailsResponse:
+    async def get_position_details(
+        self,
+        position_id: UUID,
+        school: str | None = None,
+        degree: str | None = None,
+        gpa: float | None = None,
+    ) -> PositionDetailsResponse:
         """Aggregate candidates and groups for a position."""
         # 1. Verify existence
         await self.get_position(position_id)
@@ -1093,6 +1127,7 @@ class RecruiterService:
             
             universities = []
             degrees = []
+            gpas = []
             education = parsed.get("education", [])
             if isinstance(education, list):
                 for edu in education:
@@ -1101,6 +1136,33 @@ class RecruiterService:
                         if uni: universities.append(str(uni))
                         deg = edu.get("degree") or edu.get("qualification")
                         if deg: degrees.append(str(deg))
+                        gpa_val = edu.get("gpa")
+                        if gpa_val is not None:
+                            try:
+                                import re
+                                match = re.search(r"(\d+(\.\d+)?)", str(gpa_val))
+                                if match:
+                                    gpas.append(float(match.group(1)))
+                            except Exception:
+                                pass
+            candidate_gpa = max(gpas) if gpas else None
+
+            # Filter by university/school (case-insensitive fuzzy substring)
+            if school:
+                school_lower = school.strip().lower()
+                if not any(school_lower in uni.lower() for uni in universities):
+                    continue
+
+            # Filter by degree (case-insensitive fuzzy substring)
+            if degree:
+                degree_lower = degree.strip().lower()
+                if not any(degree_lower in deg.lower() for deg in degrees):
+                    continue
+
+            # Filter by GPA threshold
+            if gpa is not None:
+                if candidate_gpa is None or candidate_gpa < gpa:
+                    continue
 
             # Map to response (simulating match score for now)
             # Map to response (simulating match score for now)
@@ -1111,6 +1173,8 @@ class RecruiterService:
                 email=email,
                 score=round(float(avg_score), 1),
                 match=match_score, # Use real match score
+                semantic_score=prescore.get("semantic_score"),
+                qag_score=prescore.get("qag_score"),
                 color="#9ca3af" if match_score < 50 else ("#10b981" if match_score >= 80 else "#f59e0b"),
                 starred=False,
                 selected=False,
@@ -1121,6 +1185,7 @@ class RecruiterService:
                 job_titles=job_titles,
                 universities=universities,
                 degrees=degrees,
+                gpa=candidate_gpa,
                 groupId=app.group_id,
                 groupName=group_map.get(app.group_id) if app.group_id else None,
                 prescore_version=prescore.get("version"),
@@ -1453,6 +1518,12 @@ class RecruiterService:
         criteria_checks = prescore.get("criteria_checks", position_critic.get("criteria_checks"))
         jd_quality_feedback = position_critic.get("feedback", prescore.get("jd_quality_feedback"))
 
+        def _f(val) -> float | None:
+            try:
+                return float(val) if val is not None else None
+            except (TypeError, ValueError):
+                return None
+
         return ApplicationScoreBreakdownResponse(
             application_id=app.id,
             candidate_id=candidate.id,
@@ -1461,13 +1532,18 @@ class RecruiterService:
             position_title=position.job_title,
             match_score=float(cv.match_score) if cv and cv.match_score is not None else 0.0,
             prescore_version=prescore.get("version"),
-            pre_score_final=float(prescore.get("pre_score_final")) if prescore.get("pre_score_final") is not None else None,
-            semantic_fit_score=float(prescore.get("semantic_fit_score")) if prescore.get("semantic_fit_score") is not None else None,
-            skills_experience_score=float(prescore.get("skills_experience_score")) if prescore.get("skills_experience_score") is not None else None,
-            optional_profile_boost=float(prescore.get("optional_profile_boost")) if prescore.get("optional_profile_boost") is not None else None,
-            jd_quality_score=float(jd_quality_score) if jd_quality_score is not None else None,
+            pre_score_final=_f(prescore.get("pre_score_final")),
+            semantic_fit_score=_f(prescore.get("semantic_fit_score")),
+            skills_experience_score=_f(prescore.get("skills_experience_score")),
+            optional_profile_boost=_f(prescore.get("optional_profile_boost")),
+            skill_alignment=_f(prescore.get("skill_alignment")),
+            experience_alignment=_f(prescore.get("experience_alignment")),
+            keyword_coverage=_f(prescore.get("keyword_coverage")),
+            seniority_score=_f(prescore.get("seniority_score")),
+            education_score=_f(prescore.get("education_score")),
+            jd_quality_score=_f(jd_quality_score),
             jd_quality_status=jd_quality_status,
-            jd_quality_cap=float(jd_quality_cap) if jd_quality_cap is not None else None,
+            jd_quality_cap=_f(jd_quality_cap),
             jd_quality_cap_applied=bool(prescore.get("jd_quality_cap_applied")) if "jd_quality_cap_applied" in prescore else None,
             score_explanation=prescore.get("score_explanation") if isinstance(prescore.get("score_explanation"), list) else [],
             criteria_checks=criteria_checks if isinstance(criteria_checks, list) else [],
@@ -1478,8 +1554,51 @@ class RecruiterService:
 
     # Application management
     async def update_application_status(self, application_id: UUID, data: ApplicationUpdate) -> CandidateApplication:
-        # TODO: Update application status
-        pass
+        query = select(CandidateApplication).where(
+            CandidateApplication.id == application_id,
+            CandidateApplication.organization_id == self.organization_id,
+            CandidateApplication.is_deleted == False
+        )
+        result = await self.session.execute(query)
+        application = result.scalar_one_or_none()
+        if not application:
+            raise NotFoundException("Application not found")
+        
+        if data.status is not None:
+            application.status = data.status
+        if data.group_id is not None:
+            application.group_id = data.group_id
+            
+        self.session.add(application)
+        await self.session.commit()
+        await self.session.refresh(application)
+        return application
+
+    async def list_applications(
+        self,
+        position_id: UUID | None = None,
+        status: str | None = None,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> list[CandidateApplication]:
+        try:
+            query = select(CandidateApplication).where(
+                CandidateApplication.organization_id == self.organization_id,
+                CandidateApplication.is_deleted == False
+            )
+            
+            if position_id:
+                query = query.where(CandidateApplication.position_id == position_id)
+            
+            if status:
+                query = query.where(CandidateApplication.status == status)
+                
+            query = query.order_by(CandidateApplication.applied_at.desc()).offset(skip).limit(limit)
+            result = await self.session.execute(query)
+            return list(result.scalars().all())
+        except Exception as e:
+            return []
+
 
     async def get_project_summary(self, project_id: UUID) -> ProjectSummaryResponse:
         """Get stats for a specific project with parallel fetching."""
@@ -2381,6 +2500,9 @@ class RecruiterService:
                     jd_critic_result=jd_critic_result,
                     profile_embedding=cv.profile_embedding,
                     jd_embedding=position.jd_embedding,
+                    position_experience_level=getattr(position, "experience_level", None),
+                    position_education_level=getattr(position, "education_level", None),
+                    jd_keywords=position.jd_keywords if isinstance(position.jd_keywords, dict) else None,
                 )
 
                 parsed_data["prescore_v2"] = prescore
@@ -2767,9 +2889,10 @@ class RecruiterService:
         metadata: dict[str, Any] | None = None,
     ) -> dict:
         """Generate a technical or interview question using the configured LLM provider."""
-        llm = get_llm(settings.DEFAULT_LLM_PROVIDER)
         metadata = metadata if isinstance(metadata, dict) else {}
         use_case = (use_case or "").strip().lower()
+        provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+        model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
 
         def _derive_yes_no_checks(payload: dict) -> list[dict]:
             rubric = str(payload.get("rubric") or "").strip()
@@ -2846,6 +2969,21 @@ class RecruiterService:
             template_name = "interview_generate_questions.md"
             fallback = fallback_prompts["interview"]
 
+        # Web search — fetch real sources before calling the LLM so it can cite them.
+        web_refs: list[dict] = []
+        web_context_snippet = ""
+        if question_type in {"mcq", "essay", "code"}:
+            try:
+                from duckduckgo_search import DDGS  # available via langchain-community dep
+                search_q = f"{topic} {question_type} programming" if question_type == "code" else f"{topic} interview question"
+                with DDGS() as ddgs:
+                    raw = list(ddgs.text(search_q, max_results=4))
+                web_refs = [{"title": r.get("title", ""), "url": r.get("href", "")} for r in raw if r.get("href")]
+                snippets = [f'- {r.get("title", "")}: {r.get("href", "")}' for r in raw if r.get("href")]
+                web_context_snippet = "\n".join(snippets)
+            except Exception:
+                pass  # Search failure is non-fatal
+
         prompt = self._render_recruiter_prompt(
             template_name,
             fallback,
@@ -2856,10 +2994,12 @@ class RecruiterService:
                 "CONTEXT": context,
                 "USE_CASE": use_case,
                 "METADATA_JSON": metadata,
+                "WEB_SOURCES": web_context_snippet or "No web sources available.",
             },
         )
 
         try:
+            llm = get_llm(provider, model=model) if model else get_llm(provider)
             response = await llm.ainvoke(prompt)
             payload = self._extract_json_payload(getattr(response, "content", ""))
 
@@ -2971,9 +3111,39 @@ class RecruiterService:
                         )
                     payload["rubricYesNoChecks"] = normalized_checks
 
+            if question_type == "code":
+                payload["starterCode"] = payload.get("starterCode")
+                payload["functionName"] = payload.get("functionName")
+                payload["inputFormat"] = payload.get("inputFormat")
+                payload["outputFormat"] = payload.get("outputFormat")
+                payload["examples"] = payload.get("examples")
+                payload["constraints"] = payload.get("constraints")
+                payload["topics"] = payload.get("topics")
+                payload["referenceAnswerCode"] = payload.get("referenceAnswer")
+                # Normalize testCases: LLM returns camelCase keys, DB judge reads snake_case
+                raw_tcs = payload.get("testCases") or []
+                payload["testCases"] = [
+                    {
+                        "input": tc.get("input", ""),
+                        "expected": (
+                            tc.get("expected")
+                            or tc.get("expectedOutput")
+                            or tc.get("expected_output")
+                            or ""
+                        ),
+                        "is_hidden": bool(tc.get("isHidden") or tc.get("is_hidden")),
+                    }
+                    for tc in raw_tcs
+                    if isinstance(tc, dict)
+                ]
+
+            # Attach real web references regardless of question type
+            if web_refs:
+                payload["references"] = web_refs
+
             return payload
         except Exception as e:
-            print(f"LLM generation failed ({settings.DEFAULT_LLM_PROVIDER}): {e}")
+            print(f"LLM generation failed ({provider}{f'/{model}' if model else ''}): {e}")
             if use_case == "recorded_interview_suggest":
                 return {
                     "questions": [
@@ -3029,29 +3199,44 @@ class RecruiterService:
                 )
             return fallback
 
-    async def refine_question_with_ai(
+    async def enhance_text_with_ai(
         self,
-        question_text: str,
+        text: str,
         use_case: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        """Refine or polish a question text using Ollama."""
-        llm = get_llm("ollama")
+        """Improve recruiter-authored text using the helper LLM config."""
+        source_text = (text or "").strip()
+        if not source_text:
+            return text
+
+        provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+        model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
         metadata = metadata if isinstance(metadata, dict) else {}
         use_case = (use_case or "").strip().lower()
 
         template_name = {
             "assessment_question": "assessment_refine_question.md",
             "assessment_rubric": "assessment_refine_rubric.md",
+            "assessment_essay_question": "assessment_refine_question.md",
+            "assessment_essay_rubric": "assessment_refine_rubric.md",
             "recorded_interview_question": "recorded_interview_refine_question.md",
             "recorded_interview_instructions": "recorded_interview_refine_instructions.md",
+            "recorded_interview_title": "recorded_interview_refine_instructions.md",
+            "recorded_interview_description": "recorded_interview_refine_instructions.md",
             "live_interview_system_prompt": "live_interview_refine_system_prompt.md",
             "live_interview_flow_instructions": "live_interview_refine_flow_instructions.md",
+            "live_interview_dimension": "live_interview_refine_flow_instructions.md",
+            "live_interview_anchor": "live_interview_refine_flow_instructions.md",
+            "live_interview_question": "recorded_interview_refine_question.md",
+            "live_interview_intent": "live_interview_refine_flow_instructions.md",
         }.get(use_case, "assessment_refine_question.md")
 
         fallback_prompt = (
-            "Refine the following text for recruiter workflows. Keep intent unchanged, improve clarity and professionalism, "
-            "and return ONLY the refined text.\n"
+            "SYSTEM: You are an editing assistant inside a recruitment configuration tool. "
+            "The user will provide their own draft text. Improve grammar, clarity, concision, and professional tone. "
+            "Preserve the original meaning, constraints, language, and factual claims. Do not add new requirements, "
+            "new evaluation criteria, examples, explanations, markdown, or quotes. Return ONLY the improved text.\n"
             "Use case: {{USE_CASE}}\n"
             "Metadata: {{METADATA_JSON}}\n"
             "Text: {{QUESTION_TEXT}}"
@@ -3061,18 +3246,238 @@ class RecruiterService:
             template_name,
             fallback_prompt,
             {
-                "QUESTION_TEXT": question_text,
+                "QUESTION_TEXT": source_text,
                 "USE_CASE": use_case,
                 "METADATA_JSON": metadata,
             },
         )
 
         try:
+            llm = get_llm(provider, model=model, temperature=0.2)
             response = await llm.ainvoke(prompt)
             refined = str(getattr(response, "content", "")).strip()
             if refined.startswith("```") and refined.endswith("```"):
                 refined = refined.strip("`").strip()
-            return refined or question_text
+            return refined or source_text
         except Exception as e:
-            print(f"Ollama refinement failed: {e}")
-            return question_text
+            print(f"Text enhancement failed ({provider}/{model}): {e}")
+            return source_text
+
+    async def refine_question_with_ai(
+        self,
+        question_text: str,
+        use_case: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Backward-compatible alias for text enhancement."""
+        return await self.enhance_text_with_ai(question_text, use_case, metadata)
+
+    async def suggest_question_rubric(
+        self,
+        question_text: str,
+        reference_answer: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> list[dict]:
+        """
+        Suggest weighted rubric criteria for a recorded video interview question.
+        Returns [{id, check, weight}] with weights summing to 1.0.
+        """
+        import json as _json
+
+        ctx = context or {}
+        position_title = ctx.get("position_title") or "the role"
+        job_description = ctx.get("job_description") or ""
+        group_name = ctx.get("group_name") or ""
+        experience_level = ctx.get("experience_level") or ""
+
+        context_lines = [
+            f"Position: {position_title}" if position_title != "the role" else "",
+            f"Experience level: {experience_level}" if experience_level else "",
+            f"Group / hiring cohort: {group_name}" if group_name else "",
+            f"Job description excerpt:\n{job_description[:400]}" if job_description else "",
+        ]
+        context_block = "\n".join(l for l in context_lines if l)
+
+        reference_block = (
+            f"\nReference answer (what a strong answer covers):\n{reference_answer}"
+            if reference_answer
+            else ""
+        )
+
+        system_prompt = (
+            "You are a senior technical hiring manager designing structured evaluation rubrics "
+            "for recorded video interviews. Your rubrics are used by an LLM judge to score "
+            "candidates objectively.\n\n"
+            "Each criterion you write must be:\n"
+            "- Answerable with YES or NO based purely on what the candidate said\n"
+            "- Specific enough that two different judges would agree on the answer\n"
+            "- Grounded in what a genuinely strong answer to THIS specific question includes\n"
+            "- Phrased as 'Does the answer...?' (active, positive framing)\n\n"
+            "Avoid generic criteria like 'Is the answer clear?' or 'Does the candidate communicate well?' "
+            "— those measure delivery, not substance. Focus entirely on technical and conceptual content."
+        )
+
+        prompt = (
+            f"{system_prompt}\n\n"
+            f"## Interview Question\n{question_text}\n\n"
+            f"## Hiring Context\n{context_block or 'No additional context provided.'}"
+            f"{reference_block}\n\n"
+            "## Task\n"
+            "Generate 5 to 8 rubric criteria for this specific question. "
+            "Assign weights (floats) that sum exactly to 1.0. "
+            "Give higher weight to the most critical aspects of a strong answer. "
+            "Choose between 5 and 8 criteria based on the question's complexity.\n\n"
+            "Respond ONLY with a valid JSON array, no markdown fences, no explanation:\n"
+            '[\n'
+            '  {"id": 1, "check": "Does the answer ...?", "weight": 0.20},\n'
+            '  {"id": 2, "check": "Does the answer ...?", "weight": 0.25},\n'
+            '  ...\n'
+            ']'
+        )
+
+        provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+        model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
+
+        try:
+            llm = get_llm(provider, model=model, temperature=0.3)
+            response = await llm.ainvoke(prompt)
+            raw = str(getattr(response, "content", "")).strip()
+
+            # Strip markdown fences if model added them
+            if raw.startswith("```"):
+                import re as _re
+                raw = _re.sub(r"^```[a-z]*\n?", "", raw)
+                raw = _re.sub(r"\n?```$", "", raw.strip())
+
+            checks = _json.loads(raw)
+
+            # Normalize structure
+            normalized: list[dict] = []
+            for i, c in enumerate(checks, 1):
+                check_text = str(c.get("check") or c.get("text") or "").strip()
+                weight = float(c.get("weight", 0.1))
+                if check_text:
+                    normalized.append({"id": i, "check": check_text, "weight": weight})
+
+            if not normalized:
+                raise ValueError("LLM returned no valid criteria")
+
+            # Normalize weights to sum exactly to 1.0
+            total = sum(c["weight"] for c in normalized) or 1.0
+            for c in normalized:
+                c["weight"] = round(c["weight"] / total, 3)
+            diff = round(1.0 - sum(c["weight"] for c in normalized), 3)
+            normalized[-1]["weight"] = round(normalized[-1]["weight"] + diff, 3)
+
+            return normalized
+
+        except Exception as e:
+            print(f"suggest_question_rubric failed ({provider}/{model}): {e}")
+            return [
+                {"id": 1, "check": "Does the answer directly address the core of the question?", "weight": 0.25},
+                {"id": 2, "check": "Does the answer provide a specific example or evidence?", "weight": 0.25},
+                {"id": 3, "check": "Does the answer demonstrate relevant technical knowledge?", "weight": 0.25},
+                {"id": 4, "check": "Does the answer show structured thinking or problem-solving process?", "weight": 0.25},
+            ]
+
+    async def suggest_jd_enrichment(
+        self,
+        gaps_and_roles: str,
+        job_title: str | None = None,
+        required_skills: list[str] | None = None,
+    ) -> dict:
+        """
+        AI-powered JD builder: takes job gaps/roles description and suggests an enhanced
+        title, detailed description, skills, experience/education level, and traits.
+        """
+        import json as _json
+        import re as _re
+
+        skills_list = required_skills or []
+        skills_str = ", ".join(skills_list) if skills_list else "None specified"
+        title_str = job_title or "Unspecified Role"
+
+        system_prompt = (
+            "You are an expert technical recruiter and HR specialist. "
+            "Your task is to take draft notes about job gaps and roles, and suggest a structured, "
+            "professional job definition to optimize candidate matching.\n\n"
+            "You must return ONLY a valid JSON object matching this schema, with no markdown fences, "
+            "no backticks, and no conversational prefix/suffix:\n"
+            "{\n"
+            '  "suggested_job_title": "string (professional, standard job title)",\n'
+            '  "suggested_job_description": "string (structured job description detailing responsibilities, requirements, and gaps addressed)",\n'
+            '  "suggested_skills": ["string (canonical technical skills only)"],\n'
+            '  "suggested_experience_level": "junior | mid-level | senior | lead | principal | executive",\n'
+            '  "suggested_years_of_experience": int (non-negative integer),\n'
+            '  "suggested_education_level": "any | high school | associate | bachelor | master | phd",\n'
+            '  "suggested_traits": ["string (soft skills or team alignment traits like Mentorship, Communication, Problem Solving)"]\n'
+            "}\n"
+        )
+
+        prompt = (
+            f"{system_prompt}\n\n"
+            f"## Recruiter Draft Inputs\n"
+            f"Job Title Draft: {title_str}\n"
+            f"Gaps and Roles needed: {gaps_and_roles}\n"
+            f"Existing skills input: {skills_str}\n\n"
+            "## Requirements:\n"
+            "1. Expand the job description into a high-quality job posting.\n"
+            "2. Identify the most critical technical skills (suggested_skills) and behavioral traits (suggested_traits).\n"
+            "3. Recommend appropriate standard experience level, required years of experience, and minimum education level.\n"
+            "4. Return ONLY valid JSON."
+        )
+
+        provider = (settings.HELPER_PRIMARY_PROVIDER or "ollama").strip().lower()
+        model = (settings.HELPER_PRIMARY_MODEL or "gemini-3-flash-preview:cloud").strip()
+
+        fallback_response = {
+            "suggested_job_title": title_str if job_title else "Software Engineer",
+            "suggested_job_description": f"We are looking for a professional to fill the following roles and address these gaps:\n{gaps_and_roles}",
+            "suggested_skills": skills_list or ["Software Development"],
+            "suggested_experience_level": "mid-level",
+            "suggested_years_of_experience": 3,
+            "suggested_education_level": "bachelor",
+            "suggested_traits": ["Problem Solving", "Teamwork"],
+        }
+
+        try:
+            llm = get_llm(provider, model=model, temperature=0.3)
+            response = await llm.ainvoke(prompt)
+            raw = str(getattr(response, "content", "")).strip()
+
+            # Clean code fences
+            if raw.startswith("```"):
+                raw = _re.sub(r"^```[a-z]*\n?", "", raw)
+                raw = _re.sub(r"\n?```$", "", raw.strip())
+
+            # Attempt parsing
+            parsed = _json.loads(raw)
+            
+            # Normalize fields to match expected types
+            experience_level = str(parsed.get("suggested_experience_level") or "mid-level").lower().strip()
+            if experience_level not in ["junior", "mid-level", "senior", "lead", "principal", "executive"]:
+                experience_level = "mid-level"
+
+            education_level = str(parsed.get("suggested_education_level") or "bachelor").lower().strip()
+            if education_level not in ["any", "high school", "associate", "bachelor", "master", "phd"]:
+                education_level = "bachelor"
+
+            try:
+                years = int(parsed.get("suggested_years_of_experience") or 0)
+            except ValueError:
+                years = 3
+
+            return {
+                "suggested_job_title": str(parsed.get("suggested_job_title") or title_str),
+                "suggested_job_description": str(parsed.get("suggested_job_description") or fallback_response["suggested_job_description"]),
+                "suggested_skills": [str(s).strip() for s in parsed.get("suggested_skills") or [] if str(s).strip()],
+                "suggested_experience_level": experience_level,
+                "suggested_years_of_experience": max(0, years),
+                "suggested_education_level": education_level,
+                "suggested_traits": [str(t).strip() for t in parsed.get("suggested_traits") or [] if str(t).strip()],
+            }
+
+        except Exception as e:
+            print(f"suggest_jd_enrichment failed ({provider}/{model}): {e}")
+            return fallback_response
+

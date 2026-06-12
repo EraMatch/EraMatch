@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { AlertCircle, ChevronLeft, ChevronRight, Clock, CheckCircle2, Code2, Flag, Play, Loader2, Send } from 'lucide-react';
-import logo from '../imports/image-eramatch.png';
+import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload, quantizeWaveform, quantizeTimestampBucket } from '../utils/proctoringPayload';
 import { useExamLockdown } from '../hooks/useExamLockdown';
@@ -34,13 +34,21 @@ interface Question {
   id: string;
   type: 'essay' | 'mcq' | 'coding';
   question: string;
+  text?: string;
+  difficulty?: string;
   options?: string[];
   correctAnswer?: number;
   starterCode?: string;
   language?: string;
-  testCases?: { input: string; expected_output: string; is_hidden?: boolean }[];
+  testCases?: { input: string; expected_output: string; expected?: string; is_hidden?: boolean }[];
   points: number;
   section_title?: string;
+  functionName?: string;
+  inputFormat?: string;
+  outputFormat?: string;
+  examples?: Array<{input: string; output: string; explanation: string}>;
+  questionConstraints?: string[];
+  topics?: string[];
 }
 
 export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionProps) {
@@ -222,12 +230,20 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
             id: q.question_id,
             type: qType as 'essay' | 'mcq' | 'coding',
             question: q.question_text,
+            text: q.question_text,
+            difficulty: q.question_config?.difficulty as string | undefined,
             options: q.question_config?.options,
             starterCode: q.question_config?.starter_code,
             language: lang,
             testCases: q.question_config?.test_cases,
             points: q.points || 10,
             section_title: q.section_title,
+            functionName: q.question_config?.function_name as string | undefined,
+            inputFormat: q.question_config?.input_format as string | undefined,
+            outputFormat: q.question_config?.output_format as string | undefined,
+            examples: (q.question_config?.examples || []) as Array<{input: string; output: string; explanation: string}>,
+            questionConstraints: (q.question_config?.constraints || []) as string[],
+            topics: (q.question_config?.topics || []) as string[],
           };
         });
         setQuestions(mappedQuestions);
@@ -1454,7 +1470,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       <header className="px-12 py-6">
         <div className="flex items-center justify-between">
           <div>
-            <img src={logo} alt="ERAMATCH - A Smarter Recruitment System" className="h-12" />
+            <Logo size="md" />
           </div>
           <div className="flex items-center gap-6">
             {/* Timer */}
@@ -1597,37 +1613,6 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
               </div>
             </div>
             
-            {/* Sample Test Cases for Coding */}
-            {currentQuestion.type === 'coding' && currentQuestion.testCases && currentQuestion.testCases.some(tc => !tc.is_hidden) && (
-              <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mt-4">
-                <h4 className="font-semibold text-gray-700 text-sm mb-3">Sample Test Cases</h4>
-                <div className="space-y-3">
-                  {currentQuestion.testCases.filter(tc => !tc.is_hidden).map((tc, idx) => {
-                    // Handle both string and object test case values
-                    const inputStr = typeof tc.input === 'object' && tc.input !== null
-                      ? JSON.stringify(tc.input, null, 2)
-                      : String(tc.input || '');
-                    const expectedStr = typeof tc.expected_output === 'object' && tc.expected_output !== null
-                      ? JSON.stringify(tc.expected_output, null, 2)
-                      : String(tc.expected_output || '');
-                    return (
-                      <div key={idx} className="bg-white p-3 rounded border border-gray-200 shadow-sm flex flex-col md:flex-row gap-4">
-                        <div className="flex-1">
-                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Input</span>
-                          <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">{inputStr}</pre>
-                        </div>
-                        <div className="hidden md:block w-px bg-gray-200"></div>
-                        <div className="flex-1">
-                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1">Expected Output</span>
-                          <pre className="text-sm font-mono text-gray-800 whitespace-pre-wrap">{expectedStr}</pre>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
             {/* Answer Section */}
             <div className="pt-4">
               {currentQuestion.type === 'essay' && (
@@ -1672,130 +1657,221 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
               )}
 
               {currentQuestion.type === 'coding' && (
-                <div className="space-y-3">
-                  {/* Coding Instructions */}
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <h4 className="font-semibold text-blue-800 text-sm mb-2 flex items-center gap-2">
-                      <Code2 className="w-4 h-4" />
-                      How to Write Your Solution
-                    </h4>
-                    <ul className="text-xs text-blue-700 space-y-1">
-                      <li>• Write a <strong>function</strong> with the exact name shown in the starter code</li>
-                      <li>• Your function will be called automatically with the test inputs when you submit</li>
-                      <li>• <strong>Run Script</strong>: Executes your code as-is (add print() to see output)</li>
-                      <li>• <strong>Submit Answer</strong>: Runs all test cases and scores your solution</li>
-                      <li>• You can submit multiple times (each submission is an attempt)</li>
-                    </ul>
-                    <div className="mt-2 pt-2 border-t border-blue-200">
-                      <p className="text-xs text-blue-600">
-                        <strong>Example:</strong> If the function is named <code className="bg-blue-100 px-1 rounded">two_sum</code>, 
-                        write <code className="bg-blue-100 px-1 rounded">def two_sum(nums, target):</code> and return the result.
-                      </p>
+                <div className="flex gap-0" style={{ minHeight: '580px' }}>
+
+                  {/* LEFT PANEL — Problem Description (40%) */}
+                  <div
+                    className="overflow-y-auto border-r border-gray-200 pr-4 flex-shrink-0"
+                    style={{ width: '40%' }}
+                  >
+                    {/* Title + badges */}
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
+                      <span className="font-bold text-gray-900 text-sm">{currentQuestion.text?.split('\n')[0]}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        currentQuestion.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
+                        currentQuestion.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-red-100 text-red-700'
+                      }`}>{currentQuestion.difficulty || 'Medium'}</span>
+                      <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                        {currentQuestion.points || 10} pts
+                      </span>
                     </div>
-                  </div>
-                  
-                  {/* Language Selector and Code Editor Header */}
-                  <div className="flex items-center justify-between p-3 rounded-t-lg" style={{ backgroundColor: '#F9FAFB' }}>
-                    <span className="text-sm text-gray-600">Code Editor</span>
-                    <div className="flex items-center gap-2">
-                      <Code2 size={16} className="text-gray-500" />
-                      <select
-                        className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#6366F1] focus:ring-offset-1 cursor-pointer"
-                        style={{
-                          backgroundColor: '#FFFFFF',
-                          color: '#374151'
-                        }}
-                        value={selectedLanguages[currentQuestion.id] || currentQuestion.language || 'python'}
-                        onChange={(e) => {
-                          setSelectedLanguages(prev => ({
-                            ...prev,
-                            [currentQuestion.id]: e.target.value
-                          }));
-                          handleActivity();
-                        }}
-                      >
-                        {programmingLanguages.map((lang) => (
-                          <option key={lang.value} value={lang.value}>
-                            {lang.label} ({lang.extension})
-                          </option>
+
+                    {/* Problem statement */}
+                    <p className="text-sm text-gray-700 leading-relaxed mb-4 whitespace-pre-line">
+                      {currentQuestion.text?.includes('\n')
+                        ? currentQuestion.text.split('\n').slice(1).join('\n').trim() || currentQuestion.text
+                        : currentQuestion.text}
+                    </p>
+
+                    {/* Input Format */}
+                    {currentQuestion.inputFormat && (
+                      <div className="mb-3">
+                        <h4 className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-1">Input Format</h4>
+                        <div className="bg-blue-50 border border-blue-100 rounded-md p-3 text-xs font-mono text-gray-700 whitespace-pre-line">
+                          {currentQuestion.inputFormat}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Output Format */}
+                    {currentQuestion.outputFormat && (
+                      <div className="mb-4">
+                        <h4 className="text-xs font-semibold text-green-600 uppercase tracking-wider mb-1">Output Format</h4>
+                        <div className="bg-green-50 border border-green-100 rounded-md p-3 text-xs font-mono text-gray-700 whitespace-pre-line">
+                          {currentQuestion.outputFormat}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Examples */}
+                    {currentQuestion.examples && currentQuestion.examples.length > 0 ? (
+                      <div className="mb-4 space-y-3">
+                        {currentQuestion.examples.map((ex, i) => (
+                          <div key={i}>
+                            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                              Example {i + 1}
+                            </h4>
+                            <div className="bg-gray-900 rounded-md p-3 text-xs font-mono">
+                              <div className="text-gray-400">Input: <span className="text-gray-100">{ex.input}</span></div>
+                              <div className="text-gray-400 mt-0.5">Output: <span className="text-green-300">{ex.output}</span></div>
+                              {ex.explanation && (
+                                <div className="text-gray-500 mt-1 text-xs not-italic">{ex.explanation}</div>
+                              )}
+                            </div>
+                          </div>
                         ))}
-                      </select>
-                    </div>
+                      </div>
+                    ) : currentQuestion.testCases && currentQuestion.testCases.some(tc => !tc.is_hidden) && (
+                      <div className="mb-4">
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Examples</h4>
+                        <div className="space-y-2">
+                          {currentQuestion.testCases.filter(tc => !tc.is_hidden).map((tc, i) => (
+                            <div key={i} className="bg-gray-900 rounded-md p-3 text-xs font-mono">
+                              <div className="text-gray-400">Input: <span className="text-gray-100">{String(tc.input)}</span></div>
+                              <div className="text-gray-400 mt-0.5">Output: <span className="text-green-300">{String(tc.expected_output || tc.expected)}</span></div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Constraints */}
+                    {currentQuestion.questionConstraints && currentQuestion.questionConstraints.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Constraints</h4>
+                        <ul className="text-xs text-gray-600 space-y-0.5">
+                          {currentQuestion.questionConstraints.map((c, i) => (
+                            <li key={i} className="flex items-start gap-1">
+                              <span className="text-gray-400 mt-0.5">•</span>
+                              <span>{c}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
-                  <textarea
-                    className="w-full min-h-80 p-4 border border-gray-300 rounded-b-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#6366F1] focus:ring-offset-2 resize-y"
-                    style={{
-                      backgroundColor: '#1E293B',
-                      color: '#E2E8F0'
-                    }}
-                    value={(answers[currentQuestion.id] as string) || currentQuestion.starterCode || ''}
-                    onChange={(e) => handleAnswerChange(e.target.value)}
-                    onFocus={handleActivity}
-                    spellCheck={false}
-                  />
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="flex items-center gap-3">
+
+                  {/* RIGHT PANEL — Editor + Results (60%) */}
+                  <div className="flex flex-col flex-1 pl-4" style={{ minWidth: 0 }}>
+
+                    {/* Editor header */}
+                    <div className="flex items-center justify-between px-3 py-2 bg-gray-800 rounded-t-md">
+                      <span className="text-xs text-gray-400">solution.py</span>
+                      <span className="text-xs bg-yellow-600 text-white px-2 py-0.5 rounded">Python 3</span>
+                    </div>
+
+                    {/* Code editor */}
+                    <textarea
+                      className="p-4 font-mono text-sm focus:outline-none resize-none"
+                      style={{
+                        backgroundColor: '#1E293B',
+                        color: '#E2E8F0',
+                        minHeight: '300px',
+                        flex: '1 1 auto',
+                      }}
+                      value={(answers[currentQuestion.id] as string) || currentQuestion.starterCode || ''}
+                      onChange={(e) => handleAnswerChange(e.target.value)}
+                      onFocus={handleActivity}
+                      spellCheck={false}
+                      placeholder="Write your solution here..."
+                    />
+
+                    {/* Action bar */}
+                    <div className="flex items-center gap-3 px-3 py-2 bg-gray-50 border border-gray-200 border-t-0">
                       <Button
-                        className="rounded-full px-4 gap-2 border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                        className="rounded-full px-4 gap-2 border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-sm"
                         onClick={handleRunCode}
                         disabled={isRunningCode}
                       >
-                        <Play className="w-4 h-4" />
+                        <Play className="w-3.5 h-3.5" />
                         Run Script
                       </Button>
                       <Button
-                        className="rounded-full px-4 gap-2"
+                        className="rounded-full px-4 gap-2 text-sm"
                         style={{
                           backgroundColor: (attemptCounts[currentQuestion.id] || 0) >= (maxAttempts[currentQuestion.id] || 5)
                             ? '#9CA3AF' : '#10B981',
                           color: '#FFFFFF',
                         }}
                         onClick={handleSubmitAnswer}
-                        disabled={isRunningCode || isSubmittingAnswer || (attemptCounts[currentQuestion.id] || 0) >= (maxAttempts[currentQuestion.id] || 5)}
+                        disabled={
+                          isRunningCode ||
+                          isSubmittingAnswer ||
+                          (attemptCounts[currentQuestion.id] || 0) >= (maxAttempts[currentQuestion.id] || 5)
+                        }
                       >
-                        {isSubmittingAnswer ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                        {isSubmittingAnswer ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                         Submit Answer
-                        <span className="ml-1 text-xs opacity-80">
-                          ({attemptCounts[currentQuestion.id] || 0}/{maxAttempts[currentQuestion.id] || 5})
-                        </span>
                       </Button>
+                      <span className="ml-auto text-xs text-gray-500">
+                        Attempt {attemptCounts[currentQuestion.id] || 0} / {maxAttempts[currentQuestion.id] || 5}
+                      </span>
                     </div>
-                  </div>
-                  
-                  {/* Test Cases Results Display */}
-                  {testResults[currentQuestion.id] && testResults[currentQuestion.id].length > 0 && (
-                    <div className="mt-4 space-y-3">
-                      <h4 className="font-semibold text-gray-700 text-sm">Test Results</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {testResults[currentQuestion.id].map((res, idx) => (
-                          <div key={idx} className={`p-4 rounded-lg border-2 ${res.passed ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="font-semibold text-sm text-gray-700">Test Case {idx + 1}</span>
-                              {res.passed ? (
-                                <span className="text-green-600 font-bold text-sm bg-green-200 px-2 rounded-full">Pass</span>
-                              ) : (
-                                <span className="text-red-600 font-bold text-sm bg-red-200 px-2 rounded-full">Fail</span>
-                              )}
-                            </div>
-                            <div className="text-xs font-mono bg-white p-2 rounded border border-gray-200 mt-2">
-                              <span className="text-gray-500 font-semibold">Expected:</span>
-                              <pre className="text-gray-800 whitespace-pre-wrap mt-1">{typeof res.expected === 'object' ? JSON.stringify(res.expected, null, 2) : res.expected}</pre>
-                            </div>
-                            <div className={`text-xs font-mono bg-white p-2 rounded border mt-2 ${res.passed ? 'border-green-200' : 'border-red-200'}`}>
-                              <span className={`${res.passed ? 'text-green-600' : 'text-red-600'} font-semibold`}>Actual:</span>
-                              <pre className={`${res.passed ? 'text-green-800' : 'text-red-800'} whitespace-pre-wrap mt-1`}>{typeof res.actual === 'object' ? JSON.stringify(res.actual, null, 2) : (res.actual || '(no output)')}</pre>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
 
-                  {codeOutput[currentQuestion.id] && (
-                    <div className="mt-3 p-4 rounded-lg font-mono text-sm whitespace-pre-wrap" style={{ backgroundColor: '#1E293B', color: '#E2E8F0' }}>
-                      {codeOutput[currentQuestion.id]}
-                    </div>
-                  )}
+                    {/* Per-test verdict results */}
+                    {testResults[currentQuestion.id] && testResults[currentQuestion.id].length > 0 && (
+                      <div className="overflow-y-auto border border-gray-200 border-t-0 rounded-b-md" style={{ maxHeight: '220px' }}>
+                        <div className="px-3 pt-2 pb-1 flex items-center justify-between bg-gray-50 border-b border-gray-100">
+                          <span className="text-xs font-semibold text-gray-600">
+                            {(testResults[currentQuestion.id] as any[]).filter((r: any) => r.passed).length} / {(testResults[currentQuestion.id] as any[]).length} Visible Passed
+                          </span>
+                          {(() => {
+                            const hiddenCount = (currentQuestion.testCases || []).filter(tc => tc.is_hidden).length;
+                            return hiddenCount > 0 ? (
+                              <span className="text-xs text-purple-600">🔒 {hiddenCount} hidden · revealed on submit</span>
+                            ) : null;
+                          })()}
+                        </div>
+                        <div className="px-3 pb-3 pt-2 space-y-1.5 bg-white">
+                          {(testResults[currentQuestion.id] as any[]).map((res: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className="rounded border-l-4 bg-white p-2.5 shadow-sm"
+                              style={{ borderColor: res.passed ? '#22c55e' : '#ef4444' }}
+                            >
+                              <div className="flex items-center justify-between mb-1">
+                                <span className={`text-xs font-semibold ${res.passed ? 'text-green-700' : 'text-red-700'}`}>
+                                  {res.passed ? '✓' : '✗'} Test {idx + 1}
+                                </span>
+                                {res.time && <span className="text-xs text-gray-400">{res.time}s</span>}
+                              </div>
+                              <div className="font-mono text-xs">
+                                {res.actual !== undefined && (
+                                  <div>
+                                    <span className={res.passed ? 'text-green-600' : 'text-red-600'}>Got: </span>
+                                    <span className="text-gray-800">
+                                      {typeof res.actual === 'object' ? JSON.stringify(res.actual) : String(res.actual || '(no output)')}
+                                    </span>
+                                  </div>
+                                )}
+                                {!res.passed && res.expected !== undefined && (
+                                  <div>
+                                    <span className="text-gray-500">Expected: </span>
+                                    <span className="text-gray-800">
+                                      {typeof res.expected === 'object' ? JSON.stringify(res.expected) : String(res.expected)}
+                                    </span>
+                                  </div>
+                                )}
+                                {res.error && <div className="text-red-500 mt-0.5 truncate">{res.error}</div>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* run-code stdout */}
+                    {codeOutput[currentQuestion.id] && (
+                      <div
+                        className="p-3 font-mono text-xs whitespace-pre-wrap border border-gray-200 border-t-0 rounded-b-md mt-1"
+                        style={{ backgroundColor: '#1E293B', color: '#94A3B8', maxHeight: '100px', overflowY: 'auto' }}
+                      >
+                        {codeOutput[currentQuestion.id]}
+                      </div>
+                    )}
+                  </div>
+
                 </div>
               )}
             </div>

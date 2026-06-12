@@ -5,24 +5,45 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import LoadingSpinner from '../../common/LoadingSpinner';
 
 interface QuestionVariant {
-  id: string;
-  questionText: string;
-  type: 'mcq' | 'essay' | 'code';
-  difficulty?: 'Easy' | 'Medium' | 'Hard';
-  category?: string;
-  tags?: string[];
-  semanticScore?: number;
-  options?: string[];
-  correctAnswer?: number;
-  multipleCorrect?: boolean;
-  maxWords?: number;
-  rubric?: string;
-  language?: string;
-  codeTemplate?: string;
-  testCases?: any[];
-  usageCount?: number;
-  isFavorite?: boolean;
-  [key: string]: any;
+    id: string;
+    questionText: string;
+    type: 'mcq' | 'essay' | 'code';
+    difficulty?: 'Easy' | 'Medium' | 'Hard';
+    category?: string;
+    tags?: string[];
+    semanticScore?: number;
+    options?: string[];
+    correctAnswer?: number;
+    multipleCorrect?: boolean;
+    maxWords?: number;
+    rubric?: string;
+    language?: string;
+    codeTemplate?: string;
+    testCases?: any[];
+    usageCount?: number;
+    isFavorite?: boolean;
+    // New coding fields
+    starterCode?: string;
+    functionName?: string;
+    inputFormat?: string;
+    outputFormat?: string;
+    questionExamples?: any[];
+    questionConstraints?: string[];
+    topics?: string[];
+    // Reviewer metadata
+    evidence?: string;
+    referenceAnswer?: string;
+    rubricYesNoChecks?: any[];
+    needsReview?: boolean;
+    criticScore?: number;
+    criticWeightedScore?: number;
+    criticFeedback?: string;
+    criticChecks?: any[];
+    retryCount?: number;
+    importType?: string;
+    importJobId?: string;
+    sourceFilename?: string;
+    [key: string]: any;
 }
 
 interface QuestionBankModalProps {
@@ -98,6 +119,7 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedTag, setSelectedTag] = useState<string>('all');
   const [favoriteOnly, setFavoriteOnly] = useState<boolean>(false);
   const [usageSort, setUsageSort] = useState<string>('none');
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
@@ -144,6 +166,14 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
             criticFeedback: q.criticFeedback,
             criticChecks: q.criticChecks,
             retryCount: q.retryCount,
+            // Coding fields
+            starterCode: q.starterCode,
+            functionName: q.functionName,
+            inputFormat: q.inputFormat,
+            outputFormat: q.outputFormat,
+            questionExamples: q.examples,
+            questionConstraints: q.constraints,
+            topics: q.topics,
           } as QuestionVariant;
         });
 
@@ -180,6 +210,21 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
     return ['all', ...Array.from(cats)] as string[];
   }, [questions]);
 
+  // Extract dynamic tags
+  const allTags = useMemo(() => {
+    const tags = new Set<string>();
+    questions.forEach((q) => q.tags?.forEach((t: string) => tags.add(t)));
+    return ['all', ...Array.from(tags).sort()];
+  }, [questions]);
+
+  // Relevance scoring shared by both search modes (replaces fake random shuffling)
+  const scoreQuestion = (q: QuestionVariant, query: string): number => {
+    const textScore = q.questionText.toLowerCase().includes(query) ? 2 : 0;
+    const tagScore = q.tags?.some((t: string) => t.toLowerCase().includes(query)) ? 1 : 0;
+    const catScore = q.category?.toLowerCase().includes(query) ? 1 : 0;
+    return textScore + tagScore + catScore;
+  };
+
   // Use useMemo to memoize filtered questions
   const filteredQuestions = useMemo(() => {
     if (!questions.length) return [];
@@ -192,6 +237,9 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
     // Filter by category
     result = result.filter(q => selectedCategory === 'all' || q.category === selectedCategory);
 
+    // Filter by tag
+    result = result.filter(q => selectedTag === 'all' || q.tags?.includes(selectedTag));
+
     // Filter by favorites
     if (favoriteOnly) {
       result = result.filter(q => q.isFavorite);
@@ -199,17 +247,18 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
 
     // Search query filtering
     if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+
       if (searchType === 'semantic') {
-        // Simulate semantic matching
+        // Semantic mode: rank all by relevance score, normalized for the match badge
         result = result
-          .map(q => ({
-            ...q,
-            semanticScore: Math.random() * 0.4 + 0.6
-          }))
+          .map(q => {
+            const raw = scoreQuestion(q, query);
+            return { ...q, semanticScore: raw > 0 ? Math.min(1, 0.6 + raw * 0.1) : 0 };
+          })
           .sort((a, b) => (b.semanticScore || 0) - (a.semanticScore || 0));
       } else {
-        // Traditional match
-        const query = searchQuery.toLowerCase();
+        // Traditional match: keep only questions that match
         result = result.filter(q =>
           q.questionText.toLowerCase().includes(query) ||
           q.tags?.some((tag: string) => tag.toLowerCase().includes(query)) ||
@@ -226,7 +275,7 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
     }
 
     return result;
-  }, [searchQuery, searchType, selectedDifficulty, selectedCategory, favoriteOnly, usageSort, questions]);
+  }, [searchQuery, searchType, selectedDifficulty, selectedCategory, selectedTag, favoriteOnly, usageSort, questions]);
 
   const selectedQuestions = useMemo(
     () => questions.filter((question) => selectedQuestionIds.includes(question.id)),
@@ -350,6 +399,18 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
                 {categories.map(cat => (
                   <option key={cat} value={cat}>
                     {cat === 'all' ? 'All Categories' : cat}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={selectedTag}
+                onChange={(e) => setSelectedTag(e.target.value)}
+                className="h-[36px] px-3 rounded-[6px] border border-[#e5e7eb] text-[13px] focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent bg-white"
+              >
+                {allTags.map(tag => (
+                  <option key={tag} value={tag}>
+                    {tag === 'all' ? 'All Tags' : tag}
                   </option>
                 ))}
               </select>
@@ -507,62 +568,9 @@ export function QuestionBankModal({ questionType, onSelect, onSelectMultiple, on
                       </div>
                     </div>
 
-                    {/* Preview based on type */}
-                    {question.type === 'mcq' && question.options && (
-                      <div className="mt-3 space-y-1">
-                        {question.options.slice(0, 2).map((opt: string, idx: number) => (
-                          <div key={idx} className="text-[13px] text-[#6b7280]">
-                            {String.fromCharCode(65 + idx)}. {opt}
-                          </div>
-                        ))}
-                        {question.options.length > 2 && (
-                          <div className="text-[13px] text-[#6b7280]">
-                            ... and {question.options.length - 2} more options
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {question.type === 'code' && (
-                      <div className="mt-3 text-[13px] text-[#6b7280]">
-                        Language: {question.language} • {question.testCases?.length || 0} test cases
-                      </div>
-                    )}
-
-                    {question.type === 'essay' && question.maxWords && (
-                      <div className="mt-3 text-[13px] text-[#6b7280]">
-                        Max words: {question.maxWords}
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
-
-              {/* Can't find what you want CTA */}
-              {onSwitchToAI && (
-                <div className="mt-6 p-4 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-[12px]">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <p className="font-['Arimo',sans-serif] text-[14px] text-purple-900 mb-1">
-                        Can't find exactly what you're looking for?
-                      </p>
-                      <p className="font-['Arimo',sans-serif] text-[12px] text-purple-700">
-                        Generate a custom question tailored to your specific needs using AI
-                      </p>
-                    </div>
-                    <Button
-                      onClick={() => {
-                        onClose();
-                        onSwitchToAI();
-                      }}
-                      className="ml-4 rounded-[8px] bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
-                    >
-                      <Sparkles size={16} className="mr-2" />
-                      Generate with AI
-                    </Button>
-                  </div>
-                </div>
-              )}
             </>
           )}
         </div>

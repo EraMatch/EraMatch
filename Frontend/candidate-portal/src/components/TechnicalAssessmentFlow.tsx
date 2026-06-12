@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Video, Mic, CheckCircle2, AlertCircle, Play, Square, Loader2, Sparkles, Settings } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, Mic, Play, Settings, Sparkles, Video } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { AssessmentSession } from './AssessmentSession';
 
@@ -11,8 +11,7 @@ interface TechnicalAssessmentFlowProps {
   onCompletion: () => void;
 }
 
-export function TechnicalAssessmentFlow({ onSignOut, onExit, onCompletion }: TechnicalAssessmentFlowProps) {
-  const [currentStep, setCurrentStep] = useState(1);
+export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAssessmentFlowProps) {
   const [inAssessmentSession, setInAssessmentSession] = useState(() => {
     return sessionStorage.getItem('assessment_checks_done') === 'true';
   });
@@ -81,7 +80,7 @@ export function TechnicalAssessmentFlow({ onSignOut, onExit, onCompletion }: Tec
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
     }
-  }, [stream, currentStep]);
+  }, [stream]);
 
   useEffect(() => {
     if (!inAssessmentSession) {
@@ -307,9 +306,6 @@ export function TechnicalAssessmentFlow({ onSignOut, onExit, onCompletion }: Tec
                 >
                   Enter Assessment Environment
                 </Button>
-                <p className="text-center text-xs text-gray-400 mt-4">
-                  By entering, you agree to our proctoring and privacy guidelines.
-                </p>
               </div>
             </div>
           </div>

@@ -156,7 +156,10 @@ export function CandidateGitHubAnalysisReviewPage({ candidateId: routedCandidate
   };
 
 
-  const updateRow = (rowId: string, patch: Partial<ReviewQuestion> & { edited?: Partial<ReviewQuestion['edited']> }) => {
+  const updateRow = (
+    rowId: string,
+    patch: Omit<Partial<ReviewQuestion>, 'edited'> & { edited?: Partial<ReviewQuestion['edited']> }
+  ) => {
     setRows((prev) => prev.map((row) => {
       if (row.id !== rowId) return row;
       return {
@@ -204,6 +207,8 @@ export function CandidateGitHubAnalysisReviewPage({ candidateId: routedCandidate
           questionText: row.questionText,
           referenceAnswer: row.referenceAnswer,
           sourceFile: row.sourceFile,
+          rubric: row.rubric,
+          rubricYesNoChecks: row.rubricYesNoChecks,
           selectionReason: row.selectionReason,
           jdRelation: row.jdRelation,
           difficulty: row.difficulty,

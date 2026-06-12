@@ -40,6 +40,15 @@ def _render_prompt_template(template_name: str, replacements: dict[str, str]) ->
     return content
 
 
+def _render_criteria_block(rubric_checks: list[dict]) -> str:
+    lines = []
+    for i, c in enumerate(rubric_checks, 1):
+        check = c.get("check", "")
+        weight = c.get("weight", 0)
+        lines.append(f"{i}. {check} (weight: {weight:.2f})")
+    return "\n".join(lines)
+
+
 SYSTEM_PROMPT = _load_prompt_template("system_prompt.md").strip()
 
 
@@ -65,6 +74,7 @@ class EvaluateRequest(BaseModel):
     reference_answer: str | None = None
     question: str | None = None
     rubric: str | None = None
+    rubric_checks: list[dict] | None = None  # [{check, weight}] — triggers G-eval path
 
 
 class EvaluateResponse(BaseModel):
@@ -75,6 +85,7 @@ class EvaluateResponse(BaseModel):
     strengths: list[str] | None = None
     improvements: list[str] | None = None
     key_points: list[str] | None = None
+    criteria_scores: list[dict] | None = None  # [{check, weight, score_1_5, cited_quote, reasoning}]
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -96,10 +107,60 @@ async def chat(request: ChatRequest):
 @router.post("/evaluate", response_model=EvaluateResponse)
 async def evaluate(request: EvaluateRequest):
     """
-    Evaluate video interview transcript with rubric-based criteria.
+    Evaluate video interview transcript.
 
-    Uses system prompt for expert interviewer persona and rubric for structured evaluation.
+    If rubric_checks provided: G-eval per-criterion scoring (1–5 per criterion
+    with cited quote + reasoning, weighted into an overall score).
+    Otherwise: free-text rubric scoring via evaluate_rubric.md (legacy path).
     """
+    import json as _json, re as _re
+
+    # ── G-eval path: structured per-criterion scoring ─────────────────────────
+    if request.rubric_checks:
+        criteria_block = _render_criteria_block(request.rubric_checks)
+
+        prompt = _render_prompt_template(
+            "evaluate_rubric_criteria.md",
+            {
+                "SYSTEM_PROMPT": SYSTEM_PROMPT,
+                "QUESTION_BLOCK": request.question or "",
+                "CRITERIA_BLOCK": criteria_block,
+                "TRANSCRIPT": request.transcript or "[No transcript available]",
+            },
+        )
+
+        try:
+            result = await chat_completion(
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            content = result["content"].strip()
+            if content.startswith("```"):
+                content = _re.sub(r"^```[a-z]*\n?", "", content)
+                content = _re.sub(r"\n?```$", "", content.strip())
+
+            parsed = _json.loads(content)
+            criteria_scores = parsed.get("criteria_scores", [])
+            overall_feedback = parsed.get("overall_feedback", "")
+
+            total_weight = sum(c.get("weight", 0) for c in criteria_scores) or 1.0
+            weighted_sum = sum(
+                c.get("score_1_5", 1) * c.get("weight", 0) for c in criteria_scores
+            )
+            score = round((weighted_sum / total_weight) / 5 * 100, 1)
+
+            return EvaluateResponse(
+                score=max(0.0, min(100.0, score)),
+                feedback=overall_feedback,
+                criteria_scores=criteria_scores,
+            )
+        except Exception as e:
+            logger.warning(f"G-eval scoring failed, falling back to legacy path: {e}")
+            # Fall through to legacy path
+
+    # ── Legacy path: free-text rubric ────────────────────────────────────────
     rubric_block = ""
     if request.rubric:
         rubric_block = "\n".join(
@@ -117,22 +178,12 @@ async def evaluate(request: EvaluateRequest):
 
     question_block = ""
     if request.question:
-        question_block = "\n".join(
-            [
-                "## Interview Question",
-                request.question,
-                "",
-            ]
-        )
+        question_block = "\n".join(["## Interview Question", request.question, ""])
 
     reference_block = ""
     if request.reference_answer:
         reference_block = "\n".join(
-            [
-                "## Reference/Model Answer",
-                request.reference_answer,
-                "",
-            ]
+            ["## Reference/Model Answer", request.reference_answer, ""]
         )
 
     prompt = _render_prompt_template(
@@ -153,97 +204,38 @@ async def evaluate(request: EvaluateRequest):
                 {"role": "user", "content": prompt},
             ],
         )
-
         content = result["content"]
         score = 50.0
         feedback = content
         strengths = []
         improvements = []
 
-        import re
-
         for line in content.split("\n"):
             line = line.strip()
             if line.startswith("SCORE:"):
                 try:
                     score_text = line.split("SCORE:")[1].strip()
-                    match = re.search(r"(\d+\.?\d*)", score_text)
+                    match = _re.search(r"(\d+\.?\d*)", score_text)
                     if match:
                         score = float(match.group(1))
-                except:
+                except Exception:
                     pass
             elif line.startswith("FEEDBACK:"):
                 feedback = line.split("FEEDBACK:")[1].strip()
             elif line.startswith("STRENGTHS:"):
                 strengths = [
-                    s.strip()
-                    for s in line.split("STRENGTHS:")[1].split(",")
-                    if s.strip()
+                    s.strip() for s in line.split("STRENGTHS:")[1].split(",") if s.strip()
                 ]
             elif line.startswith("IMPROVEMENTS:"):
                 improvements = [
-                    s.strip()
-                    for s in line.split("IMPROVEMENTS:")[1].split(",")
-                    if s.strip()
+                    s.strip() for s in line.split("IMPROVEMENTS:")[1].split(",") if s.strip()
                 ]
 
         return EvaluateResponse(
-            score=max(0, min(100, score)),
+            score=max(0.0, min(100.0, score)),
             feedback=feedback,
-            strengths=strengths,
-            improvements=improvements,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/evaluate", response_model=EvaluateResponse)
-async def evaluate(request: EvaluateRequest):
-    """
-    for the ai video based interivew, pairs of q and reference a and prompt fo a model here
-    """
-    # evaluation prompt for the llm that will judge
-    has_reference = bool(request.reference_answer and request.reference_answer.strip())
-
-    prompt = _render_prompt_template(
-        "evaluate_simple.md",
-        {
-            "QUESTION": request.question or "Interview question",
-            "REFERENCE_ANSWER": (
-                request.reference_answer
-                if has_reference
-                else "No reference provided - evaluate based on general quality"
-            ),
-            "TRANSCRIPT": request.transcript,
-        },
-    )
-
-    try:
-        result = await chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        # Parse response (simple parsing for now)
-        content = result["content"]
-        score = 70.0  # Default
-        feedback = content
-
-        if "SCORE:" in content:
-            try:
-                score_part = content.split("SCORE:")[1].split("|")[0].strip()
-                score = float(score_part)
-            except:
-                pass
-
-        if "FEEDBACK:" in content:
-            try:
-                feedback = content.split("FEEDBACK:")[1].strip()
-            except:
-                pass
-
-        return EvaluateResponse(
-            score=score,
-            feedback=feedback,
+            strengths=strengths or None,
+            improvements=improvements or None,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -493,9 +485,7 @@ async def extract_keywords(request: KeywordExtractRequest):
         )
 
         # Ensure required_skills are always in technical_skills
-        required_lower = {
-            s.strip().lower() for s in request.required_skills if s.strip()
-        }
+        required_lower = {s.strip().lower() for s in request.required_skills if s.strip()}
         existing_lower = {s.lower() for s in keywords.technical_skills}
         for skill in required_lower - existing_lower:
             keywords.technical_skills.append(skill)
@@ -509,12 +499,8 @@ async def extract_keywords(request: KeywordExtractRequest):
         # Fallback: build keywords directly from required_skills + job title tokens
         import re as _re2
 
-        fallback_technical = [
-            s.strip().lower() for s in request.required_skills if s.strip()
-        ]
-        title_tokens = [
-            t.lower() for t in _re2.findall(r"[a-zA-Z]{3,}", request.job_title)
-        ]
+        fallback_technical = [s.strip().lower() for s in request.required_skills if s.strip()]
+        title_tokens = [t.lower() for t in _re2.findall(r"[a-zA-Z]{3,}", request.job_title)]
         fallback_seniority = [
             t
             for t in title_tokens
@@ -618,15 +604,11 @@ async def jd_rank(request: JDRankRequest):
         jd_text = jd_text[:3000] + "\n[JD truncated for length]"
 
     required_skills_str = (
-        ", ".join(request.required_skills)
-        if request.required_skills
-        else "Not specified"
+        ", ".join(request.required_skills) if request.required_skills else "Not specified"
     )
     exp_level = request.experience_level or "Not specified"
     years_req = (
-        f"{request.years_of_experience}+"
-        if request.years_of_experience
-        else "Not specified"
+        f"{request.years_of_experience}+" if request.years_of_experience else "Not specified"
     )
 
     prompt = _render_prompt_template(
@@ -649,21 +631,16 @@ async def jd_rank(request: JDRankRequest):
             return []
         raw = m.group(1)
         found = _re.findall(r'"([^"]+)"', raw)
-        # Keep only IDs that belong to the actual candidate set
         return [f for f in found if f in valid_ids]
 
     def _sanitize_json_strings(text: str) -> str:
         """Replace unescaped colons inside JSON string values with a dash."""
 
-        # Only target values (after a key), not keys themselves or structural colons
-        # Replace ": " patterns inside string values (naive but effective for reasoning)
         def _fix_value(m: _re.Match) -> str:
             val = m.group(1)
-            # Replace colons that are NOT at the start (structural) with em-dash
             val = val.replace(":", " -")
             return f'"{val}"'
 
-        # Match "key": "value" pairs and sanitize the value
         return _re.sub(r'"([^"\\]*(?:\\.[^"\\]*)*)"', _fix_value, text)
 
     try:
@@ -695,18 +672,14 @@ async def jd_rank(request: JDRankRequest):
             try:
                 sanitized = _sanitize_json_strings(raw_json)
                 parsed = json.loads(sanitized)
-                logger.warning(
-                    "jd-rank: used sanitized JSON after initial parse failure"
-                )
+                logger.warning("jd-rank: used sanitized JSON after initial parse failure")
             except json.JSONDecodeError:
                 pass
 
         all_ids = {c.id for c in candidates}
 
         if parsed:
-            ranked_ids = [
-                str(x) for x in parsed.get("ranked_ids", []) if str(x) in all_ids
-            ]
+            ranked_ids = [str(x) for x in parsed.get("ranked_ids", []) if str(x) in all_ids]
             reasoning: dict[str, str] = {
                 str(k): str(v)
                 for k, v in parsed.get("reasoning", {}).items()
@@ -744,8 +717,7 @@ async def jd_rank(request: JDRankRequest):
         return JDRankResponse(
             ranked_ids=fallback_ids,
             reasoning={
-                c.id: "JD ranking unavailable — showing original order."
-                for c in candidates
+                c.id: "JD ranking unavailable — showing original order." for c in candidates
             },
             fit_summary=f"Fallback: {str(e)[:80]}",
             model="fallback",

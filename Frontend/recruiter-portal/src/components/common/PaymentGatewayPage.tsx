@@ -4,7 +4,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { RadioGroup, RadioGroupItem } from '../ui/radio-group';
-import logo from '../../imports/image-eramatch.png';
+import { Logo } from './Logo';
 
 interface PaymentGatewayPageProps {
   onBack: () => void;
@@ -84,7 +84,7 @@ export function PaymentGatewayPage({ onBack, onComplete, onBypass }: PaymentGate
     <div className="min-h-screen" style={{ backgroundColor: '#EDF0F8' }}>
       {/* Header */}
       <div className="px-12 py-6 flex items-center justify-between border-b border-gray-200 bg-white">
-        <img src={logo} alt="ERAMATCH" className="h-12" />
+        <Logo size="md" />
         <div className="flex items-center gap-3">
           {/* Admin Bypass Button */}
           {onBypass && (

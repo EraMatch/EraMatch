@@ -73,9 +73,10 @@ async def async_parse_cv_and_webhook(cv_text: str, tenant_id: str, job_id: str, 
         logger.error("BACKEND_WEBHOOK_URL is not configured. Cannot send callback.")
         return
 
-    headers = {}
-    if settings.WEBHOOK_SECRET:
-        headers["X-Webhook-Secret"] = settings.WEBHOOK_SECRET
+    # Always send the secret header — empty string is still sent so backend can
+    # compare. Previously `if settings.WEBHOOK_SECRET:` silently dropped the
+    # header when env var was empty, causing 401s.
+    headers = {"X-Webhook-Secret": settings.WEBHOOK_SECRET}
 
     async with httpx.AsyncClient() as client:
         try:

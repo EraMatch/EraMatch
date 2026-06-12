@@ -3,7 +3,7 @@ import { ArrowLeft, Shield, Eye, EyeOff } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import logo from '../../imports/image-eramatch.png';
+import { Logo } from '../common/Logo';
 import { api } from '../../services/api';
 
 interface AdminLoginPageProps {
@@ -33,7 +33,7 @@ export function AdminLoginPage({ onBack, onSignIn, onForgotPassword }: AdminLogi
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#EDF0F8' }}>
       {/* Header */}
       <div className="px-12 py-6 flex items-center justify-between border-b border-gray-200 bg-white">
-        <img src={logo} alt="ERAMATCH" className="h-12" />
+        <Logo size="md" />
         <Button
           variant="ghost"
           className="rounded-full px-6 flex items-center gap-2 text-gray-600 hover:text-gray-900"

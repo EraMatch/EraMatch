@@ -29,6 +29,7 @@ interface Candidate {
   job_titles?: string[];
   universities?: string[];
   degrees?: string[];
+  gpa?: number | null;
   // Group fields
   groupId?: string;
   groupName?: string;
@@ -352,6 +353,9 @@ export function GroupCreationPage({
     }
     if (f.degree && f.degree.length > 0) {
       filtered = filtered.filter(c => c.degrees?.some(d => f.degree.some((fd: string) => d.toLowerCase().includes(fd.toLowerCase()))));
+    }
+    if (f.gpaMin && f.gpaMin > 0) {
+      filtered = filtered.filter(c => c.gpa != null && c.gpa >= f.gpaMin);
     }
 
     // 3. Work Experience
@@ -1133,6 +1137,13 @@ export function GroupCreationPage({
                       <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
                         {candidate.email}
                       </div>
+                      {candidate.universities && candidate.universities.length > 0 && (
+                        <div className="font-['Arimo',sans-serif] text-[11px] text-[#8b5cf6] mt-0.5 truncate max-w-[200px]" title={candidate.universities.join(', ')}>
+                          🏫 {candidate.universities[0]}
+                          {candidate.degrees && candidate.degrees.length > 0 && ` (${candidate.degrees[0]})`}
+                          {candidate.gpa != null && ` • GPA: ${candidate.gpa.toFixed(2)}`}
+                        </div>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3">
@@ -1326,6 +1337,7 @@ export function GroupCreationPage({
             if (filters.techStack?.length > 0) count++;
             if (filters.seniority?.length > 0) count++;
             if (filters.degree?.length > 0) count++;
+            if (filters.gpaMin > 0) count++;
             setActiveFilterCount(count);
           }}
           activeFilters={advancedFilters}
@@ -1468,28 +1480,63 @@ export function GroupCreationPage({
                     </div>
                   )}
 
-                  <div className="rounded-[8px] border border-[#e5e7eb] bg-white p-3">
-                    <p className="font-['Arimo',sans-serif] text-[13px] text-[#111827] font-semibold mb-2">Why Some Backend Components Are 0.0</p>
-                    {!viewWhyBreakdown?.prescore_version && cvMatchScore > 0 && (
-                      <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-2">
-                        This application has legacy CV Match data but no PreScore V2 payload; that is why CV Match can be high while PreScore components stay 0.0.
-                      </p>
-                    )}
-                    <div className="space-y-2">
-                      <div>
-                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">Semantic Fit: {formatScore(backendSemantic)}</p>
-                        {semanticZeroReason && <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{semanticZeroReason}</p>}
+                  {/* Prescore V2 signal breakdown — shown when new composite scoring was used */}
+                  {viewWhyBreakdown?.skill_alignment != null ? (
+                    <div className="rounded-[8px] border border-[#e5e7eb] bg-white p-3">
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#111827] font-semibold mb-3">Score Signal Breakdown</p>
+                      <div className="space-y-2.5">
+                        {[
+                          { label: 'Skills Match', value: viewWhyBreakdown.skill_alignment!, weight: '35%', color: '#6366f1' },
+                          { label: 'Experience Alignment', value: viewWhyBreakdown.experience_alignment!, weight: '20%', color: '#8b5cf6' },
+                          { label: 'Keyword Coverage', value: viewWhyBreakdown.keyword_coverage!, weight: '20%', color: '#06b6d4' },
+                          { label: 'Seniority Fit', value: viewWhyBreakdown.seniority_score!, weight: '10%', color: '#10b981' },
+                          { label: 'Education Fit', value: viewWhyBreakdown.education_score!, weight: '10%', color: '#f59e0b' },
+                        ].map(({ label, value, weight, color }) => (
+                          <div key={label}>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-['Arimo',sans-serif] text-[12px] text-[#374151]">{label}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af]">weight {weight}</span>
+                                <span className="font-['Arimo',sans-serif] text-[12px] font-semibold" style={{ color }}>{Math.round(value ?? 0)}%</span>
+                              </div>
+                            </div>
+                            <div className="w-full h-[5px] rounded-full bg-[#f3f4f6]">
+                              <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, value ?? 0)}%`, backgroundColor: color }} />
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <div>
-                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">Skills + Experience: {formatScore(backendSkillsExp)}</p>
-                        {skillsExpZeroReason && <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{skillsExpZeroReason}</p>}
-                      </div>
-                      <div>
-                        <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">JD Quality: {formatScore(backendJdQuality)}</p>
-                        {jdQualityZeroReason && <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{jdQualityZeroReason}</p>}
+                      {viewWhyBreakdown.jd_quality_status && (
+                        <p className="font-['Arimo',sans-serif] text-[11px] text-[#9ca3af] mt-3">
+                          JD quality: {viewWhyBreakdown.jd_quality_status}
+                          {viewWhyBreakdown.jd_quality_cap != null ? ` · cap ${viewWhyBreakdown.jd_quality_cap}%` : ''}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-[8px] border border-[#e5e7eb] bg-white p-3">
+                      <p className="font-['Arimo',sans-serif] text-[13px] text-[#111827] font-semibold mb-2">Legacy Score Components</p>
+                      {!viewWhyBreakdown?.prescore_version && cvMatchScore > 0 && (
+                        <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-2">
+                          Legacy CV Match only — no PreScore V2 payload yet. Run "Recompute Scores" to get the detailed breakdown.
+                        </p>
+                      )}
+                      <div className="space-y-2">
+                        <div>
+                          <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">Semantic Fit: {formatScore(backendSemantic)}</p>
+                          {semanticZeroReason && <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{semanticZeroReason}</p>}
+                        </div>
+                        <div>
+                          <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">Skills + Experience: {formatScore(backendSkillsExp)}</p>
+                          {skillsExpZeroReason && <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{skillsExpZeroReason}</p>}
+                        </div>
+                        <div>
+                          <p className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">JD Quality: {formatScore(backendJdQuality)}</p>
+                          {jdQualityZeroReason && <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">{jdQualityZeroReason}</p>}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
 
                   {Array.isArray(viewWhyBreakdown?.score_explanation) && viewWhyBreakdown!.score_explanation.length > 0 ? (
                     <div>

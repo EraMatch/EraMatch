@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Video, Mic, CheckCircle2, AlertCircle, Play, Loader2, Sparkles, Settings } from 'lucide-react';
-import logo from '../imports/image-eramatch.png';
+import { Video, Mic, CheckCircle2, AlertCircle, Play, Loader2, Sparkles, Settings, Camera, PhoneOff } from 'lucide-react';
+import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { LiveInterviewRoom } from './live-interview-v2/LiveInterviewRoom';
 
@@ -168,7 +168,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
     return (
         <div className="min-h-screen font-sans bg-[#F8FAFC]">
             <header className="bg-white border-b border-gray-100 px-8 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
-                <img src={logo} alt="ERAMATCH" className="h-10" />
+                <Logo size={32} />
                 <Button variant="ghost" className="text-gray-500 hover:text-gray-700 font-medium" onClick={onSignOut}>
                     Sign Out
                 </Button>
@@ -307,7 +307,6 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                                     </ul>
                                 </div>
                             </div>
-
                             <div className="pt-8 mt-auto space-y-4">
                                 {tokenError && (
                                     <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2">
@@ -324,7 +323,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                                     {tokenLoading ? (
                                         <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Connecting...</>
                                     ) : (
-                                        'Enter Assessment Environment'
+                                        'Enter Interview'
                                     )}
                                 </Button>
                                 <p className="text-center text-xs text-gray-400 mt-4">

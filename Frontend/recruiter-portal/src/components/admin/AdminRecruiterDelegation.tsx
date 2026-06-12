@@ -4,7 +4,7 @@ import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { api, JobPosition, Project } from '../../services/api';
-import EraMatchLogo from '../../assets/image-eramatch.png';
+import { Logo } from '../common/Logo';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { useRecruiterDelegation, useRecentAssignments } from '../../hooks/admin/useAdminDashboard';
 import { useReassignRecruiter } from '../../hooks/admin/useAdminMutations';
@@ -119,7 +119,7 @@ export function AdminRecruiterDelegation({ onSignOut }: AdminRecruiterDelegation
             Assign and manage HR and Technical Recruiters for each job position
           </p>
         </div>
-        <img src={EraMatchLogo} alt="Era Match" className="h-[72px] w-auto object-contain mt-1 mr-6" />
+        <Logo size="md" className="mt-1 mr-6" />
       </div>
 
       {isLoading ? (

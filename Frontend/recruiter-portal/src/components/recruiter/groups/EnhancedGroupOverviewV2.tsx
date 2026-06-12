@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, Clock, Eye, Trash2, UserPlus, UserMinus, Activity, MoreVertical, Flag, Filter, X, ChevronDown, Plus, UserCog, Shield, Lock, MessageSquare, FileText, CheckSquare, Ban, Archive, AlertTriangle, BarChart3, Target, Video, Loader2, RotateCcw, Mic } from 'lucide-react';
+import { ChevronLeft, Play, Edit, Download, Users, TrendingUp, Sparkles, Calendar, Send, CheckCircle, XCircle, Clock, Eye, Trash2, UserPlus, UserMinus, Activity, MoreVertical, Flag, Filter, X, ChevronDown, Plus, UserCog, Shield, Lock, MessageSquare, FileText, CheckSquare, Ban, Archive, AlertTriangle, BarChart3, Target, Video, Loader2, RotateCcw, Mic, Sliders, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SuspectReviewPage } from '../candidates/SuspectReviewPage';
 import { CreateAdvancedAssessment } from '../assessments/CreateAdvancedAssessment';
@@ -21,6 +21,7 @@ import { LiveInterviewMonitor } from '../live-interview-v2/LiveInterviewMonitor'
 import { LiveInterviewResults } from '../live-interview-v2/LiveInterviewResults';
 
 import { ActivityLogPanel } from './ActivityLogPanel';
+import { ReviewMode } from './review/ReviewMode';
 import { ScheduleInterviewModal } from './ScheduleInterviewModal';
 import { api } from '../../../services/api';
 import { useEffect } from 'react';
@@ -173,6 +174,31 @@ export function EnhancedGroupOverviewV2({
   // Use recruiterType prop directly instead of state
   const userRole = recruiterType;
 
+  // Top-level mode: Configuration (per-stage setup) ⇄ Results (candidate matrix / review).
+  // Tech recruiters land on Configuration for a fresh group; HR lands on Results.
+  const [activeSubTab, setActiveSubTab] = useState<'candidates' | 'configuration'>(
+    recruiterType === 'technical' ? 'configuration' : 'candidates'
+  );
+  // Activity log is now a header dropdown rather than a tab.
+  const [showActivityMenu, setShowActivityMenu] = useState(false);
+  // Results sub-view: 'review' = per-stage review (rail + filters + breakdown), 'matrix' = classic cross-stage matrix.
+  const [resultsView, setResultsView] = useState<'review' | 'matrix'>('review');
+  const [user, setUser] = useState<any>(null);
+  const [actualUserRole, setActualUserRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    const userStr = localStorage.getItem('user');
+    if (userStr) {
+      try {
+        const parsedUser = JSON.parse(userStr);
+        setUser(parsedUser);
+        setActualUserRole(parsedUser.role?.toLowerCase());
+      } catch (e) {
+        console.error("Failed to parse user from local storage", e);
+      }
+    }
+  }, []);
+
   const [showAssessmentCreation, setShowAssessmentCreation] = useState(false);
   const [editingAssessmentData, setEditingAssessmentData] = useState<any>(null);
   const [showCreateAIInterview, setShowCreateAIInterview] = useState(false);
@@ -222,7 +248,15 @@ export function EnhancedGroupOverviewV2({
 
   // NEW: Activity log
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
-  const [showActivityLog, setShowActivityLog] = useState(false);
+  const [showActionsDropdown, setShowActionsDropdown] = useState(false);
+
+  // Close actions dropdown on click outside
+  useEffect(() => {
+    if (!showActionsDropdown) return;
+    const handleClose = () => setShowActionsDropdown(false);
+    window.addEventListener('click', handleClose);
+    return () => window.removeEventListener('click', handleClose);
+  }, [showActionsDropdown]);
 
   // NEW: Overrides tracking
   const [candidateOverrides, setCandidateOverrides] = useState<Set<number>>(new Set());
@@ -249,6 +283,7 @@ export function EnhancedGroupOverviewV2({
   // NEW: Pipeline steps state
   const [pipelineSteps, setPipelineSteps] = useState<PipelineStep[]>([]);
   const [candidateStatuses, setCandidateStatuses] = useState<CandidateStatus[]>([]);
+  const [selectedConfigStage, setSelectedConfigStage] = useState<string | null>(null);
   const [activeFlow, setActiveFlow] = useState<string[]>([]);
   const [positionId, setPositionId] = useState<string>('');
   const [interviewConfigId, setInterviewConfigId] = useState<string | null>(null);
@@ -452,6 +487,34 @@ export function EnhancedGroupOverviewV2({
   const showToast = (message: string) => {
     setToastMessage(message);
     setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  // ── Review mode: stages list + proceed/view handlers (application-id based) ──
+  const reviewStages = pipelineSteps.map(s => ({ key: s.id, label: s.name, state: s.state as string }));
+
+  const handleReviewViewCandidate = (candidateId: string, _applicationId: string) => {
+    // Router's onViewCandidate navigates to /recruiter/candidates/<id>; pass the real UUID.
+    (onViewCandidate as unknown as (id: string) => void)(candidateId);
+  };
+
+  const handleReviewProceed = async (
+    stageKey: string,
+    applicationIds: string[],
+    action: 'progress' | 'reject' | 'hold',
+  ) => {
+    if (applicationIds.length === 0) return;
+    try {
+      await bulkProgressMutation.mutateAsync({
+        groupId,
+        payload: { application_ids: applicationIds, action, current_stage_type: stageKey },
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.stageMonitoring(groupId, stageKey) });
+      const verb = action === 'progress' ? 'progressed' : action === 'reject' ? 'rejected' : 'held';
+      showToast(`${applicationIds.length} candidate(s) ${verb}`);
+    } catch (err: any) {
+      showToast(err?.message || 'Bulk action failed — please try again');
+    }
   };
 
   const addActivityLog = (entry: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => {
@@ -961,18 +1024,6 @@ export function EnhancedGroupOverviewV2({
 
     if (isArchived) return null;
 
-    // HR users are in monitoring/read-only mode — no stage actions allowed
-    if (userRole === 'recruiter') {
-      return (
-        <div className="flex items-center gap-2 px-4 py-2 rounded-[8px] bg-blue-50 border border-blue-200 text-blue-700">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
-          <span className="font-['Arimo',sans-serif] text-[13px]">
-            Monitoring mode — only the Technical Recruiter can take stage actions
-          </span>
-        </div>
-      );
-    }
-
     // Check if this is the last stage and it's closed - show Final Decision button
     const currentStepIndex = pipelineSteps.findIndex(s => s.id === currentStage);
     const isLastStage = currentStepIndex === pipelineSteps.length - 1;
@@ -1028,26 +1079,37 @@ export function EnhancedGroupOverviewV2({
               <span className="font-['Arimo',sans-serif] text-[14px]">Move Candidates</span>
             </button>
           )}
-          <button
-            onClick={canStart ? handleStartStage : undefined}
-            disabled={!canStart || startStageMutation.isPending}
-            title={!canStart ? `Close "${prevStep?.name}" stage first` : undefined}
-            className={`flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] text-white transition-colors ${
-              canStart && !startStageMutation.isPending
-                ? 'bg-[#6366f1] hover:bg-[#5558e3] cursor-pointer'
-                : 'bg-[#9ca3af] cursor-not-allowed'
-            }`}
-          >
-            {startStageMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-            <span className="font-['Arimo',sans-serif] text-[14px]">
-              {startStageMutation.isPending ? 'Starting…' : 'Start Current Stage'}
-            </span>
-          </button>
+          {/* Start is a Technical-recruiter action only */}
+          {userRole === 'technical' && (
+            <button
+              onClick={canStart ? handleStartStage : undefined}
+              disabled={!canStart || startStageMutation.isPending}
+              title={!canStart ? `Close "${prevStep?.name}" stage first` : undefined}
+              className={`flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] text-white transition-colors ${
+                canStart && !startStageMutation.isPending
+                  ? 'bg-[#6366f1] hover:bg-[#5558e3] cursor-pointer'
+                  : 'bg-[#9ca3af] cursor-not-allowed'
+              }`}
+            >
+              {startStageMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+              <span className="font-['Arimo',sans-serif] text-[14px]">
+                {startStageMutation.isPending ? 'Starting…' : 'Start Current Stage'}
+              </span>
+            </button>
+          )}
         </div>
       );
     }
 
     if (stageState === 'active') {
+      // Close is a Technical-recruiter action only
+      if (userRole !== 'technical') {
+        return (
+          <span className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-indigo-50 text-indigo-600 text-[13px] font-medium font-['Arimo',sans-serif]">
+            <Clock size={15} /> Stage in progress
+          </span>
+        );
+      }
       return (
         <button
           onClick={handleCloseStage}
@@ -1232,92 +1294,134 @@ export function EnhancedGroupOverviewV2({
       <div className="bg-white border-b border-[#e5e7eb] px-8 py-6">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 mb-4 font-['Arimo',sans-serif] text-[14px] text-[#6366f1] hover:underline"
+          className="flex items-center gap-1.5 mb-5 font-medium text-[13px] text-[#6366f1] hover:text-[#5558e3] transition-colors"
         >
-          <ChevronLeft size={16} />
-          Back to Position Dashboard
+          <ChevronLeft size={14} className="stroke-[2.5]" />
+          <span>Back to Position Dashboard</span>
         </button>
 
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-[#111827]">{groupName}</h1>
-              <span className="px-[12px] py-[4px] bg-[#ede9fe] text-[#6366f1] rounded-[6px] font-['Arimo',sans-serif] text-[13px]">
-                {candidateStatuses.length} Candidates
-              </span>
-              {getStageStateBadge()}
-              {candidateStatuses.filter(c => c.flags.length > 0).length > 0 && (
-                <button
-                  onClick={() => setShowFlaggedBatch(true)}
-                  className="flex items-center gap-1 px-[10px] py-[4px] bg-[#fef2f2] text-[#ef4444] rounded-[6px] font-['Arimo',sans-serif] text-[12px] hover:bg-[#fee2e2] transition-colors"
-                >
-                  <Flag size={12} />
-                  {candidateStatuses.filter(c => c.flags.length > 0).length} Flagged
-                </button>
-              )}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+          <div className="flex-1 space-y-3">
+            {/* Title & Badges */}
+            <div className="flex items-center flex-wrap gap-2.5">
+              <h1 className="text-2xl font-bold text-[#111827] tracking-tight">{groupName}</h1>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="px-2.5 py-0.5 bg-[#ede9fe] text-[#6366f1] border border-[#d8b4fe] rounded-full text-[12px] font-semibold">
+                  {candidateStatuses.length} Candidates
+                </span>
+                {getStageStateBadge()}
+                {candidateStatuses.filter(c => c.flags.length > 0).length > 0 && (
+                  <button
+                    onClick={() => setShowFlaggedBatch(true)}
+                    className="flex items-center gap-1 px-2.5 py-0.5 bg-red-50 border border-red-200 text-red-600 rounded-full text-[12px] font-semibold hover:bg-red-100 transition-colors"
+                  >
+                    <Flag size={12} className="fill-red-50" />
+                    <span>{candidateStatuses.filter(c => c.flags.length > 0).length} Flagged</span>
+                  </button>
+                )}
+              </div>
             </div>
-            <p className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280] mb-3">
-              {description || 'No description provided'}
-            </p>
 
-            <div className="flex items-center gap-2">
-              <Users size={14} className="text-[#6b7280]" />
-              <span className="font-['Arimo',sans-serif] text-[13px] text-[#374151]">
-                Assigned to: <span className="text-[#6366f1]">{assignedRecruiter}</span>
-              </span>
-              <span className="text-[#e5e7eb] mx-2">|</span>
-              <Clock size={14} className="text-[#6b7280]" />
-              <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                Created on {new Date().toLocaleDateString()}
-              </span>
+            {/* Description */}
+            {description && (
+              <p className="text-[14px] text-[#4b5563] leading-relaxed max-w-2xl font-normal">
+                {description}
+              </p>
+            )}
+
+            {/* Metadata (Assigned, Created Date) */}
+            <div className="flex items-center gap-4 text-[13px] text-[#6b7280] flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <Users size={14} className="text-[#9ca3af]" />
+                <span>
+                  Assigned to <span className="font-semibold text-[#374151]">{assignedRecruiter}</span>
+                </span>
+              </div>
+              <span className="text-gray-300">•</span>
+              <div className="flex items-center gap-1.5">
+                <Clock size={14} className="text-[#9ca3af]" />
+                <span>Created on {new Date().toLocaleDateString()}</span>
+              </div>
             </div>
           </div>
 
-          <div className="flex gap-2">
-            {/* DEV ONLY */}
-            <button
-              onClick={async () => {
-                if (!window.confirm('[DEV] Reset all stage progress and application statuses for this group?')) return;
-                await resetStagesMutation.mutateAsync({ groupId });
-                showToast('Stage progress reset');
-              }}
-              disabled={resetStagesMutation.isPending}
-              className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] border border-red-300 bg-red-50 hover:bg-red-100 transition-colors"
-              title="[DEV] Reset all stage progress"
-            >
-              <RotateCcw size={16} className="text-red-600" />
-              <span className="font-['Arimo',sans-serif] text-red-700 text-[14px]">
-                {resetStagesMutation.isPending ? 'Resetting…' : 'Reset Stages'}
-              </span>
-            </button>
-            {userRole === 'technical' && (
-              <button
-                onClick={() => setShowFlowConfigModal(true)}
-                className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
-                title="Configure Pipeline Flow"
-              >
-                <Edit size={16} className="text-[#6b7280]" />
-                <span className="font-['Arimo',sans-serif] text-[#111827] text-[14px]">
-                  Configure Flow
-                </span>
-              </button>
-            )}
+          {/* Action Buttons */}
+          <div className="flex items-center flex-wrap gap-3 lg:self-end relative">
+            {/* Primary CTA */}
             {getStageActionButton()}
-            <button
-              onClick={() => setShowActivityLog(true)}
-              className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors"
-            >
-              <FileText size={16} className="text-[#6b7280]" />
-              <span className="font-['Arimo',sans-serif] text-[#111827] text-[14px]">
-                Activity Log
-              </span>
-            </button>
-            <button className="flex items-center gap-2 h-[40px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors">
-              <Download size={16} className="text-[#6b7280]" />
-              <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                Export
-              </span>
-            </button>
+
+            {/* Actions Dropdown */}
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowActionsDropdown(!showActionsDropdown);
+                }}
+                className="flex items-center gap-1.5 h-[40px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white text-[#374151] hover:bg-[#f9fafb] active:bg-[#f3f4f6] transition-all duration-150 shadow-sm"
+              >
+                <Settings size={14} className="text-[#6b7280]" />
+                <span className="text-[14px] font-semibold">Actions</span>
+                <ChevronDown size={14} className={`text-[#6b7280] transition-transform duration-200 ${showActionsDropdown ? 'rotate-180' : ''}`} />
+              </button>
+
+              <AnimatePresence>
+                {showActionsDropdown && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                    transition={{ duration: 0.15, ease: 'easeOut' }}
+                    className="absolute right-0 mt-2 w-56 rounded-[12px] bg-white border border-[#e5e7eb] shadow-xl py-1.5 z-[100] origin-top-right focus:outline-none"
+                  >
+                    {userRole === 'technical' && (
+                      <button
+                        onClick={() => {
+                          setShowActionsDropdown(false);
+                          setShowFlowConfigModal(true);
+                        }}
+                        disabled={activeFlow.length > 0}
+                        className="flex items-center w-full gap-2 px-4 py-2 text-[13px] text-gray-700 hover:bg-[#f9fafb] disabled:opacity-50 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors text-left"
+                      >
+                        <Edit size={14} className="text-[#6b7280]" />
+                        <div className="flex flex-col">
+                          <span className="font-medium text-gray-800">Configure Flow</span>
+                          {activeFlow.length > 0 && (
+                            <span className="text-[10px] text-gray-400 font-normal">Flow already configured & locked</span>
+                          )}
+                        </div>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        setShowActionsDropdown(false);
+                        showToast('Exporting candidate progress data...');
+                      }}
+                      className="flex items-center w-full gap-2 px-4 py-2.5 text-[13px] text-gray-700 hover:bg-[#f9fafb] transition-colors text-left"
+                    >
+                      <Download size={14} className="text-[#6b7280]" />
+                      <span className="font-medium text-gray-800">Export Candidates Data</span>
+                    </button>
+
+                    <div className="border-t border-[#e5e7eb] my-1" />
+
+                    <button
+                      onClick={async () => {
+                        setShowActionsDropdown(false);
+                        if (!window.confirm('[DEV] Reset all stage progress and application statuses for this group?')) return;
+                        await resetStagesMutation.mutateAsync({ groupId });
+                        showToast('Stage progress reset');
+                      }}
+                      disabled={resetStagesMutation.isPending}
+                      className="flex items-center w-full gap-2 px-4 py-2.5 text-[13px] text-red-600 hover:bg-red-50/50 transition-colors disabled:opacity-50 text-left"
+                    >
+                      <RotateCcw size={14} className={resetStagesMutation.isPending ? "animate-spin text-red-600" : "text-red-600"} />
+                      <span className="font-medium text-red-700">{resetStagesMutation.isPending ? 'Resetting…' : 'Reset Stage Progress'}</span>
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
 
@@ -1333,7 +1437,7 @@ export function EnhancedGroupOverviewV2({
 
         {/* Filtration Flow Indicator */}
         {activeFlow.length > 0 && (
-          <div className="mt-4 px-8 py-3 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-100">
+          <div className="mt-4 p-3 bg-gradient-to-r from-emerald-50/40 via-emerald-50/10 to-teal-50/40 border border-emerald-100/70 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
             <div className="flex items-center gap-3 flex-wrap">
               <div className="flex items-center gap-1.5">
                 <TrendingUp size={13} className="text-emerald-600" />
@@ -1342,33 +1446,33 @@ export function EnhancedGroupOverviewV2({
                 </span>
               </div>
               {activeFlow.map((moduleType, index) => {
-                const moduleInfo: Record<string, { name: string; icon: any; color: string }> = {
-                  'assessment': { name: 'Technical Assessment', icon: FileText, color: 'emerald' },
-                  'ai-interview': { name: 'AI Interview', icon: Video, color: 'blue' },
-                  'live-interview': { name: 'Live Interview', icon: MessageSquare, color: 'purple' }
+                const moduleInfo: Record<string, { name: string; icon: any; color: string; bg: string; text: string; border: string }> = {
+                  'assessment': { name: 'Technical Assessment', icon: FileText, color: 'emerald', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200/60' },
+                  'ai-interview': { name: 'AI Interview', icon: Video, color: 'blue', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200/60' },
+                  'live-interview': { name: 'Live Interview', icon: MessageSquare, color: 'purple', bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200/60' }
                 };
-                const info = moduleInfo[moduleType] || { name: moduleType, icon: FileText, color: 'gray' };
+                const info = moduleInfo[moduleType] || { name: moduleType, icon: FileText, color: 'gray', bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200/60' };
                 const Icon = info.icon;
                 return (
                   <div key={moduleType} className="flex items-center gap-2">
-                    <div className={`flex items-center gap-1.5 px-2.5 py-1 bg-white border border-${info.color}-200 rounded-[6px]`}>
-                      <div className={`w-5 h-5 rounded bg-${info.color}-100 flex items-center justify-center`}>
-                        <Icon size={12} className={`text-${info.color}-600`} />
+                    <div className={`flex items-center gap-1.5 px-2.5 py-1 bg-white border ${info.border} rounded-[8px] shadow-sm`}>
+                      <div className={`w-5 h-5 rounded-[6px] ${info.bg} flex items-center justify-center`}>
+                        <Icon size={12} className={info.text} />
                       </div>
-                      <span className="font-['Arimo',sans-serif] text-[12px] text-gray-700">
+                      <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-gray-700">
                         {index + 1}. {info.name}
                       </span>
                     </div>
                     {index < activeFlow.length - 1 && (
-                      <span className="text-emerald-400 font-medium">→</span>
+                      <span className="text-emerald-400 font-bold">→</span>
                     )}
                   </div>
                 );
               })}
-              <span className="text-emerald-400 font-medium">→</span>
-              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-[6px]">
-                <CheckCircle size={12} className="text-gray-500" />
-                <span className="font-['Arimo',sans-serif] text-[12px] text-gray-500">Review & Offer</span>
+              <span className="text-emerald-400 font-bold">→</span>
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-[8px] shadow-sm">
+                <CheckCircle size={12} className="text-gray-400" />
+                <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-gray-500">Review & Offer</span>
               </div>
             </div>
           </div>
@@ -1376,7 +1480,7 @@ export function EnhancedGroupOverviewV2({
 
         {/* Hold Warning Card */}
         {candidateStatuses.filter(c => c.progressionState === 'on-hold').length > 0 && (
-          <div className="px-8 mt-4">
+          <div className="mt-4">
             <div className="flex items-center justify-between px-4 py-3 bg-amber-50 border border-amber-200 rounded-[10px]">
               <div className="flex items-center gap-2">
                 <AlertTriangle size={16} className="text-amber-600" />
@@ -1395,7 +1499,7 @@ export function EnhancedGroupOverviewV2({
         )}
 
         {/* Pipeline Progress with Stage States */}
-        <div className="px-8 mt-6">
+        <div className="mt-6">
           <div className={`grid gap-4 ${pipelineSteps.length === 1 ? 'grid-cols-1' :
             pipelineSteps.length === 2 ? 'grid-cols-2' :
               pipelineSteps.length === 3 ? 'grid-cols-3' :
@@ -1410,45 +1514,55 @@ export function EnhancedGroupOverviewV2({
               return (
                 <div
                   key={step.id}
-                  className={`p-4 rounded-[12px] border-2 transition-all ${isCurrentStage
-                    ? 'border-[#6366f1] bg-[#f5f3ff]'
-                    : isPastStage
-                      ? 'border-[#e5e7eb] bg-white opacity-60'
-                      : 'border-[#e5e7eb] bg-white opacity-40'
-                    }`}
+                  className={`p-4 rounded-2xl border transition-all duration-300 shadow-sm ${
+                    isCurrentStage
+                      ? 'border-indigo-200 bg-gradient-to-b from-indigo-50/50 to-white ring-1 ring-indigo-500/10 shadow-indigo-100/50'
+                      : isPastStage
+                        ? 'border-emerald-100 bg-gradient-to-b from-emerald-50/10 to-white opacity-95'
+                        : 'border-slate-100 bg-slate-50/50 opacity-60'
+                  }`}
                 >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className={`font-['Arimo',sans-serif] text-[13px] ${isCurrentStage ? 'text-[#6366f1] font-semibold' : 'text-[#6b7280]'
-                      }`}>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <span className={`font-['Arimo',sans-serif] text-[13px] font-semibold ${
+                      isCurrentStage ? 'text-indigo-600' : isPastStage ? 'text-emerald-700' : 'text-gray-400'
+                    }`}>
                       {step.name}
                     </span>
                     {step.state !== 'not-started' && (
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${step.state === 'active' ? 'bg-emerald-100 text-emerald-700' :
-                        step.state === 'closed' ? 'bg-amber-100 text-amber-700' :
-                          step.state === 'review-mode' ? 'bg-purple-100 text-purple-700' :
-                            'bg-gray-100 text-gray-600'
-                        }`}>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide ${
+                        step.state === 'active' ? 'bg-emerald-100/80 text-emerald-800 border border-emerald-200/50' :
+                        step.state === 'closed' ? 'bg-amber-100/80 text-amber-800 border border-amber-200/50' :
+                        step.state === 'review-mode' ? 'bg-purple-100/80 text-purple-800 border border-purple-200/50' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
                         {step.state.replace('-', ' ')}
                       </span>
                     )}
                     {isFutureStage && (
-                      <Lock size={12} className="text-gray-400" />
+                      <Lock size={12} className="text-gray-300" />
+                    )}
+                    {isPastStage && (
+                      <CheckCircle size={14} className="text-emerald-600 fill-emerald-50" />
                     )}
                   </div>
                   <div className="flex items-baseline gap-1">
-                    <span className={`text-[20px] ${isCurrentStage ? 'text-[#6366f1]' : 'text-[#111827]'
-                      }`}>
+                    <span className={`text-2xl font-bold ${
+                      isCurrentStage ? 'text-indigo-600' : isPastStage ? 'text-emerald-600' : 'text-gray-700'
+                    }`}>
                       {step.completed}
                     </span>
-                    <span className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280]">
-                      / {step.total}
+                    <span className="font-['Arimo',sans-serif] text-[13px] text-gray-400 font-medium">
+                      / {step.total} completed
                     </span>
                   </div>
                   {!isFutureStage && (
-                    <div className="mt-2 h-[4px] bg-[#e5e7eb] rounded-full overflow-hidden">
+                    <div className="mt-3 h-[6px] bg-gray-100 rounded-full overflow-hidden">
                       <div
-                        className={`h-full ${isCurrentStage ? 'bg-[#6366f1]' : 'bg-[#10b981]'
-                          } transition-all`}
+                        className={`h-full rounded-full ${
+                          isCurrentStage 
+                            ? 'bg-gradient-to-r from-indigo-500 to-violet-500' 
+                            : 'bg-gradient-to-r from-emerald-500 to-teal-500'
+                        } transition-all duration-500`}
                         style={{ width: `${(step.completed / step.total) * 100}%` }}
                       />
                     </div>
@@ -1458,351 +1572,633 @@ export function EnhancedGroupOverviewV2({
             })}
           </div>
         </div>
-
-        {/* Stage Configuration Section */}
-        <div className="mt-6 bg-white rounded-[12px] border border-[#e5e7eb] p-4">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <h3 className="font-['Arimo',sans-serif] text-[15px] text-[#111827]">
-                Stage Configuration
-              </h3>
-              <span className="px-3 py-1 bg-emerald-50 border border-emerald-200 rounded-[6px] font-['Arimo',sans-serif] text-[11px] text-emerald-800 flex items-center gap-1">
-                <Shield size={12} />
-                Defined by Technical Recruiter
-              </span>
-              {stageConfigLocked && (
-                <span className="px-3 py-1 bg-amber-50 border border-amber-200 rounded-[6px] font-['Arimo',sans-serif] text-[11px] text-amber-800 flex items-center gap-1">
-                  <Lock size={12} />
-                  Locked (Stage Active)
-                </span>
-              )}
-            </div>
-
-
-          </div>
-
-          <div className="space-y-3">
-            {/* Module Monitoring Dashboard - Technical Recruiter Only */}
-            {/* Module Monitoring Dashboard - Available to both HR and Technical */}
-            {(userRole === 'technical' || userRole === 'recruiter') && (
-              <div className="flex gap-3">
-                {activeFlow.includes('assessment') && (
-                  <button
-                    onClick={() => setShowModuleMonitoring('assessment')}
-                    disabled={(() => {
-                      const step = pipelineSteps.find(s => s.id === 'assessment');
-                      return !step || step.state === 'not-started';
-                    })()}
-                    title={(() => {
-                      const step = pipelineSteps.find(s => s.id === 'assessment');
-                      return (!step || step.state === 'not-started') ? "Stage must be started to monitor results" : "";
-                    })()}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-[#6366f1] disabled:hover:to-[#8b5cf6]"
-                  >
-                    <BarChart3 size={16} />
-                    <span className="font-['Arimo',sans-serif] text-[14px]">
-                      Monitor Assessment Results
-                    </span>
-                  </button>
-                )}
-                {(activeFlow.includes('ai-interview') || activeFlow.includes('live-interview')) && (
-                  <button
-                    onClick={() => setShowModuleMonitoring('ai-interview')}
-                    disabled={(() => {
-                      const aiStep = pipelineSteps.find(s => s.id === 'ai-interview');
-                      const liveStep = pipelineSteps.find(s => s.id === 'live-interview');
-                      const aiStarted = aiStep && aiStep.state !== 'not-started';
-                      const liveStarted = liveStep && liveStep.state !== 'not-started';
-                      return !aiStarted && !liveStarted;
-                    })()}
-                    title={(() => {
-                      const aiStep = pipelineSteps.find(s => s.id === 'ai-interview');
-                      const liveStep = pipelineSteps.find(s => s.id === 'live-interview');
-                      const aiStarted = aiStep && aiStep.state !== 'not-started';
-                      const liveStarted = liveStep && liveStep.state !== 'not-started';
-                      return (!aiStarted && !liveStarted) ? "Interview stages must be started to monitor results" : "";
-                    })()}
-                    className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] hover:from-[#5558e3] hover:to-[#7c3aed] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-[#6366f1] disabled:hover:to-[#8b5cf6]"
-                  >
-                    <BarChart3 size={16} />
-                    <span className="font-['Arimo',sans-serif] text-[14px]">
-                      Monitor AI Interview Results
-                    </span>
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Configuration Buttons - Technical Recruiter Only, ordered by pipeline stage */}
-            {userRole === 'technical' && (
-              <div className="space-y-3">
-                <div className="flex gap-3">
-                  {activeFlow.map((stage) => {
-                    if (stage === 'assessment') {
-                      const locked = stageConfigLocked || groupAssessments.length > 0;
-                      return (
-                        <button
-                          key="assessment"
-                          onClick={() => {
-                            if (locked) {
-                              showToast(stageConfigLocked ? 'Cannot modify configuration - stage is active' : 'Delete the existing assessment first');
-                              return;
-                            }
-                            setShowAssessmentCreation(true);
-                          }}
-                          disabled={locked}
-                          className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <FileText size={16} />
-                          <span className="font-['Arimo',sans-serif] text-[14px]">Add Tech Assessment</span>
-                        </button>
-                      );
-                    }
-                    if (stage === 'live-interview' || stage === 'live_interview') {
-                      const locked = stageConfigLocked || groupInterviews.some(i => i.interview_type === 'live_ai_v2');
-                      return (
-                        <button
-                          key="live-interview"
-                          onClick={() => {
-                            if (locked) {
-                              showToast(stageConfigLocked ? 'Cannot modify configuration - stage is active' : 'Delete the existing live interview config first');
-                              return;
-                            }
-                            setShowLiveInterviewV2Setup(true);
-                          }}
-                          disabled={locked}
-                          className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <Video size={16} />
-                          <span className="font-['Arimo',sans-serif] text-[14px]">Add Live Interview</span>
-                        </button>
-                      );
-                    }
-                    if (stage === 'ai-interview' || stage === 'ai_interview') {
-                      const locked = stageConfigLocked || groupInterviews.some(i => i.interview_type === 'recorded') || !!interviewConfigId;
-                      return (
-                        <button
-                          key="ai-interview"
-                          onClick={() => {
-                            if (locked) {
-                              showToast(stageConfigLocked ? 'Cannot modify configuration - stage is active' : 'Delete the existing recorded interview first');
-                              return;
-                            }
-                            setShowRecordedInterviewSetup(true);
-                          }}
-                          disabled={locked}
-                          className="flex-1 flex items-center justify-center gap-2 h-[40px] px-[16px] rounded-[8px] bg-gradient-to-r from-[#10b981] to-[#059669] hover:from-[#059669] hover:to-[#047857] text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <Mic size={16} />
-                          <span className="font-['Arimo',sans-serif] text-[14px]">Add Recorded Interview</span>
-                        </button>
-                      );
-                    }
-                    return null;
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Session Monitor button — available to both HR and Technical */}
-            {(activeFlow.includes('live-interview') || activeFlow.includes('live_interview')) && (userRole === 'technical' || userRole === 'recruiter') && (
-              <div className="mt-3">
-                <button
-                  onClick={() => setShowLiveMonitor(true)}
-                  className="flex items-center justify-center gap-2 h-[40px] px-[14px] rounded-[8px] bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors"
-                  title="Open real-time session monitoring dashboard"
-                >
-                  <Activity size={16} />
-                  <span className="font-['Arimo',sans-serif] text-[14px]">Monitor</span>
-                </button>
-              </div>
-            )}
-          </div>
-          {/* Display Created Assessments (Technical Recruiter Only) */}
-          {userRole === 'technical' && (
-            <div className="mt-4">
-              {groupAssessments.length > 0 ? (
-                <div className="space-y-2">
-                  <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] mb-2">
-                    Created Assessments ({groupAssessments.length})
-                  </h4>
-                  {groupAssessments.map((assessment) => (
-                    <div
-                      key={assessment.id}
-                      className="p-3 bg-[#f9fafb] rounded-[8px] border border-[#e5e7eb] hover:border-[#10b981] transition-colors"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                              {assessment.config.title}
-                            </span>
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${assessment.status === 'draft' ? 'bg-gray-200 text-gray-700' :
-                              assessment.status === 'published' ? 'bg-emerald-100 text-emerald-700' :
-                                'bg-blue-100 text-blue-700'
-                              }`}>
-                              {assessment.status}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-3 text-[12px] text-[#6b7280]">
-                            <span>{assessment.sections.length} sections</span>
-                            <span>•</span>
-                            <span>{assessment.config.duration} min</span>
-                            <span>•</span>
-                            <span>{assessment.config.difficulty}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={async () => {
-                              try {
-                                showToast('Loading assessment details...');
-                                const data = await api.recruiter.getAssessment(assessment.id);
-                                setEditingAssessmentData(data);
-                                setShowAssessmentCreation(true);
-                              } catch (error) {
-                                console.error('Failed to load assessment details:', error);
-                                showToast('Failed to load assessment details for editing');
-                              }
-                            }}
-                            disabled={stageConfigLocked}
-                            className="h-[28px] px-[12px] rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors text-[12px] text-[#374151] disabled:opacity-50"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDeleteAssessment(assessment.id)}
-                            disabled={stageConfigLocked}
-                            className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280] disabled:opacity-50"
-                            title="Delete Assessment"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              showToast('Assessment ready to be sent to candidates');
-                            }}
-                            className="h-[28px] px-[12px] rounded-[6px] bg-[#10b981] hover:bg-[#059669] text-white transition-colors text-[12px]"
-                          >
-                            Send
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-[8px]">
-                  <p className="font-['Arimo',sans-serif] text-[13px] text-emerald-800">
-                    💡 No assessments created yet. Click "Add Tech Assessment" above to create your first assessment with MCQ, Essay, and Coding questions.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Display Created AI Interviews (Technical Recruiter Only) */}
-          {userRole === 'technical' && groupInterviews && groupInterviews.length > 0 && (
-            <div className="mt-4">
-              <div className="space-y-2">
-                <h4 className="font-['Arimo',sans-serif] text-[13px] text-[#6b7280] mb-2">
-                  Created AI Interviews ({groupInterviews.length})
-                </h4>
-                {groupInterviews.map((interview) => {
-                  const isLiV2 = interview.interview_type === 'live_ai_v2';
-                  const rubricState = isLiV2 ? interview.live_flow_config?.rubric_state : null;
-                  const bankState = isLiV2 ? interview.live_flow_config?.bank_state : null;
-                  return (
-                    <div
-                      key={interview.id}
-                      className="p-3 bg-[#f9fafb] rounded-[8px] border border-[#e5e7eb] hover:border-[#6366f1] transition-colors"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                              {interview.title}
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700">
-                              {isLiV2 ? 'Live AI V2' : interview.interview_type === 'live_ai' || interview.interview_type === 'live' ? 'Live AI' : 'Recorded'}
-                            </span>
-                            {isLiV2 && rubricState && (
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${rubricState === 'frozen' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                Rubric: {rubricState === 'frozen' ? '✓ Frozen' : 'Draft'}
-                              </span>
-                            )}
-                            {isLiV2 && bankState && bankState !== 'none' && (
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${bankState === 'frozen' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                Bank: {bankState === 'frozen' ? '✓ Frozen' : 'Draft'}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-3 text-[12px] text-[#6b7280]">
-                            {isLiV2 ? (
-                              <span>{interview.live_flow_config?.dim_count ?? 0} dimensions</span>
-                            ) : (
-                              <span>{interview.questions_count} questions</span>
-                            )}
-                            <span>•</span>
-                            <span>{interview.total_duration_minutes ?? 30} min</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              if (stageConfigLocked) {
-                                showToast('Cannot modify configuration - stage is active');
-                                return;
-                              }
-                              if (isLiV2) {
-                                setShowLiveInterviewV2Setup(true);
-                              } else {
-                                setEditingInterviewData(interview);
-                                setShowRecordedInterviewSetup(true);
-                              }
-                            }}
-                            disabled={stageConfigLocked}
-                            className="h-[28px] px-[12px] rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] transition-colors text-[12px] text-[#374151] disabled:opacity-50"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (stageConfigLocked) {
-                                showToast('Cannot delete — stage is currently active. Close the stage first.');
-                                return;
-                              }
-                              handleDeleteAIInterview(interview.id);
-                            }}
-                            className="h-[28px] w-[28px] flex items-center justify-center rounded-[6px] border border-[#e5e7eb] bg-white hover:bg-[#fef2f2] hover:border-[#fca5a5] hover:text-[#ef4444] transition-colors text-[#6b7280]"
-                            title="Delete Interview"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                          {!isLiV2 && (
-                            <button
-                              onClick={() => showToast('AI Interview ready to be sent to candidates')}
-                              className="h-[28px] px-[12px] rounded-[6px] bg-[#1b2559] hover:bg-[#2c3a7c] text-white transition-colors text-[12px]"
-                            >
-                              Send
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-        </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="px-8 py-6">
-        {/* Candidate Progress Matrix */}
-        <div className="bg-white rounded-[16px] border border-[#e5e7eb] overflow-hidden">
+      {/* Mode toggle: Configuration ⇄ Results, with Activity dropdown */}
+        <div id="group-subtabs-section" className="px-8 mt-6">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex bg-white p-1.5 rounded-[14px] shadow-sm border border-gray-100 gap-1">
+              <button
+                onClick={() => setActiveSubTab('configuration')}
+                className={`flex items-center gap-2 px-6 py-3 rounded-[10px] font-['Arimo',sans-serif] text-[14px] font-medium transition-all ${activeSubTab === 'configuration' ? 'bg-[#f5f3ff] text-[#6366f1] shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
+              >
+                <Sliders size={16} className={activeSubTab === 'configuration' ? 'text-[#6366f1]' : 'text-gray-400'} />
+                <span>Configuration</span>
+              </button>
+              <button
+                onClick={() => setActiveSubTab('candidates')}
+                className={`flex items-center gap-2 px-6 py-3 rounded-[10px] font-['Arimo',sans-serif] text-[14px] font-medium transition-all ${activeSubTab === 'candidates' ? 'bg-[#f5f3ff] text-[#6366f1] shadow-sm font-semibold' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
+              >
+                <Users size={16} className={activeSubTab === 'candidates' ? 'text-[#6366f1]' : 'text-gray-400'} />
+                <span>Results</span>
+              </button>
+            </div>
+
+            {/* Activity log dropdown (replaces the old Activity tab) */}
+            <div className="relative">
+              <button
+                onClick={() => setShowActivityMenu(v => !v)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-[10px] border border-gray-200 bg-white text-[13px] font-medium text-gray-600 hover:bg-gray-50 shadow-sm transition-colors font-['Arimo',sans-serif]"
+              >
+                <Activity size={15} className="text-gray-400" />
+                <span>Activity</span>
+                <ChevronDown size={14} className={`text-gray-400 transition-transform ${showActivityMenu ? 'rotate-180' : ''}`} />
+              </button>
+              {showActivityMenu && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setShowActivityMenu(false)} />
+                  <div className="absolute right-0 mt-2 w-[440px] max-h-[70vh] overflow-y-auto z-40 rounded-[14px] border border-gray-200 bg-white shadow-2xl">
+                    <ActivityLogPanel
+                      groupId={groupId}
+                      groupName={groupName}
+                      isInline={true}
+                      onClose={() => setShowActivityMenu(false)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {activeSubTab === 'configuration' && (
+          <div className="px-8 mt-6">
+            <div className="bg-white rounded-[16px] border border-[#e5e7eb] p-6 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-gray-100 pb-5 mb-6">
+                <div>
+                  <h3 className="font-semibold text-gray-900 text-lg font-['Arimo',sans-serif]">
+                    Pipeline Configuration Workspace
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1 font-['Arimo',sans-serif]">
+                    Configure settings, assessments, rubrics, and banks for each stage in the evaluation pipeline.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 mt-4 md:mt-0 flex-wrap">
+                  {stageConfigLocked && (
+                    <span className="px-3.5 py-1.5 bg-amber-50 border border-amber-200 rounded-[8px] font-semibold text-[11px] text-amber-800 flex items-center gap-1.5 shadow-sm font-['Arimo',sans-serif] transition-all">
+                      <Lock size={12} className="text-amber-600" />
+                      Locked (Stage Active)
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                {/* Left Column - Stage Selector Timeline */}
+                <div className="lg:col-span-4 space-y-4">
+                  <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-1 font-['Arimo',sans-serif]">
+                    Pipeline Stages
+                  </h4>
+                  <div className="space-y-3 relative">
+                    <div className="absolute left-[24px] top-6 bottom-6 w-[2px] bg-gray-100 -z-10 hidden sm:block" />
+
+                    {activeFlow.map((stageId, index) => {
+                      const stepDetail = pipelineSteps.find(s => s.id === stageId);
+                      const isSelected = (selectedConfigStage || activeFlow[0]) === stageId;
+                      
+                      let stageTitle = stageId;
+                      let StageIcon = FileText;
+                      
+                      if (stageId === 'assessment') {
+                        stageTitle = 'Technical Assessment';
+                        StageIcon = FileText;
+                      } else if (stageId === 'ai-interview' || stageId === 'ai_interview') {
+                        stageTitle = 'AI Recorded Interview';
+                        StageIcon = Mic;
+                      } else if (stageId === 'live-interview' || stageId === 'live_interview') {
+                        stageTitle = 'Live AI Interview';
+                        StageIcon = Video;
+                      }
+
+                      // Check if configured
+                      let isConfigured = false;
+                      if (stageId === 'assessment') {
+                        isConfigured = groupAssessments.length > 0;
+                      } else if (stageId === 'ai-interview' || stageId === 'ai_interview') {
+                        isConfigured = groupInterviews.some(i => i.interview_type === 'recorded') || !!interviewConfigId;
+                      } else if (stageId === 'live-interview' || stageId === 'live_interview') {
+                        isConfigured = groupInterviews.some(i => i.interview_type === 'live_ai_v2');
+                      }
+
+                      const stepStateVal = stepDetail?.state || 'not-started';
+
+                      return (
+                        <button
+                          key={stageId}
+                          onClick={() => setSelectedConfigStage(stageId)}
+                          className={`w-full flex items-start gap-4 p-4 rounded-[12px] border transition-all text-left shadow-sm ${
+                            isSelected
+                              ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600/10'
+                              : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50/50'
+                          }`}
+                        >
+                          <div className={`flex-shrink-0 w-[20px] h-[20px] rounded-full flex items-center justify-center text-[10px] font-bold mt-1 ${
+                            isConfigured
+                              ? 'bg-emerald-500 text-white'
+                              : 'bg-amber-100 text-amber-700 border border-amber-300'
+                          }`}>
+                            {isConfigured ? '✓' : index + 1}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={`text-[14px] font-semibold truncate font-['Arimo',sans-serif] ${isSelected ? 'text-indigo-900' : 'text-gray-700'}`}>
+                                {stageTitle}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-semibold tracking-wide uppercase font-['Arimo',sans-serif] ${
+                                isConfigured 
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              }`}>
+                                {isConfigured ? 'Configured' : 'Setup Pending'}
+                              </span>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 mt-1.5 text-[12px] text-gray-500 font-['Arimo',sans-serif]">
+                              <span className="flex items-center gap-1">
+                                <StageIcon size={12} className="text-gray-400" />
+                                {stageId === 'assessment' ? 'MCQ / Essay / Code' : stageId === 'ai-interview' ? 'Recorded responses' : 'Live Agent Voice'}
+                              </span>
+                              <span>•</span>
+                              <span className={`capitalize font-medium text-[11px] ${
+                                stepStateVal === 'active' ? 'text-indigo-600 font-semibold' :
+                                stepStateVal === 'closed' ? 'text-gray-500' : 'text-gray-400'
+                              }`}>
+                                {stepStateVal === 'active' ? '● Active' : stepStateVal === 'closed' ? 'Closed' : 'Not Started'}
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Right Column - Stage Workspace Pane */}
+                <div className="lg:col-span-8 space-y-6">
+                  {(() => {
+                    const currentStageId = selectedConfigStage || activeFlow[0] || 'assessment';
+                    
+                    if (!activeFlow.includes(currentStageId)) {
+                      return (
+                        <div className="p-8 text-center bg-gray-50 rounded-[12px] border border-gray-200">
+                          <p className="text-gray-500 text-sm font-['Arimo',sans-serif]">Select a stage from the left sidebar to configure.</p>
+                        </div>
+                      );
+                    }
+
+                    let infoTitle = '';
+                    let infoDesc = '';
+                    let StageIcon = FileText;
+                    let hasConfig = false;
+
+                    if (currentStageId === 'assessment') {
+                      infoTitle = 'Technical Assessment Setup';
+                      infoDesc = 'Evaluate technical proficiency through customized sections of multiple-choice, essay, and hands-on coding challenges with real-time proctoring.';
+                      StageIcon = FileText;
+                      hasConfig = groupAssessments.length > 0;
+                    } else if (currentStageId === 'ai-interview' || currentStageId === 'ai_interview') {
+                      infoTitle = 'AI Recorded Video Interview Setup';
+                      infoDesc = 'Configure automated video prompts for candidates. The AI engine parses Whisper transcripts and evaluates communication clarity and technical relevance.';
+                      StageIcon = Mic;
+                      hasConfig = groupInterviews.some(i => i.interview_type === 'recorded') || !!interviewConfigId;
+                    } else if (currentStageId === 'live-interview' || currentStageId === 'live_interview') {
+                      infoTitle = 'Live AI V2 Interview Setup';
+                      infoDesc = 'Set up competency-based dimensions, weights, and questions. A conversational LiveKit AI bot conducts the voice interview and scores post-session transcripts.';
+                      StageIcon = Video;
+                      hasConfig = groupInterviews.some(i => i.interview_type === 'live_ai_v2');
+                    }
+
+                    const stepDetail = pipelineSteps.find(s => s.id === currentStageId);
+                    const stepStateVal = stepDetail?.state || 'not-started';
+
+                    return (
+                      <div className="space-y-6">
+                        {/* Stage Overview Banner */}
+                        <div className="p-6 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-955 rounded-[16px] text-white shadow-lg border border-slate-800 relative overflow-hidden">
+                          <div className="absolute right-0 bottom-0 translate-x-8 translate-y-8 opacity-[0.03] text-indigo-400">
+                            <StageIcon size={220} />
+                          </div>
+                          <div className="relative flex items-start gap-4">
+                            <div className="p-3 bg-white/10 rounded-[12px] border border-white/10 backdrop-blur-md shadow-inner">
+                              <StageIcon size={24} className="text-indigo-300" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-[18px] text-white flex items-center gap-2 font-['Arimo',sans-serif] tracking-tight">
+                                {infoTitle}
+                              </h4>
+                              <p className="text-indigo-200/70 text-[13px] mt-2 leading-relaxed max-w-xl font-['Arimo',sans-serif]">
+                                {infoDesc}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Monitoring Quick Access Panel (if started or active) */}
+                        {stepStateVal !== 'not-started' && (
+                          <div className="p-6 bg-gradient-to-br from-slate-50/50 via-white to-slate-50/30 border border-gray-200/80 rounded-[16px] shadow-sm relative overflow-hidden">
+                            <div className="flex items-center justify-between flex-wrap gap-4 mb-3">
+                              <div className="flex items-center gap-2.5">
+                                <span className="flex h-2 w-2 relative">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-600"></span>
+                                </span>
+                                <h5 className="font-bold text-gray-900 text-[14px] font-['Arimo',sans-serif]">
+                                  Stage Execution & Live Telemetry
+                                </h5>
+                              </div>
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 uppercase tracking-wider font-['Arimo',sans-serif]">
+                                Monitoring Active
+                              </span>
+                            </div>
+                            
+                            <p className="text-[12px] text-gray-500 mb-5 leading-relaxed font-['Arimo',sans-serif]">
+                              This stage has been started by HR and is currently live for candidates. Use the real-time telemetry console to monitor progress, view answers, review transcripts, and check proctoring warnings.
+                            </p>
+
+                            <div className="flex flex-wrap gap-3">
+                              {currentStageId === 'assessment' && (userRole === 'technical' || userRole === 'recruiter') && (
+                                <button
+                                  onClick={() => setShowModuleMonitoring('assessment')}
+                                  className="flex items-center gap-2 h-9 px-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white font-semibold text-xs rounded-[8px] shadow-md shadow-indigo-100 hover:shadow-lg transition-all font-['Arimo',sans-serif]"
+                                >
+                                  <BarChart3 size={14} />
+                                  Open Assessment Monitor
+                                </button>
+                              )}
+
+                              {(currentStageId === 'ai-interview' || currentStageId === 'ai_interview') && (userRole === 'technical' || userRole === 'recruiter') && (
+                                <button
+                                  onClick={() => setShowModuleMonitoring('ai-interview')}
+                                  className="flex items-center gap-2 h-9 px-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white font-semibold text-xs rounded-[8px] shadow-md shadow-indigo-100 hover:shadow-lg transition-all font-['Arimo',sans-serif]"
+                                >
+                                  <BarChart3 size={14} />
+                                  Open Video Response Monitor
+                                </button>
+                              )}
+
+                              {(currentStageId === 'live-interview' || currentStageId === 'live_interview') && (userRole === 'technical' || userRole === 'recruiter') && (
+                                <>
+                                  <button
+                                    onClick={() => setShowLiveMonitor(true)}
+                                    className="flex items-center gap-2 h-9 px-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white font-semibold text-xs rounded-[8px] shadow-md shadow-indigo-100 hover:shadow-lg transition-all font-['Arimo',sans-serif]"
+                                  >
+                                    <Activity size={14} />
+                                    Launch Live Session Monitor
+                                  </button>
+                                  <button
+                                    onClick={() => setShowModuleMonitoring('ai-interview')}
+                                    className="flex items-center gap-2 h-9 px-4 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 font-semibold text-xs rounded-[8px] transition-all font-['Arimo',sans-serif]"
+                                  >
+                                    <BarChart3 size={14} />
+                                    View Scoring Summary
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Config details OR Empty Configuration State */}
+                        {hasConfig ? (
+                          <div className="bg-white border border-gray-200/80 rounded-[16px] overflow-hidden shadow-sm">
+                            <div className="px-5 py-4.5 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white flex justify-between items-center">
+                              <span className="font-bold text-gray-800 text-[14px] font-['Arimo',sans-serif] tracking-tight">
+                                Active Configuration Details
+                              </span>
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase tracking-wider font-['Arimo',sans-serif]">
+                                Ready
+                              </span>
+                            </div>
+
+                            <div className="p-5 space-y-4">
+                              {/* Render Assessment Details */}
+                              {currentStageId === 'assessment' && (
+                                <div className="space-y-4">
+                                  {groupAssessments.map((assessment) => (
+                                    <div key={assessment.id} className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-[12px] bg-gradient-to-br from-slate-50/50 to-white border border-slate-200/85 hover:border-slate-300 transition-all shadow-sm">
+                                      <div>
+                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                          <span className="font-bold text-slate-800 text-[14px] font-['Arimo',sans-serif]">
+                                            {assessment.config.title}
+                                          </span>
+                                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold capitalize font-['Arimo',sans-serif] ${
+                                            assessment.status === 'draft' ? 'bg-gray-100 text-gray-600 border border-gray-255' :
+                                            assessment.status === 'published' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                                            'bg-blue-50 text-blue-700 border border-blue-200'
+                                          }`}>
+                                            {assessment.status}
+                                          </span>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 font-['Arimo',sans-serif]">
+                                          <span className="flex items-center gap-1">
+                                            <strong>Duration:</strong> {assessment.config.duration} min
+                                          </span>
+                                          <span className="text-gray-300">•</span>
+                                          <span className="flex items-center gap-1">
+                                            <strong>Sections:</strong> {assessment.sections.length}
+                                          </span>
+                                          <span className="text-gray-300">•</span>
+                                          <span className="flex items-center gap-1">
+                                            <strong>Difficulty:</strong> {assessment.config.difficulty}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center gap-2 self-end md:self-auto">
+                                        {userRole === 'technical' && (
+                                          <>
+                                            <button
+                                              onClick={async () => {
+                                                try {
+                                                  showToast('Loading assessment details...');
+                                                  const data = await api.recruiter.getAssessment(assessment.id);
+                                                  setEditingAssessmentData(data);
+                                                  setShowAssessmentCreation(true);
+                                                } catch (error) {
+                                                  console.error('Failed to load assessment details:', error);
+                                                  showToast('Failed to load assessment details for editing');
+                                                }
+                                              }}
+                                              disabled={stageConfigLocked}
+                                              title={stageConfigLocked ? 'Stage is active — close the stage before editing its configuration' : undefined}
+                                              className="h-8 px-3 rounded-[8px] border border-gray-300 hover:bg-gray-50 font-semibold text-xs text-gray-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 font-['Arimo',sans-serif]"
+                                            >
+                                              <Edit size={12} />
+                                              Edit
+                                            </button>
+                                            <button
+                                              onClick={() => handleDeleteAssessment(assessment.id)}
+                                              disabled={stageConfigLocked}
+                                              className="h-8 w-8 flex items-center justify-center rounded-[8px] border border-gray-300 hover:bg-red-50 hover:border-red-300 hover:text-red-600 text-gray-500 disabled:opacity-50 transition-colors"
+                                              title={stageConfigLocked ? 'Stage is active — close the stage before editing its configuration' : 'Delete Assessment'}
+                                            >
+                                              <Trash2 size={12} />
+                                            </button>
+                                          </>
+                                        )}
+                                        <button
+                                          onClick={() => showToast('Assessment ready to be sent to candidates')}
+                                          className="h-8 px-3.5 rounded-[8px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-semibold text-xs shadow-sm transition-all flex items-center gap-1.5 font-['Arimo',sans-serif]"
+                                        >
+                                          <Send size={12} />
+                                          Send
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Render AI Recorded Interview Details */}
+                              {(currentStageId === 'ai-interview' || currentStageId === 'ai_interview') && (
+                                <div className="space-y-4">
+                                  {groupInterviews.filter(i => i.interview_type === 'recorded').map((interview) => (
+                                    <div key={interview.id} className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-[12px] bg-gradient-to-br from-slate-50/50 to-white border border-slate-200/85 hover:border-slate-300 transition-all shadow-sm">
+                                      <div>
+                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                          <span className="font-bold text-slate-800 text-[14px] font-['Arimo',sans-serif]">
+                                            {interview.title}
+                                          </span>
+                                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 uppercase tracking-wide font-['Arimo',sans-serif]">
+                                            Recorded
+                                          </span>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 font-['Arimo',sans-serif]">
+                                          <span className="flex items-center gap-1">
+                                            <strong>Questions:</strong> {interview.questions_count}
+                                          </span>
+                                          <span className="text-gray-300">•</span>
+                                          <span className="flex items-center gap-1">
+                                            <strong>Duration:</strong> {interview.total_duration_minutes ?? 30} min
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center gap-2 self-end md:self-auto font-['Arimo',sans-serif]">
+                                        {userRole === 'technical' && (
+                                          <>
+                                            <button
+                                              onClick={() => {
+                                                if (stageConfigLocked) {
+                                                  showToast('Cannot modify configuration - stage is active');
+                                                  return;
+                                                }
+                                                setEditingInterviewData(interview);
+                                                setShowRecordedInterviewSetup(true);
+                                              }}
+                                              disabled={stageConfigLocked}
+                                              title={stageConfigLocked ? 'Stage is active — close the stage before editing its configuration' : undefined}
+                                              className="h-8 px-3 rounded-[8px] border border-gray-300 hover:bg-gray-50 font-semibold text-xs text-gray-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 font-['Arimo',sans-serif]"
+                                            >
+                                              <Edit size={12} />
+                                              Edit
+                                            </button>
+                                            <button
+                                              onClick={() => {
+                                                if (stageConfigLocked) {
+                                                  showToast('Cannot delete — stage is currently active. Close the stage first.');
+                                                  return;
+                                                }
+                                                handleDeleteAIInterview(interview.id);
+                                              }}
+                                              className="h-8 w-8 flex items-center justify-center rounded-[8px] border border-gray-300 hover:bg-red-50 hover:border-red-300 hover:text-red-600 text-gray-500 transition-colors"
+                                              title="Delete Interview"
+                                            >
+                                              <Trash2 size={12} />
+                                            </button>
+                                          </>
+                                        )}
+                                        <button
+                                          onClick={() => showToast('AI Interview ready to be sent to candidates')}
+                                          className="h-8 px-3.5 rounded-[8px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-semibold text-xs shadow-sm transition-all flex items-center gap-1.5 font-['Arimo',sans-serif]"
+                                        >
+                                          <Send size={12} />
+                                          Send
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Render Live AI V2 Details */}
+                              {(currentStageId === 'live-interview' || currentStageId === 'live_interview') && (
+                                <div className="space-y-4">
+                                  {groupInterviews.filter(i => i.interview_type === 'live_ai_v2').map((interview) => {
+                                    const rubricState = interview.live_flow_config?.rubric_state;
+                                    const bankState = interview.live_flow_config?.bank_state;
+                                    return (
+                                      <div key={interview.id} className="space-y-4">
+                                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-[12px] bg-gradient-to-br from-slate-50/50 to-white border border-slate-200/85 hover:border-slate-300 transition-all shadow-sm">
+                                          <div>
+                                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                              <span className="font-bold text-slate-800 text-[14px] font-['Arimo',sans-serif]">
+                                                {interview.title}
+                                              </span>
+                                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-50 text-purple-700 border border-purple-200 uppercase tracking-wide font-['Arimo',sans-serif]">
+                                                Conversational AI
+                                              </span>
+                                              {rubricState && (
+                                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border font-['Arimo',sans-serif] ${
+                                                  rubricState === 'frozen' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                                                }`}>
+                                                  Rubric: {rubricState === 'frozen' ? '✓ Frozen' : 'Draft'}
+                                                </span>
+                                              )}
+                                              {bankState && bankState !== 'none' && (
+                                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border font-['Arimo',sans-serif] ${
+                                                  bankState === 'frozen' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                                                }`}>
+                                                  Bank: {bankState === 'frozen' ? '✓ Frozen' : 'Draft'}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 font-['Arimo',sans-serif]">
+                                              <span className="flex items-center gap-1">
+                                                <strong>Competencies:</strong> {interview.live_flow_config?.dim_count ?? 0} dimensions
+                                              </span>
+                                              <span className="text-gray-300">•</span>
+                                              <span className="flex items-center gap-1">
+                                                <strong>Time Budget:</strong> {interview.total_duration_minutes ?? 30} min
+                                              </span>
+                                            </div>
+                                          </div>
+
+                                          {userRole === 'technical' && (
+                                            <div className="flex items-center gap-2 self-end md:self-auto">
+                                              <button
+                                                onClick={() => {
+                                                  if (stageConfigLocked) {
+                                                    showToast('Cannot modify configuration - stage is active');
+                                                    return;
+                                                  }
+                                                  setShowLiveInterviewV2Setup(true);
+                                                }}
+                                                disabled={stageConfigLocked}
+                                              title={stageConfigLocked ? 'Stage is active — close the stage before editing its configuration' : undefined}
+                                                className="h-8 px-3 rounded-[8px] border border-gray-300 hover:bg-gray-50 font-semibold text-xs text-gray-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 font-['Arimo',sans-serif]"
+                                              >
+                                                <Edit size={12} />
+                                                Edit
+                                              </button>
+                                              <button
+                                                onClick={() => {
+                                                  if (stageConfigLocked) {
+                                                    showToast('Cannot delete — stage is currently active. Close the stage first.');
+                                                    return;
+                                                  }
+                                                  handleDeleteAIInterview(interview.id);
+                                                }}
+                                                className="h-8 w-8 flex items-center justify-center rounded-[8px] border border-gray-300 hover:bg-red-50 hover:border-red-300 hover:text-red-600 text-gray-500 transition-colors"
+                                                title="Delete Interview"
+                                              >
+                                                <Trash2 size={12} />
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          /* Empty Setup Card */
+                          <div className="bg-gradient-to-br from-slate-50/50 via-white to-slate-50/20 border-2 border-dashed border-gray-200 hover:border-indigo-300 transition-all rounded-[16px] p-8 text-center flex flex-col items-center justify-center shadow-sm">
+                            <div className="w-14 h-14 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center mb-4.5 shadow-inner">
+                              <Plus size={22} className="text-indigo-600" />
+                            </div>
+                            <h5 className="font-bold text-gray-900 text-[15px] mb-1.5 font-['Arimo',sans-serif] tracking-tight">
+                              No configuration set for this stage
+                            </h5>
+                            <p className="text-xs text-gray-500 max-w-sm mb-6 leading-relaxed font-['Arimo',sans-serif]">
+                              {currentStageId === 'assessment'
+                                ? 'To evaluate candidates using multiple-choice, coding, and essay questions, you need to initialize a technical assessment config.'
+                                : currentStageId === 'ai-interview' || currentStageId === 'ai_interview'
+                                ? 'Configure automated question prompts and video limits for asynchronous candidate interviews.'
+                                : 'Configure evaluation competencies and voice question banks for live conversational voice-AI rooms.'}
+                            </p>
+
+                            {userRole === 'technical' ? (
+                              <button
+                                onClick={() => {
+                                  if (stageConfigLocked) {
+                                    showToast('Cannot modify configuration - stage is active');
+                                    return;
+                                  }
+                                  if (currentStageId === 'assessment') {
+                                    setShowAssessmentCreation(true);
+                                  } else if (currentStageId === 'ai-interview' || currentStageId === 'ai_interview') {
+                                    setEditingInterviewData(null);
+                                    setShowRecordedInterviewSetup(true);
+                                  } else if (currentStageId === 'live-interview' || currentStageId === 'live_interview') {
+                                    setShowLiveInterviewV2Setup(true);
+                                  }
+                                }}
+                                disabled={stageConfigLocked}
+                                title={stageConfigLocked ? 'Stage is active — close the stage before editing its configuration' : undefined}
+                                className="inline-flex items-center gap-2 h-10 px-5 rounded-[10px] bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white font-semibold text-[13px] shadow-md shadow-indigo-100 transition-all font-['Arimo',sans-serif]"
+                              >
+                                <Plus size={16} />
+                                {currentStageId === 'assessment'
+                                  ? 'Create Tech Assessment'
+                                  : currentStageId === 'ai-interview' || currentStageId === 'ai_interview'
+                                  ? 'Configure Recorded Interview'
+                                  : 'Configure Live Interview'}
+                              </button>
+                            ) : (
+                              <div className="p-3 bg-amber-50 rounded-[8px] border border-amber-200">
+                                <p className="text-[12px] text-amber-800 font-semibold leading-relaxed font-['Arimo',sans-serif]">
+                                  ⚠️ Stage must be configured by the Technical Recruiter.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Results sub-view toggle: Review (per-stage) ⇄ Matrix (cross-stage) */}
+        {activeSubTab === 'candidates' && (
+          <div className="px-8 mt-4">
+            <div className="inline-flex gap-1 bg-white border border-gray-100 rounded-[10px] p-1 shadow-sm">
+              <button
+                onClick={() => setResultsView('review')}
+                className={`px-4 py-2 rounded-[8px] text-[13px] font-medium transition-all ${resultsView === 'review' ? 'bg-[#f5f3ff] text-[#6366f1] font-semibold' : 'text-gray-500 hover:bg-gray-50'}`}
+              >Review</button>
+              <button
+                onClick={() => setResultsView('matrix')}
+                className={`px-4 py-2 rounded-[8px] text-[13px] font-medium transition-all ${resultsView === 'matrix' ? 'bg-[#f5f3ff] text-[#6366f1] font-semibold' : 'text-gray-500 hover:bg-gray-50'}`}
+              >Matrix</button>
+            </div>
+          </div>
+        )}
+
+        {/* Per-stage Review mode (rail + filters + breakdown + proceed) */}
+        {activeSubTab === 'candidates' && resultsView === 'review' && (
+          <ReviewMode
+            groupId={groupId}
+            stages={reviewStages}
+            recruiterType={recruiterType}
+            onViewCandidate={handleReviewViewCandidate}
+            onProceed={handleReviewProceed}
+            proceedPending={bulkProgressMutation.isPending}
+          />
+        )}
+
+        {activeSubTab === 'candidates' && resultsView === 'matrix' && (
+          <div className="px-8 py-6">
+            {/* Candidate Progress Matrix */}
+            <div className="bg-white rounded-[16px] border border-[#e5e7eb] overflow-hidden">
           <div className="px-6 py-4 border-b border-[#e5e7eb]">
             <div className="flex items-center justify-between">
               <h2 className="text-[#111827]">Candidate Progress Matrix</h2>
@@ -2265,6 +2661,7 @@ export function EnhancedGroupOverviewV2({
           </div>
         </div>
       </div>
+      )}
 
       {/* Comment Modal */}
       {
@@ -2402,14 +2799,7 @@ export function EnhancedGroupOverviewV2({
         )
       }
 
-      {/* Activity Log Panel */}
-      {showActivityLog && (
-        <ActivityLogPanel
-          groupId={groupId}
-          groupName={groupName}
-          onClose={() => setShowActivityLog(false)}
-        />
-      )}
+
 
 
 
@@ -2479,6 +2869,7 @@ export function EnhancedGroupOverviewV2({
       {showRecordedInterviewSetup && (
         <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
           <RecordedInterviewSetup
+            key={editingInterviewData?.id || 'new'}
             groupName={groupName}
             activeFlow={activeFlow}
             initialData={editingInterviewData}
@@ -2498,18 +2889,33 @@ export function EnhancedGroupOverviewV2({
       {showRecordedQuestionSetup && (
         <div className="fixed inset-0 bg-white ml-[96px] z-[60] overflow-y-auto">
           <RecordedInterviewQuestionSetup
+            key={editingInterviewData?.id || 'new'}
             groupName={groupName}
+            positionContext={{
+              positionTitle: (groupDetailData as any)?.position_title || description,
+              jobDescription: (groupDetailData as any)?.job_description || '',
+              requiredSkills: Array.isArray((groupDetailData as any)?.required_skills)
+                ? (groupDetailData as any).required_skills
+                : [],
+              experienceLevel: (groupDetailData as any)?.experience_level || '',
+              yearsOfExperience: (groupDetailData as any)?.years_of_experience,
+            }}
             initialQuestions={(() => {
-              // Extract saved questions from the interview being edited
-              const items = editingInterviewData?.questions?.items;
-              if (Array.isArray(items) && items.length > 0) {
-                return items.map((q: any, i: number) => ({
-                  id: q.id || String(i + 1),
-                  text: q.text || q.question || '',
-                  duration: q.duration || q.recordingTime || 120
-                }));
-              }
-              return undefined;
+              const q = editingInterviewData?.questions;
+              if (!q) return undefined;
+              // Support both storage formats: {items:[]} and {questions:[]}
+              const items: any[] = Array.isArray(q.items)
+                ? q.items
+                : Array.isArray(q.questions)
+                  ? q.questions
+                  : [];
+              if (items.length === 0) return undefined;
+              return items.map((item: any, i: number) => ({
+                id: item.id || String(i + 1),
+                text: item.text || item.question || '',
+                duration: item.duration || item.recordingTime || 120,
+                rubricYesNoChecks: Array.isArray(item.rubricYesNoChecks) ? item.rubricYesNoChecks : [],
+              }));
             })()}
             onBack={() => {
               setShowRecordedQuestionSetup(false);
@@ -2528,6 +2934,7 @@ export function EnhancedGroupOverviewV2({
                 setPendingAISettings(null);
                 setEditingInterviewData(null);
                 setRefreshKey(prev => prev + 1);
+                queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId) });
               } catch (error) {
                 console.error('Failed to assign recorded interview:', error);
                 showToast('Failed to save AI Interview');

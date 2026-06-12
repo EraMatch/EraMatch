@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Sparkles, Loader2, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
 import { fetchAPI } from '../../../services/client';
+import { recruiterService } from '../../../services/recruiter.service';
 
 interface Dimension {
   name: string;
@@ -26,6 +27,7 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [enhancingKey, setEnhancingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -87,6 +89,24 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
     }
     newDims[idx].anchors![level] = value;
     setDimensions(newDims);
+  };
+
+  const enhanceAnchor = async (idx: number, level: 'substandard' | 'proficient' | 'excellent') => {
+    const current = dimensions[idx]?.anchors?.[level] || '';
+    if (!current.trim()) return;
+    const key = `${idx}-${level}`;
+    try {
+      setEnhancingKey(key);
+      const response = await recruiterService.enhanceText(current, {
+        useCase: 'live_interview_anchor',
+        metadata: { dimension: dimensions[idx]?.name, level, group_id: groupId },
+      });
+      updateAnchor(idx, level, (response?.enhancedText || current).trim() || current);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to fix anchor text');
+    } finally {
+      setEnhancingKey(null);
+    }
   };
 
   const handleSave = async () => {
@@ -169,9 +189,22 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
             <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-200">
               {/* Substandard */}
               <div className="p-4 bg-white">
-                <label className="flex items-center gap-2 text-sm font-semibold text-red-700 mb-2">
-                  <div className="w-2 h-2 rounded-full bg-red-500"></div> Substandard
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-red-700">
+                    <div className="w-2 h-2 rounded-full bg-red-500"></div> Substandard
+                  </label>
+                  {!isFrozen && (
+                    <button
+                      type="button"
+                      onClick={() => void enhanceAnchor(idx, 'substandard')}
+                      disabled={!dim.anchors?.substandard?.trim() || enhancingKey === `${idx}-substandard`}
+                      className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                    >
+                      {enhancingKey === `${idx}-substandard` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      Fix text
+                    </button>
+                  )}
+                </div>
                 <textarea
                   value={dim.anchors?.substandard || ''}
                   onChange={(e) => updateAnchor(idx, 'substandard', e.target.value)}
@@ -184,9 +217,22 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
               
               {/* Proficient */}
               <div className="p-4 bg-white">
-                <label className="flex items-center gap-2 text-sm font-semibold text-amber-600 mb-2">
-                  <div className="w-2 h-2 rounded-full bg-amber-400"></div> Proficient
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-amber-600">
+                    <div className="w-2 h-2 rounded-full bg-amber-400"></div> Proficient
+                  </label>
+                  {!isFrozen && (
+                    <button
+                      type="button"
+                      onClick={() => void enhanceAnchor(idx, 'proficient')}
+                      disabled={!dim.anchors?.proficient?.trim() || enhancingKey === `${idx}-proficient`}
+                      className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                    >
+                      {enhancingKey === `${idx}-proficient` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      Fix text
+                    </button>
+                  )}
+                </div>
                 <textarea
                   value={dim.anchors?.proficient || ''}
                   onChange={(e) => updateAnchor(idx, 'proficient', e.target.value)}
@@ -199,9 +245,22 @@ export function RubricEditor({ groupId, rubricId, isFrozen, onBack, onSave }: Ru
 
               {/* Excellent */}
               <div className="p-4 bg-white">
-                <label className="flex items-center gap-2 text-sm font-semibold text-green-700 mb-2">
-                  <div className="w-2 h-2 rounded-full bg-green-500"></div> Excellent
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-green-700">
+                    <div className="w-2 h-2 rounded-full bg-green-500"></div> Excellent
+                  </label>
+                  {!isFrozen && (
+                    <button
+                      type="button"
+                      onClick={() => void enhanceAnchor(idx, 'excellent')}
+                      disabled={!dim.anchors?.excellent?.trim() || enhancingKey === `${idx}-excellent`}
+                      className="inline-flex items-center gap-1 text-[11px] text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                    >
+                      {enhancingKey === `${idx}-excellent` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      Fix text
+                    </button>
+                  )}
+                </div>
                 <textarea
                   value={dim.anchors?.excellent || ''}
                   onChange={(e) => updateAnchor(idx, 'excellent', e.target.value)}
