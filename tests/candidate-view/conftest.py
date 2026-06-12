@@ -9,8 +9,8 @@ import httpx
 # CONFIGURATION
 # ─────────────────────────────────────────────
 BASE_URL = "http://localhost:8000/api/v1"
-CANDIDATE_EMAIL = "candidate2@eramatch.com"
-CANDIDATE_PASSWORD = "test123"
+CANDIDATE_EMAIL = "c1.strong@example.com"
+CANDIDATE_PASSWORD = "admin12345"
 
 
 # ─────────────────────────────────────────────

@@ -20,10 +20,12 @@ class CandidateAuthService:
 
     async def login(self, username: str, password: str) -> TokenResponse:
         """
-        Authenticate candidate by username and return JWT tokens.
+        Authenticate candidate by username or email and return JWT tokens.
         """
         candidate = await self._get_candidate_by_username(username)
-        
+        if not candidate:
+            candidate = await self._get_candidate_by_email(username)
+
         if not candidate:
             raise UnauthorizedException("Invalid username or password")
         
@@ -92,6 +94,15 @@ class CandidateAuthService:
         """Get candidate by username."""
         statement = select(CandidateProfile).where(
             CandidateProfile.username == username,
+            CandidateProfile.is_deleted == False
+        )
+        result = await self.session.execute(statement)
+        return result.scalars().first()
+
+    async def _get_candidate_by_email(self, email: str) -> CandidateProfile | None:
+        """Get candidate by email (fallback when username is not set)."""
+        statement = select(CandidateProfile).where(
+            CandidateProfile.email == email,
             CandidateProfile.is_deleted == False
         )
         result = await self.session.execute(statement)
