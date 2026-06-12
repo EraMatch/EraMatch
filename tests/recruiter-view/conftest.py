@@ -90,9 +90,9 @@ def raw_client():
 from pathlib import Path
 
 TECH_EMAIL = "tech@eramatch.com"
-TECH_PASSWORD = "1234567890"
+TECH_PASSWORD = "admin12345"
 ADMIN_EMAIL = "admin_1@eramatch.com"
-ADMIN_PASSWORD = "1234567890"
+ADMIN_PASSWORD = "admin12345"
 # Sample CV PDFs provided by the user for ingestion tests.
 SAMPLE_CVS_DIR = Path("/Users/anasahmed/Uni_projects/grad_project/Main_Dev/sample_pdfs")
 
