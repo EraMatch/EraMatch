@@ -119,13 +119,13 @@ class QuestionService:
                 inputFormat=config.get("input_format"),
                 outputFormat=config.get("output_format"),
                 examples=config.get("examples"),
-                constraints=config.get("constraints"),
-                topics=config.get("topics"),
+                constraints=([config["constraints"]] if isinstance(config.get("constraints"), str) else config.get("constraints")),
+                topics=([config["topics"]] if isinstance(config.get("topics"), str) else config.get("topics")),
                 referenceAnswerCode=(config.get("reference_solution") or (
                     (qb.correct_answer or {}).get("reference_solution")
                 )),
                 maxWords=config.get("max_words"),
-                expectedKeywords=config.get("expected_keywords"),
+                expectedKeywords=([config["expected_keywords"]] if isinstance(config.get("expected_keywords"), str) else config.get("expected_keywords")),
                 rubric=config.get("rubric"),
                 evidence=config.get("evidence"),
                 referenceAnswer=config.get("reference_answer"),
