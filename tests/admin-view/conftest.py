@@ -10,7 +10,7 @@ import httpx
 # ─────────────────────────────────────────────
 BASE_URL = "http://localhost:8000/api/v1"
 ADMIN_EMAIL = "admin_1@eramatch.com"
-ADMIN_PASSWORD = "1234567890"
+ADMIN_PASSWORD = "admin12345"
 
 
 # ─────────────────────────────────────────────
