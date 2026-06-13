@@ -994,30 +994,6 @@ export function PositionDetailView({
               </div>
             )}
 
-{/* Import Candidates Section */}
-            <div className="bg-white rounded-[14px] p-6 shadow-sm mb-6 border border-[#eef2ff]">
-              <h3 className="font-['Arimo',sans-serif] text-[19px] text-black mb-4">
-                Import Candidates
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <button
-                  onClick={() => setShowZipUploadModal(true)}
-                  className="flex items-center gap-3 p-4 rounded-[8px] border-2 border-[#e5e7eb] hover:border-[#6366f1] hover:bg-[#f9fafb] transition-all"
-                >
-                  <Upload size={20} className="text-[#6366f1]" />
-                  <div className="text-left">
-                    <div className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                      Upload CVs (.zip / .pdf)
-                    </div>
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">
-                      Drag & drop or browse
-                    </div>
-                  </div>
-                </button>
-                {/* ...rest of Anas's Import Candidates buttons / content... */}
-              </div>
-            </div>
-
             {/* Quick Data Board */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
               {[
@@ -1085,7 +1061,7 @@ export function PositionDetailView({
                         <Upload size={20} />
                       </div>
                       <div className="text-left">
-                        <div className="text-[14px] font-semibold text-slate-900">Upload CVs (.zip)</div>
+                        <div className="text-[14px] font-semibold text-slate-900">Upload CVs (.zip / .pdf)</div>
                         <div className="text-[12px] font-medium text-slate-500">Drag & drop or browse</div>
                       </div>
                     </button>
