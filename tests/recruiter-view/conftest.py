@@ -159,24 +159,46 @@ def upload_headers(recruiter_token):
 
 
 @pytest.fixture(scope="session")
-def approved_project_id(client):
-    """Pick an existing approved/active project to host the E2E test position."""
+def approved_project_id(client, admin_headers):
+    """
+    Return an active/approved project id.
+    If none exists, creates one via the admin client (bypasses approval flow)
+    so the E2E test always has somewhere to attach positions.
+    """
     resp = client.get("/recruiter/projects")
-    assert resp.status_code == 200, f"Could not list projects: {resp.status_code} — {resp.text}"
-    projects = resp.json()
-    if isinstance(projects, dict):
-        projects = projects.get("projects") or projects.get("data") or []
-    assert projects, "No projects available to host the E2E position. Create/approve a project first."
+    projects = []
+    if resp.status_code == 200:
+        raw = resp.json()
+        projects = raw if isinstance(raw, list) else (raw.get("projects") or raw.get("data") or [])
 
     def _status(p):
         return str(p.get("status", "")).lower()
 
-    # Prefer an explicitly active/approved/open project; fall back to the first.
-    chosen = next(
-        (p for p in projects if any(s in _status(p) for s in ("active", "approved", "open"))),
-        projects[0],
-    )
-    return str(chosen.get("id") or chosen.get("project_id"))
+    active = [p for p in projects if any(s in _status(p) for s in ("active", "approved", "open"))]
+    if active:
+        return str(active[0].get("id") or active[0].get("project_id"))
+
+    # Fall back to ANY project
+    if projects:
+        return str(projects[0].get("id") or projects[0].get("project_id"))
+
+    # No projects at all — create one via admin so it starts approved
+    with httpx.Client(base_url=BASE_URL, headers=admin_headers, timeout=30.0) as ac:
+        cr = ac.post("/recruiter/projects", json={
+            "name": "E2E Seed Project",
+            "description": "Auto-created by test fixtures — safe to delete.",
+            "target_hire_count": 5,
+            "status": "active",
+            "priority": "medium",
+        })
+        assert cr.status_code in (200, 201), (
+            f"Auto-create project failed: {cr.status_code} — {cr.text}\n"
+            "Create at least one project manually before running E2E tests."
+        )
+        data = cr.json()
+        pid = str(data.get("project_id") or data.get("id") or "")
+        assert pid, f"No project_id in response: {data}"
+        return pid
 
 
 @pytest.fixture(scope="session")
@@ -188,3 +210,148 @@ def sample_cv_paths():
     if not pdfs:
         pytest.skip(f"No sample CV PDFs in {SAMPLE_CVS_DIR}")
     return pdfs
+
+
+_SEED_MCQ_QUESTIONS = [
+    {
+        "question_type": "mcq", "question_text": "Which React hook is used for side effects?",
+        "question_config": {
+            "options": ["useState", "useEffect", "useContext", "useReducer"],
+            "correct_answer": {"correct_index": 1},
+            "explanation": "useEffect runs after render for side effects.",
+        },
+        "difficulty": "Easy", "tags": ["React", "Hooks"], "points": 10,
+        "category": "Frontend",
+    },
+    {
+        "question_type": "mcq",
+        "question_text": "What is the time complexity of inserting into a balanced BST?",
+        "question_config": {
+            "options": ["O(1)", "O(log n)", "O(n)", "O(n log n)"],
+            "correct_answer": {"correct_index": 1},
+            "explanation": "Balanced BST insert is O(log n) because each level halves the search space.",
+        },
+        "difficulty": "Medium", "tags": ["Data Structures", "Algorithms"], "points": 10,
+        "category": "Computer Science",
+    },
+    {
+        "question_type": "mcq",
+        "question_text": "Which CSS property controls stacking order of overlapping elements?",
+        "question_config": {
+            "options": ["z-index", "position", "display", "overflow"],
+            "correct_answer": {"correct_index": 0},
+            "explanation": "z-index controls the stack order for positioned elements.",
+        },
+        "difficulty": "Easy", "tags": ["CSS"], "points": 10,
+        "category": "Frontend",
+    },
+    {
+        "question_type": "mcq",
+        "question_text": "What does the TypeScript `keyof` operator return?",
+        "question_config": {
+            "options": [
+                "All values of an object type",
+                "A union of all property keys of an object type",
+                "A boolean indicating key existence",
+                "An array of keys",
+            ],
+            "correct_answer": {"correct_index": 1},
+            "explanation": "`keyof T` produces a union type of string/number literal types for T's keys.",
+        },
+        "difficulty": "Medium", "tags": ["TypeScript"], "points": 10,
+        "category": "Frontend",
+    },
+    {
+        "question_type": "mcq",
+        "question_text": "In GraphQL, what is a resolver?",
+        "question_config": {
+            "options": [
+                "A caching layer for queries",
+                "A function that returns data for a specific field",
+                "A type definition in the schema",
+                "A middleware for authentication",
+            ],
+            "correct_answer": {"correct_index": 1},
+            "explanation": "Resolvers are functions responsible for fetching data for each schema field.",
+        },
+        "difficulty": "Medium", "tags": ["GraphQL"], "points": 10,
+        "category": "Backend",
+    },
+]
+
+_SEED_ESSAY_QUESTIONS = [
+    {
+        "question_type": "essay",
+        "question_text": "Describe the key differences between REST and GraphQL APIs. When would you choose one over the other?",
+        "question_config": {
+            "max_words": 400,
+            "rubric": "Grade on technical accuracy, real-world trade-off analysis, and clarity.",
+            "rubric_yes_no_checks": [
+                {"id": i + 1, "check": f"Does the answer address point {i + 1}?", "weight": 0.1}
+                for i in range(10)
+            ],
+        },
+        "difficulty": "Medium", "tags": ["API Design", "GraphQL", "REST"], "points": 20,
+        "category": "Backend",
+    },
+    {
+        "question_type": "essay",
+        "question_text": "Explain how you would approach optimising the performance of a slow React application.",
+        "question_config": {
+            "max_words": 500,
+            "rubric": "Evaluate breadth of optimisation strategies and concrete examples.",
+            "rubric_yes_no_checks": [
+                {"id": i + 1, "check": f"Does the answer address point {i + 1}?", "weight": 0.1}
+                for i in range(10)
+            ],
+        },
+        "difficulty": "Hard", "tags": ["React", "Performance"], "points": 20,
+        "category": "Frontend",
+    },
+    {
+        "question_type": "essay",
+        "question_text": "What strategies would you use to ensure accessibility (a11y) in a web application?",
+        "question_config": {
+            "max_words": 350,
+            "rubric": "Assess knowledge of WCAG guidelines, semantic HTML, and ARIA.",
+            "rubric_yes_no_checks": [
+                {"id": i + 1, "check": f"Does the answer address point {i + 1}?", "weight": 0.1}
+                for i in range(10)
+            ],
+        },
+        "difficulty": "Medium", "tags": ["Accessibility", "HTML"], "points": 20,
+        "category": "Frontend",
+    },
+]
+
+
+@pytest.fixture(scope="session")
+def seed_qb_questions(tech_client):
+    """
+    Ensure the question bank has enough questions for the E2E tests to pull from.
+    Seeds 5 MCQ + 3 essay questions if fewer than 3 of either type exist.
+    Safe to run multiple times — uses POST /questions only when the bank is sparse.
+    Returns counts: {"mcq": int, "essay": int}
+    """
+    counts: dict[str, int] = {}
+    for q_type, seeds in [("mcq", _SEED_MCQ_QUESTIONS), ("essay", _SEED_ESSAY_QUESTIONS)]:
+        r = tech_client.get("/questions", params={"question_type": q_type, "limit": 10})
+        existing = 0
+        if r.status_code == 200:
+            raw = r.json()
+            items = raw if isinstance(raw, list) else (raw.get("questions") or raw.get("items") or [])
+            existing = len(items)
+
+        if existing >= 3:
+            counts[q_type] = existing
+            continue
+
+        # Seed
+        created = 0
+        for q in seeds:
+            cr = tech_client.post("/questions", json=q)
+            if cr.status_code in (200, 201):
+                created += 1
+        counts[q_type] = existing + created
+
+    return counts
