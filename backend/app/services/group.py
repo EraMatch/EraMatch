@@ -750,7 +750,7 @@ class GroupService:
                         max_retakes=cfg.max_retakes,
                         questions_count=q_count,
                         instructions=cfg.instructions,
-                        questions=cfg.questions,
+                        questions=cfg.questions if isinstance(cfg.questions, dict) else {},
                         think_time_seconds=cfg.think_time_seconds,
                         answer_time_seconds=cfg.answer_time_seconds,
                         live_interview_context=cfg.live_interview_context,
