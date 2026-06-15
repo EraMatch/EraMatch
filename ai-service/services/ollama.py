@@ -17,14 +17,14 @@ def get_ollama_semaphore() -> asyncio.Semaphore:
     return _ollama_semaphore
 
 
-def get_client(host: str | None = None) -> Client:
+def get_client(host: str | None = None, timeout: float | None = None) -> Client:
     """Get configured Ollama client (cloud or local)."""
     target_host = host or settings.OLLAMA_HOST
     headers = None
     # Only attach API key for cloud host
     if settings.OLLAMA_API_KEY and target_host == settings.OLLAMA_HOST:
         headers = {"Authorization": f"Bearer {settings.OLLAMA_API_KEY}"}
-    return Client(host=target_host, headers=headers)
+    return Client(host=target_host, headers=headers, timeout=timeout)
 
 
 async def chat_completion(
@@ -47,7 +47,6 @@ async def chat_completion(
     Returns:
         dict with content and model
     """
-    client = get_client(host=host)
     model_name = model or settings.OLLAMA_MODEL
     effective_host = host or settings.OLLAMA_HOST
     logger.debug("[Ollama] chat_completion — model=%s host=%s stream=%s", model_name, effective_host, stream)
@@ -62,6 +61,7 @@ async def chat_completion(
         chat_kwargs["format"] = response_format
 
     async def _run_chat() -> dict:
+        client = get_client(host=host, timeout=timeout_seconds)
         max_retries = 5
         base_delay = 1.0
 
@@ -120,6 +120,4 @@ async def chat_completion(
         async with semaphore:
             return await _run_chat()
 
-    if timeout_seconds and timeout_seconds > 0:
-        return await asyncio.wait_for(_run_with_semaphore(), timeout=timeout_seconds)
     return await _run_with_semaphore()

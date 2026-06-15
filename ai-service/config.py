@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     OLLAMA_GH_SYNTH_MODEL: str = "gemma3:12b-cloud"
     OLLAMA_GH_STAGE_TIMEOUT_SECONDS: int = 180
     OLLAMA_MAX_CONCURRENT_CALLS: int = 4
-    OLLAMA_CV_PARSE_TIMEOUT_SECONDS: int = 120
+    OLLAMA_CV_PARSE_TIMEOUT_SECONDS: int = 300
 
     # GitHub analysis runtime controls
     GH_ANALYSIS_HTTP_TIMEOUT_SECONDS: int = 30
