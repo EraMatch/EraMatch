@@ -6,6 +6,7 @@ import { api } from '../../../services/api';
 import { Button } from '../../ui/button';
 import { Textarea } from '../../ui/textarea';
 import { Label } from '../../ui/label';
+import { useBackgroundTasksPolling } from '../../../hooks/backgroundTasks/useBackgroundTasks';
 
 interface QAGQuestion {
     id: number;
@@ -48,6 +49,21 @@ export function PositionPreMatchingReviewPage() {
     const [keywordsMessage, setKeywordsMessage] = useState<string | null>(null);
     const [keywordsError, setKeywordsError] = useState<string | null>(null);
     const [approvalCompleted, setApprovalCompleted] = useState(false);
+    const [isQagGenerating, setIsQagGenerating] = useState(false);
+    const [qagJobId, setQagJobId] = useState<string | null>(null);
+    const [qagGenerationFailed, setQagGenerationFailed] = useState(false);
+
+    const applyArtifact = (artifact: any) => {
+        const questions = Array.isArray(artifact?.questions) ? artifact.questions : [];
+        setQagQuestions(questions as QAGQuestion[]);
+        setQagArtifactMeta({
+            provider: artifact?.provider,
+            model: artifact?.model,
+            generation_source: artifact?.generation_source,
+            fallback_used: Boolean(artifact?.fallback_used),
+            generation_duration_ms: typeof artifact?.generation_duration_ms === 'number' ? artifact.generation_duration_ms : undefined,
+        });
+    };
 
     useEffect(() => {
         const load = async () => {
@@ -59,16 +75,33 @@ export function PositionPreMatchingReviewPage() {
 
             try {
                 setLoading(true);
+                setQagGenerationFailed(false);
+
+                // Check whether a generation job is already running for this position before
+                // hitting the auto-trigger endpoint below (which would otherwise spawn a duplicate job).
+                const tasks = await api.recruiter.getBackgroundTasks().catch(() => [] as any[]);
+                const runningJob = Array.isArray(tasks)
+                    ? tasks.find((t: any) =>
+                        t?.task_category === 'qag' &&
+                        t?.qag_job_type === 'qag_generation' &&
+                        t?.position_id === positionId &&
+                        (t?.status === 'pending' || t?.status === 'processing'))
+                    : null;
+
+                if (runningJob) {
+                    setQagJobId(runningJob.id);
+                    setIsQagGenerating(true);
+                    return;
+                }
+
                 const artifact = await api.recruiter.getPositionHDEvalQAG(positionId);
-                const questions = Array.isArray(artifact?.questions) ? artifact.questions : [];
-                setQagQuestions(questions as QAGQuestion[]);
-                setQagArtifactMeta({
-                    provider: artifact?.provider,
-                    model: artifact?.model,
-                    generation_source: artifact?.generation_source,
-                    fallback_used: Boolean(artifact?.fallback_used),
-                    generation_duration_ms: typeof artifact?.generation_duration_ms === 'number' ? artifact.generation_duration_ms : undefined,
-                });
+                if (artifact?.status === 'pending' && artifact?.job_id) {
+                    setQagJobId(artifact.job_id);
+                    setIsQagGenerating(true);
+                    return;
+                }
+
+                applyArtifact(artifact);
             } catch (error) {
                 console.error('Failed to load pre-matching criteria:', error);
                 toast.error('Failed to load Position Pre-Matching Score criteria');
@@ -79,6 +112,31 @@ export function PositionPreMatchingReviewPage() {
 
         load();
     }, [positionId]);
+
+    const { data: backgroundTasks } = useBackgroundTasksPolling(isQagGenerating);
+
+    useEffect(() => {
+        if (!isQagGenerating || !qagJobId || !Array.isArray(backgroundTasks)) return;
+        const job = backgroundTasks.find((t: any) => t?.id === qagJobId);
+        if (!job) return;
+
+        if (job.status === 'completed') {
+            setIsQagGenerating(false);
+            api.recruiter.getPositionHDEvalQAG(positionId)
+                .then((artifact) => {
+                    applyArtifact(artifact);
+                    toast.success('Position pre-matching criteria generated.');
+                })
+                .catch((error) => {
+                    console.error('Failed to load generated pre-matching criteria:', error);
+                    toast.error('Criteria generation finished, but loading the results failed. Please reload.');
+                });
+        } else if (job.status === 'failed' || job.status === 'cancelled') {
+            setIsQagGenerating(false);
+            setQagGenerationFailed(true);
+            toast.error('Position pre-matching criteria generation failed.');
+        }
+    }, [backgroundTasks, isQagGenerating, qagJobId, positionId]);
 
     const approvedCount = useMemo(
         () => qagQuestions.filter((q) => Boolean(q.approved ?? true)).length,
@@ -166,6 +224,24 @@ export function PositionPreMatchingReviewPage() {
         setQagQuestions((prev) =>
             prev.map((q) => (filteredIds.has(q.id) ? { ...q, approved, edited: true } : q))
         );
+    };
+
+    const handleRegenerateQAG = async () => {
+        if (!positionId) return;
+        try {
+            setQagGenerationFailed(false);
+            const artifact = await api.recruiter.regeneratePositionHDEvalQAG(positionId);
+            if (artifact?.status === 'pending' && artifact?.job_id) {
+                setQagJobId(artifact.job_id);
+                setIsQagGenerating(true);
+            } else {
+                applyArtifact(artifact);
+            }
+        } catch (error) {
+            console.error('Failed to regenerate pre-matching criteria:', error);
+            toast.error('Failed to start criteria regeneration');
+            setQagGenerationFailed(true);
+        }
     };
 
     const handleSaveQAGDraft = async () => {
@@ -341,7 +417,28 @@ export function PositionPreMatchingReviewPage() {
                     </div>
 
                     <div className="space-y-3">
-                        {filteredQuestions.length === 0 ? (
+                        {isQagGenerating ? (
+                            <div
+                                role="status"
+                                aria-live="polite"
+                                className="rounded-xl border border-[#6366f1]/20 bg-[#f5f3ff] p-6 flex items-center gap-3"
+                            >
+                                <Loader2 className="w-5 h-5 animate-spin text-[#6366f1] flex-shrink-0" />
+                                <p className="text-sm text-[#4f46e5]">
+                                    Generating Position Pre-Matching Score criteria in the background…
+                                    this page will update automatically when it's done.
+                                </p>
+                            </div>
+                        ) : qagGenerationFailed ? (
+                            <div className="rounded-xl border border-red-200 bg-red-50 p-6 flex items-center justify-between gap-3">
+                                <p className="text-sm text-red-700">
+                                    Criteria generation failed for this position.
+                                </p>
+                                <Button type="button" variant="outline" onClick={handleRegenerateQAG}>
+                                    Regenerate
+                                </Button>
+                            </div>
+                        ) : filteredQuestions.length === 0 ? (
                             <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500">
                                 No criteria match the current search/filter.
                             </div>
@@ -459,11 +556,11 @@ export function PositionPreMatchingReviewPage() {
                             <Button variant="outline" onClick={() => navigate('/recruiter/reviews')} disabled={submitting}>
                                 Cancel
                             </Button>
-                            <Button variant="outline" onClick={handleSaveQAGDraft} disabled={submitting}>
+                            <Button variant="outline" onClick={handleSaveQAGDraft} disabled={submitting || isQagGenerating}>
                                 {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                 Save Draft
                             </Button>
-                            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={handleApproveWithQAG} disabled={submitting || approvedCount === 0 || approvalCompleted}>
+                            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={handleApproveWithQAG} disabled={submitting || isQagGenerating || approvedCount === 0 || approvalCompleted}>
                                 {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                 {approvalCompleted ? 'Approved' : 'Approve Request + Activate Criteria'}
                             </Button>

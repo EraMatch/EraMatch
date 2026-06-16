@@ -242,6 +242,7 @@ async def get_background_tasks(
                 "total_flagged": None,
                 "total_approved": total_approved,
                 "qag_job_type": job.job_type,
+                "position_id": str(job.position_id) if job.position_id else None,
                 "processed_items": job.processed_items,
                 "total_items": job.total_items,
                 "candidates_found": candidates_found,
