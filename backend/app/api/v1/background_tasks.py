@@ -322,6 +322,7 @@ async def get_background_tasks(
                 "total_candidate_count": scoring.get("total_candidate_count"),
                 "scored_count": scoring.get("scored_count"),
                 "pending_count": scoring.get("pending_count"),
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
             })
     except Exception:
         pass

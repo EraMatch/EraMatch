@@ -249,6 +249,9 @@ class ApplicationScoreBreakdownResponse(BaseModel):
     criteria_checks: list[dict] = Field(default_factory=list)
     keyword_match_score: float | None = None
     jd_embedding_similarity: float | None = None
+    # Dual-score model fields
+    semantic_score: float | None = None  # Jina cosine sim(JD, CV); falls back to heuristic composite
+    qag_score: float | None = None       # AI QAG evaluation score (None until QAG approved & run)
 
 class ProjectSummaryResponse(BaseModel):
     openPositions: int

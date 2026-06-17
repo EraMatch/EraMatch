@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Max seconds to wait for the LLM to evaluate a single candidate.
 # If Ollama takes longer than this, we skip the candidate and use the
 # heuristic fallback score instead of blocking the whole queue.
-PER_CANDIDATE_TIMEOUT_SECONDS = 120
+PER_CANDIDATE_TIMEOUT_SECONDS = 600
 
 
 async def _run_prescore_async(
@@ -59,6 +59,7 @@ async def _run_prescore_async(
 
 def _heuristic_prescore(position, cv, gh):
     """Fast fallback scoring based purely on token overlap and skills (no LLM)."""
+    import math as _math
     scorer = PreScoreService()
 
     parsed = cv.parsed_data if isinstance(cv.parsed_data, dict) else {}
@@ -126,6 +127,20 @@ def _heuristic_prescore(position, cv, gh):
         1,
     )
 
+    # Compute Jina cosine similarity if both embeddings are available
+    jd_sim = None
+    try:
+        prof_emb = getattr(cv, "profile_embedding", None)
+        jd_emb = getattr(position, "jd_embedding", None)
+        if prof_emb and jd_emb:
+            dot = sum(x * y for x, y in zip(prof_emb, jd_emb))
+            na = _math.sqrt(sum(x * x for x in prof_emb))
+            nb = _math.sqrt(sum(y * y for y in jd_emb))
+            if na > 0 and nb > 0:
+                jd_sim = round((dot / (na * nb)) * 100, 1)
+    except Exception:
+        pass
+
     return {
         "version": "heuristic_fallback_v2",
         "pre_score_final": pre_score_final,
@@ -142,6 +157,9 @@ def _heuristic_prescore(position, cv, gh):
         "jd_quality_cap": None,
         "jd_quality_cap_applied": False,
         "criteria_checks": [],
+        "jd_embedding_similarity": jd_sim,
+        "semantic_score": jd_sim if jd_sim is not None else pre_score_final,
+        "qag_score": None,
         "score_explanation": [
             "LLM timed out — heuristic score used.",
             f"Skills match {skill_alignment}% (fuzzy synonym matching)",

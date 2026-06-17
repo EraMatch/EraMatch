@@ -559,7 +559,8 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const strengths: string[] = [];
   if (Number(candidate.experience || 0) > 0) strengths.push(`${candidate.experience} years of relevant experience`);
   if (Array.isArray(candidate.skills) && candidate.skills.length > 0) strengths.push(`Core skills: ${candidate.skills.slice(0, 5).join(', ')}`);
-  if (scoreBreakdown?.semantic_fit_score != null) strengths.push(`Strong semantic fit (${formatScore(scoreBreakdown.semantic_fit_score, 1)})`);
+  const _semVal = scoreBreakdown?.semantic_score ?? scoreBreakdown?.jd_embedding_similarity;
+  if (_semVal != null) strengths.push(`Strong semantic match (${formatScore(_semVal, 1)})`);
   if (scoreBreakdown?.skills_experience_score != null) strengths.push(`Skills/experience alignment at ${formatScore(scoreBreakdown.skills_experience_score, 1)}`);
   if (Number.isFinite(Number(displayGithubScore)) && Number(displayGithubScore) > 0 && !showGithubProfileLock) {
     strengths.push(`GitHub score ${formatScore(displayGithubScore, 1)} based on repository analysis`);
@@ -880,8 +881,11 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                             <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.pre_score_final ?? scoreBreakdown.match_score, 1)}</p>
                           </div>
                           <div className="bg-[#f9fafb] rounded-[8px] p-3">
-                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Semantic Fit</p>
-                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.semantic_fit_score, 1)}</p>
+                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Semantic Score</p>
+                            {scoreBreakdown.semantic_score != null
+                              ? <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.semantic_score, 1)}</p>
+                              : <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
+                            }
                           </div>
                           <div className="bg-[#f9fafb] rounded-[8px] p-3">
                             <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Skills + Experience</p>
@@ -889,28 +893,25 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                           </div>
                           {/* Row 2 */}
                           <div className="bg-[#f9fafb] rounded-[8px] p-3">
-                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">JD Embedding Match</p>
-                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">
-                              {scoreBreakdown.jd_embedding_similarity != null ? formatScore(scoreBreakdown.jd_embedding_similarity, 1) : '—'}
-                            </p>
-                            {scoreBreakdown.jd_embedding_similarity == null && (
-                              <p className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af] mt-0.5">Save JD keywords to enable</p>
-                            )}
+                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">QAG Score</p>
+                            {scoreBreakdown.qag_score != null
+                              ? <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.qag_score, 1)}</p>
+                              : <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
+                            }
                           </div>
                           <div className="bg-[#f9fafb] rounded-[8px] p-3">
                             <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Keyword Coverage</p>
-                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">
-                              {scoreBreakdown.keyword_match_score != null ? formatScore(scoreBreakdown.keyword_match_score, 1) : '—'}
-                            </p>
-                            {scoreBreakdown.keyword_match_score == null && (
-                              <p className="font-['Arimo',sans-serif] text-[10px] text-[#9ca3af] mt-0.5">Generate JD keywords to enable</p>
-                            )}
+                            {scoreBreakdown.keyword_match_score != null
+                              ? <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.keyword_match_score, 1)}</p>
+                              : <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
+                            }
                           </div>
                           <div className="bg-[#f9fafb] rounded-[8px] p-3">
                             <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">GitHub Boost</p>
-                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">
-                              {scoreBreakdown.optional_profile_boost != null ? `${formatScore(scoreBreakdown.optional_profile_boost, 1)}/10` : '—'}
-                            </p>
+                            {scoreBreakdown.optional_profile_boost != null
+                              ? <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.optional_profile_boost, 1)}/10</p>
+                              : <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
+                            }
                           </div>
                         </div>
 

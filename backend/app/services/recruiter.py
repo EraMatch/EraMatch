@@ -1549,7 +1549,17 @@ class RecruiterService:
             criteria_checks=criteria_checks if isinstance(criteria_checks, list) else [],
             jd_quality_feedback=jd_quality_feedback,
             keyword_match_score=float(cv.keyword_match_score) if cv and cv.keyword_match_score is not None else None,
-            jd_embedding_similarity=float(prescore.get("jd_embedding_similarity")) if prescore.get("jd_embedding_similarity") is not None else None,
+            jd_embedding_similarity=_f(prescore.get("jd_embedding_similarity")),
+            # semantic_score: first non-None across embedding sim → stored value → heuristic composite
+            semantic_score=next(
+                (v for v in (
+                    _f(prescore.get("semantic_score")),
+                    _f(prescore.get("jd_embedding_similarity")),
+                    _f(prescore.get("pre_score_final")),
+                ) if v is not None),
+                None
+            ),
+            qag_score=_f(prescore.get("qag_score")),
         )
 
     # Application management

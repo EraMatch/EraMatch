@@ -199,6 +199,31 @@ class CVParsingWorkerService:
                     vec = _jina_embed_sync(profile_text, _settings.AI_SERVICE_URL)
                     if vec:
                         analysis.profile_embedding = vec
+                        # Immediately compute semantic_score using Jina cosine similarity if JD embedding exists
+                        try:
+                            _app_stmt = select(CandidateApplication).where(CandidateApplication.id == application_id)
+                            _app = self.session.execute(_app_stmt).scalars().first()
+                            if _app:
+                                _pos_stmt = select(Position).where(Position.id == _app.position_id)
+                                _pos = self.session.execute(_pos_stmt).scalars().first()
+                                if _pos and _pos.jd_embedding:
+                                    import math as _math
+                                    a, b = vec, _pos.jd_embedding
+                                    dot = sum(x * y for x, y in zip(a, b))
+                                    na = _math.sqrt(sum(x * x for x in a))
+                                    nb = _math.sqrt(sum(y * y for y in b))
+                                    jd_sim = round((dot / (na * nb)) * 100, 1) if na > 0 and nb > 0 else None
+                                    if jd_sim is not None and isinstance(analysis.parsed_data, dict):
+                                        pv2 = analysis.parsed_data.get("prescore_v2")
+                                        if isinstance(pv2, dict):
+                                            pv2["jd_embedding_similarity"] = jd_sim
+                                            pv2["semantic_score"] = jd_sim
+                                            analysis.parsed_data = {**analysis.parsed_data, "prescore_v2": pv2}
+                                            from sqlalchemy.orm.attributes import flag_modified
+                                            flag_modified(analysis, "parsed_data")
+                                            logger.info(f"[CVParsing] Patched semantic_score={jd_sim} for application {application_id}")
+                        except Exception as _sim_exc:
+                            logger.warning(f"[CVParsing] Jina semantic patch failed for {application_id}: {_sim_exc}")
                         self.session.add(analysis)
                         self.session.commit()
                         logger.info(f"[CVParsing] Stored profile embedding for application {application_id}")

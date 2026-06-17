@@ -12,9 +12,11 @@ import os
 from uuid import UUID
 
 import requests
+from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.db.session import sync_session_factory
+from app.models import CVAnalysis, CandidateApplication, QAGProcessingJob
 from app.services.cv_parsing import CVParsingWorkerService
 from worker.celery_app import celery_app
 
@@ -48,6 +50,89 @@ def extract_text_from_pdf(file_path: str) -> str:
         text_parts.append(page.get_text())
     doc.close()
     return "\n".join(text_parts).strip()
+
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+def _maybe_trigger_qag_recompute(application_id: str, organization_id: str) -> None:
+    """Trigger QAG recompute for a position when all its CVs have been parsed."""
+    from datetime import datetime, timezone
+
+    with sync_session_factory() as session:
+        app = session.execute(
+            select(CandidateApplication).where(CandidateApplication.id == UUID(application_id))
+        ).scalars().first()
+        if not app:
+            return
+
+        position_id = app.position_id
+
+        # Count applications that still have no analyzed CVAnalysis row
+        unanalyzed_count = session.execute(
+            select(func.count(CandidateApplication.id))
+            .outerjoin(CVAnalysis, CVAnalysis.application_id == CandidateApplication.id)
+            .where(
+                CandidateApplication.position_id == position_id,
+                CandidateApplication.organization_id == UUID(organization_id),
+                CandidateApplication.is_deleted == False,
+                CVAnalysis.analyzed_at.is_(None),
+            )
+        ).scalar() or 0
+
+        if unanalyzed_count > 0:
+            return  # Not all CVs done yet
+
+        total_apps = session.execute(
+            select(func.count(CandidateApplication.id))
+            .where(
+                CandidateApplication.position_id == position_id,
+                CandidateApplication.organization_id == UUID(organization_id),
+                CandidateApplication.is_deleted == False,
+            )
+        ).scalar() or 0
+
+        if total_apps == 0:
+            return
+
+        # Skip if a QAG job is already running for this position
+        running = session.execute(
+            select(QAGProcessingJob).where(
+                QAGProcessingJob.position_id == position_id,
+                QAGProcessingJob.status.in_(["pending", "processing"]),
+            )
+        ).scalars().first()
+        if running:
+            return
+
+        job = QAGProcessingJob(
+            organization_id=UUID(organization_id),
+            position_id=position_id,
+            created_by_user_id=None,
+            job_type="qag_resume_correction",
+            status="processing",
+            total_items=int(total_apps),
+            processed_items=0,
+            started_at=datetime.now(timezone.utc),
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        celery_app.send_task(
+            "qag.recompute_position_prescores",
+            kwargs={
+                "position_id": str(position_id),
+                "organization_id": str(organization_id),
+                "user_id": "system",
+                "job_id": str(job.id),
+            },
+        )
+        logger.info(
+            "[CVParsing] Auto-triggered QAG recompute for position %s (job %s, %d candidates)",
+            position_id, job.id, total_apps,
+        )
 
 
 # =============================================================================
@@ -129,3 +214,9 @@ def persist_parsed_data(self, application_id: str, organization_id: str, file_pa
     except Exception as exc:
         logger.error("[CVParsing] Persisting failed for %s: %s", application_id, exc)
         raise self.retry(exc=exc)
+
+    # Auto-trigger QAG recompute when this is the last CV parsed for the position
+    try:
+        _maybe_trigger_qag_recompute(application_id, organization_id)
+    except Exception as _qag_exc:
+        logger.warning("[CVParsing] QAG auto-trigger check failed for %s: %s", application_id, _qag_exc)

@@ -923,6 +923,10 @@ class PreScoreService:
         has_generated_qag = isinstance(all_generated_questions, list) and len(all_generated_questions) > 0
         pending_qag_approval = has_generated_qag and not bool(approved_questions)
 
+        # Fall back to generated questions (approved=True by default) when explicit approval hasn't occurred
+        if not approved_questions and has_generated_qag:
+            approved_questions = [q for q in all_generated_questions if isinstance(q, dict) and q.get("approved", True)]
+
         normalized_qag = self._normalize_qag_questions(
             [q for q in approved_questions if isinstance(q, dict) and q.get("question")]
         ) if approved_questions else []
@@ -1079,7 +1083,8 @@ class PreScoreService:
                 "semantic_fit_score": semantic_fit,
                 "skills_experience_score": skills_experience_score_shared,
                 # Two distinct candidate scores (dual-score model):
-                "semantic_score": semantic_score,
+                # semantic_score = Jina cosine sim(JD embedding, CV embedding) when available, else heuristic composite
+                "semantic_score": jd_embedding_similarity if jd_embedding_similarity is not None else semantic_score,
                 "qag_score": qag_score,
                 "optional_profile_boost": 0.0,
                 "jd_quality_score": jd_quality_score,
@@ -1222,9 +1227,9 @@ class PreScoreService:
             "version": self.VERSION,
             "pre_score_final": pre_score_final,
             # Two distinct candidate scores (Phase: dual-score model):
-            #   semantic_score = heuristic JD↔CV fit (skills/experience/keywords/…)
+            #   semantic_score = Jina cosine sim(JD embedding, CV embedding); falls back to heuristic composite
             #   qag_score      = AI QAG yes/no evaluation (None until QAG approved)
-            "semantic_score": pre_score_final,
+            "semantic_score": jd_embedding_similarity if jd_embedding_similarity is not None else pre_score_final,
             "qag_score": None,
             "semantic_fit_score": token_overlap_score,  # kept for backward compat
             "skills_experience_score": skills_experience_score,

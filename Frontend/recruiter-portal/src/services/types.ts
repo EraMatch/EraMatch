@@ -127,4 +127,6 @@ export interface ApplicationScoreBreakdown {
     }>;
     keyword_match_score?: number | null;
     jd_embedding_similarity?: number | null;
+    semantic_score?: number | null;
+    qag_score?: number | null;
 }

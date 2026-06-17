@@ -1,4 +1,4 @@
-import { ChevronLeft, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
+import { ChevronLeft, ChevronDown, Pencil, Filter, ArrowUpDown, Star, Plus, Sparkles, Share2, Edit2, Trash2, Users, Download, Upload, Calendar, X, Loader2, CheckCircle, Sliders, TrendingUp, ShieldCheck, Target, Award, MapPin, Building2, Globe } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -386,6 +386,9 @@ export function PositionDetailView({
   // bgPendingCount: from background-tasks, non-zero while DB has unscored applications.
   // Both independently trigger auto-refetch so the list updates without manual refresh.
   const [lastUploadAt, setLastUploadAt] = useState<number | null>(null);
+  const [lastIngestionCompletedAt, setLastIngestionCompletedAt] = useState<number | null>(null);
+  const [lastKnownStagedTotal, setLastKnownStagedTotal] = useState(0);
+  const prevHasActiveIngestionRef = useRef(false);
 
   const { data: bgTasks } = useBackgroundTasksPolling(true);
   const bgPendingCount = (() => {
@@ -397,19 +400,64 @@ export function PositionDetailView({
     return Number(positionJobs[0]?.pending_count ?? 0);
   })();
 
+  // Active ingestion jobs: ZIP/PDF still being extracted (status pending/processing).
+  // These exist even before any CandidateApplication rows appear, covering the early
+  // phase where bgPendingCount is still 0 and no candidates are visible yet.
+  const activeIngestionJobs = Array.isArray(bgTasks) && positionId
+    ? bgTasks.filter(
+        (t: any) =>
+          t.task_category === 'cv_ingestion' &&
+          t.position_id === positionId &&
+          ['pending', 'processing'].includes(String(t.status).toLowerCase())
+      )
+    : [];
+  const hasActiveIngestion = activeIngestionJobs.length > 0;
+  const stagedTotal = activeIngestionJobs.reduce((s: number, j: any) => s + Number(j.total_generated ?? 0), 0);
+
+  // Persist the last known staged count so step 1/2 can show it after the job completes
+  useEffect(() => {
+    if (stagedTotal > 0) setLastKnownStagedTotal(stagedTotal);
+  }, [stagedTotal]);
+
+  // Completed ingestion job within last 30 min = still in AI-parsing gap (survives navigation).
+  // Time-bounded so stale completed jobs don't trigger the accordion indefinitely.
+  const hasRecentlyCompletedIngestion = Array.isArray(bgTasks) && positionId
+    ? bgTasks.some((t: any) => {
+        if (
+          t.task_category !== 'cv_ingestion' ||
+          t.position_id !== positionId ||
+          String(t.status).toLowerCase() !== 'completed'
+        ) return false;
+        const completedAt = t.completed_at ? new Date(t.completed_at).getTime() : null;
+        return completedAt != null && Date.now() - completedAt < 30 * 60 * 1000;
+      })
+    : false;
+
   const UPLOAD_POLL_WINDOW_MS = 8 * 60 * 1000; // 8 min after upload
+  const INGESTION_GAP_WINDOW_MS = 5 * 60 * 1000; // 5 min after job completes → bridges webhook delay
   const isRecentUpload = lastUploadAt != null && (Date.now() - lastUploadAt) < UPLOAD_POLL_WINDOW_MS;
+  const isRecentIngestionComplete =
+    lastIngestionCompletedAt != null &&
+    Date.now() - lastIngestionCompletedAt < INGESTION_GAP_WINDOW_MS;
 
-  // shouldPoll = recent upload OR DB still has unscored candidates
-  const shouldPoll = isRecentUpload || bgPendingCount > 0;
+  // Detect when active ingestion just finished → start the gap window
+  useEffect(() => {
+    if (prevHasActiveIngestionRef.current && !hasActiveIngestion) {
+      setLastIngestionCompletedAt(Date.now());
+    }
+    prevHasActiveIngestionRef.current = hasActiveIngestion;
+  }, [hasActiveIngestion]);
 
-  // Count from visible candidates — always accurate to what the user sees
+  // Count from visible candidates — must be before shouldPoll
   const scoredCandidateCount = candidates.filter((c: any) => (c.score ?? 0) > 0 || (c.match ?? 0) > 0).length;
   const totalCandidateCount = candidates.length;
 
-  // Show the chip: processing started (shouldPoll) and we have candidates to display, OR some are still N/A
+  const shouldPoll =
+    isRecentUpload || bgPendingCount > 0 || hasActiveIngestion || isRecentIngestionComplete ||
+    (hasRecentlyCompletedIngestion && totalCandidateCount === 0); // gap: job done, no candidates yet
+
   const unscoredVisible = totalCandidateCount > 0 && scoredCandidateCount < totalCandidateCount;
-  const showScoringChip = shouldPoll && (totalCandidateCount > 0 || isRecentUpload);
+  const showScoringChip = shouldPoll;
 
   // Auto-refetch position detail the whole time — picks up new candidates + score updates
   useEffect(() => {
@@ -420,12 +468,38 @@ export function PositionDetailView({
     return () => clearInterval(interval);
   }, [shouldPoll, positionId, queryClient]);
 
-  // Stop the recent-upload window if all candidates are scored (no more work to do)
+  // Clear the upload window when all work is done
   useEffect(() => {
-    if (isRecentUpload && totalCandidateCount > 0 && !unscoredVisible && bgPendingCount === 0) {
+    if (
+      isRecentUpload &&
+      totalCandidateCount > 0 &&
+      !unscoredVisible &&
+      bgPendingCount === 0 &&
+      !hasActiveIngestion &&
+      !isRecentIngestionComplete
+    ) {
       setLastUploadAt(null);
     }
-  }, [isRecentUpload, totalCandidateCount, unscoredVisible, bgPendingCount]);
+  }, [isRecentUpload, totalCandidateCount, unscoredVisible, bgPendingCount, hasActiveIngestion, isRecentIngestionComplete]);
+
+  // Clear the gap window only after candidates have appeared AND scoring is done.
+  // Without the totalCandidateCount guard this fires immediately (bgPendingCount is still 0
+  // right after the ingestion job completes, before the webhook creates any candidates).
+  useEffect(() => {
+    if (
+      isRecentIngestionComplete &&
+      totalCandidateCount > 0 &&
+      bgPendingCount === 0 &&
+      !hasActiveIngestion
+    ) {
+      setLastIngestionCompletedAt(null);
+    }
+  }, [isRecentIngestionComplete, totalCandidateCount, bgPendingCount, hasActiveIngestion]);
+
+  // Auto-collapse accordion only when processing is fully done
+  useEffect(() => {
+    if (!shouldPoll) setIsCvProgressExpanded(false);
+  }, [shouldPoll]);
 
   useEffect(() => {
     if (!insightsData) return;
@@ -460,6 +534,7 @@ export function PositionDetailView({
   const [isRecomputingScores, setIsRecomputingScores] = useState(false);
   const [recomputeMessage, setRecomputeMessage] = useState<string | null>(null);
   const [recomputeError, setRecomputeError] = useState<string | null>(null);
+  const [isCvProgressExpanded, setIsCvProgressExpanded] = useState(false);
   const [isQagDialogOpen, setIsQagDialogOpen] = useState(false);
   const [qagLoading, setQagLoading] = useState(false);
   const [qagSaving, setQagSaving] = useState(false);
@@ -819,18 +894,90 @@ export function PositionDetailView({
                 )}
               </div>
 
-              {/* Screening Conditions Card */}
+              {/* JD Keywords Card — replaces Screening Conditions */}
               <div className="group rounded-2xl border border-slate-100 bg-slate-50/50 p-5 transition-colors hover:bg-slate-50">
-                <div className="mb-3 flex items-center gap-2 text-slate-700">
-                  <ShieldCheck size={16} className="text-slate-400 group-hover:text-emerald-500 transition-colors" />
-                  <h2 className="text-[15px] font-bold">Screening Conditions</h2>
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-slate-700">
+                    <Sparkles size={16} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                    <h2 className="text-[15px] font-bold">JD Keywords</h2>
+                    {isGeneratingKeywords && <Loader2 size={13} className="animate-spin text-indigo-500 ml-1" />}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isGeneratingKeywords || !canUseCandidateActions}
+                    title={!canUseCandidateActions ? 'Position must be approved to extract keywords' : undefined}
+                    onClick={async () => {
+                      if (!canUseCandidateActions) return;
+                      setIsGeneratingKeywords(true);
+                      setKeywordsMessage(null);
+                      setKeywordsError(null);
+                      try {
+                        if (!hasAnyKeywords(jdKeywords)) {
+                          const existing = await api.recruiter.getPositionKeywords(positionId) as Record<string, string[]>;
+                          if (hasAnyKeywords(existing)) {
+                            setJdKeywords(existing);
+                            setKeywordsMessage('Loaded saved JD keywords.');
+                            return;
+                          }
+                        }
+                        const r = await api.recruiter.generatePositionKeywords(positionId) as any;
+                        setJdKeywords(r?.keywords ?? null);
+                        setKeywordsMessage(`Keywords extracted via ${r?.model ?? 'LLM'}.`);
+                      } catch (e) {
+                        setKeywordsError(e instanceof Error ? e.message : 'Extraction failed — please retry.');
+                      } finally {
+                        setIsGeneratingKeywords(false);
+                      }
+                    }}
+                    className="flex items-center gap-1 rounded-lg bg-indigo-50 px-2.5 py-1 text-[12px] font-semibold text-indigo-600 hover:bg-indigo-100 transition-colors disabled:opacity-50"
+                  >
+                    {isGeneratingKeywords ? 'Extracting…' : hasAnyKeywords(jdKeywords) ? 'Re-extract' : 'Extract'}
+                  </button>
                 </div>
-                <div className="flex items-start gap-3">
-                  <div className="mt-0.5 h-full w-[2px] bg-emerald-200 rounded-full group-hover:bg-emerald-400 transition-colors"></div>
-                  <p className="text-[14px] leading-relaxed text-slate-600 whitespace-pre-line break-words italic">
-                    "{screeningPreview || 'No specific screening conditions'}"
-                  </p>
-                </div>
+
+                {keywordsMessage && (
+                  <p className="mb-2 text-[12px] font-medium text-emerald-600 bg-emerald-50 px-2.5 py-1.5 rounded-lg">{keywordsMessage}</p>
+                )}
+                {keywordsError && (
+                  <p className="mb-2 text-[12px] font-medium text-rose-600 bg-rose-50 px-2.5 py-1.5 rounded-lg">{keywordsError}</p>
+                )}
+
+                {hasAnyKeywords(jdKeywords) ? (
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-0.5">
+                    {KEYWORD_SECTIONS.map(({ key, label, color }) => {
+                      const kws: string[] = Array.isArray((jdKeywords as any)?.[key]) ? (jdKeywords as any)[key] : [];
+                      if (kws.length === 0) return null;
+                      const isExpanded = Boolean(expandedKeywordSections[key]);
+                      return (
+                        <div key={key} className="overflow-hidden rounded-xl border border-slate-100 bg-white/60">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedKeywordSections((prev) => ({ ...prev, [key]: !prev[key] }))}
+                            className="flex w-full items-center justify-between p-2.5 hover:bg-slate-100/50 transition-colors"
+                          >
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">{label}</span>
+                            <span className="flex h-5 items-center justify-center rounded-full bg-white px-2 text-[11px] font-bold text-slate-600 shadow-sm ring-1 ring-slate-200">{kws.length}</span>
+                          </button>
+                          {isExpanded && (
+                            <div className="flex flex-wrap gap-1.5 p-2.5 pt-0">
+                              {kws.map((kw, i) => (
+                                <span key={`${key}-${i}`} className={`inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-semibold ring-1 ring-inset ring-black/5 ${color}`}>{kw}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-5 text-center border-2 border-dashed border-slate-100 rounded-xl">
+                    <p className="text-[12px] font-medium text-slate-400">
+                      {canUseCandidateActions
+                        ? 'No keywords extracted yet — click Extract above.'
+                        : 'Position must be approved to extract keywords.'}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -888,112 +1035,6 @@ export function PositionDetailView({
 {/* Candidates Tab Content */}
         {activeTab === 'candidates' && (
 <div className="w-full space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            {/* ── Scoring progress bar — prominent, visible top of tab ── */}
-            {showScoringChip && (
-              <div className="flex items-center gap-3 rounded-[10px] bg-[#4f46e5] px-4 py-3 text-white shadow-sm">
-                <Loader2 size={15} className="animate-spin shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <span className="font-['Arimo',sans-serif] text-[13px] font-semibold">Scoring candidates</span>
-                  {totalCandidateCount > 0 && (
-                    <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-200 ml-2">
-                      {scoredCandidateCount} of {totalCandidateCount} analyzed
-                    </span>
-                  )}
-                  {totalCandidateCount === 0 && (
-                    <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-200 ml-2">
-                      Processing CVs, candidates will appear shortly…
-                    </span>
-                  )}
-                </div>
-                {totalCandidateCount > 0 && (
-                  <div className="shrink-0 text-right">
-                    <span className="font-['Arimo',sans-serif] text-[20px] font-bold">
-                      {scoredCandidateCount}/{totalCandidateCount}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Header & Workspace Actions */}
-            <div className="relative overflow-hidden rounded-3xl bg-white p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100">
-              <div className="absolute top-0 right-0 -mr-20 -mt-20 h-64 w-64 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 blur-3xl mix-blend-multiply"></div>
-              <div className="absolute bottom-0 left-0 -ml-20 -mb-20 h-64 w-64 rounded-full bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 blur-3xl mix-blend-multiply"></div>
-
-              <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h2 className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent">
-                    Candidates Workspace
-                  </h2>
-                  <p className="mt-2 text-[14px] font-medium text-slate-500">
-                    Manage criteria, track metrics, and orchestrate candidate evaluations seamlessly.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    onClick={handleShowKeywords}
-                    disabled={!canUseCandidateActions}
-                    title={!canUseCandidateActions ? 'Position must be approved before using JD keywords' : undefined}
-                    className={`group relative flex h-11 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-b from-white to-slate-50 px-5 shadow-sm ring-1 ring-slate-200/50 transition-all ${canUseCandidateActions ? 'hover:shadow-md hover:ring-indigo-500/30' : 'opacity-50 cursor-not-allowed'}`}
-                  >
-                    <div className="absolute inset-0 bg-gradient-to-r from-emerald-400/0 via-emerald-400/10 to-emerald-400/0 opacity-0 transition-opacity duration-500 group-hover:opacity-100"></div>
-                    <span className="relative flex items-center gap-2 text-[14px] font-semibold text-slate-700 transition-colors group-hover:text-emerald-700">
-                      <div className={`w-2 h-2 rounded-full ${keywordsVisible ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" : "bg-slate-300"}`}></div>
-                      {keywordsVisible ? 'JD Keywords Visible' : 'Show JD Keywords'}
-                    </span>
-                  </button>
-                  
-                  {canManageQAG && (
-                    <button
-                      onClick={openQagManager}
-                      disabled={!canUseCandidateActions}
-                      title={!canUseCandidateActions ? 'Position must be approved before managing QAG' : undefined}
-                      className={`group relative flex h-11 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-b from-white to-slate-50 px-5 shadow-sm ring-1 ring-slate-200/50 transition-all ${canUseCandidateActions ? 'hover:shadow-md hover:ring-purple-500/30' : 'opacity-50 cursor-not-allowed'}`}
-                    >
-                      <div className="absolute inset-0 bg-gradient-to-r from-purple-400/0 via-purple-400/10 to-purple-400/0 opacity-0 transition-opacity duration-500 group-hover:opacity-100"></div>
-                      <span className="relative flex items-center gap-2 text-[14px] font-semibold text-slate-700 transition-colors group-hover:text-purple-700">
-                        <Users size={16} className="text-slate-400 group-hover:text-purple-500 transition-colors" />
-                        Manage QAG
-                      </span>
-                    </button>
-                  )}
-                  
-                  <button
-                    onClick={handleRecomputeScores}
-                    disabled={isRecomputingScores || !canUseCandidateActions}
-                    title={!canUseCandidateActions ? 'Position must be approved before recomputing scores' : undefined}
-                    className={`group relative flex h-11 items-center justify-center overflow-hidden rounded-xl bg-indigo-600 px-6 shadow-[0_4px_14px_0_rgb(79,70,229,0.39)] transition-all ${canUseCandidateActions ? 'hover:bg-indigo-700 hover:-translate-y-0.5 hover:shadow-[0_6px_20px_rgba(79,70,229,0.23)]' : 'opacity-50 cursor-not-allowed'} disabled:hover:translate-y-0`}
-                  >
-                    <span className="relative flex items-center gap-2 text-[14px] font-semibold text-white">
-                      {isRecomputingScores ? (
-                        <>
-                          <Loader2 size={16} className="animate-spin" />
-                          Recomputing...
-                        </>
-                      ) : (
-                        <>
-                          <ArrowUpDown size={16} className="transition-transform group-hover:rotate-180 duration-500" />
-                          Recompute Scores
-                        </>
-                      )}
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {recomputeMessage && (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3 backdrop-blur-sm animate-in fade-in">
-                <p className="text-sm font-medium text-emerald-800">{recomputeMessage}</p>
-              </div>
-            )}
-            {recomputeError && (
-              <div className="rounded-xl border border-rose-200 bg-rose-50/50 px-4 py-3 backdrop-blur-sm animate-in fade-in">
-                <p className="text-sm font-medium text-rose-800">{recomputeError}</p>
-              </div>
-            )}
-
             {/* Quick Data Board */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
               {[
@@ -1138,159 +1179,76 @@ export function PositionDetailView({
                   )}
                 </div>
                 
-                {keywordsVisible && (
-                  <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100 hover:shadow-md transition-shadow animate-in fade-in slide-in-from-left-4">
-                    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg font-bold text-slate-900">Extracted JD Keywords</span>
-                        {isGeneratingKeywords && <Loader2 size={16} className="animate-spin text-indigo-600" />}
-                      </div>
-                      <button
-                        type="button"
-                        disabled={isGeneratingKeywords}
-                        onClick={async () => {
-                          setIsGeneratingKeywords(true);
-                          setKeywordsMessage(null);
-                          setKeywordsError(null);
-                          try {
-                            const r = await api.recruiter.generatePositionKeywords(positionId) as any;
-                            const extracted = r?.keywords ?? null;
-                            setJdKeywords(extracted);
-                            setKeywordsMessage(`Keywords extracted via ${r?.model ?? 'LLM'}.`);
-                          } catch (e) {
-                            setKeywordsError(e instanceof Error ? e.message : 'Extraction failed — please retry.');
-                          } finally {
-                            setIsGeneratingKeywords(false);
-                          }
-                        }}
-                        className="flex items-center justify-center h-8 px-3 rounded-lg bg-indigo-50 text-[12px] font-semibold text-indigo-600 hover:bg-indigo-100 transition-colors disabled:opacity-50"
-                      >
-                        {isGeneratingKeywords ? 'Extracting...' : 'Re-extract'}
-                      </button>
-                    </div>
-
-{/* Dual-score filters: Semantic (JD↔CV fit) + QAG (AI evaluation) */}
-              <div className="flex flex-wrap items-center gap-4 mb-5 px-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-700">Semantic ≥</span>
-                  <input
-                    type="range" min={0} max={100} value={minSemantic}
-                    onChange={(e) => setMinSemantic(Number(e.target.value))}
-                    className="w-[120px] accent-[#6366f1]"
-                  />
-                  <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-indigo-700 w-[34px]">{minSemantic}%</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="font-['Arimo',sans-serif] text-[12px] text-violet-700">QAG ≥</span>
-                  <input
-                    type="range" min={0} max={100} value={minQag}
-                    onChange={(e) => setMinQag(Number(e.target.value))}
-                    className="w-[120px] accent-[#8b5cf6]"
-                  />
-                  <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-violet-700 w-[34px]">{minQag}%</span>
-                </div>
-                {(minSemantic > 0 || minQag > 0) && (
-                  <button
-                    onClick={() => { setMinSemantic(0); setMinQag(0); }}
-                    className="font-['Arimo',sans-serif] text-[12px] text-[#64748b] hover:text-[#0f172a] underline"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-
-              {/* Keyword operation feedback */}
-              {keywordsMessage && (
-                <p className="mb-3 text-[13px] font-medium text-emerald-600 bg-emerald-50 px-3 py-2 rounded-lg">{keywordsMessage}</p>
-              )}
-              {keywordsError && (
-                <p className="mb-3 text-[13px] font-medium text-rose-600 bg-rose-50 px-3 py-2 rounded-lg">{keywordsError}</p>
-              )}
-
-              {/* Assessment reset feedback */}
-              {assessmentResetMessage && (
-                <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{assessmentResetMessage}</p>
-                </div>
-              )}
-              {assessmentResetError && (
-                <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{assessmentResetError}</p>
-                </div>
-              )}
-
-                    {!hasAnyKeywords(jdKeywords) ? (
-                      <div className="flex flex-col items-center justify-center py-6 text-center border-2 border-dashed border-slate-100 rounded-xl">
-                        <p className="text-[13px] font-medium text-slate-500">
-                          No keywords are saved yet.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {KEYWORD_SECTIONS.map(({ key, label, color }) => {
-                          const kws: string[] = Array.isArray((jdKeywords as any)?.[key]) ? (jdKeywords as any)[key] : [];
-                          if (kws.length === 0) return null;
-                          const isExpanded = Boolean(expandedKeywordSections[key]);
-                          return (
-                            <div key={key} className="overflow-hidden rounded-xl border border-slate-100 bg-slate-50/50">
-                              <button
-                                type="button"
-                                onClick={() => setExpandedKeywordSections((prev) => ({ ...prev, [key]: !prev[key] }))}
-                                className="flex w-full items-center justify-between p-3 hover:bg-slate-100/50 transition-colors"
-                              >
-                                <span className="text-[12px] font-bold uppercase tracking-wider text-slate-700">{label}</span>
-                                <div className="flex items-center gap-2">
-                                  <span className="flex h-5 items-center justify-center rounded-full bg-white px-2 text-[11px] font-bold text-slate-600 shadow-sm ring-1 ring-slate-200">{kws.length}</span>
-                                </div>
-                              </button>
-
-                              {isExpanded && (
-                                <div className="flex flex-wrap gap-2 p-3 pt-0">
-                                  {kws.map((kw, i) => (
-                                    <span key={`${key}-${i}`} className={`inline-flex items-center px-2.5 py-1 rounded-lg text-[12px] font-semibold shadow-sm ring-1 ring-inset ring-black/5 ${color.replace('border', '').trim()} bg-white`}>
-                                      {kw}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
 
               {/* Right Column: All Candidates List */}
               <div className="lg:col-span-8">
                 <div className="flex h-full flex-col rounded-2xl bg-white shadow-sm ring-1 ring-slate-100">
-                  <div className="flex items-center justify-between border-b border-slate-100 p-6">
+                  <div className="flex items-center justify-between border-b border-slate-100 p-4 px-5">
                     <div>
                       <h3 className="text-xl font-bold text-slate-900">
                         Candidates Roster
                       </h3>
-                      <p className="mt-1 text-[13px] font-medium text-slate-500">
+                      <p className="mt-0.5 text-[13px] font-medium text-slate-500">
                         Showing {filteredCandidates.length} potential matches
                       </p>
+                      {(hasActiveIngestion || bgPendingCount > 0) && (
+                        <div className="mt-1 flex items-center gap-1.5 text-[12px] font-medium text-indigo-500">
+                          <Loader2 size={11} className="animate-spin" />
+                          {hasActiveIngestion && bgPendingCount === 0
+                            ? 'Importing CVs…'
+                            : `${bgPendingCount} CV${bgPendingCount !== 1 ? 's' : ''} processing`}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
+                      {canManageQAG && (
+                        <button
+                          onClick={openQagManager}
+                          disabled={!canUseCandidateActions}
+                          title={!canUseCandidateActions ? 'Position must be approved before managing QAG' : 'Manage QAG'}
+                          className="group flex h-9 items-center gap-1.5 rounded-xl bg-slate-50 px-3 text-[13px] font-semibold text-slate-700 ring-1 ring-slate-200 transition-all hover:bg-purple-50 hover:text-purple-700 hover:ring-purple-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Users size={14} className="text-slate-400 group-hover:text-purple-500 transition-colors" />
+                          QAG
+                        </button>
+                      )}
+                      <button
+                        onClick={handleRecomputeScores}
+                        disabled={isRecomputingScores || !canUseCandidateActions}
+                        title={!canUseCandidateActions ? 'Position must be approved before recomputing scores' : 'Recompute Scores'}
+                        className="group flex h-9 items-center gap-1.5 rounded-xl bg-indigo-600 px-3 text-[13px] font-semibold text-white shadow-sm transition-all hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isRecomputingScores
+                          ? <Loader2 size={14} className="animate-spin" />
+                          : <ArrowUpDown size={14} className="transition-transform group-hover:rotate-180 duration-500" />}
+                        {isRecomputingScores ? 'Recomputing…' : 'Recompute'}
+                      </button>
                       <button
                         onClick={() => setIsFilterOpen(true)}
-                        className={`group relative flex h-10 w-10 items-center justify-center rounded-xl transition-all ${
+                        className={`group relative flex h-9 w-9 items-center justify-center rounded-xl transition-all ${
                           Object.values(filters).some(v => Array.isArray(v) ? v.length > 0 : !!v) &&
                           (filters.experienceRange[0] > 0 || filters.experienceRange[1] < 20)
                             ? 'bg-indigo-600 text-white shadow-md hover:bg-indigo-700'
                             : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700 ring-1 ring-slate-200'
                         }`}
                       >
-                        <Filter size={18} className="transition-transform group-hover:scale-110" />
-                      </button>
-                      <button className="group flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 text-slate-500 ring-1 ring-slate-200 transition-all hover:bg-slate-100 hover:text-slate-700">
-                        <ArrowUpDown size={18} className="transition-transform group-hover:scale-110" />
+                        <Filter size={16} className="transition-transform group-hover:scale-110" />
                       </button>
                     </div>
                   </div>
+
+                  {/* Recompute feedback — lives inside the card */}
+                  {recomputeMessage && (
+                    <div className="mx-5 mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 animate-in fade-in">
+                      <p className="text-[13px] font-medium text-emerald-800">{recomputeMessage}</p>
+                    </div>
+                  )}
+                  {recomputeError && (
+                    <div className="mx-5 mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 animate-in fade-in">
+                      <p className="text-[13px] font-medium text-rose-800">{recomputeError}</p>
+                    </div>
+                  )}
 
                   {assessmentResetMessage && (
                     <div className="mx-6 mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
@@ -1302,6 +1260,205 @@ export function PositionDetailView({
                       <p className="text-[13px] font-medium text-rose-800">{assessmentResetError}</p>
                     </div>
                   )}
+
+                  {/* ── CV processing accordion ── */}
+                  {showScoringChip && (() => {
+                    const displayStagedTotal = stagedTotal > 0 ? stagedTotal : lastKnownStagedTotal;
+
+                    // Per-step status
+                    const s1Active = hasActiveIngestion;
+                    const s1Done = !hasActiveIngestion && (isRecentIngestionComplete || hasRecentlyCompletedIngestion || bgPendingCount > 0 || totalCandidateCount > 0);
+                    const s2Active = (isRecentIngestionComplete || (hasRecentlyCompletedIngestion && totalCandidateCount === 0)) && !hasActiveIngestion;
+                    const s2Done = totalCandidateCount > 0;
+                    const s3Active = bgPendingCount > 0;
+                    const s3Done = totalCandidateCount > 0 && bgPendingCount === 0;
+
+                    const subtitle = s3Active
+                      ? `${bgPendingCount} CV${bgPendingCount !== 1 ? 's' : ''} remaining`
+                      : s2Active
+                      ? 'AI parsing — candidates will appear automatically'
+                      : s1Active
+                      ? 'Extracting files…'
+                      : s3Done
+                      ? `${totalCandidateCount} candidate${totalCandidateCount !== 1 ? 's' : ''} scored`
+                      : null;
+
+                    const stepCircle = (num: number, active: boolean, done: boolean, activeColor: string, doneColor: string) => (
+                      <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ring-1 ${
+                        active ? `${activeColor} ring-current/40` : done ? `${doneColor} ring-current/40` : 'bg-white/10 ring-white/20'
+                      }`}>
+                        {done
+                          ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                          : <span className="text-[10px] font-bold">{num}</span>
+                        }
+                      </div>
+                    );
+
+                    return (
+                      <div className="overflow-hidden bg-[#4f46e5]">
+                        <button
+                          type="button"
+                          onClick={() => setIsCvProgressExpanded((p) => !p)}
+                          className="flex w-full items-center gap-3 px-5 py-3 text-white"
+                        >
+                          <Loader2 size={15} className="animate-spin shrink-0" />
+                          <div className="flex-1 min-w-0 text-left">
+                            <span className="font-['Arimo',sans-serif] text-[13px] font-semibold">
+                              CV Processing in Progress
+                            </span>
+                            {subtitle && (
+                              <span className="font-['Arimo',sans-serif] text-[12px] text-indigo-200 ml-2">
+                                {subtitle}
+                              </span>
+                            )}
+                          </div>
+                          {bgPendingCount > 0
+                            ? <span className="font-['Arimo',sans-serif] shrink-0 text-[18px] font-bold leading-none">{bgPendingCount}</span>
+                            : <span className="shrink-0 inline-flex items-center rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-semibold">In progress</span>
+                          }
+                          <ChevronDown
+                            size={16}
+                            className={`shrink-0 transition-transform duration-200 ${isCvProgressExpanded ? 'rotate-180' : ''}`}
+                          />
+                        </button>
+
+                        {isCvProgressExpanded && (
+                          <div className="border-t border-indigo-400/40 bg-indigo-950/20 px-5 py-3 space-y-3">
+
+                            {/* Step 1 — File Extraction */}
+                            <div className="flex items-start gap-3">
+                              <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ring-1 ${s1Active ? 'bg-amber-400/20 ring-amber-400/40 text-amber-300' : s1Done ? 'bg-emerald-400/20 ring-emerald-400/40 text-emerald-300' : 'bg-white/10 ring-white/20 text-white/40'}`}>
+                                {s1Done
+                                  ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                  : <span className="text-[10px] font-bold">1</span>}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className={`font-['Arimo',sans-serif] text-[12px] font-semibold ${s1Active || s1Done ? 'text-white' : 'text-white/40'}`}>File Extraction</span>
+                                  {s1Active && (
+                                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-400/20 px-2 py-0.5 text-[11px] font-semibold text-amber-300">
+                                      <Loader2 size={9} className="animate-spin" /> In progress
+                                    </span>
+                                  )}
+                                  {s1Done && displayStagedTotal > 0 && (
+                                    <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                                      {displayStagedTotal} CV{displayStagedTotal !== 1 ? 's' : ''} extracted
+                                    </span>
+                                  )}
+                                  {!s1Active && !s1Done && (
+                                    <span className="text-[11px] text-white/30">Waiting</span>
+                                  )}
+                                </div>
+                                {s1Active && activeIngestionJobs.map((j: any) => (
+                                  <p key={j.id} className="mt-0.5 text-[11px] text-indigo-300 truncate">
+                                    {j.source_filename || 'Archive'} — {Number(j.total_generated ?? 0)} file{Number(j.total_generated ?? 0) !== 1 ? 's' : ''} staged
+                                    {Number(j.total_flagged ?? 0) > 0 && `, ${j.total_flagged} skipped`}
+                                  </p>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Step 2 — AI Parsing */}
+                            <div className="flex items-start gap-3">
+                              <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ring-1 ${s2Active ? 'bg-blue-400/20 ring-blue-400/40 text-blue-300' : s2Done ? 'bg-emerald-400/20 ring-emerald-400/40 text-emerald-300' : 'bg-white/10 ring-white/20 text-white/40'}`}>
+                                {s2Done
+                                  ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                  : <span className="text-[10px] font-bold">2</span>}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className={`font-['Arimo',sans-serif] text-[12px] font-semibold ${s2Active || s2Done ? 'text-white' : 'text-white/40'}`}>AI Parsing</span>
+                                  {s2Active && (
+                                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-blue-400/20 px-2 py-0.5 text-[11px] font-semibold text-blue-300">
+                                      <Loader2 size={9} className="animate-spin" />
+                                      {displayStagedTotal > 0 ? `${displayStagedTotal} CV${displayStagedTotal !== 1 ? 's' : ''}` : 'In progress'}
+                                    </span>
+                                  )}
+                                  {s2Done && (
+                                    <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                                      {totalCandidateCount} candidate{totalCandidateCount !== 1 ? 's' : ''} created
+                                    </span>
+                                  )}
+                                  {!s2Active && !s2Done && (
+                                    <span className="text-[11px] text-white/30">Waiting</span>
+                                  )}
+                                </div>
+                                {s2Active && (
+                                  <p className="mt-0.5 text-[11px] text-indigo-300">Sent to AI — candidates appear when parsing completes</p>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Step 3 — Score Computation */}
+                            <div className="flex items-start gap-3">
+                              <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ring-1 ${s3Active ? 'bg-purple-400/20 ring-purple-400/40 text-purple-300' : s3Done ? 'bg-emerald-400/20 ring-emerald-400/40 text-emerald-300' : 'bg-white/10 ring-white/20 text-white/40'}`}>
+                                {s3Done
+                                  ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                  : <span className="text-[10px] font-bold">3</span>}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className={`font-['Arimo',sans-serif] text-[12px] font-semibold ${s3Active || s3Done ? 'text-white' : 'text-white/40'}`}>Score Computation</span>
+                                  {s3Active && (
+                                    <span className="inline-flex shrink-0 items-center rounded-full bg-purple-400/20 px-2 py-0.5 text-[11px] font-semibold text-purple-300">
+                                      {bgPendingCount} remaining
+                                    </span>
+                                  )}
+                                  {s3Done && (
+                                    <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                                      All scored
+                                    </span>
+                                  )}
+                                  {!s3Active && !s3Done && (
+                                    <span className="text-[11px] text-white/30">Waiting</span>
+                                  )}
+                                </div>
+                                {s3Active && totalCandidateCount > 0 && (
+                                  <p className="mt-0.5 text-[11px] text-indigo-300">
+                                    {scoredCandidateCount} of {totalCandidateCount} candidates scored
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+
+                            <p className="font-['Arimo',sans-serif] text-[11px] text-indigo-300/70 pt-1 border-t border-indigo-400/20">
+                              Candidates appear automatically as each stage completes — no refresh needed.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Score threshold filters */}
+                  <div className="flex flex-wrap items-center gap-4 border-t border-slate-100 px-6 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-['Arimo',sans-serif] text-[12px] font-medium text-indigo-700">Semantic ≥</span>
+                      <input
+                        type="range" min={0} max={100} value={minSemantic}
+                        onChange={(e) => setMinSemantic(Number(e.target.value))}
+                        className="w-[100px] accent-[#6366f1]"
+                      />
+                      <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-indigo-700 w-8">{minSemantic}%</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-['Arimo',sans-serif] text-[12px] font-medium text-violet-700">QAG ≥</span>
+                      <input
+                        type="range" min={0} max={100} value={minQag}
+                        onChange={(e) => setMinQag(Number(e.target.value))}
+                        className="w-[100px] accent-[#8b5cf6]"
+                      />
+                      <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-violet-700 w-8">{minQag}%</span>
+                    </div>
+                    {(minSemantic > 0 || minQag > 0) && (
+                      <button
+                        onClick={() => { setMinSemantic(0); setMinQag(0); }}
+                        className="font-['Arimo',sans-serif] text-[12px] text-slate-500 hover:text-slate-800 underline"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
 
                   <div className="flex-1 overflow-y-auto p-6 pt-4 min-h-[400px]">
                     <div className="flex flex-col gap-4">
@@ -1329,17 +1486,17 @@ export function PositionDetailView({
                           <div className="flex flex-wrap items-center gap-4 sm:flex-nowrap sm:justify-end">
                             <div className="flex flex-col items-start rounded-xl bg-slate-50 px-4 py-2 sm:items-end">
                               {(() => {
-                                const displayScore = getCandidateDisplayScore(candidate);
-                                const displayMatch = getCandidateDisplayMatch(candidate);
+                                const qagScore = candidate.qag_score != null ? Math.round(candidate.qag_score) : null;
+                                const semanticScore = candidate.semantic_score != null ? Math.round(candidate.semantic_score) : null;
                                 return (
                                   <>
                                     <div className="flex items-center gap-2">
-                                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Score</span>
-                                      <span className="text-[16px] font-extrabold text-slate-900">{displayScore != null ? displayScore : '-'}</span>
+                                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">QAG</span>
+                                      <span className="text-[16px] font-extrabold text-slate-900">{qagScore != null ? qagScore : '-'}</span>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Match</span>
-                                      <span className="text-[13px] font-bold text-indigo-600">{displayMatch != null ? `${displayMatch}%` : '-'}</span>
+                                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Semantic</span>
+                                      <span className="text-[13px] font-bold text-indigo-600">{semanticScore != null ? `${semanticScore}%` : '-'}</span>
                                     </div>
                                   </>
                                 );
