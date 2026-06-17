@@ -1,67 +1,152 @@
-# EraMatch - AI-Powered Recruitment Platform
+# EraMatch — AI-Powered Recruitment Platform
 
-A modern recruitment platform with AI-powered assessments, interviews, and candidate evaluation.
+EraMatch is a **multi-tenant AI-powered recruitment platform** built for organizations to run structured, automated candidate evaluation pipelines. The system supports technical assessments, AI video interviews, and real-time live AI-conducted voice interviews with post-session scoring and explainable AI verdicts.
 
-## Project Structure
+---
+
+## Service Layout
+
+All application services reside within the `EraMatch/` folder and can be launched together:
+
+| Service | Path | Port | Stack | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Recruiter Portal** | `Frontend/recruiter-portal/` | `5173` | React 18 + TS + Vite + Tailwind + shadcn/ui | Recruiter dashboard to create projects, positions, candidate groups, configure stages, and view scores. |
+| **Candidate Portal** | `Frontend/candidate-portal/` | `5174` | React 18 + TS + Vite + Tailwind + shadcn/ui | Candidate dashboard for completing proctored assessments, recorded video interviews, and live WebRTC room interviews. |
+| **Backend API** | `backend/` | `8000` | FastAPI + SQLModel + PostgreSQL + Celery | Core API handling business logic, database management, and asynchronous task dispatching. |
+| **AI Service** | `ai-service/` | `8001` | FastAPI + Whisper + Ollama + LangChain | Heavy computational service managing local/cloud LLMs, Whisper transcription, and CV parsing. |
+| **LiveKit Worker** | `ai-service/livekit_worker/` | — | Python LiveKit Agent | Live WebRTC assistant agent that connects directly to candidate rooms to conduct interviews. |
+
+**Database**: Supabase PostgreSQL.
+
+---
+
+## System Architecture
+
+```mermaid
+graph TD
+    %% Portals
+    CP[Candidate Portal :5174]
+    RP[Recruiter Portal :5173]
+
+    %% Backend and AI
+    BE[Backend API :8000]
+    AI[AI Service :8001]
+    
+    %% Workers
+    BEC[Celery Worker - Backend]
+    AIC[Celery Worker - AI]
+    LKW[LiveKit Worker - Agent]
+
+    %% External
+    DB[(Supabase PostgreSQL)]
+    Redis[(Redis Broker)]
+    LK[LiveKit Cloud]
+    Ollama[Ollama Local/Cloud]
+
+    %% Connections
+    RP -->|HTTP/REST| BE
+    CP -->|HTTP/REST| BE
+    CP -->|WebRTC Voice| LK
+    LKW -->|WebRTC Voice| LK
+
+    BE -->|SQLModel Async| DB
+    BE -->|Async Tasks| Redis
+    Redis -->|Orchestrate| BEC
+    Redis -->|Orchestrate| AIC
+    
+    BEC -->|SQLModel Sync| DB
+    BEC -->|HTTP/Heavy Compute| AI
+    
+    AI -->|HTTP Webhooks| BE
+    AI -->|Async CV Parse| Redis
+    AI -->|LLM Inference| Ollama
+    
+    LKW -->|LLM/TTS/STT| AI
+    LKW -->|Save Session| BE
+```
+
+---
+
+## Directory Structure
+
+Here is a high-level overview of the repository layout:
 
 ```
 EraMatch/
-├── Frontend/                    # Frontend applications
-│   ├── candidate-portal/        # Candidate-facing app (port 5174)
-│   ├── recruiter-portal/        # Admin + Recruiter app (port 5173)
-│   └── backend/                 # Mock FastAPI backend (port 8000)
-└── backend/                     # Real backend (to be implemented)
+├── Frontend/                    # Client-side applications
+│   ├── recruiter-portal/        # Recruiter/Admin React dashboard
+│   │   ├── src/                 # Components, hooks, router definitions, and API client
+│   │   └── package.json
+│   └── candidate-portal/        # Candidate evaluation portal
+│       ├── src/                 # Proctoring checks, assessments, and interview rooms
+│       └── package.json
+├── backend/                     # FastAPI core backend service
+│   ├── app/                     # Application logic
+│   │   ├── api/                 # Endpoint routers (V1 API, auth, positions, groups)
+│   │   ├── core/                # Configuration settings, exceptions, and security
+│   │   ├── db/                  # Database connections and table initializations
+│   │   ├── models.py            # Global domain tables & models (SQLModel)
+│   │   ├── schemas/             # Pydantic data validation schemas
+│   │   └── services/            # Business logic handlers
+│   ├── worker/                  # Backend celery tasks (ingestion, QAG scoring)
+│   └── pyproject.toml
+├── ai-service/                  # Heavy computational AI endpoints
+│   ├── main.py                  # API endpoints (STT, LLM evaluators, CV parsing)
+│   ├── livekit_worker/          # Real-time WebRTC LiveKit agent code
+│   ├── worker/                  # AI async celery tasks (CV parsing worker)
+│   └── pyproject.toml
+├── scripts/                     # Setup and management utility scripts
+├── start.sh                     # Services combined launcher with log streaming
+└── start-dev.sh                 # Developer port-clearing orchestrator (macOS/Linux)
 ```
+
+---
 
 ## Quick Start
 
-### Prerequisites
+### 1. Prerequisites
+Ensure you have the following installed:
 - Node.js 18+
 - Python 3.9+
-- npm or yarn
+- Redis Server (Required for Celery tasks)
 
-### 1. Start Mock Backend
+### 2. Run Redis
 ```bash
-cd Frontend/backend
-pip install fastapi uvicorn pandas
-uvicorn main:app --reload
+brew services start redis           # macOS
+sudo systemctl start redis-server   # Linux
 ```
 
-### 2. Start Recruiter Portal
+### 3. Launch Services
+From the `EraMatch/` root directory:
 ```bash
-cd Frontend/recruiter-portal
-npm install
-npm run dev
+# Start all 5 services with log streaming
+./start.sh
+
+# Stop all services
+./start.sh stop
+
+# Tail the logs manually
+./start.sh logs
 ```
 
-### 3. Start Candidate Portal
-```bash
-cd Frontend/candidate-portal
-npm install
-npm run dev
-```
+---
 
-## URLs
+## Git Workflow & Branching Rules
 
-| Service | URL | Description |
-|---------|-----|-------------|
-| Recruiter Portal | http://localhost:5173 | Admin & Recruiter login |
-| Candidate Portal | http://localhost:5174 | Candidate assessments |
-| Backend API | http://localhost:8000 | Mock API server |
-| API Docs | http://localhost:8000/docs | Swagger documentation |
+### Branch Naming Conventions
+Always create feature/fix branches using the following format:
+* **Features**: `feat/{issue-number}-{short-description}`
+* **Bug Fixes**: `fix/{issue-number}-{short-description}`
+* **Policies/Regulations**: `regulation/{short-description}`
+* **Others**: `other/{short-description}`
 
-## Features
+### Commit Message Conventions
+Commit messages must follow the standard prefixes matching your branch type, written in lowercase:
+* **Format**: `<type>: <concise description>` (e.g. `feat: implement prescore v2 calculation formula`)
+* Mention the issue driving the edit and list key technical changes in the body only when necessary.
+* **CRITICAL**: Do **NOT** include `"Co-authored-by: Claude"` or any other AI authorship attribution in your commits.
 
-- **AI-Powered Interviews** - Live and recorded AI interviews
-- **Technical Assessments** - Coding tests with anti-cheating
-- **Candidate Management** - Track and evaluate candidates
-- **Role-Based Access** - Admin, Recruiter, and Candidate portals
-- **Analytics Dashboard** - Recruitment metrics and insights
-
-## Tech Stack
-
-- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, Radix UI
-- **Mock Backend**: FastAPI (Python)
-- **Charts**: Recharts
-- **Routing**: React Router v7
-
+### Development-Phase File Policy
+To maintain codebase cleanliness, never commit draft spec files, brainstorming logs, or agent documentation files to Git. 
+* All development temporary notes must reside under `Dev_temp_files/` (which is configured in `.gitignore`).
+* Formal test suites (under `tests/`) are considered production verification tools and **must** be committed.
