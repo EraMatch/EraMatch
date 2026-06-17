@@ -34,6 +34,7 @@ export const authService = {
             if (!prevOwner || prevOwner !== newOwner) clearRecruiterCache();
             localStorage.setItem('eramatch-recruiter-cache-owner', newOwner);
             localStorage.setItem('token', token);
+            if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
             localStorage.setItem('user', JSON.stringify(data.user));
         }
 
@@ -60,6 +61,7 @@ export const authService = {
             if (!prevOwner || prevOwner !== newOwner) clearRecruiterCache();
             localStorage.setItem('eramatch-recruiter-cache-owner', newOwner);
             localStorage.setItem('token', token);
+            if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
             localStorage.setItem('user', JSON.stringify(data.user));
         }
 
@@ -122,6 +124,7 @@ export const authService = {
             // Even if the API call fails, clear local session
         } finally {
             localStorage.removeItem('token');
+            localStorage.removeItem('refresh_token');
             localStorage.removeItem('user');
         }
     },
