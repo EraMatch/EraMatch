@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routers import llm, custom, transcribe, evaluate, question_import, anomaly_detection, github_analysis, proctoring, cv_parsing
+from routers import llm, custom, transcribe, evaluate, question_import, anomaly_detection, github_analysis, proctoring, cv_parsing, behavioral
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -47,6 +47,7 @@ app.include_router(anomaly_detection.router, prefix="/anomaly", tags=["Anomaly D
 app.include_router(github_analysis.router, prefix="/github-analysis", tags=["GitHub Analysis"])
 app.include_router(proctoring.router, prefix="/proctoring", tags=["Proctoring"])
 app.include_router(cv_parsing.router, prefix="/cv-parsing", tags=["CV Parsing"])
+app.include_router(behavioral.router, prefix="/behavioral", tags=["Behavioral"])
 
 
 @app.on_event("startup")

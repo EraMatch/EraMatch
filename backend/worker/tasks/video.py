@@ -191,6 +191,30 @@ def process_video_logic(
             "has_criteria_scores": bool(criteria_scores),
         })
 
+        # Step 2.5: Behavioral analysis (trial_c) — best-effort. A failure here
+        # must never break transcription/scoring, so it is fully isolated.
+        behavioral_analysis = None
+        try:
+            log_debug("behavioral_started", {"response_id": response_id})
+            with httpx.Client(timeout=180.0) as client:
+                behavioral_response = client.post(
+                    f"{AI_SERVICE_URL}/behavioral/analyze",
+                    json={"video_url": video_url},
+                )
+                if behavioral_response.status_code == 200:
+                    behavioral_analysis = behavioral_response.json()
+                    log_debug("behavioral_completed", {
+                        "response_id": response_id,
+                        "dominant_emotion": behavioral_analysis.get("dominant_emotion"),
+                    })
+                else:
+                    log_debug("behavioral_non_200", {
+                        "response_id": response_id,
+                        "status": behavioral_response.status_code,
+                    })
+        except Exception as exc:
+            log_debug("behavioral_failed", {"response_id": response_id, "error": str(exc)})
+
         if _is_cancelled(response_id):
             log_debug("task_cancelled_after_evaluation", {"response_id": response_id})
             return {"status": "cancelled", "response_id": response_id}
@@ -213,10 +237,19 @@ def process_video_logic(
                 transcript_confidence = %s,
                 ai_score = %s,
                 ai_feedback = %s,
+                behavioral_analysis = %s,
                 processing_status = %s
             WHERE response_id = %s AND processing_status <> 'cancelled'
             """,
-            (transcript, confidence, score, json.dumps(ai_feedback_payload), 'completed', response_id)
+            (
+                transcript,
+                confidence,
+                score,
+                json.dumps(ai_feedback_payload),
+                json.dumps(behavioral_analysis) if behavioral_analysis else None,
+                'completed',
+                response_id,
+            )
         )
         conn.commit()
         if cursor.rowcount == 0:
