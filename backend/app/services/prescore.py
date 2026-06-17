@@ -930,6 +930,8 @@ class PreScoreService:
         normalized_qag = self._normalize_qag_questions(
             [q for q in approved_questions if isinstance(q, dict) and q.get("question")]
         ) if approved_questions else []
+        if len(normalized_qag) > 13:
+            normalized_qag = sorted(normalized_qag, key=lambda q: q.get("weight", 0), reverse=True)[:13]
 
         # Compute semantic_fit and skills/exp independently — used by BOTH QAG and heuristic paths
         if jd_embedding_similarity is not None:
