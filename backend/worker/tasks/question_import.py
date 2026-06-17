@@ -195,7 +195,7 @@ def _parse_question_type(raw_value: object) -> str:
     if raw in {"essay", "open ended", "open-ended", "long answer"}:
         return "essay"
     if raw in {"code", "coding", "programming"}:
-        return "code"
+        return "coding"
     return "essay"
 
 

@@ -28,7 +28,7 @@ def _normalize_question_type(value: str | None) -> str:
         return 'essay'
 
     if normalized in {'code', 'coding', 'programming'}:
-        return 'code'
+        return 'coding'
 
     return 'essay'
 
