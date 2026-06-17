@@ -287,7 +287,7 @@ class RecruiterService:
                 func.count(func.distinct(CandidateApplication.id)).label("count"),
                 func.count(func.distinct(CandidateGroup.id)).label("groups_count")
             )
-            .outerjoin(CandidateApplication, CandidateApplication.position_id == Position.id)
+            .outerjoin(CandidateApplication, (CandidateApplication.position_id == Position.id) & (CandidateApplication.is_deleted == False))
             .outerjoin(CandidateGroup, CandidateGroup.position_id == Position.id)
             .where(
                 Position.project_id == project_id,
