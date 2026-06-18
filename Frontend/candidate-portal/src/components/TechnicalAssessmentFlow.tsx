@@ -142,7 +142,7 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
     if (recordedUrl) setIsPlaying(true);
   };
 
-  const handleCaptureFace = () => {
+  const handleCaptureFace = async () => {
     if (!videoRef.current || !stream) return;
     const video = videoRef.current;
     const canvas = document.createElement('canvas');
@@ -155,6 +155,26 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
     setCapturedFaceDataUrl(dataUrl);
     sessionStorage.setItem('reference_face_photo', dataUrl);
     setFaceCaptureDone(true);
+
+    // Extract face embedding from the captured photo and store it so
+    // AssessmentSession can send it with every /proctoring/analyze-frame call.
+    try {
+      const AI_SERVICE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
+      const frame_b64 = dataUrl.split(',')[1];
+      const res = await fetch(`${AI_SERVICE_URL}/proctoring/extract-face-encoding`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frame_b64, session_id: null }),
+      });
+      if (res.ok) {
+        const { encoding } = await res.json();
+        if (Array.isArray(encoding) && encoding.length > 0) {
+          sessionStorage.setItem('reference_face_encoding', JSON.stringify(encoding));
+        }
+      }
+    } catch {
+      // Non-fatal: identity verification won't run but assessment can still proceed
+    }
   };
 
   const handleRequestScreenShare = async () => {
