@@ -815,7 +815,7 @@ export const recruiterService = {
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-qag/${taskId}`, { method: 'POST' }),
     stopCvIngestionTask: async (taskId: string) =>
         fetchAPI<{ message: string; task_id: string; status: string }>(`/background-tasks/stop-cv-ingestion/${taskId}`, { method: 'POST' }),
-    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import' | 'github_analysis' | 'qag' | 'cv_ingestion') =>
+    deleteBackgroundTask: async (taskId: string, taskCategory: 'video' | 'question_import' | 'github_analysis' | 'qag' | 'cv_ingestion' | 'assessment_grading' | 'assessment_compression') =>
         fetchAPI<{ message: string }>(
             `/background-tasks/${taskId}?task_category=${encodeURIComponent(taskCategory)}`,
             { method: 'DELETE' }
