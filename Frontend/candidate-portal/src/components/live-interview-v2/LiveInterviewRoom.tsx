@@ -31,6 +31,8 @@ import { liveInterviewService } from '../../services/live-interview.service';
 import { API_URL } from '../../services/client';
 import { AIAgentOrb } from './AIAgentOrb';
 import { useExamLockdown } from '../../hooks/useExamLockdown';
+import { useFullscreenGuard } from '../../hooks/useFullscreenGuard';
+import { FullscreenCountdownOverlay } from '../FullscreenCountdownOverlay';
 import { captureVideoFrameBase64 } from '../../utils/proctoringPayload';
 
 interface LiveInterviewRoomProps {
@@ -79,7 +81,16 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
     const [proctoringWarning, setProctoringWarning] = useState<string | null>(null);
     const [livenessPrompt, setLivenessPrompt] = useState<string | null>(null);
     const [trustScore, setTrustScore] = useState<number>(100);
-    const [isTerminated, setIsTerminated] = useState(false);
+
+    const FS_COUNTDOWN = 15;
+    const { countdownActive: fsCountdownActive, secondsLeft: fsSecondsLeft, enterFullscreen } =
+      useFullscreenGuard({
+        enabled: isConnected,
+        onCountdownExpired: () => {
+          void handleEndInterview();
+        },
+        countdownSeconds: FS_COUNTDOWN,
+      });
 
     useEffect(() => {
         if (timeBudgetMinutes && timeBudgetMinutes > 0) {
@@ -183,20 +194,22 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
     // Call useExamLockdown hook
     useExamLockdown({
         sessionId,
-        enabled: isConnected && !isTerminated,
+        enabled: isConnected,
         enforceFullscreen: true,
+        onFullscreenExit: enterFullscreen,
         onViolation: useCallback((evt: any) => {
             setProctoringWarning(evt.message);
             setTimeout(() => setProctoringWarning(null), 5000);
         }, []),
-        onTerminated: useCallback((msg: any) => {
-            setIsTerminated(true);
+        onTerminated: useCallback((msg: string) => {
+            setProctoringWarning(`⚠️ ${msg}`);
+            setTimeout(() => setProctoringWarning(null), 8000);
         }, []),
     });
 
     // Proctoring interval for unified frame analysis & YOLO
     useEffect(() => {
-        if (!isConnected || isTerminated) return;
+        if (!isConnected) return;
 
         const AI_SERVICE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 
@@ -225,11 +238,7 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
                         setTrustScore(data.trust_score);
                     }
 
-                    // Check for termination
-                    if (data.is_terminated) {
-                        setIsTerminated(true);
-                        return;
-                    }
+                    // Termination signals are flagged but do not auto-disconnect
 
                     // Parse liveness challenge
                     const challenge = data.liveness_challenge || data.challenge || null;
@@ -259,7 +268,7 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
 
         const interval = setInterval(runAnalysis, 4000);
         return () => clearInterval(interval);
-    }, [isConnected, isTerminated, sessionId]);
+    }, [isConnected, sessionId]);
 
     const handleRetry = useCallback(() => {
         room.disconnect();
@@ -315,27 +324,13 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
                 </div>
             )}
 
-            {/* Blocking Terminated Overlay */}
-            {isTerminated && (
-                <div className="absolute inset-0 z-[70] bg-gray-950/95 backdrop-blur-md flex items-center justify-center rounded-xl p-6">
-                    <div className="max-w-md w-full bg-gray-900 border border-red-500/30 rounded-2xl p-8 text-center space-y-6 shadow-2xl">
-                        <div className="w-16 h-16 rounded-full flex items-center justify-center bg-red-950 border border-red-500/40 mx-auto">
-                            <AlertCircle className="w-8 h-8 text-red-400" />
-                        </div>
-                        <div className="space-y-2">
-                            <h3 className="text-xl font-bold text-red-400">Interview Terminated</h3>
-                            <p className="text-sm text-gray-400">
-                                This session has been terminated by the anti-cheating engine due to multiple lockdown or integrity violations.
-                            </p>
-                        </div>
-                        <Button
-                            className="w-full text-white bg-red-600 hover:bg-red-700 rounded-full font-semibold py-3"
-                            onClick={handleEndInterview}
-                        >
-                            Exit and Submit Session
-                        </Button>
-                    </div>
-                </div>
+            {/* Fullscreen guard countdown overlay */}
+            {fsCountdownActive && (
+                <FullscreenCountdownOverlay
+                    secondsLeft={fsSecondsLeft}
+                    totalSeconds={FS_COUNTDOWN}
+                    onReenter={enterFullscreen}
+                />
             )}
 
             {agentTimeout && (

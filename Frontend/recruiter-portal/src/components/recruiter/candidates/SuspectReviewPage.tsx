@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo } from 'react';
-import { ChevronLeft, Play, Pause, SkipForward, AlertTriangle, Flag, Mail, X, FileText, Clock, User, Video, ChevronDown } from 'lucide-react';
+import { ChevronLeft, Play, Pause, SkipForward, AlertTriangle, Flag, Mail, X, FileText, User, Video, ChevronDown, Monitor, Camera } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../../../services/api';
 import { API_URL } from '../../../services/client';
@@ -17,6 +17,7 @@ interface FlagEvent {
   proof?: Record<string, unknown> | null;
   notes: string;
   status: 'pending' | 'cleared' | 'escalated';
+  priority_weight?: number | null;
 }
 
 interface SuspectReviewPageProps {
@@ -34,6 +35,9 @@ interface SuspectReviewPayload {
   position_title: string;
   current_module: string;
   recording_url?: string | null;
+  webcam_recording_url?: string | null;
+  screen_recording_compressed_url?: string | null;
+  webcam_recording_compressed_url?: string | null;
   duration: number;
   suspicious_timestamps?: number[];
   flags: FlagEvent[];
@@ -56,9 +60,12 @@ export function SuspectReviewPage({
   const [isProcessing, setIsProcessing] = useState(false);
   const [decompressionStatus, setDecompressionStatus] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const webcamVideoRef = useRef<HTMLVideoElement>(null);
+  const [activeVideoTab, setActiveVideoTab] = useState<'screen' | 'webcam'>('screen');
   const [flags, setFlags] = useState<FlagEvent[]>([]);
   const [suspectTimestamps, setSuspectTimestamps] = useState<number[]>([]);
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
+  const [webcamRecordingUrl, setWebcamRecordingUrl] = useState<string | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [drawerExpanded, setDrawerExpanded] = useState(true);
   const [flagStatuses, setFlagStatuses] = useState<Record<string, 'pending' | 'cleared' | 'escalated'>>({});
@@ -78,13 +85,20 @@ export function SuspectReviewPage({
     setPositionTitle(data.position_title || 'Unknown Position');
     setCurrentModule(data.current_module || 'Assessment');
     const backendBase = API_URL.replace('/api/v1', '');
-    if (data.recording_url && /^https?:\/\//i.test(data.recording_url)) {
-      setRecordingUrl(data.recording_url);
-    } else if (data.recording_url) {
-      setRecordingUrl(`${backendBase}${data.recording_url}`);
-    } else {
-      setRecordingUrl(null);
-    }
+
+    const resolveUrl = (url: string | null | undefined) => {
+      if (!url) return null;
+      return /^https?:\/\//i.test(url) ? url : `${backendBase}${url}`;
+    };
+
+    // Prefer compressed URL, fall back to raw
+    setRecordingUrl(
+      resolveUrl(data.screen_recording_compressed_url || data.recording_url)
+    );
+    setWebcamRecordingUrl(
+      resolveUrl(data.webcam_recording_compressed_url || data.webcam_recording_url)
+    );
+
     setFlags(data.flags || []);
     setSuspectTimestamps((data.suspicious_timestamps || []).map((v) => Math.max(0, Math.floor(v))));
     setDuration(Math.max(0, data.duration || 0));
@@ -147,6 +161,10 @@ export function SuspectReviewPage({
       videoRef.current.currentTime = timestamp;
       void videoRef.current.play().catch(() => undefined);
     }
+    if (webcamVideoRef.current) {
+      webcamVideoRef.current.currentTime = timestamp;
+      if (activeVideoTab === 'webcam') void webcamVideoRef.current.play().catch(() => undefined);
+    }
   };
 
   const handleFlagAction = (flagId: string, action: 'cleared' | 'escalated') => {
@@ -183,6 +201,25 @@ export function SuspectReviewPage({
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const getPriorityMarkerColor = (flag: FlagEvent) => {
+    const w = flag.priority_weight ?? -1;
+    if (w >= 9.0) return 'bg-[#ef4444]';   // critical — red
+    if (w >= 6.0) return 'bg-[#f97316]';   // high — orange
+    if (w >= 3.0) return 'bg-[#f59e0b]';   // medium — yellow
+    if (w >= 0)   return 'bg-[#9ca3af]';   // low — grey
+    // fallback to severity
+    return flag.severity === 'high' ? 'bg-[#ef4444]' : flag.severity === 'medium' ? 'bg-[#f59e0b]' : 'bg-[#3b82f6]';
+  };
+
+  const getPriorityBadge = (flag: FlagEvent) => {
+    const w = flag.priority_weight ?? -1;
+    if (w >= 9.0) return 'bg-[#fef2f2] text-[#ef4444] border-[#fecaca]';
+    if (w >= 6.0) return 'bg-[#fff7ed] text-[#f97316] border-[#fed7aa]';
+    if (w >= 3.0) return 'bg-[#fffbeb] text-[#f59e0b] border-[#fde68a]';
+    if (w >= 0)   return 'bg-[#f9fafb] text-[#6b7280] border-[#e5e7eb]';
+    return getSeverityColor(flag.severity);
   };
 
   const getSeverityColor = (severity: string) => {
@@ -289,33 +326,73 @@ export function SuspectReviewPage({
           <div className="col-span-8 space-y-6">
             {/* Video Player */}
             <div className="bg-white rounded-[12px] border border-[#e5e7eb] overflow-hidden">
+              {/* Tab Bar */}
+              <div className="flex border-b border-[#e5e7eb] bg-[#f9fafb]">
+                <button
+                  onClick={() => setActiveVideoTab('screen')}
+                  className={`flex items-center gap-2 px-5 py-3 font-['Arimo',sans-serif] text-[13px] font-medium transition-colors border-b-2 ${activeVideoTab === 'screen' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent text-[#6b7280] hover:text-[#111827]'}`}
+                >
+                  <Monitor size={14} /> Screen Recording
+                  {!recordingUrl && <span className="text-[10px] text-[#d1d5db] ml-1">(none)</span>}
+                </button>
+                <button
+                  onClick={() => setActiveVideoTab('webcam')}
+                  className={`flex items-center gap-2 px-5 py-3 font-['Arimo',sans-serif] text-[13px] font-medium transition-colors border-b-2 ${activeVideoTab === 'webcam' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent text-[#6b7280] hover:text-[#111827]'}`}
+                >
+                  <Camera size={14} /> Webcam Video
+                  {!webcamRecordingUrl && <span className="text-[10px] text-[#d1d5db] ml-1">(none)</span>}
+                </button>
+              </div>
+
               <div className="relative w-full bg-[#1f2937] aspect-video flex items-center justify-center">
-                {recordingUrl ? (
-                  <video
-                    ref={videoRef}
-                    src={recordingUrl}
-                    className="w-full h-full object-contain"
-                    onLoadedMetadata={() => {
-                      if (videoRef.current?.duration) {
-                        setDuration((prev) => Math.max(prev, Math.ceil(videoRef.current!.duration)));
-                      }
-                    }}
-                    onTimeUpdate={() => {
-                      if (videoRef.current) {
-                        setCurrentTime(Math.floor(videoRef.current.currentTime));
-                        setIsPlaying(!videoRef.current.paused);
-                      }
-                    }}
-                    onEnded={() => setIsPlaying(false)}
-                  />
-                ) : (
+                {/* Screen recording video */}
+                <video
+                  ref={videoRef}
+                  src={recordingUrl || undefined}
+                  className={`w-full h-full object-contain ${activeVideoTab === 'screen' && recordingUrl ? '' : 'hidden'}`}
+                  onLoadedMetadata={() => {
+                    if (videoRef.current?.duration) {
+                      setDuration((prev) => Math.max(prev, Math.ceil(videoRef.current!.duration)));
+                    }
+                  }}
+                  onTimeUpdate={() => {
+                    if (videoRef.current && activeVideoTab === 'screen') {
+                      setCurrentTime(Math.floor(videoRef.current.currentTime));
+                      setIsPlaying(!videoRef.current.paused);
+                    }
+                  }}
+                  onEnded={() => setIsPlaying(false)}
+                />
+
+                {/* Webcam video */}
+                <video
+                  ref={webcamVideoRef}
+                  src={webcamRecordingUrl || undefined}
+                  className={`w-full h-full object-contain ${activeVideoTab === 'webcam' && webcamRecordingUrl ? '' : 'hidden'}`}
+                  onLoadedMetadata={() => {
+                    if (webcamVideoRef.current?.duration) {
+                      setDuration((prev) => Math.max(prev, Math.ceil(webcamVideoRef.current!.duration)));
+                    }
+                  }}
+                  onTimeUpdate={() => {
+                    if (webcamVideoRef.current && activeVideoTab === 'webcam') {
+                      setCurrentTime(Math.floor(webcamVideoRef.current.currentTime));
+                      setIsPlaying(!webcamVideoRef.current.paused);
+                    }
+                  }}
+                  onEnded={() => setIsPlaying(false)}
+                />
+
+                {/* Empty state */}
+                {((activeVideoTab === 'screen' && !recordingUrl) || (activeVideoTab === 'webcam' && !webcamRecordingUrl)) && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-6">
                     <Video size={64} className="text-white/20" />
                     <span className="font-['Arimo',sans-serif] text-[13px] text-white/60">
-                      No system recording available for this assessment yet.
+                      No {activeVideoTab === 'screen' ? 'screen' : 'webcam'} recording available yet.
                     </span>
                   </div>
                 )}
+
                 <div className="absolute bottom-4 right-4 px-[10px] py-[6px] bg-black/70 rounded-[6px]">
                   <span className="font-['Arimo',sans-serif] text-[14px] text-white">
                     {formatTime(currentTime)} / {formatTime(duration)}
@@ -337,6 +414,21 @@ export function SuspectReviewPage({
 
               {/* Scrub Bar with Markers */}
               <div className="p-4 bg-[#f9fafb]">
+                {/* Priority weight legend */}
+                <div className="flex items-center gap-4 mb-3 flex-wrap">
+                  {[
+                    { label: 'Critical (≥9)', color: 'bg-[#ef4444]' },
+                    { label: 'High (6–8.9)', color: 'bg-[#f97316]' },
+                    { label: 'Medium (3–5.9)', color: 'bg-[#f59e0b]' },
+                    { label: 'Low (<3)', color: 'bg-[#9ca3af]' },
+                  ].map(({ label, color }) => (
+                    <div key={label} className="flex items-center gap-1.5">
+                      <div className={`w-2.5 h-2.5 rounded-full ${color}`} />
+                      <span className="font-['Arimo',sans-serif] text-[11px] text-[#6b7280]">{label}</span>
+                    </div>
+                  ))}
+                </div>
+
                 <div className="relative">
                   {/* Flag Markers */}
                   <div className="absolute top-0 left-0 right-0 h-[32px] -translate-y-[36px]">
@@ -347,14 +439,9 @@ export function SuspectReviewPage({
                           handleSeekToFlag(flag.timestamp);
                           setSelectedFlag(flag.id);
                         }}
-                        className={`absolute w-[3px] h-[32px] rounded-full transition-all hover:w-[6px] ${flag.severity === 'high'
-                          ? 'bg-[#ef4444]'
-                          : flag.severity === 'medium'
-                            ? 'bg-[#f59e0b]'
-                            : 'bg-[#3b82f6]'
-                          } ${selectedFlag === flag.id ? 'ring-2 ring-white w-[6px]' : ''}`}
+                        className={`absolute w-[3px] h-[32px] rounded-full transition-all hover:w-[6px] ${getPriorityMarkerColor(flag)} ${selectedFlag === flag.id ? 'ring-2 ring-white w-[6px]' : ''}`}
                         style={{ left: `${(flag.timestamp / safeDuration) * 100}%` }}
-                        title={`${flag.timeDisplay} - ${flag.event}`}
+                        title={`${flag.timeDisplay} - ${flag.event}${flag.priority_weight != null ? ` (weight: ${flag.priority_weight})` : ''}`}
                       />
                     ))}
                   </div>
@@ -373,7 +460,7 @@ export function SuspectReviewPage({
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => {
-                        const video = videoRef.current;
+                        const video = activeVideoTab === 'screen' ? videoRef.current : webcamVideoRef.current;
                         if (!video) {
                           setIsPlaying((prev) => !prev);
                           return;
@@ -396,7 +483,7 @@ export function SuspectReviewPage({
                     </button>
                     <button
                       onClick={() => {
-                        const video = videoRef.current;
+                        const video = activeVideoTab === 'screen' ? videoRef.current : webcamVideoRef.current;
                         if (!video) return;
                         video.currentTime = Math.min(video.duration || safeDuration, video.currentTime + 5);
                         setCurrentTime(Math.floor(video.currentTime));
@@ -416,9 +503,8 @@ export function SuspectReviewPage({
                         onClick={() => {
                           const rate = Number(speed.replace('x', ''));
                           setPlaybackRate(rate);
-                          if (videoRef.current) {
-                            videoRef.current.playbackRate = rate;
-                          }
+                          if (videoRef.current) videoRef.current.playbackRate = rate;
+                          if (webcamVideoRef.current) webcamVideoRef.current.playbackRate = rate;
                         }}
                         className={`h-[28px] px-[10px] rounded-[6px] font-['Arimo',sans-serif] text-[12px] transition-colors ${Number(speed.replace('x', '')) === playbackRate
                           ? 'bg-[#6366f1] text-white'
@@ -513,8 +599,8 @@ export function SuspectReviewPage({
                             >
                               {flag.timeDisplay}
                             </button>
-                            <span className={`px-[6px] py-[2px] rounded-[4px] font-['Arimo',sans-serif] text-[10px] uppercase ${getSeverityColor(flag.severity)}`}>
-                              {flag.severity}
+                            <span className={`px-[6px] py-[2px] rounded-[4px] font-['Arimo',sans-serif] text-[10px] uppercase border ${getPriorityBadge(flag)}`}>
+                              {flag.priority_weight != null ? `w${flag.priority_weight}` : flag.severity}
                             </span>
                           </div>
                           <div className="font-['Arimo',sans-serif] text-[13px] text-[#111827] mb-1">

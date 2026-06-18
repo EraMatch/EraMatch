@@ -16,6 +16,7 @@ from fastapi import BackgroundTasks
 from app.models import LiV2Session, LiV2Evaluation, LiV2Rubric, CandidateProfile
 from app.core.exceptions import NotFoundException, BadRequestException
 from app.services.live_interview.judge import run_judge_pipeline
+from worker.tasks.video import compress_recordings
 
 logger = logging.getLogger("eramatch.live_interview.session")
 
@@ -111,6 +112,12 @@ async def complete_session_service(
 
     # Fire Judge pipeline asynchronously — doesn't block the agent shutdown
     background_tasks.add_task(run_judge_pipeline, str(session_id))
+
+    # Compress screen + webcam recordings via Celery
+    try:
+        compress_recordings.delay(str(session_id), "live_interview")
+    except Exception:
+        pass  # Non-fatal: worker may be unavailable in dev
 
     return {
         "status": "completed",

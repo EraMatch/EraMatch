@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 
 from app.api.deps import get_db, get_current_user
-from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob, GitHubAnalysisJob, QAGProcessingJob, CVIngestionJob, Position, CVAnalysis
+from app.models import InterviewResponse, OngoingInterview, CandidateApplication, CandidateProfile, QuestionImportJob, GitHubAnalysisJob, QAGProcessingJob, CVIngestionJob, Position, CVAnalysis, OngoingAssessment, CandidateAnswer
 
 router = APIRouter(prefix="/background-tasks", tags=["Background Tasks"])
 
@@ -324,6 +324,115 @@ async def get_background_tasks(
                 "pending_count": scoring.get("pending_count"),
                 "completed_at": job.completed_at.isoformat() if job.completed_at else None,
             })
+    except Exception:
+        pass
+
+    # ── Assessment grading + recording compression tasks ─────────────────────
+    try:
+        from sqlalchemy import func, text as sa_text, case
+
+        # Fetch recently completed assessment sessions for this org
+        assessment_query = (
+            select(
+                OngoingAssessment.id.label("session_id"),
+                OngoingAssessment.status,
+                OngoingAssessment.submitted_at,
+                OngoingAssessment.recording_url,
+                OngoingAssessment.webcam_recording_url,
+                OngoingAssessment.screen_recording_compressed_url,
+                OngoingAssessment.webcam_recording_compressed_url,
+                CandidateProfile.full_name.label("candidate_name"),
+            )
+            .join(CandidateApplication, OngoingAssessment.application_id == CandidateApplication.id)
+            .join(CandidateProfile, CandidateApplication.candidate_id == CandidateProfile.id)
+            .where(
+                OngoingAssessment.organization_id == current_user.organization_id,
+                OngoingAssessment.status == "completed",
+                OngoingAssessment.submitted_at.isnot(None),
+            )
+            .order_by(desc(OngoingAssessment.submitted_at))
+            .limit(limit)
+        )
+        assessment_result = await db.execute(assessment_query)
+        assessment_rows = assessment_result.all()
+
+        if assessment_rows:
+            session_ids = [row.session_id for row in assessment_rows]
+
+            # Count total and graded answers per session in one query
+            answer_stats_q = (
+                select(
+                    CandidateAnswer.session_id,
+                    func.count(CandidateAnswer.id).label("total"),
+                    func.count(CandidateAnswer.points_earned).label("graded"),
+                )
+                .where(CandidateAnswer.session_id.in_(session_ids))
+                .group_by(CandidateAnswer.session_id)
+            )
+            answer_stats_result = await db.execute(answer_stats_q)
+            answer_stats: dict[str, dict] = {
+                str(row.session_id): {"total": int(row.total), "graded": int(row.graded)}
+                for row in answer_stats_result.all()
+            }
+
+            for row in assessment_rows:
+                sid = str(row.session_id)
+                stats = answer_stats.get(sid, {"total": 0, "graded": 0})
+                total_ans = stats["total"]
+                graded_ans = stats["graded"]
+                pending_ans = max(0, total_ans - graded_ans)
+
+                # Grading task
+                if total_ans > 0:
+                    if pending_ans == 0:
+                        grading_status = "completed"
+                    else:
+                        grading_status = "processing"
+
+                    tasks.append({
+                        "id": f"grading-{sid}",
+                        "status": grading_status,
+                        "type": "Assessment Grading",
+                        "task_category": "assessment_grading",
+                        "candidate_name": row.candidate_name,
+                        "source_filename": None,
+                        "question": f"{graded_ans}/{total_ans} answers graded",
+                        "timestamp": row.submitted_at.isoformat() if row.submitted_at else None,
+                        "total_generated": total_ans,
+                        "total_flagged": pending_ans,
+                        "total_approved": graded_ans,
+                        "session_id": sid,
+                    })
+
+                # Recording compression task (only if at least one recording exists)
+                has_screen = bool(row.recording_url)
+                has_webcam = bool(row.webcam_recording_url)
+                if has_screen or has_webcam:
+                    screen_compressed = bool(row.screen_recording_compressed_url)
+                    webcam_compressed = bool(row.webcam_recording_compressed_url)
+                    both_compressed = (not has_screen or screen_compressed) and (not has_webcam or webcam_compressed)
+                    comp_status = "completed" if both_compressed else "processing"
+
+                    parts = []
+                    if has_screen:
+                        parts.append(f"screen {'✓' if screen_compressed else '…'}")
+                    if has_webcam:
+                        parts.append(f"webcam {'✓' if webcam_compressed else '…'}")
+
+                    tasks.append({
+                        "id": f"compress-{sid}",
+                        "status": comp_status,
+                        "type": "Recording Compression",
+                        "task_category": "assessment_compression",
+                        "candidate_name": row.candidate_name,
+                        "source_filename": None,
+                        "question": ", ".join(parts),
+                        "timestamp": row.submitted_at.isoformat() if row.submitted_at else None,
+                        "total_generated": None,
+                        "total_flagged": None,
+                        "total_approved": None,
+                        "session_id": sid,
+                    })
     except Exception:
         pass
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { AlertCircle, CheckCircle2, Loader2, Mic, Play, Settings, Sparkles, Video } from 'lucide-react';
+import { AlertCircle, Camera, CheckCircle2, Loader2, Mic, Monitor, Play, Settings, Sparkles, Video } from 'lucide-react';
 import logo from '../imports/image-eramatch.png';
 import { AssessmentSession } from './AssessmentSession';
 
@@ -27,6 +27,15 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
   const [isRecording, setIsRecording] = useState(false);
   const [hasRecorded, setHasRecorded] = useState(false);
   
+  // Screen share state (acquired once here, passed to AssessmentSession)
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+  const [screenShareError, setScreenShareError] = useState<string | null>(null);
+  const [isRequestingScreen, setIsRequestingScreen] = useState(false);
+
+  // Face capture state
+  const [faceCaptureDone, setFaceCaptureDone] = useState(false);
+  const [capturedFaceDataUrl, setCapturedFaceDataUrl] = useState<string | null>(null);
+
   // Microphone visualization
   const [audioLevel, setAudioLevel] = useState(0);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -133,8 +142,48 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
     if (recordedUrl) setIsPlaying(true);
   };
 
+  const handleCaptureFace = () => {
+    if (!videoRef.current || !stream) return;
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    setCapturedFaceDataUrl(dataUrl);
+    sessionStorage.setItem('reference_face_photo', dataUrl);
+    setFaceCaptureDone(true);
+  };
+
+  const handleRequestScreenShare = async () => {
+    setIsRequestingScreen(true);
+    setScreenShareError(null);
+    try {
+      const display = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 12, max: 20 }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      // If the user stops sharing before the session starts, clear the stream
+      display.getVideoTracks()[0].onended = () => setScreenStream(null);
+      setScreenStream(display);
+    } catch (err) {
+      const e = err as { name?: string };
+      if (e?.name === 'NotAllowedError') {
+        setScreenShareError('Screen share permission denied. Please click "Share Screen" and allow access to continue.');
+      } else {
+        setScreenShareError('Unable to start screen sharing. Please try again.');
+      }
+    } finally {
+      setIsRequestingScreen(false);
+    }
+  };
+
   const handleStartSession = () => {
-    stopCamera();
+    // Fire fullscreen WITHOUT awaiting — this preserves the screen share stream during transition.
+    // Still called from the click handler (user gesture), so browsers honour it.
+    void document.documentElement.requestFullscreen().catch(() => {});
     sessionStorage.setItem('assessment_checks_done', 'true');
     setInAssessmentSession(true);
   };
@@ -142,6 +191,7 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
   if (inAssessmentSession) {
     return (
       <AssessmentSession
+        screenStream={screenStream}
         onSignOut={() => {
           sessionStorage.removeItem('assessment_checks_done');
           onSignOut();
@@ -237,28 +287,49 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
               </div>
 
               {!cameraError && (
-                <div className="flex gap-3 justify-center">
+                <div className="space-y-3">
+                  {/* Face capture — required before starting */}
                   <Button
-                    onClick={handleRecordTestClip}
-                    disabled={isRecording || isPlaying}
-                    className="flex-1 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border-none h-12 font-medium"
+                    onClick={handleCaptureFace}
+                    disabled={!stream || isRecording}
+                    className={`w-full h-12 rounded-xl font-medium border transition-colors ${
+                      faceCaptureDone
+                        ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
+                        : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
+                    }`}
                     variant="outline"
                   >
-                    {isRecording ? (
-                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Recording (4s)...</>
+                    {faceCaptureDone ? (
+                      <><CheckCircle2 className="w-4 h-4 mr-2" /> Face Captured — Click to Recapture</>
                     ) : (
-                      <><Video className="w-4 h-4 mr-2 text-indigo-600" /> Record Test</>
+                      <><Camera className="w-4 h-4 mr-2" /> Capture Face Photo</>
                     )}
                   </Button>
 
-                  <Button
-                    onClick={handlePlayClip}
-                    disabled={!hasRecorded || isRecording || isPlaying}
-                    className="flex-1 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border-none h-12 font-medium disabled:opacity-50"
-                    variant="outline"
-                  >
-                    <Play className="w-4 h-4 mr-2 text-indigo-600" /> Play Test
-                  </Button>
+                  {/* Optional test recording */}
+                  <div className="flex gap-3">
+                    <Button
+                      onClick={handleRecordTestClip}
+                      disabled={isRecording || isPlaying}
+                      className="flex-1 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border-none h-11 font-medium text-sm"
+                      variant="outline"
+                    >
+                      {isRecording ? (
+                        <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Recording...</>
+                      ) : (
+                        <><Video className="w-4 h-4 mr-2 text-gray-500" /> Test Recording</>
+                      )}
+                    </Button>
+
+                    <Button
+                      onClick={handlePlayClip}
+                      disabled={!hasRecorded || isRecording || isPlaying}
+                      className="flex-1 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border-none h-11 font-medium text-sm disabled:opacity-50"
+                      variant="outline"
+                    >
+                      <Play className="w-4 h-4 mr-2 text-gray-500" /> Play Test
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>
@@ -282,30 +353,85 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
                   </h4>
                   <ul className="space-y-3 text-sm text-gray-600">
                     <li className="flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full ${stream ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${stream ? 'bg-green-500' : 'bg-gray-300'}`}></div>
                       Camera and Microphone permissions granted
                     </li>
                     <li className="flex items-center gap-3">
-                      <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${faceCaptureDone ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                      <span className={faceCaptureDone ? 'text-green-700 font-medium' : ''}>Face photo captured</span>
+                      {capturedFaceDataUrl && (
+                        <img
+                          src={capturedFaceDataUrl}
+                          alt="Captured face"
+                          className="w-7 h-7 rounded-full object-cover ml-auto border-2 border-green-300"
+                        />
+                      )}
+                    </li>
+                    <li className="flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${screenStream ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                      Screen share permission granted
+                    </li>
+                    <li className="flex items-center gap-3">
+                      <div className="w-2 h-2 rounded-full flex-shrink-0 bg-green-500"></div>
                       Stable internet connection
                     </li>
                     <li className="flex items-center gap-3">
-                      <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                      <div className="w-2 h-2 rounded-full flex-shrink-0 bg-green-500"></div>
                       Quiet environment
                     </li>
                   </ul>
+                </div>
+
+                {/* Screen share step */}
+                <div className="mt-4">
+                  {screenStream ? (
+                    <div className="flex items-center gap-3 p-3 rounded-xl bg-green-50 border border-green-200 text-green-700 text-sm font-medium">
+                      <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                      Screen sharing active
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Button
+                        onClick={handleRequestScreenShare}
+                        disabled={isRequestingScreen || !!cameraError || !stream}
+                        variant="outline"
+                        className="w-full h-11 rounded-xl border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-medium"
+                      >
+                        {isRequestingScreen ? (
+                          <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Requesting Screen Share...</>
+                        ) : (
+                          <><Monitor className="w-4 h-4 mr-2" /> Share Screen</>
+                        )}
+                      </Button>
+                      {screenShareError && (
+                        <p className="text-xs text-red-600 flex items-start gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                          {screenShareError}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div className="pt-8 mt-auto">
                 <Button
                   onClick={handleStartSession}
-                  disabled={!!cameraError || !stream}
+                  disabled={!!cameraError || !stream || !screenStream || !faceCaptureDone}
                   className="w-full h-14 rounded-xl text-lg font-medium shadow-lg shadow-indigo-200 transition-transform active:scale-[0.98]"
                   style={{ backgroundColor: '#6366F1' }}
                 >
                   Enter Assessment Environment
                 </Button>
+                {stream && !cameraError && (
+                  <p className="text-center text-xs text-gray-400 mt-2">
+                    {!faceCaptureDone
+                      ? 'Capture your face photo above to continue'
+                      : !screenStream
+                      ? 'Share your screen above to continue'
+                      : null}
+                  </p>
+                )}
               </div>
             </div>
           </div>

@@ -29,6 +29,7 @@ from app.core.integrity import (
     INTEGRITY_DUP_WINDOW_SECONDS,
     INTEGRITY_ENFORCEMENT_WINDOW_SECONDS,
     INTEGRITY_ENFORCEMENT_CRITICAL_EVENTS,
+    compute_priority_weight,
 )
 INTERVIEW_INTEGRITY_EVENT_MAX_PER_MINUTE = INTEGRITY_EVENT_MAX_PER_MINUTE
 INTERVIEW_INTEGRITY_DUP_WINDOW_SECONDS = INTEGRITY_DUP_WINDOW_SECONDS
@@ -272,15 +273,8 @@ async def _interview_enforcement_action(
     high_cnt = int(row.get("high_cnt") or 0)
     medium_cnt = int(row.get("medium_cnt") or 0)
 
-    event_type = (latest_event_type or "").strip().lower()
-    severity = _normalize_severity(latest_severity)
-
-    if event_type in INTERVIEW_ENFORCEMENT_CRITICAL_EVENTS:
-        return "terminate", "critical_event_detected"
-    if high_cnt >= 2 or medium_cnt >= 4:
-        return "pause", "repeated_high_risk_pattern"
-    if medium_cnt >= 2:
-        return "warn", "elevated_risk_pattern"
+    # Enforcement is informational only — sessions are never auto-terminated.
+    # Flags are priority-ranked; recruiters review and decide.
     return "none", None
 
 
@@ -1054,6 +1048,10 @@ async def report_interview_integrity_event(
     }
 
     flag_id = uuid4()
+    flag_severity = _normalize_severity(request.severity)
+    flag_priority = compute_priority_weight(
+        normalized_event_type, flag_severity, float(request.confidence or 0.5)
+    )
     await session.execute(
         text("""
             INSERT INTO proctoring_flags (
@@ -1067,6 +1065,7 @@ async def report_interview_integrity_event(
                 severity,
                 evidence,
                 detected_by,
+                priority_weight,
                 status,
                 created_at
             )
@@ -1081,6 +1080,7 @@ async def report_interview_integrity_event(
                 :severity,
                 :evidence,
                 :detected_by,
+                :priority_weight,
                 'pending',
                 NOW()
             )
@@ -1097,9 +1097,10 @@ async def report_interview_integrity_event(
             "organization_id": interview_session["organization_id"],
             "timestamp_seconds": event_ts,
             "event_type": normalized_event_type,
-            "severity": _normalize_severity(request.severity),
+            "severity": flag_severity,
             "evidence": json.dumps(evidence_payload),
             "detected_by": detected_by,
+            "priority_weight": flag_priority,
         },
     )
 

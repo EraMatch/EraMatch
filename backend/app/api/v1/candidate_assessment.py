@@ -30,7 +30,7 @@ import subprocess
 import tempfile
 import time as time_module
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 from fastapi import UploadFile, File, Form
 from sqlalchemy import text, bindparam
@@ -39,14 +39,17 @@ from sqlalchemy.dialects.postgresql import UUID as pgUUID, JSONB
 from app.api.deps import CurrentCandidate, DbSession
 from app.core.config import settings
 from app.core.integrity_metrics import integrity_metrics
+from app.db.session import async_session_factory
 
 
 logger = logging.getLogger(__name__)
+from worker.tasks.video import compress_recordings
 from app.core.integrity import (
     INTEGRITY_EVENT_MAX_PER_MINUTE,
     INTEGRITY_DUP_WINDOW_SECONDS,
     INTEGRITY_ENFORCEMENT_WINDOW_SECONDS,
     INTEGRITY_ENFORCEMENT_CRITICAL_EVENTS,
+    compute_priority_weight,
 )
 
 router = APIRouter(prefix="/assessment", tags=["Candidate Assessment"])
@@ -635,10 +638,19 @@ async def start_assessment_session(
 async def upload_assessment_recording(
     session_id: str = Form(...),
     recording: UploadFile = File(...),
+    recording_type: str = Form(default="screen"),  # "screen" | "webcam"
     candidate: CurrentCandidate = None,
     session: DbSession = None,
 ):
-    """Persist system-captured assessment screen recording for recruiter review."""
+    """Persist assessment recording (screen or webcam) for recruiter review.
+
+    recording_type:
+      "screen"  — stores to recording_url (screen share capture)
+      "webcam"  — stores to webcam_recording_url (camera capture)
+    """
+    if recording_type not in {"screen", "webcam"}:
+        recording_type = "screen"
+
     try:
         session_uuid = UUID(session_id)
     except Exception as exc:
@@ -674,7 +686,7 @@ async def upload_assessment_recording(
 
     recordings_dir = os.path.join(os.getcwd(), "static", "proctoring", "assessments")
     os.makedirs(recordings_dir, exist_ok=True)
-    file_name = f"{session_uuid}_{int(time_module.time())}{ext}"
+    file_name = f"{session_uuid}_{recording_type}_{int(time_module.time())}{ext}"
     full_path = os.path.join(recordings_dir, file_name)
 
     data = await recording.read()
@@ -685,10 +697,12 @@ async def upload_assessment_recording(
         f.write(data)
 
     public_url = f"/static/proctoring/assessments/{file_name}"
+    db_column = "recording_url" if recording_type == "screen" else "webcam_recording_url"
+
     await session.execute(
-        text("""
+        text(f"""
             UPDATE ongoing_assessments
-            SET recording_url = :recording_url
+            SET {db_column} = :recording_url
             WHERE session_id = :session_id
         """).bindparams(
             bindparam("session_id", type_=pgUUID(as_uuid=True)),
@@ -700,9 +714,16 @@ async def upload_assessment_recording(
     )
     await session.commit()
 
+    # Trigger compression now that this recording is on disk.
+    try:
+        compress_recordings.delay(session_id, "assessment")
+    except Exception:
+        pass  # Non-fatal: worker may be unavailable in dev
+
     return {
         "recording_url": public_url,
-        "message": "Assessment screen recording stored",
+        "recording_type": recording_type,
+        "message": f"Assessment {recording_type} recording stored",
     }
 
 
@@ -1512,15 +1533,8 @@ async def _assessment_enforcement_action(
     high_cnt = int(row.get("high_cnt") or 0)
     medium_cnt = int(row.get("medium_cnt") or 0)
 
-    event_type = (latest_event_type or "").strip().lower()
-    severity = _normalize_severity(latest_severity)
-
-    if event_type in INTEGRITY_ENFORCEMENT_CRITICAL_EVENTS:
-        return "terminate", "critical_event_detected"
-    if high_cnt >= 2 or medium_cnt >= 4:
-        return "pause", "repeated_high_risk_pattern"
-    if medium_cnt >= 2:
-        return "warn", "elevated_risk_pattern"
+    # Enforcement is informational only — sessions are never auto-terminated.
+    # Flags are priority-ranked; recruiters review and decide.
     return "none", None
 
 
@@ -1805,6 +1819,10 @@ async def report_integrity_event(
     }
 
     flag_id = uuid4()
+    flag_severity = _normalize_severity(request.severity)
+    flag_priority = compute_priority_weight(
+        normalized_event_type, flag_severity, float(request.confidence or 0.5)
+    )
     await session.execute(
         text("""
             INSERT INTO proctoring_flags (
@@ -1818,6 +1836,7 @@ async def report_integrity_event(
                 severity,
                 evidence,
                 detected_by,
+                priority_weight,
                 status,
                 created_at
             )
@@ -1832,6 +1851,7 @@ async def report_integrity_event(
                 :severity,
                 :evidence,
                 :detected_by,
+                :priority_weight,
                 'pending',
                 NOW()
             )
@@ -1848,9 +1868,10 @@ async def report_integrity_event(
             "organization_id": oa["organization_id"],
             "timestamp_seconds": event_ts,
             "event_type": normalized_event_type,
-            "severity": _normalize_severity(request.severity),
+            "severity": flag_severity,
             "evidence": json.dumps(evidence_payload),
             "detected_by": detected_by,
+            "priority_weight": flag_priority,
         },
     )
 
@@ -2745,6 +2766,10 @@ async def auto_grade_answers(session_id: UUID, db_session):
     - Coding: runs code against hidden test cases via subprocess
 
     Updates candidate_answers.points_earned and answer_data.ai_feedback in place.
+
+    Design: fetch rows → commit (release DB) → grade all in memory → batch UPDATE.
+    The DB session is never held idle during AI/subprocess calls, preventing
+    idle_in_transaction timeouts on long essay-grading sessions.
     """
     import asyncio
     import subprocess
@@ -2752,7 +2777,7 @@ async def auto_grade_answers(session_id: UUID, db_session):
     import os
     import time as time_module
 
-    # Fetch ungraded answers (essay + coding) with their question snapshots
+    # 1. Fetch ungraded rows then release the DB transaction immediately.
     ungraded = await db_session.execute(
         text("""
             SELECT
@@ -2777,7 +2802,13 @@ async def auto_grade_answers(session_id: UUID, db_session):
         logger.info(f"[auto_grade] No ungraded answers for session {session_id}")
         return
 
+    # Commit now so the DB connection is free while AI/subprocess calls run.
+    await db_session.commit()
+
     logger.info(f"[auto_grade] Grading {len(rows)} ungraded answer(s) for session {session_id}")
+
+    # 2. Grade every answer in memory — no DB held during this phase.
+    grades: list[tuple] = []  # (answer_id, points_earned, updated_data)
 
     for row in rows:
         answer_id = row["answer_id"]
@@ -3133,32 +3164,34 @@ try {{
                     f"(hidden {hidden_passed}/{hidden_total}), pts={points_earned}/{points_max}"
                 )
 
-        # ── UPDATE the answer row ─────────────────────────────────────
+        # ── Accumulate result (no DB write yet) ──────────────────────
         if points_earned is not None:
-            # Merge feedback into existing answer_data
             if isinstance(answer_data, dict):
                 updated_data = {**answer_data, **feedback_data}
             else:
                 updated_data = {"original_answer": answer_data, **feedback_data}
+            grades.append((answer_id, points_earned, updated_data))
 
-            await db_session.execute(
-                text("""
-                    UPDATE candidate_answers
-                    SET points_earned = :points_earned,
-                        answer_data = :answer_data
-                    WHERE answer_id = :answer_id
-                """).bindparams(
-                    bindparam("answer_id", type_=pgUUID(as_uuid=True)),
-                    bindparam("answer_data", type_=JSONB),
-                ),
-                {
-                    "points_earned": points_earned,
-                    "answer_data": updated_data,
-                    "answer_id": answer_id,
-                }
-            )
+    # 3. Batch-write all grades in a single short transaction.
+    for answer_id, points_earned, updated_data in grades:
+        await db_session.execute(
+            text("""
+                UPDATE candidate_answers
+                SET points_earned = :points_earned,
+                    answer_data = :answer_data
+                WHERE answer_id = :answer_id
+            """).bindparams(
+                bindparam("answer_id", type_=pgUUID(as_uuid=True)),
+                bindparam("answer_data", type_=JSONB),
+            ),
+            {
+                "points_earned": points_earned,
+                "answer_data": updated_data,
+                "answer_id": answer_id,
+            }
+        )
 
-    logger.info(f"[auto_grade] Finished grading session {session_id}")
+    logger.info(f"[auto_grade] Finished grading session {session_id} — {len(grades)} answer(s) written")
 
 
 async def finalize_expired_assessment_session(session, session_id: UUID) -> None:
@@ -3284,11 +3317,90 @@ async def finalize_expired_assessment_session(session, session_id: UUID) -> None
     await session.commit()
 
 
+async def _background_grade_session(session_id: UUID) -> None:
+    """Background task: grade all answers then update the final score on the session."""
+    async with async_session_factory() as db:
+        try:
+            await auto_grade_answers(session_id, db)
+
+            score_result = await db.execute(
+                text("""
+                    SELECT
+                        COALESCE(SUM(CASE WHEN points_earned IS NOT NULL THEN points_earned ELSE 0 END), 0) as total_earned,
+                        COALESCE(SUM(points_max), 0) as total_max
+                    FROM candidate_answers
+                    WHERE session_id = :session_id
+                """).bindparams(bindparam("session_id", type_=pgUUID(as_uuid=True))),
+                {"session_id": session_id},
+            )
+            scores = score_result.mappings().first()
+
+            oa_result = await db.execute(
+                text("""
+                    SELECT oa.max_points, oa.assessment_id, oa.application_id, a.passing_score
+                    FROM ongoing_assessments oa
+                    JOIN assessments a ON a.assessment_id = oa.assessment_id
+                    WHERE oa.session_id = :session_id
+                """).bindparams(bindparam("session_id", type_=pgUUID(as_uuid=True))),
+                {"session_id": session_id},
+            )
+            oa = oa_result.mappings().first()
+            if not oa:
+                return
+
+            total_earned = float(scores["total_earned"])
+            total_max = int(oa["max_points"] or scores["total_max"] or 0)
+            passing_score = float(oa["passing_score"] or 60.0)
+            percentage = (total_earned / total_max * 100) if total_max > 0 else 0
+            passed = percentage >= passing_score
+
+            await db.execute(
+                text("""
+                    UPDATE ongoing_assessments
+                    SET total_score = :percentage, total_points = :total_earned
+                    WHERE session_id = :session_id
+                """).bindparams(bindparam("session_id", type_=pgUUID(as_uuid=True))),
+                {"percentage": percentage, "total_earned": int(total_earned), "session_id": session_id},
+            )
+
+            await db.execute(
+                text("""
+                    UPDATE candidate_pipeline_progress
+                    SET score = :score, max_score = :max_score, passed = :passed
+                    WHERE application_id = :application_id
+                      AND (session_id = :session_id OR session_id IS NULL)
+                      AND stage_id IN (
+                          SELECT gps.stage_id FROM group_pipeline_stages gps
+                          WHERE gps.config_id = :assessment_id AND gps.stage_type = 'assessment'
+                      )
+                """).bindparams(
+                    bindparam("application_id", type_=pgUUID(as_uuid=True)),
+                    bindparam("assessment_id", type_=pgUUID(as_uuid=True)),
+                    bindparam("session_id", type_=pgUUID(as_uuid=True)),
+                ),
+                {
+                    "score": percentage,
+                    "max_score": total_max,
+                    "passed": passed,
+                    "application_id": oa["application_id"],
+                    "assessment_id": oa["assessment_id"],
+                    "session_id": session_id,
+                },
+            )
+
+            await db.commit()
+            logger.info(f"[auto_grade] Finished grading session {session_id}: {percentage:.1f}% ({'pass' if passed else 'fail'})")
+        except Exception as exc:
+            logger.error(f"[auto_grade] Background grading failed for session {session_id}: {exc}")
+            await db.rollback()
+
+
 @router.post("/submit", response_model=SubmitAssessmentResponse)
 async def submit_assessment(
     request: SubmitAssessmentRequest,
     candidate: CurrentCandidate,
     session: DbSession,
+    background_tasks: BackgroundTasks,
 ):
     """
     Submit the assessment. Auto-grades essay/coding answers, calculates
@@ -3318,14 +3430,7 @@ async def submit_assessment(
     if oa["status"] == "completed":
         raise HTTPException(status_code=400, detail="Assessment already submitted")
 
-    # 1b. AUTO-GRADE ungraded essay/coding answers before calculating score
-    try:
-        await auto_grade_answers(UUID(request.session_id), session)
-    except Exception as e:
-        logger.error(f"Auto-grading failed (non-fatal): {e}")
-        # Continue with submission even if grading fails
-
-    # 2. Calculate total score
+    # 2. Calculate total score (grading runs in background after response)
     score_result = await session.execute(
         text("""
             SELECT
@@ -3422,6 +3527,9 @@ async def submit_assessment(
     # their own progress marked as 'completed'. No auto-unlock of next stage.
 
     await session.commit()
+
+    # Grade essays/coding in the background — recordings are compressed when they upload.
+    background_tasks.add_task(_background_grade_session, UUID(request.session_id))
 
     return SubmitAssessmentResponse(
         total_score=total_earned,

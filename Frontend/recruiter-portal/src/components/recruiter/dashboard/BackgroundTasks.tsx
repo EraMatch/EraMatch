@@ -5,6 +5,7 @@ import {
     ChevronDown,
     ChevronRight,
     Clock,
+    ClipboardList,
     FileText,
     Filter,
     Loader2,
@@ -38,7 +39,7 @@ interface TaskRecord {
     id: string;
     status: string;
     type: string;
-    task_category: 'video' | 'question_import' | 'github_analysis' | 'qag' | 'cv_ingestion';
+    task_category: 'video' | 'question_import' | 'github_analysis' | 'qag' | 'cv_ingestion' | 'assessment_grading' | 'assessment_compression';
     candidate_name: string | null;
     question: string;
     timestamp: string;
@@ -76,7 +77,7 @@ interface SloHealthResponse {
 }
 
 type PageView = 'dashboard' | 'categories';
-type CategoryId = 'video-processing' | 'profile-processing' | 'video-recording' | 'question-generation-extraction' | 'qag-processing';
+type CategoryId = 'video-processing' | 'profile-processing' | 'video-recording' | 'question-generation-extraction' | 'qag-processing' | 'assessment-processing';
 
 type StatusFilter = 'all' | 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
@@ -137,6 +138,12 @@ const CATEGORIES: Array<{ id: CategoryId; title: string; icon: React.ReactNode; 
         title: 'Position Pre-Matching Score',
         icon: <Sparkles size={15} />,
         description: 'Pre-matching criteria generation and candidate correction jobs',
+    },
+    {
+        id: 'assessment-processing',
+        title: 'Assessment Tasks',
+        icon: <ClipboardList size={15} />,
+        description: 'Auto-grading and recording compression for completed assessments',
     },
 ];
 
@@ -381,6 +388,10 @@ export function BackgroundTasks() {
         [tasks]
     );
     const qagTasks = useMemo(() => tasks.filter((task) => task.task_category === 'qag'), [tasks]);
+    const assessmentTasks = useMemo(
+        () => tasks.filter((task) => task.task_category === 'assessment_grading' || task.task_category === 'assessment_compression'),
+        [tasks]
+    );
 
     const categorized = useMemo(() => {
         const recorded = videoTasks.filter((task) => !isAntiCheatingTask(task) && !isLiveVideoTask(task));
@@ -488,8 +499,22 @@ export function BackgroundTasks() {
                     ]
                     : []),
             ],
+            'assessment-processing': [
+                {
+                    id: 'assessment-grading',
+                    title: 'Auto-Grading',
+                    description: 'Background grading of essay and coding answers after submit',
+                    tasks: assessmentTasks.filter((t) => t.task_category === 'assessment_grading'),
+                },
+                {
+                    id: 'assessment-compression',
+                    title: 'Recording Compression',
+                    description: 'FFmpeg compression of screen and webcam recordings',
+                    tasks: assessmentTasks.filter((t) => t.task_category === 'assessment_compression'),
+                },
+            ],
         } as Record<CategoryId, SectionTable[]>;
-    }, [videoTasks, questionImportTasks, qagTasks]);
+    }, [videoTasks, questionImportTasks, qagTasks, assessmentTasks]);
 
     const activeCategoryTables = useMemo(() => categorized[activeCategory], [activeCategory, categorized]);
 
@@ -527,6 +552,7 @@ export function BackgroundTasks() {
             'video-recording': categorized['video-recording'].reduce((sum, table) => sum + table.tasks.length, 0),
             'question-generation-extraction': categorized['question-generation-extraction'].reduce((sum, table) => sum + table.tasks.length, 0),
             'qag-processing': categorized['qag-processing'].reduce((sum, table) => sum + table.tasks.length, 0),
+            'assessment-processing': categorized['assessment-processing'].reduce((sum, table) => sum + table.tasks.length, 0),
         };
 
         const recent = [...tasks]
@@ -1162,13 +1188,13 @@ export function BackgroundTasks() {
                         <div className="rounded-[16px] border border-border bg-card p-3 overflow-x-auto">
                             <div className="relative min-w-[860px] rounded-[12px] border border-border bg-background p-1">
                                 <div
-                                    className="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%-0.5rem)/5)] transition-transform duration-300 ease-out motion-reduce:transition-none"
+                                    className="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc((100%-0.5rem)/6)] transition-transform duration-300 ease-out motion-reduce:transition-none"
                                     style={{ transform: `translateX(${Math.max(activeCategoryIndex, 0) * 100}%)` }}
                                 >
                                     <div className="h-full w-full rounded-[9px] border border-primary/25 bg-primary/15 shadow-[0_4px_14px_rgba(99,102,241,0.18)]" />
                                 </div>
 
-                                <div className="relative z-10 grid grid-cols-5 gap-0">
+                                <div className="relative z-10 grid grid-cols-6 gap-0">
                                     {CATEGORIES.map((category) => {
                                         const active = category.id === activeCategory;
                                         return (

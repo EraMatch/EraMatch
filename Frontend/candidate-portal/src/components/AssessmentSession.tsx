@@ -6,6 +6,8 @@ import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload, quantizeWaveform, quantizeTimestampBucket } from '../utils/proctoringPayload';
 import { useExamLockdown } from '../hooks/useExamLockdown';
+import { useFullscreenGuard } from '../hooks/useFullscreenGuard';
+import { FullscreenCountdownOverlay } from './FullscreenCountdownOverlay';
 
 const AI_SERVICE_BASE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 const ENABLE_BIOMETRIC_BETA = ((import.meta as any).env?.VITE_ENABLE_BIOMETRIC_BETA ?? 'true') !== 'false';
@@ -28,6 +30,7 @@ type ProctoringSignalResult = {
 interface AssessmentSessionProps {
   onSignOut: () => void;
   onComplete: () => void;
+  screenStream?: MediaStream | null;
 }
 
 interface Question {
@@ -51,7 +54,7 @@ interface Question {
   topics?: string[];
 }
 
-export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionProps) {
+export function AssessmentSession({ onSignOut, onComplete, screenStream }: AssessmentSessionProps) {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [assessmentTimer, setAssessmentTimer] = useState(60 * 60); // 60 minutes default
   const [initialTimer, setInitialTimer] = useState(60 * 60);
@@ -66,8 +69,6 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const [codeOutput, setCodeOutput] = useState<Record<string, string>>({});
   const [testResults, setTestResults] = useState<Record<string, { passed: boolean; output: string; expected: string; actual: string }[]>>({});
   const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
-  const [integrityBlocked, setIntegrityBlocked] = useState(false);
-  const [integrityReason, setIntegrityReason] = useState<string | null>(null);
   const [screenRecordingActive, setScreenRecordingActive] = useState(false);
   const [lockdownWarning, setLockdownWarning] = useState<string | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -101,6 +102,13 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const screenRecordingStopPromiseRef = useRef<Promise<Blob | null> | null>(null);
   const screenRecordingStopResolveRef = useRef<((blob: Blob | null) => void) | null>(null);
   const screenRecordingUploadStartedRef = useRef(false);
+  const webcamRecorderRef = useRef<MediaRecorder | null>(null);
+  const webcamChunksRef = useRef<BlobPart[]>([]);
+  const webcamBlobRef = useRef<Blob | null>(null);
+  const webcamStopPromiseRef = useRef<Promise<Blob | null> | null>(null);
+  const webcamStopResolveRef = useRef<((blob: Blob | null) => void) | null>(null);
+  const webcamUploadStartedRef = useRef(false);
+  const screenStreamOwnedRef = useRef(false); // true only if we called getDisplayMedia ourselves
   const suspiciousTimestampBucketsRef = useRef<number[]>([]);
   const focusHiddenMsRef = useRef(0);
   const hiddenStartedAtRef = useRef<number | null>(null);
@@ -116,18 +124,28 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
   const audioWsRef = useRef<WebSocket | null>(null);
 
 
+  const FULLSCREEN_COUNTDOWN = 15;
+
+  const { countdownActive: fsCountdownActive, secondsLeft: fsSecondsLeft, enterFullscreen } =
+    useFullscreenGuard({
+      enabled: !!sessionId && !assessmentComplete,
+      onCountdownExpired: () => {
+        if (sessionId) {
+          api.candidate.submitAssessment({ session_id: sessionId }).catch(() => {});
+        }
+        setAssessmentComplete(true);
+      },
+      countdownSeconds: FULLSCREEN_COUNTDOWN,
+    });
+
   // --- Browser prevention lockdown (tab switch, fullscreen, copy/paste, devtools) ---
   useExamLockdown({
     sessionId,
-    enabled: !assessmentComplete && !isLoading && !!sessionId && screenRecordingActive,
-    enforceFullscreen: false,
+    enabled: !!sessionId && !assessmentComplete,
+    onFullscreenExit: enterFullscreen,
     onTerminated: (message) => {
-      setIntegrityBlocked(true);
-      setIntegrityReason(message);
-      if (sessionId) {
-        api.candidate.submitAssessment({ session_id: sessionId }).catch(() => {});
-      }
-      setAssessmentComplete(true);
+      setLockdownWarning(`⚠️ ${message}`);
+      setTimeout(() => setLockdownWarning(null), 8000);
     },
     onViolation: (event) => {
       setLockdownWarning(`⚠️ ${event.message}`);
@@ -316,20 +334,8 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         },
       });
 
-      const action = response?.enforcement_action;
-      if (action === 'terminate') {
-        setIntegrityBlocked(true);
-        setIntegrityReason(response?.enforcement_reason || 'critical_event_detected');
-        try {
-          await api.candidate.submitAssessment({ session_id: sessionId });
-        } catch (submitErr) {
-          console.error('Failed to auto-submit after terminate action:', submitErr);
-        }
-        setAssessmentComplete(true);
-      } else if (action === 'pause') {
-        setIntegrityBlocked(true);
-        setIntegrityReason(response?.enforcement_reason || 'repeated_high_risk_pattern');
-      }
+      // Enforcement actions from the server are ignored — flags are priority-ranked,
+      // sessions are never auto-terminated by integrity signals.
     } catch (error) {
       console.error('Failed to report integrity event:', error);
     }
@@ -362,16 +368,43 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       if (!blob || blob.size === 0) {
         return;
       }
-      await api.candidate.uploadAssessmentRecording(sessionId, blob);
+      await api.candidate.uploadAssessmentRecording(sessionId, blob, 'screen');
     } catch (error) {
-      console.error('Failed to upload system-captured assessment recording:', error);
+      console.error('Failed to upload screen recording:', error);
     }
   }, [sessionId, finalizeSystemScreenRecording]);
 
+  const uploadWebcamRecording = useCallback(async () => {
+    if (!sessionId || webcamUploadStartedRef.current) return;
+    webcamUploadStartedRef.current = true;
+
+    try {
+      const recorder = webcamRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+
+      const blob = await (webcamStopPromiseRef.current
+        ? Promise.race([
+            webcamStopPromiseRef.current,
+            new Promise<Blob | null>((r) => window.setTimeout(() => r(webcamBlobRef.current), 4000)),
+          ])
+        : Promise.resolve(webcamBlobRef.current));
+
+      if (!blob || blob.size === 0) return;
+      await api.candidate.uploadAssessmentRecording(sessionId, blob, 'webcam');
+    } catch (error) {
+      console.error('Failed to upload webcam recording:', error);
+    }
+  }, [sessionId]);
+
   useEffect(() => {
     if (!assessmentComplete || !sessionId) return;
+
+    // Stop the injected screen-share stream — assessment is done, parent no longer needs it.
+    screenStream?.getTracks().forEach((t) => t.stop());
+
     void uploadSystemScreenRecording();
-  }, [assessmentComplete, sessionId, uploadSystemScreenRecording]);
+    void uploadWebcamRecording();
+  }, [assessmentComplete, sessionId, screenStream, uploadSystemScreenRecording, uploadWebcamRecording]);
 
   const postProctoringSignal = useCallback(async (
     signal: 'face' | 'voice' | 'gaze' | 'emotion',
@@ -519,19 +552,20 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       try {
         if (captureStartedRef.current) return;
         captureStartedRef.current = true;
-        
-        const stream = await navigator.mediaDevices.getUserMedia({
+
+        // Always acquire a fresh camera + mic stream for proctoring
+        const camStream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 640 }, height: { ideal: 480 } },
           audio: true,
         });
         if (stopped) {
-          stream.getTracks().forEach(t => t.stop());
+          camStream.getTracks().forEach(t => t.stop());
           return;
         }
 
-        proctoringStreamRef.current = stream;
+        proctoringStreamRef.current = camStream;
         const video = document.createElement('video');
-        video.srcObject = stream;
+        video.srcObject = camStream;
         video.muted = true;
         video.playsInline = true;
         await video.play().catch(() => undefined);
@@ -539,32 +573,55 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
 
         const audioCtx = new AudioContext();
         audioContextRef.current = audioCtx;
-        const source = audioCtx.createMediaStreamSource(stream);
+        const source = audioCtx.createMediaStreamSource(camStream);
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 1024;
         source.connect(analyser);
         audioAnalyserRef.current = analyser;
         audioBufferRef.current = new Float32Array(analyser.fftSize);
 
-        if (!navigator.mediaDevices?.getDisplayMedia) {
-          setIntegrityBlocked(true);
-          setIntegrityReason('screen_recording_not_supported');
-          void emitIntegrityEvent('screen_recording_unavailable', 'high', {
-            reason: 'get_display_media_not_supported',
-          }, 30000);
-          return;
+        // Start webcam recorder
+        if (typeof MediaRecorder !== 'undefined') {
+          const wcRecorder = new MediaRecorder(camStream, { mimeType: 'video/webm' });
+          webcamChunksRef.current = [];
+          webcamBlobRef.current = null;
+          webcamStopPromiseRef.current = new Promise<Blob | null>((resolve) => {
+            webcamStopResolveRef.current = resolve;
+          });
+          wcRecorder.ondataavailable = (e: BlobEvent) => {
+            if (e.data && e.data.size > 0) webcamChunksRef.current.push(e.data);
+          };
+          wcRecorder.onstop = () => {
+            const blob = webcamChunksRef.current.length > 0
+              ? new Blob(webcamChunksRef.current, { type: 'video/webm' })
+              : null;
+            webcamBlobRef.current = blob;
+            webcamStopResolveRef.current?.(blob);
+          };
+          wcRecorder.start(10000);
+          webcamRecorderRef.current = wcRecorder;
         }
 
-        const displayStream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            frameRate: { ideal: 12, max: 20 },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: false,
-        });
+        // Use injected screen stream if available (from pre-flight), otherwise acquire it
+        let displayStream: MediaStream;
+        if (screenStream && screenStream.active) {
+          displayStream = screenStream;
+          screenStreamOwnedRef.current = false; // parent owns this stream
+        } else {
+          if (!navigator.mediaDevices?.getDisplayMedia) {
+            void emitIntegrityEvent('screen_recording_unavailable', 'high', {
+              reason: 'get_display_media_not_supported',
+            }, 30000);
+            return;
+          }
+          displayStream = await navigator.mediaDevices.getDisplayMedia({
+            video: { frameRate: { ideal: 12, max: 20 }, width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false,
+          });
+          screenStreamOwnedRef.current = true; // we acquired it, we stop it
+        }
         if (stopped) {
-          displayStream.getTracks().forEach(t => t.stop());
+          if (screenStreamOwnedRef.current) displayStream.getTracks().forEach(t => t.stop());
           return;
         }
 
@@ -578,8 +635,6 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         if (displayTrack) {
           displayTrack.onended = () => {
             setScreenRecordingActive(false);
-            setIntegrityBlocked(true);
-            setIntegrityReason('screen_recording_stopped');
             void emitIntegrityEvent('screen_recording_stopped', 'high', {
               reason: 'candidate_ended_screen_share',
             }, 4000);
@@ -615,7 +670,6 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         screenCaptureVideoRef.current = screenVideo;
         setScreenRecordingActive(true);
 
-        // Reset tracking to ignore the blur caused by the getDisplayMedia dialog
         captureFullyInitializedRef.current = true;
         sampleWindowStartRef.current = Date.now();
         focusHiddenMsRef.current = 0;
@@ -625,8 +679,6 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
         console.error('Biometric capture init failed:', error);
         const err = error as { name?: string };
         if (err?.name === 'NotAllowedError') {
-          setIntegrityBlocked(true);
-          setIntegrityReason('screen_recording_permission_denied');
           void emitIntegrityEvent('screen_recording_permission_denied', 'high', {
             reason: 'candidate_denied_screen_share_permission',
           }, 15000);
@@ -832,12 +884,7 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
                   setTimeout(() => setLockdownWarning(null), 5000);
                 }
               }
-              // Check for terminated session
-              if (unified.is_terminated) {
-                setIntegrityBlocked(true);
-                setIntegrityReason('Session terminated by proctoring system.');
-                setAssessmentComplete(true);
-              }
+              // is_terminated signals are flagged but do not auto-submit
             }
           } catch (err) {
             console.error('[Proctoring] Unified frame analysis failed:', err);
@@ -862,18 +909,31 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
       window.removeEventListener('focus', handleFocus);
-      proctoringStreamRef.current?.getTracks().forEach(track => track.stop());
-      proctoringStreamRef.current = null;
-      captureStartedRef.current = false;
-      proctoringVideoRef.current = null;
+
+      // Stop recorders BEFORE source tracks so onstop fires with all buffered chunks.
+      // Stopping tracks first can cause browsers to silently drop the final chunk.
       if (screenRecorderRef.current && screenRecorderRef.current.state !== 'inactive') {
         screenRecorderRef.current.stop();
       }
       screenRecorderRef.current = null;
-      screenCaptureStreamRef.current?.getTracks().forEach(track => track.stop());
+      if (webcamRecorderRef.current && webcamRecorderRef.current.state !== 'inactive') {
+        webcamRecorderRef.current.stop();
+      }
+      webcamRecorderRef.current = null;
+
+      // Now release source tracks (turns off camera LED)
+      proctoringStreamRef.current?.getTracks().forEach(track => track.stop());
+      proctoringStreamRef.current = null;
+      captureStartedRef.current = false;
+      proctoringVideoRef.current = null;
+      // Only stop screen tracks if we acquired the stream ourselves; parent owns prop streams
+      if (screenStreamOwnedRef.current) {
+        screenCaptureStreamRef.current?.getTracks().forEach(track => track.stop());
+      }
       screenCaptureStreamRef.current = null;
       screenCaptureVideoRef.current = null;
       setScreenRecordingActive(false);
+
       captureFullyInitializedRef.current = false;
       audioAnalyserRef.current = null;
       audioBufferRef.current = null;
@@ -902,17 +962,11 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
           return;
         }
 
+        // blocked_integrity status: show a warning but never auto-terminate
         if (status.status === 'blocked_integrity') {
-          setIntegrityBlocked(true);
-          setIntegrityReason(status.enforcement_reason || 'integrity_policy_blocked');
-          if (status.enforcement_action === 'terminate') {
-            try {
-              await api.candidate.submitAssessment({ session_id: sessionId });
-            } catch (submitErr) {
-              console.error('Failed to auto-submit blocked assessment:', submitErr);
-            }
-            setAssessmentComplete(true);
-          }
+          const reason = (status.enforcement_reason || 'integrity_policy_blocked').replace(/_/g, ' ');
+          setLockdownWarning(`⚠️ Integrity flag: ${reason}`);
+          setTimeout(() => setLockdownWarning(null), 8000);
         }
         
         // Update timer from backend (authoritative source)
@@ -1387,22 +1441,6 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
     );
   }
 
-  if (integrityBlocked) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#EDF0F8' }}>
-        <Card className="max-w-md p-8 text-center space-y-4">
-          <AlertCircle className="w-12 h-12 text-red-500 mx-auto" />
-          <h3 className="text-gray-900 font-medium">Assessment Paused For Integrity Review</h3>
-          <p className="text-gray-600 text-sm">High-risk cheating behavior was detected and this session is currently blocked.</p>
-          {integrityReason && (
-            <p className="text-xs text-gray-500">Reason: {integrityReason}</p>
-          )}
-          <Button onClick={onSignOut} variant="outline">Return to Home</Button>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div
       ref={containerRef}
@@ -1414,6 +1452,15 @@ export function AssessmentSession({ onSignOut, onComplete }: AssessmentSessionPr
       onClick={handleActivity}
       onKeyDown={handleActivity}
     >
+      {/* Fullscreen guard countdown overlay */}
+      {fsCountdownActive && (
+        <FullscreenCountdownOverlay
+          secondsLeft={fsSecondsLeft}
+          totalSeconds={FULLSCREEN_COUNTDOWN}
+          onReenter={enterFullscreen}
+        />
+      )}
+
       {/* Lockdown Violation Warning Banner */}
       {lockdownWarning && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] animate-pulse">

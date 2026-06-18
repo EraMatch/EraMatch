@@ -42,10 +42,11 @@ export const candidateService = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }),
-    uploadAssessmentRecording: async (sessionId: string, recording: Blob) => {
+    uploadAssessmentRecording: async (sessionId: string, recording: Blob, recordingType: 'screen' | 'webcam' = 'screen') => {
         const form = new FormData();
         form.append('session_id', sessionId);
-        form.append('recording', recording, `assessment-${sessionId}.webm`);
+        form.append('recording_type', recordingType);
+        form.append('recording', recording, `assessment-${sessionId}-${recordingType}.webm`);
         return fetchAPI<{ recording_url: string; message: string }>('/assessment/recording', {
             method: 'POST',
             body: form,

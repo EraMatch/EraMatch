@@ -12,6 +12,8 @@ from typing import Any
 import numpy as np
 
 from config import settings
+from services.futurproctor.facial_detections import detect_faces as _fp_detect_faces
+from services.futurproctor.audio_detection import detect_speech as _fp_detect_speech
 
 
 def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
@@ -693,9 +695,15 @@ def _frame_face_observations(
     if frame is None or cascade is None:
         return None, reference_embedding
 
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = cascade.detectMultiScale(gray, 1.2, 5)
-    faces_detected = int(len(faces))
+    # Primary: MediaPipe FaceDetection (more accurate than Haar for webcam frames).
+    # Falls back to Haar cascade if MediaPipe is unavailable.
+    mp_result = _fp_detect_faces(frame)
+    if mp_result["face_count"] > 0 or mp_result["has_face"] is not None:
+        faces_detected = mp_result["face_count"]
+    else:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        haar_faces = cascade.detectMultiScale(gray, 1.2, 5)
+        faces_detected = int(len(haar_faces))
 
     liveness_score = 0.0
     face_model_score = None
@@ -1360,13 +1368,17 @@ def detect_audio_amplitude(
     if audio_data.size == 0:
         return {"audio_detected": False, "max_amplitude": 0, "exceeds_threshold": False}
 
-    max_amp = int(np.max(np.abs(audio_data)))
-    exceeds = max_amp > threshold
+    # Use futurproctor amplitude analysis for richer signal (adds rms, speech_detected).
+    fp_result = _fp_detect_speech(audio_data, threshold=threshold)
+    max_amp = int(fp_result["peak_amplitude"])
+    exceeds = fp_result["speech_detected"]
 
     return {
         "audio_detected": exceeds,
         "max_amplitude": max_amp,
         "exceeds_threshold": exceeds,
+        "rms": fp_result["rms"],
+        "speech_detected": exceeds,
     }
 
 

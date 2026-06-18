@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from sqlmodel import Field, SQLModel, Relationship, Column
 from sqlalchemy import Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, BYTEA, ARRAY, UUID as PG_UUID, INET
-from sqlalchemy import String
+from sqlalchemy import String, Numeric
 
 
 class UserRole(str, Enum):
@@ -751,6 +751,9 @@ class OngoingAssessment(BaseModel, table=True):
     max_points: int | None = Field(default=None)
     flag_count: int = Field(default=0)
     recording_url: str | None = Field(default=None, max_length=500)
+    webcam_recording_url: str | None = Field(default=None, sa_column=Column(Text))
+    screen_recording_compressed_url: str | None = Field(default=None, sa_column=Column(Text))
+    webcam_recording_compressed_url: str | None = Field(default=None, sa_column=Column(Text))
     browser_info: dict | None = Field(default=None, sa_column=Column(JSONB))
     ip_address: str | None = Field(default=None, sa_column=Column(INET(), nullable=True))
 
@@ -894,6 +897,7 @@ class InterviewResponse(SQLModel, table=True):
     emotion_analysis: dict | None = Field(default=None, sa_column=Column(JSONB))
     answered_at: datetime | None = Field(default=None)
     processing_status: str = Field(default="pending", max_length=50)
+    video_compressed_url: str | None = Field(default=None, sa_column=Column(Text))
 
 
 class AIInterviewTurn(BaseModel, table=True):
@@ -1054,10 +1058,15 @@ class ProctoringFlag(BaseModel, table=True):
     severity: str = Field(max_length=10)  # high, medium, low
     evidence: str | None = Field(default=None, sa_column=Column(Text))
     detected_by: str | None = Field(default=None, max_length=50)
+    confidence_score: Decimal | None = Field(default=None)
+    screenshot_url: str | None = Field(default=None, max_length=500)
+    time_display: str | None = Field(default=None, max_length=20)
+    priority_weight: Decimal = Field(default=Decimal("0"), sa_column=Column(Numeric(5, 2), server_default="0"))
     status: str = Field(default="pending", max_length=20)
     reviewed_by_user_id: UUID | None = Field(
         default=None, foreign_key="organization_users.user_id"
     )
+    reviewed_at: datetime | None = Field(default=None)
     review_notes: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -1356,6 +1365,9 @@ class LiV2Session(BaseModel, table=True):
     transcript: list | None = Field(default=None, sa_column=Column(JSONB))
     # transcript: [{role, text, pillar_idx, phase, timestamp}] — saved by agent on shutdown
     recording_url: str | None = Field(default=None, max_length=500)
+    webcam_recording_url: str | None = Field(default=None, sa_column=Column(Text))
+    screen_recording_compressed_url: str | None = Field(default=None, sa_column=Column(Text))
+    webcam_recording_compressed_url: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

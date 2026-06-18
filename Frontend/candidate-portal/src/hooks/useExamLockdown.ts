@@ -22,6 +22,8 @@ interface LockdownOptions {
   onViolation?: (event: { event_type: string; severity: string; message: string; count?: number }) => void;
   /** Whether to enforce fullscreen mode */
   enforceFullscreen?: boolean;
+  /** Called when fullscreen exits — use this to show the guard overlay instead of auto-re-entering */
+  onFullscreenExit?: () => void;
 }
 
 export function useExamLockdown({
@@ -30,11 +32,18 @@ export function useExamLockdown({
   onTerminated,
   onViolation,
   enforceFullscreen = false,
+  onFullscreenExit,
 }: LockdownOptions) {
   const devtoolsCheckRef = useRef<number | null>(null);
   const lastEventTsRef = useRef<Record<string, number>>({});
 
-  // Throttled event reporter — sends to session-stateful backend
+  // Keep callbacks in refs so reportBrowserEvent stays stable across renders
+  const onTerminatedRef = useRef(onTerminated);
+  onTerminatedRef.current = onTerminated;
+  const onViolationRef = useRef(onViolation);
+  onViolationRef.current = onViolation;
+
+  // Throttled event reporter — stable reference; uses refs for callbacks
   const reportBrowserEvent = useCallback(async (eventType: string, throttleMs = 3000) => {
     if (!sessionId || !enabled) return;
 
@@ -53,13 +62,12 @@ export function useExamLockdown({
       if (response.ok) {
         const data = await response.json();
 
-        // Check if session was terminated
         if (data.status === 'terminated' || data.is_terminated) {
-          onTerminated?.(data.message || 'Session terminated due to excessive violations.');
+          onTerminatedRef.current?.(data.message || 'Session terminated due to excessive violations.');
           return;
         }
 
-        onViolation?.({
+        onViolationRef.current?.({
           event_type: eventType,
           severity: data.event?.severity || data.severity || 'medium',
           message: data.message || `Browser event: ${eventType}`,
@@ -69,7 +77,7 @@ export function useExamLockdown({
     } catch (error) {
       console.error('[Lockdown] Failed to report browser event:', error);
     }
-  }, [sessionId, enabled, onTerminated, onViolation]);
+  }, [sessionId, enabled]); // stable — callbacks accessed via refs
 
   useEffect(() => {
     if (!enabled || !sessionId) return;
@@ -90,8 +98,13 @@ export function useExamLockdown({
     const handleFullscreenChange = () => {
       if (enforceFullscreen && !document.fullscreenElement) {
         void reportBrowserEvent('fullscreen_exit');
-        // Re-enter fullscreen
-        document.documentElement.requestFullscreen?.().catch(() => {});
+        if (onFullscreenExit) {
+          // Delegate re-entry to the fullscreen guard hook/overlay
+          onFullscreenExit();
+        } else {
+          // Fallback: attempt auto-re-entry (wrapped in try/catch — browsers may block after ESC)
+          document.documentElement.requestFullscreen?.().catch(() => {});
+        }
       }
     };
 
@@ -181,11 +194,6 @@ export function useExamLockdown({
       return e.returnValue;
     };
 
-    // --- 10. Enter fullscreen if enforced ---
-    if (enforceFullscreen) {
-      document.documentElement.requestFullscreen?.().catch(() => {});
-    }
-
     // Register all event listeners
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleWindowBlur);
@@ -211,11 +219,6 @@ export function useExamLockdown({
       if (devtoolsCheckRef.current) {
         window.clearInterval(devtoolsCheckRef.current);
         devtoolsCheckRef.current = null;
-      }
-
-      // Exit fullscreen on cleanup
-      if (document.fullscreenElement) {
-        document.exitFullscreen?.().catch(() => {});
       }
     };
   }, [enabled, sessionId, enforceFullscreen, reportBrowserEvent]);

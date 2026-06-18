@@ -1133,6 +1133,9 @@ class CandidateService:
                 "position_title": "Unknown Position",
                 "current_module": "Assessment",
                 "recording_url": None,
+                "webcam_recording_url": None,
+                "screen_recording_compressed_url": None,
+                "webcam_recording_compressed_url": None,
                 "duration": 0,
                 "suspicious_timestamps": [],
                 "flags": [],
@@ -1142,10 +1145,15 @@ class CandidateService:
         recording_row = await self.session.execute(
             text(
                 """
-                SELECT oa.recording_url
+                SELECT
+                  oa.recording_url,
+                  oa.webcam_recording_url,
+                  oa.screen_recording_compressed_url,
+                  oa.webcam_recording_compressed_url
                 FROM ongoing_assessments oa
                 WHERE oa.application_id = :application_id
-                  AND oa.recording_url IS NOT NULL
+                  AND oa.status IN ('completed', 'in_progress')
+                  AND (oa.recording_url IS NOT NULL OR oa.webcam_recording_url IS NOT NULL)
                 ORDER BY COALESCE(oa.submitted_at, oa.started_at) DESC
                 LIMIT 1
                 """
@@ -1165,6 +1173,7 @@ class CandidateService:
                   pf.session_type,
                   pf.evidence,
                   pf.status,
+                  pf.priority_weight,
                   pf.created_at
                 FROM proctoring_flags pf
                 WHERE pf.application_id = :application_id
@@ -1208,6 +1217,7 @@ class CandidateService:
                 elif evidence_obj.get("source"):
                     evidence_text = f"source={evidence_obj.get('source')}"
 
+            pw = row["priority_weight"]
             mapped_flags.append(
                 {
                     "id": str(row["flag_id"]),
@@ -1221,6 +1231,7 @@ class CandidateService:
                     "proof": proof_payload,
                     "notes": note,
                     "status": str(row["status"] or "pending").lower(),
+                    "priority_weight": float(pw) if pw is not None else None,
                 }
             )
 
@@ -1237,6 +1248,9 @@ class CandidateService:
             "position_title": candidate["position_title"],
             "current_module": current_module,
             "recording_url": recording["recording_url"] if recording else None,
+            "webcam_recording_url": recording["webcam_recording_url"] if recording else None,
+            "screen_recording_compressed_url": recording["screen_recording_compressed_url"] if recording else None,
+            "webcam_recording_compressed_url": recording["webcam_recording_compressed_url"] if recording else None,
             "duration": max(60, max_ts + 30 if max_ts > 0 else 0),
             "suspicious_timestamps": sorted(suspicious_timestamp_buckets),
             "flags": mapped_flags,

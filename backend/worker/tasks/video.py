@@ -311,6 +311,102 @@ def process_video_logic(
         raise exc
 
 
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
+def compress_recordings(self, session_id: str, session_type: str) -> dict:
+    """
+    Compress raw WebM recordings (screen + webcam) to H.264/MP4 using ffmpeg-python.
+    Dispatched as a background task after assessment/interview submission.
+
+    session_type: "assessment" | "live_interview"
+    """
+    import os
+    import ffmpeg as ffmpeg_lib
+
+    table_map = {
+        "assessment": (
+            "ongoing_assessments",
+            "session_id",
+            [("recording_url", "screen_recording_compressed_url"),
+             ("webcam_recording_url", "webcam_recording_compressed_url")],
+        ),
+        "live_interview": (
+            "li_v2_sessions",
+            "session_id",
+            [("recording_url", "screen_recording_compressed_url"),
+             ("webcam_recording_url", "webcam_recording_compressed_url")],
+        ),
+    }
+    if session_type not in table_map:
+        return {"status": "skipped", "reason": "unknown_session_type"}
+
+    table, pk_col, column_pairs = table_map[session_type]
+
+    conn = _get_db_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"SELECT * FROM {table} WHERE {pk_col} = %s LIMIT 1", (session_id,))
+        cols = [desc[0] for desc in cur.description]
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            return {"status": "skipped", "reason": "session_not_found"}
+        record = dict(zip(cols, row))
+
+        compressed: dict[str, str] = {}
+        for raw_col, compressed_col in column_pairs:
+            raw_path = record.get(raw_col)
+            if not raw_path:
+                continue
+            # raw_path may be a URL like /static/... — resolve to filesystem path
+            if raw_path.startswith("/static/"):
+                abs_path = os.path.join(os.getcwd(), raw_path.lstrip("/"))
+            else:
+                abs_path = raw_path
+            if not os.path.exists(abs_path):
+                continue
+            out_path = abs_path.rsplit(".", 1)[0] + "_compressed.mp4"
+            try:
+                (
+                    ffmpeg_lib
+                    .input(abs_path)
+                    .output(
+                        out_path,
+                        vcodec="libx264",
+                        crf=28,
+                        preset="fast",
+                        acodec="aac",
+                        audio_bitrate="64k",
+                    )
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+                # Build the same /static/... URL for the compressed file
+                rel = os.path.relpath(out_path, os.getcwd()).replace("\\", "/")
+                compressed[compressed_col] = "/" + rel
+            except Exception as exc:
+                # Log but don't fail the whole task for one file
+                log_debug("compress_error", {"file": abs_path, "error": str(exc)})
+
+        if compressed:
+            set_clause = ", ".join(f"{col} = %s" for col in compressed)
+            values = list(compressed.values()) + [session_id]
+            cur.execute(
+                f"UPDATE {table} SET {set_clause} WHERE {pk_col} = %s",
+                values,
+            )
+            conn.commit()
+
+        cur.close()
+        return {"status": "completed", "session_id": session_id, "compressed": compressed}
+
+    except Exception as exc:
+        conn.rollback()
+        log_debug("compress_task_error", {"session_id": session_id, "error": str(exc)})
+        raise self.retry(exc=exc)
+    finally:
+        conn.close()
+
+
 @celery_app.task(bind=True, max_retries=3)
 def process_video_response(
     self,
