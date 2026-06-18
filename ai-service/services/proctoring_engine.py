@@ -69,7 +69,7 @@ class _ModelRegistry:
         self.root = root
         self.emotion_model_file = root / "Emotion classification" / "model_keras.h5"
         self.emotion_weights_file = root / "Emotion classification" / "model_weights.h5"
-        self.face_tflite_file = root / "Eye monitoring" / "mobilefacenet.tflite"
+        self.face_tflite_file = root / "Eye monitoring" / "facenet_512.tflite"
         self.gaze_weights_file = root / "Eye monitoring" / "Eye gaze" / "gaze_model_final.pth"
         self.speaker_profiles_dir = root / "Speaker Identification" / "speaker_profiles"
         self.yolo_model_file = root / "yolo11s.pt"
@@ -190,14 +190,28 @@ class _ModelRegistry:
                 self._face_tflite_output_details,
             )
 
-        _ensure_model_downloaded(self.face_tflite_file, "models/face/mobilefacenet.tflite")
+        _ensure_model_downloaded(self.face_tflite_file, "models/face/facenet_512.tflite")
         if not self.face_tflite_file.exists():
             self._face_loader_error = "face_tflite_file_not_found"
             return None
 
         try:
-            tf = importlib.import_module("tensorflow")
-            interpreter = tf.lite.Interpreter(model_path=str(self.face_tflite_file))
+            interpreter = None
+            # Try lightweight runtimes before full TensorFlow
+            for mod_path, attr_path in [
+                ("tflite_runtime.interpreter", "Interpreter"),
+                ("ai_edge_litert.interpreter", "Interpreter"),
+            ]:
+                try:
+                    mod = importlib.import_module(mod_path)
+                    Interpreter = getattr(mod, attr_path)
+                    interpreter = Interpreter(model_path=str(self.face_tflite_file))
+                    break
+                except Exception:
+                    continue
+            if interpreter is None:
+                tf = importlib.import_module("tensorflow")
+                interpreter = tf.lite.Interpreter(model_path=str(self.face_tflite_file))
             interpreter.allocate_tensors()
             self._face_tflite_interpreter = interpreter
             self._face_tflite_input_details = interpreter.get_input_details()
@@ -1211,30 +1225,55 @@ _logger = _logging.getLogger(__name__)
 
 def extract_face_encoding(image: np.ndarray) -> list[float] | None:
     """
-    Extract a face encoding from a BGR image using multiple strategies:
-    1. face_recognition library (if available)
-    2. OpenCV Haar cascade with simple embedding
-    3. Centered-crop fallback for clear webcam faces
+    Extract a 512-d face embedding from a BGR image.
 
-    Returns a list of floats (the face embedding) or None if no face detected.
+    Strategy 1: FaceNet 512 TFLite — same pipeline used by live proctoring analysis,
+                so reference and live embeddings are always dimensionally compatible.
+    Strategy 2: face_recognition library (128-d) — fallback when TFLite unavailable.
     """
     if image is None or not isinstance(image, np.ndarray) or image.ndim < 2:
         return None
 
-    # Convert BGR -> RGB
-    if image.ndim == 3 and image.shape[2] == 3:
-        rgb_image = image[:, :, ::-1]
-    else:
-        rgb_image = image
+    cv2 = _get_cv2()
 
-    # Strategy 1: face_recognition library
+    # Strategy 1: FaceNet 512 TFLite (matches _face_embedding_from_frame)
+    face_embedder = REGISTRY.get_face_embedder()
+    if cv2 is not None and face_embedder is not None:
+        try:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+            cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
+            faces = cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5, minSize=(40, 40))
+            if len(faces) > 0:
+                x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
+                face_crop = image[y : y + h, x : x + w]
+                if face_crop.size > 0:
+                    interpreter, input_details, output_details = face_embedder
+                    input_shape = input_details[0].get("shape", [1, 160, 160, 3])
+                    target_h = int(input_shape[1]) if len(input_shape) > 2 else 160
+                    target_w = int(input_shape[2]) if len(input_shape) > 2 else 160
+                    prepared = cv2.resize(face_crop, (target_w, target_h)).astype(np.float32)
+                    prepared = (prepared - 127.5) / 128.0
+                    prepared = np.expand_dims(prepared, axis=0)
+                    interpreter.set_tensor(input_details[0]["index"], prepared)
+                    interpreter.invoke()
+                    embedding = interpreter.get_tensor(output_details[0]["index"])[0]
+                    embedding = np.asarray(embedding, dtype=np.float32)
+                    norm = float(np.linalg.norm(embedding))
+                    if norm > 0:
+                        return (embedding / norm).tolist()
+        except Exception:
+            pass
+
+    # Strategy 2: face_recognition library (128-d fallback)
     try:
+        rgb_image = image[:, :, ::-1] if image.ndim == 3 and image.shape[2] == 3 else image
         face_recognition = importlib.import_module("face_recognition")
-        detection_attempts = [
+        for attempt in [
             {"number_of_times_to_upsample": 1, "model": "hog"},
             {"number_of_times_to_upsample": 2, "model": "hog"},
-        ]
-        for attempt in detection_attempts:
+        ]:
             face_locations = face_recognition.face_locations(rgb_image, **attempt)
             encodings = face_recognition.face_encodings(rgb_image, face_locations)
             if encodings:
@@ -1242,45 +1281,6 @@ def extract_face_encoding(image: np.ndarray) -> list[float] | None:
                 return enc.tolist() if hasattr(enc, "tolist") else list(enc)
     except Exception:
         pass
-
-    # Strategy 2: OpenCV Haar cascade
-    cv2 = _get_cv2()
-    if cv2 is not None:
-        try:
-            gray = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY) if rgb_image.ndim == 3 else rgb_image
-            gray = cv2.equalizeHist(gray)
-            cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            )
-            faces = cascade.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=3, minSize=(40, 40))
-            if len(faces) > 0:
-                x, y, w, h = max(faces, key=lambda rect: rect[2] * rect[3])
-                face_crop = gray[y : y + h, x : x + w]
-                if face_crop.size > 0:
-                    face_resized = cv2.resize(face_crop, (16, 8), interpolation=cv2.INTER_AREA)
-                    embedding = face_resized.astype("float32").flatten()
-                    norm = float(np.linalg.norm(embedding) + 1e-6)
-                    return (embedding / norm).tolist()
-        except Exception:
-            pass
-
-        # Strategy 3: Centered-crop fallback
-        try:
-            gray = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY) if rgb_image.ndim == 3 else rgb_image
-            height, width = gray.shape[:2]
-            if height >= 40 and width >= 40:
-                crop_top = max(0, int(height * 0.15))
-                crop_bottom = min(height, int(height * 0.85))
-                crop_left = max(0, int(width * 0.2))
-                crop_right = min(width, int(width * 0.8))
-                face_crop = gray[crop_top:crop_bottom, crop_left:crop_right]
-                if face_crop.size > 0:
-                    face_resized = cv2.resize(face_crop, (16, 8), interpolation=cv2.INTER_AREA)
-                    embedding = face_resized.astype("float32").flatten()
-                    norm = float(np.linalg.norm(embedding) + 1e-6)
-                    return (embedding / norm).tolist()
-        except Exception:
-            pass
 
     return None
 
@@ -1301,31 +1301,31 @@ def extract_face_encoding_b64(frame_b64: str | None) -> list[float] | None:
 def match_face_encodings(
     captured_encoding: list[float] | np.ndarray,
     stored_encoding: list[float] | np.ndarray,
-    threshold: float = 0.6,
+    threshold: float = 0.9,
 ) -> tuple[bool, float]:
     """
     Compare two face encodings and return (is_match, distance).
 
-    Tries face_recognition.compare_faces first, then falls back to numpy L2 norm.
-    """
-    # Strategy 1: face_recognition library
-    try:
-        face_recognition = importlib.import_module("face_recognition")
-        if hasattr(face_recognition, "compare_faces") and callable(face_recognition.compare_faces):
-            match = face_recognition.compare_faces([stored_encoding], captured_encoding)[0]
-            dist = float(np.linalg.norm(
-                np.array(captured_encoding, dtype=np.float32) - np.array(stored_encoding, dtype=np.float32)
-            ))
-            return bool(match), dist
-    except Exception:
-        pass
+    Both encodings are expected to be L2-normalised (unit vectors) from FaceNet 512,
+    so we use L2 distance directly. threshold=0.9 is appropriate for 512-d unit vectors
+    (equivalent to cosine similarity > 0.595).
 
-    # Strategy 2: numpy distance
+    Falls back to face_recognition.compare_faces only when both are 128-d (legacy).
+    """
     try:
         a = np.array(captured_encoding, dtype=np.float32)
         b = np.array(stored_encoding, dtype=np.float32)
         if a.size != b.size:
             return False, float("inf")
+        # For 128-d vectors from face_recognition, delegate to its built-in comparator.
+        if a.size == 128:
+            try:
+                face_recognition = importlib.import_module("face_recognition")
+                match = face_recognition.compare_faces([b], a, tolerance=threshold)[0]
+                dist = float(np.linalg.norm(a - b))
+                return bool(match), dist
+            except Exception:
+                pass
         dist = float(np.linalg.norm(a - b))
         return dist < threshold, dist
     except Exception:

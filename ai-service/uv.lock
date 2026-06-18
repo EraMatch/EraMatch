@@ -22,6 +22,29 @@ wheels = [
 ]
 
 [[package]]
+name = "ai-edge-litert"
+version = "2.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "backports-strenum" },
+    { name = "flatbuffers" },
+    { name = "numpy" },
+    { name = "protobuf" },
+    { name = "tqdm" },
+    { name = "typing-extensions" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e4/7f/ec543ef2f79cf5b5909521cb614162ec1e6fc9df863ccae23142260dd8c7/ai_edge_litert-2.1.5-cp311-cp311-macosx_12_0_arm64.whl", hash = "sha256:cf9a6e98677d26fd900ec9459a19cf5cce9f94c64132d728485eeb9accd5c162", size = 9709620, upload-time = "2026-05-15T23:34:15.065Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/84/a1ec0a9c6c345e79207b2a3a2a8e1e9572f412143100dc650f332c53d84f/ai_edge_litert-2.1.5-cp311-cp311-manylinux_2_27_aarch64.whl", hash = "sha256:1edf83d132919b0b95bb5ded64e79bfed018168d3584c28fa30a8eb0d3bfca6b", size = 12866358, upload-time = "2026-05-15T23:11:20.539Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/44/3c365bc63b744316ef61c75761e53f34f9cdc0ba31fddc1d1039ca5322b4/ai_edge_litert-2.1.5-cp311-cp311-manylinux_2_27_x86_64.whl", hash = "sha256:7c54e45589831fbaeec1481df530e336d0112002a6193bc28f7aafa5f4898a3a", size = 17566472, upload-time = "2026-05-15T23:05:31.285Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/47/d3956aeddc00194463dcc83991ad58759b1a94672d66e7b7c5d2be1d95de/ai_edge_litert-2.1.5-cp311-cp311-win_amd64.whl", hash = "sha256:ad7844c7c2431dfe36debf6d4541f27af198848ed3090cbaacbdf2bb2cd377c7", size = 17753382, upload-time = "2026-05-15T23:39:22.178Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/37/cf525a4ed6aff573b10a162b7bff19673e50ce6f45daac0a095dcd099a28/ai_edge_litert-2.1.5-cp312-cp312-macosx_12_0_arm64.whl", hash = "sha256:b62fd3d90e643bcc3e3a31885a7636b5662527d48c27154cf07793f26896f018", size = 9711976, upload-time = "2026-05-15T23:34:16.988Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/6f/b43fc56831ecc439a6e6eb0e1bfdffbfe6213e8c706aa421017dce1ac56b/ai_edge_litert-2.1.5-cp312-cp312-manylinux_2_27_aarch64.whl", hash = "sha256:1d282722cdfb70bb42d457f4bfe7789f88187ccadd73fea9f0107dce6e98fe45", size = 12867617, upload-time = "2026-05-15T23:11:22.759Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/20/a76ba29b1c4c3009b5c64f4ec7f5fe5165104fe15481bd79b55927948541/ai_edge_litert-2.1.5-cp312-cp312-manylinux_2_27_x86_64.whl", hash = "sha256:f1c6d8db4382890881baeb8ed13c0802ada022e0b104b0db8fccf31353899ee0", size = 17570644, upload-time = "2026-05-15T23:05:33.664Z" },
+    { url = "https://files.pythonhosted.org/packages/82/fa/5399085daffd9949668d13a83a48db9f69af535ef9f9d06fdf71f0205321/ai_edge_litert-2.1.5-cp312-cp312-win_amd64.whl", hash = "sha256:6d2db6759188b12be9fd095468c3c7069c1bc7c128de78f42f862fb654d247ea", size = 17755006, upload-time = "2026-05-15T23:39:24.555Z" },
+]
+
+[[package]]
 name = "aiofiles"
 version = "25.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -202,6 +225,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ba/bd/776046f27093aef80155a204ca7d82a887ae4ee72ba4ef8411b46ea7898c/av-17.0.1-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:3ed6bcd7021fe55832f95b8ef78dd01a4cb21faf3cd71f1e1bf4f20bf100b278", size = 37430809, upload-time = "2026-04-18T17:12:04.231Z" },
     { url = "https://files.pythonhosted.org/packages/d9/d5/3261bd2c6b7f6c0aa8379fc970d1ecf496330990b992ad28607785074268/av-17.0.1-cp311-abi3-win_amd64.whl", hash = "sha256:9af524e8632a54032e361d6b88895bd3e7c6212ca560de60f5ccc525323c764c", size = 28889649, upload-time = "2026-04-18T17:12:07.04Z" },
     { url = "https://files.pythonhosted.org/packages/98/39/381104e427a0c7231d2ec0d25d538d58fc20fc0458846b95860d3ef8073b/av-17.0.1-cp311-abi3-win_arm64.whl", hash = "sha256:50e58a473d65ea29b645e45c9fd8518a6783737135683ecc40571a91592bdfe4", size = 21918412, upload-time = "2026-04-18T17:12:09.312Z" },
+]
+
+[[package]]
+name = "backports-strenum"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/c7/2ed54c32fed313591ffb21edbd48db71e68827d43a61938e5a0bc2b6ec91/backports_strenum-1.3.1.tar.gz", hash = "sha256:77c52407342898497714f0596e86188bb7084f89063226f4ba66863482f42414", size = 7257, upload-time = "2023-12-09T14:36:40.937Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/50/56cf20e2ee5127b603b81d5a69580a1a325083e2b921aa8f067da83927c0/backports_strenum-1.3.1-py3-none-any.whl", hash = "sha256:cdcfe36dc897e2615dc793b7d3097f54d359918fc448754a517e6f23044ccf83", size = 8304, upload-time = "2023-12-09T14:36:39.905Z" },
 ]
 
 [[package]]
@@ -519,6 +551,7 @@ name = "eramatch-ai-service"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "ai-edge-litert" },
     { name = "aiofiles" },
     { name = "aiohttp" },
     { name = "asyncpg" },
@@ -568,6 +601,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ai-edge-litert", specifier = ">=2.0.0" },
     { name = "aiofiles", specifier = ">=23.0.0" },
     { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "asyncpg", specifier = ">=0.29.0" },

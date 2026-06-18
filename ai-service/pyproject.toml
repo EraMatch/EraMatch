@@ -53,6 +53,8 @@ dependencies = [
     # Task Queue
     "celery[redis]>=5.3.0",
     "redis>=5.0.0",
+    # TFLite runtime for FaceNet 512 face embedding (Google's tflite-runtime successor)
+    "ai-edge-litert>=2.0.0",
     # Proctoring ML (ported from FuturProctor)
     "opencv-contrib-python>=4.10.0",
     "mediapipe>=0.10.20",
