@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import { ChevronLeft, Play, Pause, SkipForward, AlertTriangle, Flag, Mail, X, FileText, User, Video, ChevronDown, Monitor, Camera } from 'lucide-react';
 import { motion } from 'motion/react';
 import { api } from '../../../services/api';
@@ -73,12 +73,11 @@ export function SuspectReviewPage({
   const [groupName, setGroupName] = useState('Unknown Group');
   const [positionTitle, setPositionTitle] = useState('Unknown Position');
   const [currentModule, setCurrentModule] = useState('Assessment');
-  const [dataInitialized, setDataInitialized] = useState(false);
-
   const { data: suspectData, isLoading: loading } = useSuspectReview(candidateId, applicationId);
 
-  // Derive local state from query data when it arrives
-  if (suspectData && !dataInitialized) {
+  // Re-derive local state every time the query response changes (covers stale-cache → fresh update).
+  useEffect(() => {
+    if (!suspectData) return;
     const data = suspectData as SuspectReviewPayload;
     setCandidateName(data.candidate_name || 'Unknown Candidate');
     setGroupName(data.group_name || 'Unknown Group');
@@ -91,22 +90,15 @@ export function SuspectReviewPage({
       return /^https?:\/\//i.test(url) ? url : `${backendBase}${url}`;
     };
 
-    // Prefer compressed URL, fall back to raw
-    setRecordingUrl(
-      resolveUrl(data.screen_recording_compressed_url || data.recording_url)
-    );
-    setWebcamRecordingUrl(
-      resolveUrl(data.webcam_recording_compressed_url || data.webcam_recording_url)
-    );
-
+    setRecordingUrl(resolveUrl(data.screen_recording_compressed_url || data.recording_url));
+    setWebcamRecordingUrl(resolveUrl(data.webcam_recording_compressed_url || data.webcam_recording_url));
     setFlags(data.flags || []);
     setSuspectTimestamps((data.suspicious_timestamps || []).map((v) => Math.max(0, Math.floor(v))));
     setDuration(Math.max(0, data.duration || 0));
     setFlagStatuses(
       (data.flags || []).reduce((acc: Record<string, 'pending' | 'cleared' | 'escalated'>, flag: FlagEvent) => ({ ...acc, [flag.id]: flag.status }), {})
     );
-    setDataInitialized(true);
-  }
+  }, [suspectData]);
 
   const pendingCount = useMemo(
     () => flags.filter((f) => (flagStatuses[f.id] || f.status) === 'pending').length,

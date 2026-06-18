@@ -31,5 +31,6 @@ export function useSuspectReview(candidateId: string | undefined, applicationId?
         queryKey: queryKeys.candidates.suspectReview(candidateId ?? '', applicationId),
         queryFn: () => api.recruiter.getSuspectReview(candidateId!, applicationId),
         enabled: !!candidateId,
+        staleTime: 30 * 1000,
     })
 }
