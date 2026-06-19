@@ -10,6 +10,7 @@ interface TranscriptSegment {
   text: string;
   sentiment: 'positive' | 'neutral' | 'negative';
   flagged: boolean;
+  accordionData?: { score?: number; feedback?: string; criteriaScores?: any[] };
 }
 
 interface IntegrityFlag {
@@ -27,6 +28,76 @@ interface ModuleDetailAIInterviewProps {
   completedDate: string;
   onClose: () => void;
   onMoveToNextStage: () => void;
+  videoQuestionsData?: any[];
+}
+
+// Normalize interview score: backend may send 0-10 or 0-100
+function normalizeInterviewScore(raw: unknown): number | null {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n > 10 ? Math.round(n) / 10 : Math.round(n * 10) / 10;
+}
+
+function interviewScoreColor(score: number) {
+  return score >= 7 ? 'bg-[#dcfce7] text-[#065f46]' : score >= 5 ? 'bg-[#fffbeb] text-[#92400e]' : 'bg-[#fef2f2] text-[#991b1b]';
+}
+
+function InterviewAccordion({ score, feedback, criteriaScores }: { score?: number; feedback?: string; criteriaScores?: any[] }) {
+  const [open, setOpen] = useState(false);
+  const normalized = score != null ? normalizeInterviewScore(score) : null;
+  const hasContent = feedback || (Array.isArray(criteriaScores) && criteriaScores.length > 0);
+  if (!hasContent) return null;
+  return (
+    <div className="mt-2 border border-[#e5e7eb] rounded-[8px] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-[#f5f3ff] hover:bg-[#ede9fe] transition-colors"
+      >
+        <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#5b21b6]">
+          {open ? '▾' : '▸'} Score Breakdown
+        </span>
+        {normalized != null && (
+          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${interviewScoreColor(normalized)}`}>
+            {normalized}/10
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="px-3 py-3 space-y-3 bg-white">
+          {Array.isArray(criteriaScores) && criteriaScores.length > 0 && (
+            <div>
+              <div className="font-['Arimo',sans-serif] text-[10px] font-semibold text-[#6b7280] uppercase tracking-wider mb-2">Criteria</div>
+              <div className="space-y-2">
+                {criteriaScores.map((c: any, i: number) => {
+                  const val = Number(c.score ?? c.value ?? 0);
+                  const maxVal = Number(c.maxScore ?? c.max ?? 10);
+                  const pct = maxVal > 0 ? (val / maxVal) * 100 : 0;
+                  return (
+                    <div key={i}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-['Arimo',sans-serif] text-[12px] text-[#374151]">{c.criteria || c.label || c.name}</span>
+                        <span className="font-['Arimo',sans-serif] text-[12px] font-semibold text-[#111827]">{val}/{maxVal}</span>
+                      </div>
+                      <div className="w-full h-[5px] bg-[#f3f4f6] rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${pct >= 70 ? 'bg-[#10b981]' : pct >= 50 ? 'bg-[#f59e0b]' : 'bg-[#ef4444]'}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {feedback && (
+            <div>
+              <div className="font-['Arimo',sans-serif] text-[10px] font-semibold text-[#6b7280] uppercase tracking-wider mb-1">AI Feedback</div>
+              <p className="font-['Arimo',sans-serif] text-[12px] text-[#374151] leading-relaxed whitespace-pre-wrap">{feedback}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ModuleDetailAIInterview({
@@ -35,14 +106,41 @@ export function ModuleDetailAIInterview({
   score,
   completedDate,
   onClose,
-  onMoveToNextStage
+  onMoveToNextStage,
+  videoQuestionsData,
 }: ModuleDetailAIInterviewProps) {
   const [selectedSegment, setSelectedSegment] = useState<number | null>(null);
   const [showRequestReview, setShowRequestReview] = useState(false);
 
-  const { data: interviewResult, isLoading } = useAIInterviewResult(String(candidateId));
+  const { data: interviewResult } = useAIInterviewResult(
+    videoQuestionsData ? undefined : String(candidateId)
+  );
 
-  const transcript: TranscriptSegment[] = (interviewResult as any)?.transcript || [];
+  const transcript: TranscriptSegment[] = videoQuestionsData
+    ? videoQuestionsData.flatMap((q: any, i: number) => [
+        {
+          id: i * 2,
+          timestamp: q.duration || '',
+          speaker: 'AI' as const,
+          text: q.question || '',
+          sentiment: 'neutral' as const,
+          flagged: false,
+        },
+        {
+          id: i * 2 + 1,
+          timestamp: q.duration || '',
+          speaker: 'Candidate' as const,
+          text: q.transcript || 'No transcript recorded.',
+          sentiment: 'neutral' as const,
+          flagged: false,
+          accordionData: {
+            score: q.score,
+            feedback: q.feedback,
+            criteriaScores: q.criteriaScores,
+          },
+        },
+      ])
+    : ((interviewResult as any)?.transcript || []);
   const integrityFlags: IntegrityFlag[] = (interviewResult as any)?.integrityFlags || [];
   const performanceMetrics: any[] = (interviewResult as any)?.performanceMetrics || [];
 
@@ -71,18 +169,12 @@ export function ModuleDetailAIInterview({
   };
 
   return (
-    <div className="h-full w-full overflow-auto bg-[#f9fafb]">
+    <div className="w-full bg-[#f9fafb]">
       <div className="max-w-[1400px] mx-auto">
         {/* Header */}
         <div className="bg-gradient-to-r from-[#6366f1] to-[#8b5cf6] px-8 py-6 sticky top-0 z-10">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <button
-                onClick={onClose}
-                className="w-[36px] h-[36px] rounded-[8px] bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
-              >
-                <ChevronLeft size={20} className="text-white" />
-              </button>
               <div>
                 <h2 className="text-white text-[20px] mb-1">AI Interview Details</h2>
                 <div className="flex items-center gap-3">
@@ -96,27 +188,19 @@ export function ModuleDetailAIInterview({
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <div className="font-['Arimo',sans-serif] text-[12px] text-white/80 mb-1">
-                  Overall Score
-                </div>
-                <div className="text-white text-[32px] leading-none">
-                  {score}%
-                </div>
+            <div className="text-right">
+              <div className="font-['Arimo',sans-serif] text-[12px] text-white/80 mb-1">
+                Overall Score
               </div>
-              <button
-                onClick={onClose}
-                className="w-[36px] h-[36px] rounded-[8px] bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
-              >
-                <X size={20} className="text-white" />
-              </button>
+              <div className="text-white text-[32px] leading-none">
+                {score}%
+              </div>
             </div>
           </div>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto">
+        <div>
           <div className="grid grid-cols-12 gap-6 p-8">
             {/* Left Column - Transcript */}
             <div className="col-span-8 space-y-4">
@@ -222,24 +306,33 @@ export function ModuleDetailAIInterview({
                           {segment.text}
                         </p>
                         {segment.speaker === 'Candidate' && (
-                          <div className="flex items-center gap-2 mt-2">
-                            {segment.sentiment === 'positive' && (
-                              <div className="flex items-center gap-1">
-                                <ThumbsUp size={12} className="text-[#10b981]" />
-                                <span className="font-['Arimo',sans-serif] text-[11px] text-[#10b981]">
-                                  Confident
-                                </span>
-                              </div>
+                          <>
+                            <div className="flex items-center gap-2 mt-2">
+                              {segment.sentiment === 'positive' && (
+                                <div className="flex items-center gap-1">
+                                  <ThumbsUp size={12} className="text-[#10b981]" />
+                                  <span className="font-['Arimo',sans-serif] text-[11px] text-[#10b981]">
+                                    Confident
+                                  </span>
+                                </div>
+                              )}
+                              {segment.sentiment === 'negative' && (
+                                <div className="flex items-center gap-1">
+                                  <ThumbsDown size={12} className="text-[#ef4444]" />
+                                  <span className="font-['Arimo',sans-serif] text-[11px] text-[#ef4444]">
+                                    Hesitant
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            {segment.accordionData && (
+                              <InterviewAccordion
+                                score={segment.accordionData.score}
+                                feedback={segment.accordionData.feedback}
+                                criteriaScores={segment.accordionData.criteriaScores}
+                              />
                             )}
-                            {segment.sentiment === 'negative' && (
-                              <div className="flex items-center gap-1">
-                                <ThumbsDown size={12} className="text-[#ef4444]" />
-                                <span className="font-['Arimo',sans-serif] text-[11px] text-[#ef4444]">
-                                  Hesitant
-                                </span>
-                              </div>
-                            )}
-                          </div>
+                          </>
                         )}
                       </div>
                     </div>
@@ -361,23 +454,6 @@ export function ModuleDetailAIInterview({
           </div>
         </div>
 
-        {/* Footer Actions */}
-        <div className="border-t border-[#e5e7eb] px-8 py-4 bg-[#f9fafb]">
-          <div className="flex items-center justify-end gap-3">
-            <button
-              onClick={onClose}
-              className="h-[36px] px-[16px] rounded-[8px] border border-[#e5e7eb] bg-white hover:bg-[#f9fafb] font-['Arimo',sans-serif] text-[13px] text-[#111827] transition-colors"
-            >
-              Close
-            </button>
-            <button
-              onClick={onMoveToNextStage}
-              className="h-[36px] px-[16px] rounded-[8px] bg-[#10b981] hover:bg-[#059669] font-['Arimo',sans-serif] text-[13px] text-white transition-colors"
-            >
-              Move to Next Stage
-            </button>
-          </div>
-        </div>
 
         {/* Request Review Modal */}
         {showRequestReview && (

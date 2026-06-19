@@ -143,6 +143,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
   const [githubQuestionTypeFilter, setGithubQuestionTypeFilter] = useState<'all' | 'mcq' | 'essay' | 'coding'>('all');
   const [showModuleDetail, setShowModuleDetail] = useState(false);
   const [showAIInterviewDetail, setShowAIInterviewDetail] = useState(false);
+  const [notesValue, setNotesValue] = useState('');
 
   const [assessmentResetLoading, setAssessmentResetLoading] = useState(false);
   const [assessmentResetMessage, setAssessmentResetMessage] = useState<string | null>(null);
@@ -329,7 +330,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
   baseTabs.push(
     { id: 'notes', label: 'Notes', icon: MessageSquare, locked: false },
-    { id: 'final-report', label: 'Final Report', icon: CheckCircle, locked: !areAllStagesCompleted() }
+    { id: 'final-report', label: 'Final Report', icon: CheckCircle, locked: !areAllStagesCompleted() && !(candidate as any).offerStatus }
   );
 
   const tabs = baseTabs;
@@ -386,7 +387,11 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
     icon: FileCheck,
     completedIcon: CheckCircle,
     inProgressIcon: Activity,
-    status: areAllStagesCompleted() ? pipelineStatus.finalDecision?.status || 'not-started' : 'not-started',
+    status: (candidate as any).offerStatus
+      ? 'completed'
+      : areAllStagesCompleted()
+        ? pipelineStatus.finalDecision?.status || 'not-started'
+        : 'not-started',
     completedAt: pipelineStatus.finalDecision?.completedAt,
   });
 
@@ -607,148 +612,210 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
         </button>
         )}
 
-        {/* Profile Header */}
-        <div className="bg-white rounded-[12px] border border-[#e5e7eb] p-8 mb-6">
-          <div className="flex items-start gap-6">
-              <div className="w-[100px] h-[100px] rounded-[16px] bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] flex items-center justify-center text-white text-[36px]">
-              {String(candidate.name || '').split(' ').map((n: string) => (n ? n[0] : '')).join('')}
-            </div>
-            <div className="flex-1">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h1 className="text-[#111827] mb-1">{candidate.name}</h1>
-                  <p className="font-['Arimo',sans-serif] text-[16px] text-[#6b7280] mb-3">
-                    {candidate.title}
-                  </p>
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <div className="flex items-center gap-2 text-[#6b7280]">
-                      <Mail size={16} />
-                      <span className="font-['Arimo',sans-serif] text-[14px]">{candidate.email}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[#6b7280]">
-                      <Phone size={16} />
-                      <span className="font-['Arimo',sans-serif] text-[14px]">{candidate.phone}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[#6b7280]">
-                      <MapPin size={16} />
-                      <span className="font-['Arimo',sans-serif] text-[14px]">{candidate.location}</span>
+        {/* Profile Header — Hero */}
+        <div className="rounded-[24px] overflow-hidden mb-6 shadow-lg">
+
+          {/* Dark gradient banner */}
+          <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 px-10 py-8">
+            <div className="flex items-start gap-6">
+
+              {/* Avatar */}
+              <div className="w-[120px] h-[120px] rounded-2xl bg-gradient-to-br from-indigo-400 to-purple-600 flex items-center justify-center text-white text-[42px] font-bold font-['Arimo',sans-serif] ring-4 ring-white/20 shadow-xl flex-shrink-0">
+                {String(candidate.name || '').split(' ').map((n: string) => (n ? n[0] : '')).join('')}
+              </div>
+
+              {/* Name / meta / actions */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-4 mb-4">
+                  <div>
+                    <h1 className="text-white text-[28px] font-bold font-['Arimo',sans-serif] mb-1 leading-tight">
+                      {candidate.name}
+                    </h1>
+                    <p className="text-indigo-200 text-[15px] font-['Arimo',sans-serif] mb-3">
+                      {candidate.title}
+                    </p>
+                    <div className="flex items-center gap-5 flex-wrap">
+                      <span className="flex items-center gap-2 text-slate-300 text-[13px] font-['Arimo',sans-serif]">
+                        <Mail size={14} className="text-indigo-400" />
+                        {candidate.email}
+                      </span>
+                      <span className="flex items-center gap-2 text-slate-300 text-[13px] font-['Arimo',sans-serif]">
+                        <Phone size={14} className="text-indigo-400" />
+                        {candidate.phone}
+                      </span>
+                      <span className="flex items-center gap-2 text-slate-300 text-[13px] font-['Arimo',sans-serif]">
+                        <MapPin size={14} className="text-indigo-400" />
+                        {candidate.location}
+                      </span>
                     </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      const resumeUrl = resolveBackendMediaUrl(candidate.resumeUrl);
-                      if (resumeUrl) {
-                        window.open(resumeUrl, '_blank');
-                      } else {
-                        alert("No resume available for download.");
-                      }
-                    }}
-                    className="flex items-center gap-2 h-[40px] px-[20px] rounded-[8px] border border-[#e5e7eb] hover:bg-[#f9fafb] transition-colors"
-                  >
-                    <Download size={16} className="text-[#6b7280]" />
-                    <span className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
+
+                  {/* Action buttons */}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => {
+                        const resumeUrl = resolveBackendMediaUrl(candidate.resumeUrl);
+                        if (resumeUrl) {
+                          window.open(resumeUrl, '_blank');
+                        } else {
+                          alert("No resume available for download.");
+                        }
+                      }}
+                      className="flex items-center gap-2 h-[38px] px-4 rounded-xl border border-white/30 text-white text-[13px] font-['Arimo',sans-serif] hover:bg-white/10 transition-colors"
+                    >
+                      <Download size={15} />
                       Download Resume
-                    </span>
-                  </button>
+                    </button>
+                    {candidate.github_url && (
+                      <a
+                        href={candidate.github_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-2 h-[38px] px-4 rounded-xl border border-white/30 text-white text-[13px] font-['Arimo',sans-serif] hover:bg-white/10 transition-colors"
+                      >
+                        <Github size={15} />
+                        GitHub
+                      </a>
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              {assessmentResetMessage && (
-                <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{assessmentResetMessage}</p>
-                </div>
-              )}
-              {assessmentResetError && (
-                <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{assessmentResetError}</p>
-                </div>
-              )}
-              {githubReanalysisMessage && (
-                <div className="mb-4 rounded-[8px] border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2">
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#166534]">{githubReanalysisMessage}</p>
-                </div>
-              )}
-              {githubReanalysisError && (
-                <div className="mb-4 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
-                  <p className="font-['Arimo',sans-serif] text-[12px] text-[#b91c1c]">{githubReanalysisError}</p>
-                </div>
-              )}
-
-              {/* Scores */}
-              <div className="grid grid-cols-4 gap-4">
-                <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                  <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Overall Score</div>
-                  <div className="text-[24px] text-[#111827]">{formatScore(displayOverallScore, 1)}</div>
-                </div>
-                
-                {activeFlow.includes('assessment') && (
-                  <div
-                    onClick={() => handleStageClick('assessment')}
-                    className={`rounded-[8px] p-4 cursor-pointer transition-all hover:shadow-md active:scale-95 ${tabs.find(t => t.id === 'assessment')?.locked ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'bg-[#f4f7ff] hover:bg-[#ebf0ff] border border-indigo-100'
-                      }`}
-                  >
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
-                      Assessment
-                      {!tabs.find(t => t.id === 'assessment')?.locked && <Eye size={12} className="text-indigo-400" />}
-                    </div>
-                    <div className="text-[24px] text-[#111827]">{formatScore(displayAssessmentScore, 1)}</div>
+                {/* Notification banners */}
+                {assessmentResetMessage && (
+                  <div className="mb-3 rounded-xl border border-white/20 bg-white/10 px-3 py-2">
+                    <p className="font-['Arimo',sans-serif] text-[12px] text-white">{assessmentResetMessage}</p>
                   </div>
                 )}
-                
-                {(activeFlow.includes('ai_interview') || activeFlow.includes('ai-interview') || activeFlow.includes('aiInterview')) && (
-                  <div
-                    onClick={() => handleStageClick('aiInterview')}
-                    className={`rounded-[8px] p-4 cursor-pointer transition-all hover:shadow-md active:scale-95 ${tabs.find(t => t.id === 'interview')?.locked ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'bg-[#f4f7ff] hover:bg-[#ebf0ff] border border-indigo-100'
-                      }`}
-                  >
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
-                      AI Interview
-                      {!tabs.find(t => t.id === 'interview')?.locked && <Eye size={12} className="text-indigo-400" />}
-                    </div>
-                    <div className="text-[24px] text-[#111827]">{formatScore(displayAIInterviewScore, 1)}</div>
+                {assessmentResetError && (
+                  <div className="mb-3 rounded-xl border border-red-400/40 bg-red-500/20 px-3 py-2">
+                    <p className="font-['Arimo',sans-serif] text-[12px] text-red-300">{assessmentResetError}</p>
                   </div>
                 )}
-                
-                {(activeFlow.includes('live_interview') || activeFlow.includes('live-interview') || activeFlow.includes('liveInterview')) && (
-                  <div
-                    onClick={() => handleStageClick('liveInterview')}
-                    className={`rounded-[8px] p-4 cursor-pointer transition-all hover:shadow-md active:scale-95 ${tabs.find(t => t.id === 'live-interview')?.locked ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'bg-[#f4f7ff] hover:bg-[#ebf0ff] border border-indigo-100'
-                      }`}
-                  >
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
-                      Live Interview
-                      {!tabs.find(t => t.id === 'live-interview')?.locked && <Eye size={12} className="text-indigo-400" />}
-                    </div>
-                    <div className="text-[24px] text-[#111827]">
-                      {pipelineStatus.liveInterview?.status === 'completed' ? 'Done' : 'Pending'}
-                    </div>
+                {githubReanalysisMessage && (
+                  <div className="mb-3 rounded-xl border border-white/20 bg-white/10 px-3 py-2">
+                    <p className="font-['Arimo',sans-serif] text-[12px] text-white">{githubReanalysisMessage}</p>
                   </div>
                 )}
-                
-                <div
-                  onClick={() => handleStageClick('github')}
-                  className="bg-[#f9fafb] rounded-[8px] p-4 cursor-pointer transition-all hover:bg-[#f3f4f6] hover:shadow-md active:scale-95 border border-transparent hover:border-gray-200"
-                >
-                  <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1 flex items-center justify-between">
-                    GitHub
-                    <Eye size={12} className="text-gray-400" />
+                {githubReanalysisError && (
+                  <div className="mb-3 rounded-xl border border-red-400/40 bg-red-500/20 px-3 py-2">
+                    <p className="font-['Arimo',sans-serif] text-[12px] text-red-300">{githubReanalysisError}</p>
                   </div>
-                  <div className="text-[24px] text-[#111827]">{showGithubProfileLock ? 'Pending' : formatScore(displayGithubScore, 1)}</div>
-                </div>
-              </div>
+                )}
 
-              {candidate.antiCheating && (
-                <div className="mt-4 flex items-center gap-2 px-[16px] py-[10px] bg-[#fef2f2] border border-[#fecaca] rounded-[8px]">
-                  <AlertTriangle size={18} className="text-[#ef4444]" />
-                  <span className="font-['Arimo',sans-serif] text-[14px] text-[#ef4444]">
+                {/* Anti-cheating badge */}
+                {candidate.antiCheating && (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-500/20 border border-red-400/40 text-red-300 text-[12px] font-['Arimo',sans-serif]">
+                    <AlertTriangle size={13} />
                     Anti-cheating flag detected
-                  </span>
-                </div>
-              )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
+
+          {/* Score strip — attached below the banner */}
+          {(() => {
+            const hasAssessment = activeFlow.includes('assessment');
+            const hasAI = activeFlow.includes('ai_interview') || activeFlow.includes('ai-interview') || activeFlow.includes('aiInterview');
+            const hasLive = activeFlow.includes('live_interview') || activeFlow.includes('live-interview') || activeFlow.includes('liveInterview');
+            const colCount = 1 + (hasAssessment ? 1 : 0) + (hasAI ? 1 : 0) + (hasLive ? 1 : 0) + 1;
+            const assessmentLocked = !!tabs.find(t => t.id === 'assessment')?.locked;
+            const aiLocked = !!tabs.find(t => t.id === 'interview')?.locked;
+            const liveLocked = !!tabs.find(t => t.id === 'live-interview')?.locked;
+            const assessScore = Number(displayAssessmentScore);
+            const overallScore = Number(displayOverallScore);
+
+            return (
+              <div
+                className="bg-white border-x border-b border-slate-200 rounded-b-[24px] grid divide-x divide-slate-100"
+                style={{ gridTemplateColumns: `repeat(${colCount}, minmax(0,1fr))` }}
+              >
+                {/* Overall Match */}
+                <div className="px-6 py-5 text-center">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1 font-['Arimo',sans-serif]">
+                    Overall Match
+                  </div>
+                  <div className="text-[32px] font-bold text-indigo-600 leading-none font-['Arimo',sans-serif]">
+                    {formatScore(displayOverallScore, 0)}%
+                  </div>
+                  <div className="mt-2 h-1 rounded-full bg-indigo-100 mx-auto w-14 overflow-hidden">
+                    <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${Math.min(100, overallScore)}%` }} />
+                  </div>
+                </div>
+
+                {/* Assessment */}
+                {hasAssessment && (
+                  <button
+                    onClick={() => !assessmentLocked && handleStageClick('assessment')}
+                    disabled={assessmentLocked}
+                    className="px-6 py-5 text-center transition-colors hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1 font-['Arimo',sans-serif]">
+                      Assessment
+                    </div>
+                    <div className="text-[32px] font-bold text-blue-600 leading-none font-['Arimo',sans-serif]">
+                      {formatScore(displayAssessmentScore, 0)}%
+                    </div>
+                    <div className="mt-2 h-1 rounded-full bg-blue-100 mx-auto w-14 overflow-hidden">
+                      <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, assessScore)}%` }} />
+                    </div>
+                  </button>
+                )}
+
+                {/* AI Interview */}
+                {hasAI && (
+                  <button
+                    onClick={() => !aiLocked && handleStageClick('aiInterview')}
+                    disabled={aiLocked}
+                    className="px-6 py-5 text-center transition-colors hover:bg-purple-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1 font-['Arimo',sans-serif]">
+                      AI Interview
+                    </div>
+                    <div className="text-[32px] font-bold text-purple-600 leading-none font-['Arimo',sans-serif]">
+                      {formatInterviewScore(displayAIInterviewScore)}<span className="text-[18px] text-purple-400">/10</span>
+                    </div>
+                    <div className="mt-2 h-1 rounded-full bg-purple-100 mx-auto w-14 overflow-hidden">
+                      <div className="h-full bg-purple-500 rounded-full" style={{ width: `${Math.min(100, Number(formatInterviewScore(displayAIInterviewScore)) * 10)}%` }} />
+                    </div>
+                  </button>
+                )}
+
+                {/* Live Interview */}
+                {hasLive && (
+                  <button
+                    onClick={() => !liveLocked && handleStageClick('liveInterview')}
+                    disabled={liveLocked}
+                    className="px-6 py-5 text-center transition-colors hover:bg-amber-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1 font-['Arimo',sans-serif]">
+                      Live Interview
+                    </div>
+                    <div className="text-[32px] font-bold text-amber-600 leading-none font-['Arimo',sans-serif]">
+                      {pipelineStatus.liveInterview?.status === 'completed' ? 'Done' : 'Pending'}
+                    </div>
+                  </button>
+                )}
+
+                {/* GitHub */}
+                <button
+                  onClick={() => handleStageClick('github')}
+                  className="px-6 py-5 text-center transition-colors hover:bg-emerald-50"
+                >
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1 font-['Arimo',sans-serif]">
+                    GitHub
+                  </div>
+                  <div className="text-[32px] font-bold text-emerald-600 leading-none font-['Arimo',sans-serif]">
+                    {showGithubProfileLock ? '—' : formatScore(displayGithubScore, 0)}
+                  </div>
+                  <div className="mt-2 h-1 rounded-full bg-emerald-100 mx-auto w-14 overflow-hidden">
+                    <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, Number(displayGithubScore))}%` }} />
+                  </div>
+                </button>
+              </div>
+            );
+          })()}
+
         </div>
 
         {/* Offer Status Banner */}
@@ -817,33 +884,40 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
         )}
 
         {/* Tabs */}
-        <div className="bg-white rounded-[12px] border border-[#e5e7eb] overflow-hidden">
-          <div className="border-b border-[#e5e7eb] px-6">
-            <div className="flex gap-1 overflow-x-auto pb-1">
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => {
-                      if (tab.locked) return;
-                      setActiveTab(tab.id as TabType);
-                    }}
-                    title={tab.locked ? 'This stage has not been reached yet' : undefined}
-                    className={`flex items-center gap-2 px-[20px] py-[14px] font-['Arimo',sans-serif] text-[14px] border-b-2 transition-colors whitespace-nowrap ${tab.locked
-                      ? 'border-transparent text-[#d1d5db] cursor-not-allowed'
-                      : activeTab === tab.id
-                        ? 'border-[#6366f1] text-[#6366f1]'
-                        : 'border-transparent text-[#6b7280] hover:text-[#111827]'
-                      }`}
-                  >
-                    {tab.locked ? <Lock size={14} className="text-[#d1d5db]" /> : <Icon size={16} />}
-                    {tab.label}
-                    {tab.locked && <span className="text-[10px] bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded ml-1">Pending</span>}
-                  </button>
-                );
-              })}
-            </div>
+        <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-100">
+          <div className="px-6 py-3 flex items-center gap-1.5 overflow-x-auto border-b border-slate-100">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    if (tab.locked) return;
+                    setActiveTab(tab.id as TabType);
+                  }}
+                  title={tab.locked ? 'This stage has not been reached yet' : undefined}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-['Arimo',sans-serif] whitespace-nowrap transition-all ${
+                    tab.locked
+                      ? 'text-slate-300 cursor-not-allowed'
+                      : isActive
+                        ? 'bg-indigo-50 text-indigo-700 font-semibold ring-1 ring-indigo-200'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                  }`}
+                >
+                  {tab.locked
+                    ? <Lock size={13} className="text-slate-300" />
+                    : <Icon size={14} className={isActive ? 'text-indigo-600' : 'text-slate-400'} />
+                  }
+                  {tab.label}
+                  {tab.locked && (
+                    <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400">
+                      Pending
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {/* Tab Content */}
@@ -875,42 +949,46 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     ) : (
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                          {/* Row 1 */}
-                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
-                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Final Pre-Score</p>
-                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.pre_score_final ?? scoreBreakdown.match_score, 1)}</p>
+                          {/* Final Pre-Score — indigo */}
+                          <div className="rounded-2xl bg-white ring-1 ring-slate-100 shadow-sm p-4">
+                            <p className="font-['Arimo',sans-serif] text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Final Pre-Score</p>
+                            <p className="font-['Arimo',sans-serif] text-[24px] font-bold text-indigo-600">{formatScore(scoreBreakdown.pre_score_final ?? scoreBreakdown.match_score, 0)}%</p>
                           </div>
-                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
-                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Semantic Score</p>
+                          {/* Semantic Score — sky */}
+                          <div className="rounded-2xl bg-white ring-1 ring-slate-100 shadow-sm p-4">
+                            <p className="font-['Arimo',sans-serif] text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Semantic Score</p>
                             {scoreBreakdown.semantic_score != null
-                              ? <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.semantic_score, 1)}</p>
-                              : <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
+                              ? <p className="font-['Arimo',sans-serif] text-[24px] font-bold text-sky-600">{formatScore(scoreBreakdown.semantic_score, 0)}%</p>
+                              : <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
                             }
                           </div>
-                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
-                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Skills + Experience</p>
-                            <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.skills_experience_score, 1)}</p>
+                          {/* Skills + Experience — violet */}
+                          <div className="rounded-2xl bg-white ring-1 ring-slate-100 shadow-sm p-4">
+                            <p className="font-['Arimo',sans-serif] text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Skills + Experience</p>
+                            <p className="font-['Arimo',sans-serif] text-[24px] font-bold text-violet-600">{formatScore(scoreBreakdown.skills_experience_score, 0)}%</p>
                           </div>
-                          {/* Row 2 */}
-                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
-                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">QAG Score</p>
+                          {/* QAG Score — amber */}
+                          <div className="rounded-2xl bg-white ring-1 ring-slate-100 shadow-sm p-4">
+                            <p className="font-['Arimo',sans-serif] text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">QAG Score</p>
                             {scoreBreakdown.qag_score != null
-                              ? <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.qag_score, 1)}</p>
-                              : <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
+                              ? <p className="font-['Arimo',sans-serif] text-[24px] font-bold text-amber-600">{formatScore(scoreBreakdown.qag_score, 0)}%</p>
+                              : <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
                             }
                           </div>
-                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
-                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">Keyword Coverage</p>
+                          {/* Keyword Coverage — teal */}
+                          <div className="rounded-2xl bg-white ring-1 ring-slate-100 shadow-sm p-4">
+                            <p className="font-['Arimo',sans-serif] text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Keyword Coverage</p>
                             {scoreBreakdown.keyword_match_score != null
-                              ? <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.keyword_match_score, 1)}</p>
-                              : <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
+                              ? <p className="font-['Arimo',sans-serif] text-[24px] font-bold text-teal-600">{formatScore(scoreBreakdown.keyword_match_score, 0)}%</p>
+                              : <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
                             }
                           </div>
-                          <div className="bg-[#f9fafb] rounded-[8px] p-3">
-                            <p className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280]">GitHub Boost</p>
-                            {scoreBreakdown.optional_profile_boost != null
-                              ? <p className="font-['Arimo',sans-serif] text-[18px] text-[#111827]">{formatScore(scoreBreakdown.optional_profile_boost, 1)}/10</p>
-                              : <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
+                          {/* GitHub Boost — emerald (keep /10 unit) */}
+                          <div className="rounded-2xl bg-white ring-1 ring-slate-100 shadow-sm p-4">
+                            <p className="font-['Arimo',sans-serif] text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">GitHub Boost</p>
+                            {scoreBreakdown.optional_profile_boost != null && Number(scoreBreakdown.optional_profile_boost) > 0
+                              ? <p className="font-['Arimo',sans-serif] text-[24px] font-bold text-emerald-600">{formatScore(scoreBreakdown.optional_profile_boost, 1)}<span className="text-[16px] text-emerald-400">/10</span></p>
+                              : <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-200 mt-1">Pending</span>
                             }
                           </div>
                         </div>
@@ -946,7 +1024,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     <div className="bg-white border border-[#e5e7eb] rounded-xl p-6">
                       <div className="relative">
                         {/* Progress Line */}
-                        <div className="absolute top-6 left-0 right-0 h-1 bg-gray-200" style={{ zIndex: 0 }}>
+                        <div className="absolute top-7 left-0 right-0 h-1 bg-slate-100" style={{ zIndex: 0 }}>
                           <div
                             className="h-full bg-gradient-to-r from-indigo-500 to-emerald-500 transition-all duration-500"
                             style={{ width: `${progressPercentage}%` }}
@@ -965,23 +1043,23 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                                 onClick={() => isClickable && handleStageClick(stage.id)}
                                 className={`flex flex-col items-center group ${isClickable ? 'cursor-pointer' : 'cursor-default'}`}
                               >
-                                <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 border-4 transition-all duration-300 ${stage.status === 'completed'
-                                    ? 'bg-emerald-500 border-emerald-200 group-hover:scale-110 group-hover:shadow-lg'
+                                <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-2 border-4 transition-all duration-300 ${stage.status === 'completed'
+                                    ? 'bg-emerald-500 border-emerald-200 group-hover:scale-110 group-hover:shadow-lg group-hover:shadow-emerald-100'
                                     : stage.status === 'in-progress'
-                                      ? 'bg-indigo-500 border-indigo-200 group-hover:scale-110 group-hover:shadow-lg'
-                                      : 'bg-gray-300 border-gray-200'
+                                      ? 'bg-indigo-500 border-indigo-200 ring-4 ring-indigo-100 group-hover:scale-110 group-hover:shadow-lg'
+                                      : 'bg-slate-200 border-slate-100'
                                   }`}>
-                                  <Icon size={24} className={stage.status === 'completed' ? 'text-white' : stage.status === 'in-progress' ? 'text-white animate-pulse' : 'text-gray-500'} />
+                                  <Icon size={26} className={stage.status === 'completed' ? 'text-white' : stage.status === 'in-progress' ? 'text-white animate-pulse' : 'text-slate-400'} />
                                 </div>
                                 <div className="text-center">
-                                  <div className={`font-['Arimo',sans-serif] text-[12px] font-semibold mb-1 transition-colors ${isClickable ? 'text-[#111827] group-hover:text-indigo-600' : 'text-[#9ca3af]'
+                                  <div className={`font-['Arimo',sans-serif] text-[12px] font-semibold mb-1 transition-colors ${isClickable ? 'text-slate-800 group-hover:text-indigo-600' : 'text-slate-400'
                                     }`}>
                                     {stage.label}
                                   </div>
                                   {stage.completedAt && (
-                                    <div className="font-['Arimo',sans-serif] text-[10px] text-[#6b7280]">
+                                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 font-['Arimo',sans-serif]">
                                       {stage.completedAt}
-                                    </div>
+                                    </span>
                                   )}
                                   {stage.status === 'in-progress' && (
                                     <div className="font-['Arimo',sans-serif] text-[10px] text-indigo-600 font-semibold">
@@ -1004,7 +1082,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     {candidate.skills.map((skill: string, i: number) => (
                       <span
                         key={i}
-                        className="px-[16px] py-[8px] bg-[#ede9fe] text-[#6366f1] rounded-[8px] font-['Arimo',sans-serif] text-[14px]"
+                        className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-full font-['Arimo',sans-serif] text-[13px] font-medium ring-1 ring-indigo-100 hover:bg-indigo-100 transition-colors"
                       >
                         {skill}
                       </span>
@@ -1014,18 +1092,23 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
                 <div>
                   <h3 className="text-[#111827] mb-4">Work Experience</h3>
-                  <div className="space-y-4">
+                  <div className="space-y-1">
                     {candidate.workHistory.map((job: any, i: number) => (
-                      <div key={i} className="border-l-2 border-[#6366f1] pl-4">
-                        <div className="font-['Arimo',sans-serif] text-[16px] text-[#111827] mb-1">
-                          {job.title}
+                      <div key={i}>
+                        <div className="border-l-4 border-indigo-200 pl-5 py-1">
+                          <div className="font-['Arimo',sans-serif] text-[16px] font-semibold text-slate-800 mb-1">
+                            {job.title}
+                          </div>
+                          <div className="font-['Arimo',sans-serif] text-[13px] text-slate-500 mb-2">
+                            {job.company} • {job.duration}
+                          </div>
+                          <p className="font-['Arimo',sans-serif] text-[14px] text-slate-600">
+                            {job.description}
+                          </p>
                         </div>
-                        <div className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280] mb-2">
-                          {job.company} • {job.duration}
-                        </div>
-                        <p className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
-                          {job.description}
-                        </p>
+                        {i < candidate.workHistory.length - 1 && (
+                          <div className="h-px bg-slate-100 my-4" />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1033,15 +1116,20 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
 
                 <div>
                   <h3 className="text-[#111827] mb-4">Education</h3>
-                  <div className="space-y-3">
+                  <div className="space-y-1">
                     {candidate.education.map((edu: any, i: number) => (
                       <div key={i}>
-                        <div className="font-['Arimo',sans-serif] text-[15px] text-[#111827]">
-                          {edu.degree}
+                        <div className="border-l-4 border-indigo-100 pl-5 py-1">
+                          <div className="font-['Arimo',sans-serif] text-[15px] font-semibold text-slate-800">
+                            {edu.degree}
+                          </div>
+                          <div className="font-['Arimo',sans-serif] text-[13px] text-slate-500">
+                            {edu.school} • {edu.year}
+                          </div>
                         </div>
-                        <div className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                          {edu.school} • {edu.year}
-                        </div>
+                        {i < candidate.education.length - 1 && (
+                          <div className="h-px bg-slate-100 my-3" />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1552,98 +1640,17 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
             )}
 
             {activeTab === 'assessment' && (
-              <div className="space-y-6">
-                {/* Score Card */}
-                <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl p-6">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <h4 className="text-indigo-900 font-semibold mb-2">Assessment Score</h4>
-                      <p className="text-sm text-indigo-700">
-                        {assessmentData.questionsCorrect} out of {assessmentData.questionsTotal} questions correct
-                      </p>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-5xl font-bold text-indigo-600 mb-1">{candidate.scores.assessment}</div>
-                      <div className="text-sm text-indigo-700">/ 100</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Completed</div>
-                    <div className="font-['Arimo',sans-serif] text-[16px] text-[#111827]">
-                      {assessmentData.completedAt}
-                    </div>
-                  </div>
-                  <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Duration</div>
-                    <div className="font-['Arimo',sans-serif] text-[16px] text-[#111827]">
-                      {assessmentData.duration}
-                    </div>
-                  </div>
-                  <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Score</div>
-                    <div className="font-['Arimo',sans-serif] text-[16px] text-[#111827]">
-                      {assessmentData.questionsCorrect}/{assessmentData.questionsTotal}
-                    </div>
-                  </div>
-                </div>
-
-                {/* View Details Button */}
-                <Button
-                  onClick={() => setShowAssessmentDetails(true)}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-6 flex items-center justify-center gap-2"
-                >
-                  <FileCheck size={20} />
-                  View Questions & Answers
-                </Button>
-
-                <div>
-                  <h3 className="text-[#111827] mb-4">Topic Scores</h3>
-                  <div className="space-y-3">
-                    {assessmentData.topicScores.map((topic: any, i: number) => (
-                      <div key={i}>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-['Arimo',sans-serif] text-[14px] text-[#111827]">
-                            {topic.topic}
-                          </span>
-                          <span className="font-['Arimo',sans-serif] text-[14px] text-[#6b7280]">
-                            {topic.score}%
-                          </span>
-                        </div>
-                        <div className="w-full h-[8px] bg-[#e5e7eb] rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-[#6366f1] rounded-full"
-                            style={{ width: `${topic.score}%` }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Per-question analysis — Phase 3 */}
-                {!showModuleDetail ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowModuleDetail(true)}
-                    className="w-full rounded-[10px] border border-dashed border-indigo-200 py-3 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
-                  >
-                    View Per-Question Analysis
-                  </button>
-                ) : (
-                  <div className="rounded-[12px] border border-gray-200 overflow-hidden">
-                    <ModuleDetailAssessment
-                      candidateId={Number(candidateId)}
-                      candidateName={(candidate as any)?.name ?? ''}
-                      score={(candidate as any)?.scores?.assessment ?? 0}
-                      completedDate={(candidate as any)?.pipelineStatus?.assessment?.completedAt ?? '—'}
-                      onClose={() => setShowModuleDetail(false)}
-                      onMoveToNextStage={() => {}}
-                    />
-                  </div>
-                )}
+              <div className="-mx-8 -mb-8">
+                <ModuleDetailAssessment
+                  candidateId={Number(candidateId)}
+                  candidateName={(candidate as any)?.name ?? ''}
+                  score={(candidate as any)?.scores?.assessment ?? 0}
+                  completedDate={(candidate as any)?.pipelineStatus?.assessment?.completedAt ?? '—'}
+                  onClose={() => {}}
+                  onMoveToNextStage={() => {}}
+                  questionsData={assessmentQuestions}
+                  assessmentStats={assessmentData}
+                />
               </div>
             )}
 
@@ -1652,95 +1659,16 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
             )}
 
             {activeTab === 'interview' && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Completed</div>
-                    <div className="font-['Arimo',sans-serif] text-[16px] text-[#111827]">
-                      {interviewData.completedAt}
-                    </div>
-                  </div>
-                  <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                    <div className="font-['Arimo',sans-serif] text-[12px] text-[#6b7280] mb-1">Duration</div>
-                    <div className="font-['Arimo',sans-serif] text-[16px] text-[#111827]">
-                      {interviewData.duration}
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-[#111827] mb-4">Video Responses</h3>
-                  <div className="space-y-4">
-                    {videoInterviewQuestions.map((q: any, i: number) => (
-                      <div key={i} className="bg-white border border-[#e5e7eb] rounded-[12px] p-5">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex-1">
-                            <div className="font-['Arimo',sans-serif] text-[14px] text-[#111827] mb-2">
-                              Q{i + 1}: {q.question}
-                            </div>
-                            <div className="flex items-center gap-4 text-sm text-[#6b7280]">
-                              <span className="flex items-center gap-1">
-                                <Clock size={14} />
-                                {q.duration}
-                              </span>
-                              <span className="font-['Arimo',sans-serif] text-[#6366f1]">
-                                Score: {q.score}/10
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <Button
-                            onClick={() => setShowVideoResponse(q.id)}
-                            className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-3 flex items-center justify-center gap-2"
-                          >
-                            <Play size={16} />
-                            View Video Response
-                          </Button>
-                          <Button
-                            onClick={() => setShowVideoTranscript(q.id)}
-                            variant="outline"
-                            className="flex-1 border-indigo-600 text-indigo-600 hover:bg-indigo-50 rounded-lg py-3 flex items-center justify-center gap-2"
-                          >
-                            <MessageCircle size={16} />
-                            View Transcript
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-[#111827] mb-3">Overall Feedback</h3>
-                  <div className="bg-[#f9fafb] rounded-[8px] p-4">
-                    <p className="font-['Arimo',sans-serif] text-[14px] text-[#374151]">
-                      {interviewData.overallFeedback}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Interview analysis — Phase 3 */}
-                {!showAIInterviewDetail ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowAIInterviewDetail(true)}
-                    className="w-full rounded-[10px] border border-dashed border-indigo-200 py-3 text-[13px] font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
-                  >
-                    View Interview Analysis
-                  </button>
-                ) : (
-                  <div className="rounded-[12px] border border-gray-200 overflow-hidden">
-                    <ModuleDetailAIInterview
-                      candidateId={Number(candidateId)}
-                      candidateName={(candidate as any)?.name ?? ''}
-                      score={(candidate as any)?.scores?.aiInterview ?? 0}
-                      completedDate={(candidate as any)?.pipelineStatus?.aiInterview?.completedAt ?? '—'}
-                      onClose={() => setShowAIInterviewDetail(false)}
-                      onMoveToNextStage={() => {}}
-                    />
-                  </div>
-                )}
+              <div className="-mx-8 -mb-8">
+                <ModuleDetailAIInterview
+                  candidateId={Number(candidateId)}
+                  candidateName={(candidate as any)?.name ?? ''}
+                  score={(candidate as any)?.scores?.aiInterview ?? 0}
+                  completedDate={(candidate as any)?.pipelineStatus?.aiInterview?.completedAt ?? '—'}
+                  onClose={() => {}}
+                  onMoveToNextStage={() => {}}
+                  videoQuestionsData={videoInterviewQuestions}
+                />
               </div>
             )}
 
@@ -1762,23 +1690,31 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
             )}
 
             {activeTab === 'notes' && (
-              <div>
-                <h3 className="text-[#111827] mb-4">Recruiter Notes</h3>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[16px] font-bold text-slate-800 font-['Arimo',sans-serif]">Recruiter Notes</h3>
+                  <span className="text-[12px] text-slate-400 font-['Arimo',sans-serif]">Private to your team</span>
+                </div>
                 <textarea
-                  placeholder="Add notes about this candidate..."
+                  value={notesValue}
+                  onChange={(e) => setNotesValue(e.target.value)}
+                  placeholder="Add private notes about this candidate..."
                   rows={10}
-                  className="w-full px-[16px] py-[12px] rounded-[8px] border border-[#e5e7eb] font-['Arimo',sans-serif] text-[14px] resize-none focus:outline-none focus:ring-2 focus:ring-[#6366f1] focus:border-transparent"
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 font-['Arimo',sans-serif] text-[14px] text-slate-700 resize-none bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder:text-slate-300 transition-shadow"
                 />
-                <button className="mt-4 h-[40px] px-[24px] rounded-[8px] bg-[#6366f1] hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[14px] text-white transition-colors">
-                  Save Notes
-                </button>
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] text-slate-400 font-['Arimo',sans-serif]">{notesValue.length} characters</span>
+                  <button className="h-[40px] px-6 rounded-xl bg-indigo-600 hover:bg-[#5558e3] font-['Arimo',sans-serif] text-[14px] text-white font-medium transition-colors shadow-sm">
+                    Save Notes
+                  </button>
+                </div>
               </div>
             )}
 
             {activeTab === 'final-report' && (
               <div className="space-y-6">
-                {pipelineStatus.finalDecision?.status !== 'completed' ? (
-                  /* ── Pipeline not finished yet — show pending state ── */
+                {pipelineStatus.finalDecision?.status !== 'completed' && !candidate.offerStatus ? (
+                  /* ── No decision yet — show pending state ── */
                   <div className="flex flex-col items-center justify-center py-16 text-center">
                     <div className="w-20 h-20 rounded-full bg-amber-100 flex items-center justify-center mb-6">
                       <Clock size={40} className="text-amber-500" />
@@ -1980,7 +1916,7 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
                     <div className="bg-white border border-[#e5e7eb] rounded-2xl p-6">
                       <h3 className="text-[#111827] mb-3">Final Recommendation</h3>
                       <p className="text-sm text-gray-700 leading-relaxed mb-4">
-                        This recommendation is generated from current pipeline outcomes and score signals for {candidate.name}. Pre-score is {formatScore(scoreBreakdown?.pre_score_final ?? scoreBreakdown?.match_score, 1)}, assessment is {formatScore(candidate.scores.assessment, 1)}, AI interview is {formatScore(candidate.scores.aiInterview, 1)}, and GitHub is {showGithubProfileLock ? 'pending' : formatScore(displayGithubScore, 1)}.
+                        This recommendation is generated from current pipeline outcomes and score signals for {candidate.name}. Pre-score is {formatScore(scoreBreakdown?.pre_score_final ?? scoreBreakdown?.match_score, 0)}%, assessment is {formatScore(candidate.scores.assessment, 0)}%, AI interview is {formatInterviewScore(candidate.scores.aiInterview)}/10, and GitHub is {showGithubProfileLock ? 'pending' : formatScore(displayGithubScore, 0)}.
                       </p>
                       {recommendationReasons.length > 0 && (
                         <div className="mb-4">
@@ -2008,225 +1944,6 @@ export function CandidateProfile({ candidateId, applicationId, onBack, showFinal
           </div>
         </div>
 
-        {/* Assessment Details Modal */}
-        <Dialog open={showAssessmentDetails} onOpenChange={setShowAssessmentDetails}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="text-2xl">Assessment Questions & Answers</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-6 mt-4">
-              {assessmentQuestions.map((q: any, i: number) => (
-                <div key={q.id} className="border border-[#e5e7eb] rounded-lg p-5">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium">
-                          Q{i + 1}
-                        </span>
-                        <span className="text-sm text-gray-500">{q.topic || q.questionType || 'Assessment'}</span>
-                      </div>
-                      <h4 className="text-lg font-medium text-gray-900 mb-3">{q.question}</h4>
-                    </div>
-                    {q.isCorrect === true ? (
-                      <CheckCircle size={24} className="text-emerald-600 flex-shrink-0" />
-                    ) : q.isCorrect === false && (q.questionType || '').toLowerCase() !== 'essay' ? (
-                      <XCircle size={24} className="text-red-600 flex-shrink-0" />
-                    ) : null}
-                  </div>
-
-                  {(() => {
-                    const qType = (q.questionType || '').toLowerCase();
-                    const raw = q.answer;
-
-                    // Render simple markdown: **bold**, \n\n paragraphs
-                    const renderMarkdown = (text: string) => {
-                      const paragraphs = text.split(/\n\n+/);
-                      return (
-                        <div className="space-y-2">
-                          {paragraphs.map((para, pi) => {
-                            const parts = para.split(/\*\*([^*]+)\*\*/g);
-                            return (
-                              <p key={pi} className="text-sm leading-relaxed">
-                                {parts.map((part, ji) =>
-                                  ji % 2 === 1 ? <strong key={ji}>{part}</strong> : part
-                                )}
-                              </p>
-                            );
-                          })}
-                        </div>
-                      );
-                    };
-
-                    // Resolve selected index (MCQ)
-                    const selectedIdx = raw != null && typeof raw === 'object'
-                      ? (raw.selected_index ?? raw.selected_option ?? raw.selected_value ?? null)
-                      : (q.selected ?? null);
-
-                    // Resolve option text — options are plain strings or objects
-                    const resolveOption = (opts: any[], idx: number): string => {
-                      const opt = opts[idx];
-                      if (opt == null) return `Option ${idx + 1}`;
-                      return typeof opt === 'object' ? (opt.text || opt.label || String(idx + 1)) : String(opt);
-                    };
-
-                    // Candidate answer
-                    let candidateAnswerText = '';
-                    let aiScore: number | null = null;
-                    let aiFeedback: string | null = null;
-                    if (raw === null || raw === undefined) {
-                      candidateAnswerText = 'No answer submitted';
-                    } else if (qType === 'mcq') {
-                      if (selectedIdx !== null && Array.isArray(q.options) && q.options[selectedIdx] != null) {
-                        candidateAnswerText = resolveOption(q.options, Number(selectedIdx));
-                      } else if (selectedIdx !== null) {
-                        candidateAnswerText = `Option ${Number(selectedIdx) + 1}`;
-                      } else {
-                        candidateAnswerText = 'N/A';
-                      }
-                    } else if (typeof raw === 'object') {
-                      candidateAnswerText = raw.text || raw.answer || raw.response || '';
-                      if (raw.ai_score != null) aiScore = raw.ai_score;
-                      if (raw.ai_feedback) aiFeedback = raw.ai_feedback;
-                    } else {
-                      candidateAnswerText = String(raw);
-                    }
-
-                    // Correct answer
-                    let correctAnswerText = '';
-                    if (q.referenceAnswer) {
-                      correctAnswerText = q.referenceAnswer;
-                    } else if (q.correctIndex != null && Array.isArray(q.options) && q.options[q.correctIndex] != null) {
-                      correctAnswerText = resolveOption(q.options, Number(q.correctIndex));
-                    } else {
-                      correctAnswerText = qType === 'essay' ? 'Open-ended — evaluated by AI rubric' : 'N/A';
-                    }
-
-                    return (
-                      <div className="space-y-3">
-                        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
-                          <div className="text-sm font-medium text-blue-900 mb-2">Candidate's Answer</div>
-                          <div className="text-sm text-blue-800 whitespace-pre-wrap">{candidateAnswerText}</div>
-                        </div>
-
-                        <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded">
-                          <div className="text-sm font-medium text-emerald-900 mb-2">Correct Answer</div>
-                          <div className="text-sm text-emerald-800">{correctAnswerText}</div>
-                        </div>
-
-                        {aiFeedback && (
-                          <div className="bg-violet-50 border-l-4 border-violet-400 p-4 rounded">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="text-sm font-medium text-violet-900">AI Feedback</div>
-                              {aiScore !== null && (
-                                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-200 text-violet-800">
-                                  Score: {aiScore}/100
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-violet-800">{renderMarkdown(aiFeedback)}</div>
-                          </div>
-                        )}
-
-                        {q.rubric && (
-                          <div className="bg-gray-50 border-l-4 border-gray-300 p-4 rounded">
-                            <div className="text-sm font-medium text-gray-700 mb-1">Rubric</div>
-                            <div className="text-sm text-gray-600 whitespace-pre-wrap">{q.rubric}</div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-              ))}
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Video Response Modal */}
-        <Dialog open={showVideoResponse !== null} onOpenChange={() => setShowVideoResponse(null)}>
-          <DialogContent className="max-w-3xl">
-            <DialogHeader>
-              <DialogTitle>Video Response</DialogTitle>
-            </DialogHeader>
-            {showVideoResponse && videoInterviewQuestions.find((q: any) => q.id === showVideoResponse) && (
-              <div className="mt-4">
-                {resolveBackendMediaUrl(videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.videoUrl) ? (
-                  <video 
-                    controls
-                    className="w-full rounded-lg aspect-video mb-4 bg-black"
-                    src={resolveBackendMediaUrl(videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.videoUrl)}
-                  />
-                ) : (
-                  <div className="bg-gray-100 rounded-lg aspect-video flex items-center justify-center mb-4">
-                    <div className="text-center">
-                      <Play size={64} className="text-gray-400 mx-auto mb-2" />
-                      <p className="text-gray-600">Video Not Available</p>
-                      <p className="text-sm text-gray-500 mt-1">
-                        Duration: {videoInterviewQuestions.find((q: any) => q.id === showVideoResponse)?.duration}
-                      </p>
-                    </div>
-                  </div>
-                )}
-                {(() => {
-                  const vq = videoInterviewQuestions.find((q: any) => q.id === showVideoResponse);
-                  return (
-                    <>
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                          <div className="text-sm text-indigo-700 font-medium">Score</div>
-                          <div className="text-2xl font-bold text-indigo-900">{formatInterviewScore(vq?.score)}/10</div>
-                        </div>
-                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                          <div className="text-sm text-gray-700 font-medium">Duration</div>
-                          <div className="text-2xl font-bold text-gray-900">{vq?.duration}</div>
-                        </div>
-                      </div>
-                      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-3">
-                        <h4 className="font-medium text-indigo-900 mb-2">Question</h4>
-                        <p className="text-indigo-800">{vq?.question}</p>
-                      </div>
-                      {/* Criteria breakdown (G-eval) or fallback feedback */}
-                      {vq?.criteriaScores?.length
-                        ? <CriteriaBreakdown criteriaScores={vq.criteriaScores} />
-                        : vq?.feedback
-                          ? (
-                            <div className="bg-violet-50 border border-violet-200 rounded-lg p-4">
-                              <div className="text-sm font-medium text-violet-900 mb-1">AI Feedback</div>
-                              <div className="text-sm text-violet-800">{vq.feedback}</div>
-                            </div>
-                          )
-                          : null
-                      }
-                    </>
-                  );
-                })()}
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-
-        {/* Video Transcript Modal */}
-        <Dialog open={showVideoTranscript !== null} onOpenChange={() => setShowVideoTranscript(null)}>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Video Response Transcript</DialogTitle>
-            </DialogHeader>
-            {showVideoTranscript && videoInterviewQuestions.find((q: any) => q.id === showVideoTranscript) && (
-              <div className="mt-4">
-                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-4">
-                  <h4 className="font-medium text-indigo-900 mb-2">Question</h4>
-                  <p className="text-indigo-800">{videoInterviewQuestions.find((q: any) => q.id === showVideoTranscript)?.question}</p>
-                </div>
-                <div className="bg-white border border-gray-200 rounded-lg p-6">
-                  <h4 className="font-medium text-gray-900 mb-3">Transcript</h4>
-                  <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
-                    {videoInterviewQuestions.find((q: any) => q.id === showVideoTranscript)?.transcript}
-                  </p>
-                </div>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
 
         {/* Live Interview Transcript Modal */}
         <Dialog open={showLiveInterviewTranscript} onOpenChange={setShowLiveInterviewTranscript}>
