@@ -22,18 +22,32 @@ def _hash_password(password: str) -> str:
 # Configuration
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "llama3.2"
+# Circuit breaker: once an Ollama request fails (unreachable / timeout), stop
+# trying for the rest of the run and fall back to faker immediately. Prevents the
+# seed from blocking ~10s on every LLM call when no local Ollama proxy is running.
+_OLLAMA_AVAILABLE = True
 
 
 # Database Connection
 def get_db_url():
+    # 1. Prefer an explicit environment variable (set by the runner / .env loader).
+    env_url = os.environ.get("DATABASE_URL")
+    if env_url:
+        return env_url.replace("+asyncpg", "")
+
+    # 2. Fall back to the backend .env located relative to this file
+    #    (backend/app/utils/seeds/seed_data.py -> parents[3] == backend/).
+    from pathlib import Path
+
+    env_path = Path(__file__).resolve().parents[3] / ".env"
     try:
-        with open(r"c:\Users\ot\Desktop\EraMatch\backend\.env", "r") as f:
+        with open(env_path, "r") as f:
             for line in f:
                 if line.startswith("DATABASE_URL="):
                     url = line.strip().split("=", 1)[1].strip("\"'")
                     return url.replace("+asyncpg", "")
     except Exception as e:
-        print(f"Error reading .env: {e}")
+        print(f"Error reading .env ({env_path}): {e}")
         return None
 
 
@@ -48,6 +62,10 @@ def generate_with_llama(prompt, context=""):
     Generates text using local Ollama instance.
     Falls back to Faker if Ollama is unreachable.
     """
+    global _OLLAMA_AVAILABLE
+    if not _OLLAMA_AVAILABLE:
+        return fake.paragraph()
+
     full_prompt = f"{context}\n\nTask: {prompt}\n\nResponse (JSON or Text):"
 
     payload = {
@@ -58,7 +76,7 @@ def generate_with_llama(prompt, context=""):
     }
 
     try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=10)
+        response = requests.post(OLLAMA_URL, json=payload, timeout=2)
         if response.status_code == 200:
             text = response.json().get("response", "").strip()
             # Remove common conversational preambles
@@ -86,7 +104,8 @@ def generate_with_llama(prompt, context=""):
                 text = text[1:-1].strip()
             return text
     except requests.exceptions.RequestException:
-        pass
+        # Trip the circuit breaker so we don't keep waiting on every later call.
+        _OLLAMA_AVAILABLE = False
 
     # Fallback if AI fails or is slow
     return fake.paragraph()
@@ -109,50 +128,17 @@ def clean_database():
 
     print("Cleaning database (Truncating tables)...")
 
-    # Truncate all tables (cascade)
+    # Truncate every table in the public schema (CASCADE). Done dynamically so the
+    # clean step is robust against schema drift and any leftover mess from previous
+    # seeding attempts — we never reference a hardcoded (possibly stale) table name.
     try:
-        cur.execute("""
-            TRUNCATE TABLE
-            ai_interview_configs,
-            ai_interview_turns,
-            assessments,
-            candidate_answers,
-            candidate_applications,
-            candidate_groups,
-            candidate_profiles,
-            candidate_stage_progress,
-            cv_analysis,
-            email_logs,
-            github_analysis,
-            group_stage_config,
-            hires,
-            interview_responses,
-            live_interview_configs,
-            live_interview_sessions,
-            notifications,
-            offers,
-            ongoing_assessments,
-            ongoing_interviews,
-            organization_departments,
-            organization_users,
-            organizations,
-            payment_methods,
-            pipeline_transitions,
-            positions,
-            proctoring_flags,
-            project_access,
-            projects,
-            question_bank,
-            question_bank_favorites,
-            recruiter_assignment_logs,
-            recruiter_notes,
-            stage_onboarding,
-            subscription_plans,
-            system_logs,
-            user_permissions
-            CASCADE;
-        """)
+        cur.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+        tables = [row[0] for row in cur.fetchall()]
+        if tables:
+            quoted = ", ".join(f'"{t}"' for t in tables)
+            cur.execute(f"TRUNCATE TABLE {quoted} RESTART IDENTITY CASCADE;")
         conn.commit()
+        print(f"  Truncated {len(tables)} tables.")
     except Exception as e:
         print(f"  Truncate warning: {e}")
         conn.rollback()
@@ -408,7 +394,7 @@ def generate_candidates_and_applications(org_id, position_ids, group_map):
             statuses = (
                 ["applied"] * 10
                 + ["screening"] * 8
-                + ["in_pipeline"] * 5
+                + ["holded"] * 5
                 + ["rejected"] * 10
                 + ["offered"] * 2
                 + ["hired"] * 1
@@ -470,7 +456,7 @@ def generate_groups_and_stages(org_id, position_ids):
             sid = str(uuid4())
             cur.execute(
                 """
-                INSERT INTO group_stage_config (stage_config_id, group_id, organization_id, stage_type, stage_order, state)
+                INSERT INTO group_pipeline_stages (stage_id, group_id, organization_id, stage_type, stage_order, state)
                 VALUES (%s, %s, %s, %s, %s, 'active')
                 """,
                 (sid, gid, org_id, st_type, order),
@@ -556,12 +542,15 @@ def generate_detailed_assessments_and_interviews(org_id, candidates):
             }
 
         asm_id = pos_assessment_map[pid]["asm_id"]
+        # NOTE: the current schema stores question structure in assessment_sections /
+        # section_question_pool, not a JSON `structure` column on assessments. We keep
+        # the generated `struct` for the assessment description so the data isn't lost.
         cur.execute(
             """
-            INSERT INTO assessments (assessment_id, organization_id, title, structure, status, created_at)
-            VALUES (%s, %s, %s, %s, 'published', NOW())
+            INSERT INTO assessments (assessment_id, organization_id, position_id, title, description, status, created_at)
+            VALUES (%s, %s, %s, %s, %s, 'published', NOW())
             """,
-            (asm_id, org_id, f"{title} Assessment", json.dumps(struct)),
+            (asm_id, org_id, pid, f"{title} Assessment", json.dumps(struct)),
         )
 
     # 2. Process Candidates
@@ -578,7 +567,7 @@ def generate_detailed_assessments_and_interviews(org_id, candidates):
         asm_id = mapping["asm_id"]
         ai_config_id = mapping["ai_conf_id"]
 
-        if status in ["screening", "in_pipeline", "offered", "hired", "rejected"]:
+        if status in ["screening", "holded", "offered", "hired", "rejected"]:
             # Create Ongoing Assessment
             session_id = str(uuid4())
             score = round(random.uniform(60.0, 98.0), 2)
@@ -742,8 +731,8 @@ def generate_full_db_coverage(org_id, candidates, user_ids, position_ids, group_
                 q_tags = [topic]
 
             cur.execute(
-                "INSERT INTO question_bank (question_id, organization_id, question_text, question_type, tags, difficulty, created_at) VALUES (%s, %s, %s, %s, %s, %s, NOW())",
-                (str(uuid4()), org_id, q_text, q_type, q_tags, random.randint(1, 5)),
+                "INSERT INTO question_bank (question_id, organization_id, question_text, question_type, question_config, tags, difficulty, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())",
+                (str(uuid4()), org_id, q_text, q_type, json.dumps({}), q_tags, random.randint(1, 5)),
             )
 
     # 2. ORGANIZATION DEPARTMENTS & PAYMENT METHODS
@@ -827,10 +816,23 @@ def generate_full_db_coverage(org_id, candidates, user_ids, position_ids, group_
             (str(uuid4()), cand["app_id"], org_id, cand["status"], recruiter_id),
         )
 
-        # Stage Progress (Mock)
+        # Stage Progress (Mock) — current schema links progress to a concrete
+        # group_pipeline_stages.stage_id (the assessment stage, order 1) rather than
+        # storing stage_type/stage_order inline.
         if cand["status"] != "applied":
             cur.execute(
-                "INSERT INTO candidate_stage_progress (progress_id, application_id, group_id, stage_type, stage_order, status) VALUES (%s, %s, (SELECT group_id FROM candidate_applications WHERE application_id = %s), 'assessment', 1, 'completed')",
+                """
+                INSERT INTO candidate_pipeline_progress (progress_id, application_id, stage_id, status)
+                VALUES (
+                    %s, %s,
+                    (SELECT gps.stage_id
+                       FROM group_pipeline_stages gps
+                       JOIN candidate_applications ca ON ca.group_id = gps.group_id
+                      WHERE ca.application_id = %s AND gps.stage_order = 1
+                      LIMIT 1),
+                    'completed'
+                )
+                """,
                 (str(uuid4()), cand["app_id"], cand["app_id"]),
             )
 

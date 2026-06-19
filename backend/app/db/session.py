@@ -152,6 +152,8 @@ async def init_db() -> None:
             ("assessments", "created_by_user_id", "UUID"),
             ("candidate_answers", "assignment_id", "UUID"),
             ("ai_interview_configs", "created_by_user_id", "UUID"),
+            # Behavioral assessment (trial_c) — separate from emotion_analysis.
+            ("interview_responses", "behavioral_analysis", "JSONB"),
         ]:
             res = await conn.execute(
                 text(

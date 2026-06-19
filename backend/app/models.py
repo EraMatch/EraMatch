@@ -895,6 +895,9 @@ class InterviewResponse(SQLModel, table=True):
     ai_score: Decimal | None = Field(default=None)
     ai_feedback: dict | None = Field(default=None, sa_column=Column(JSONB))
     emotion_analysis: dict | None = Field(default=None, sa_column=Column(JSONB))
+    # Candidate-assessment behavioral scores (trial_c model). Kept SEPARATE from
+    # emotion_analysis, which is reserved for the anti-cheating emotion signal.
+    behavioral_analysis: dict | None = Field(default=None, sa_column=Column(JSONB))
     answered_at: datetime | None = Field(default=None)
     processing_status: str = Field(default="pending", max_length=50)
     video_compressed_url: str | None = Field(default=None, sa_column=Column(Text))

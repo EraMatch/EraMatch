@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     # Dev-safe default: allow fallback adapter output unless explicitly forced by env.
     PROCTORING_REQUIRE_MODEL: bool = False
 
+    # Behavioral analysis (trial_c) — model weights location
+    BEHAVIORAL_MODELS_DIR: str = "./models/behavioral"
+    BEHAVIORAL_NBB_WEIGHTS: str = "trial_c_nbb_best.pth"
+
     # Jina AI — embeddings for semantic candidate search
     JINA_API_KEY: str = ""
 
