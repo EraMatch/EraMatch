@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck, AlertTriangle, Activity, Video, User, ShieldAlert, WandSparkles, ChevronRight, Sparkles } from 'lucide-react';
+import { Home, Briefcase, Users, Settings, Bell, BookOpen, LogOut, ClipboardCheck, AlertTriangle, Activity, ClipboardList, User, WandSparkles, ChevronRight, Sparkles } from 'lucide-react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../../../services/api';
 import { authService } from '../../../services/auth.service';
@@ -127,15 +127,17 @@ export function Sidebar() {
     const videoTasks = runningTasks.filter((task) => task.task_category === 'video');
     const questionImportTasks = runningTasks.filter((task) => task.task_category === 'question_import' || task.task_category === 'github_analysis');
     const qagTasks = runningTasks.filter((task) => task.task_category === 'qag');
+    const assessmentTasks = runningTasks.filter((task) =>
+      task.task_category === 'assessment_grading' || task.task_category === 'assessment_compression'
+    );
 
     const profileTasks = questionImportTasks.filter((task) => !isGenerationTask(task) && !isExtractionTask(task));
     const questionGenerationAndExtraction = questionImportTasks.filter((task) => isGenerationTask(task) || isExtractionTask(task));
 
     return {
       total: runningTasks.length,
-      videoProcessing: videoTasks.filter((task) => !isAntiCheatingTask(task)).length,
+      candidateSessions: videoTasks.filter((task) => !isAntiCheatingTask(task)).length + assessmentTasks.length,
       profileProcessing: profileTasks.length,
-      videoRecording: videoTasks.filter((task) => isAntiCheatingTask(task)).length,
       questionGenerationExtraction: questionGenerationAndExtraction.length,
       qagProcessing: qagTasks.length,
     };
@@ -287,10 +289,10 @@ export function Sidebar() {
                 <div className="space-y-1">
                   <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
                     <div className="flex items-center gap-2 text-[13px] text-[#334155]">
-                      <Video size={14} />
-                      <span>Video Processing</span>
+                      <ClipboardList size={14} />
+                      <span>Candidate Sessions Tasks</span>
                     </div>
-                    <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.videoProcessing}</span>
+                    <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.candidateSessions}</span>
                   </div>
                   <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
                     <div className="flex items-center gap-2 text-[13px] text-[#334155]">
@@ -298,13 +300,6 @@ export function Sidebar() {
                       <span>Profile Processing</span>
                     </div>
                     <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.profileProcessing}</span>
-                  </div>
-                  <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
-                    <div className="flex items-center gap-2 text-[13px] text-[#334155]">
-                      <ShieldAlert size={14} />
-                      <span>Processing Video Recording</span>
-                    </div>
-                    <span className="text-[13px] font-semibold text-[#111827]">{runningTaskCounts.videoRecording}</span>
                   </div>
                   <div className="flex items-center justify-between px-2 py-2 rounded-[10px] bg-[#f8fafc]">
                     <div className="flex items-center gap-2 text-[13px] text-[#334155]">

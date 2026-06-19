@@ -10,11 +10,9 @@ import {
     Filter,
     Loader2,
     RefreshCcw,
-    ShieldAlert,
     Sparkles,
     Trash2,
     User,
-    Video,
     WandSparkles,
     XCircle,
 } from 'lucide-react';
@@ -77,7 +75,7 @@ interface SloHealthResponse {
 }
 
 type PageView = 'dashboard' | 'categories';
-type CategoryId = 'video-processing' | 'profile-processing' | 'video-recording' | 'question-generation-extraction' | 'qag-processing' | 'assessment-processing';
+type CategoryId = 'candidate-sessions' | 'profile-processing' | 'question-generation-extraction' | 'qag-processing';
 
 type StatusFilter = 'all' | 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
@@ -110,22 +108,16 @@ const SUB_STATUS_FILTERS: Array<{ id: StatusFilter; label: string }> = [
 
 const CATEGORIES: Array<{ id: CategoryId; title: string; icon: React.ReactNode; description: string }> = [
     {
-        id: 'video-processing',
-        title: 'Video Processing',
-        icon: <Video size={15} />,
-        description: 'Recorded and live interview processing',
+        id: 'candidate-sessions',
+        title: 'Candidate Sessions Tasks',
+        icon: <ClipboardList size={15} />,
+        description: 'Video interview, live interview, auto-grading and recording compression for candidate sessions',
     },
     {
         id: 'profile-processing',
         title: 'Profile Processing',
         icon: <User size={15} />,
         description: 'CV and GitHub profile analysis',
-    },
-    {
-        id: 'video-recording',
-        title: 'Processing Video Recording',
-        icon: <ShieldAlert size={15} />,
-        description: 'Anti-cheating and suspicious recording checks',
     },
     {
         id: 'question-generation-extraction',
@@ -138,12 +130,6 @@ const CATEGORIES: Array<{ id: CategoryId; title: string; icon: React.ReactNode; 
         title: 'Position Pre-Matching Score',
         icon: <Sparkles size={15} />,
         description: 'Pre-matching criteria generation and candidate correction jobs',
-    },
-    {
-        id: 'assessment-processing',
-        title: 'Assessment Tasks',
-        icon: <ClipboardList size={15} />,
-        description: 'Auto-grading and recording compression for completed assessments',
     },
 ];
 
@@ -341,7 +327,7 @@ export function BackgroundTasks() {
     const rawView = location.pathname.split('/').pop() || '';
     const activeView: PageView = isPageView(rawView) ? rawView : 'dashboard';
 
-    const [activeCategory, setActiveCategory] = useState<CategoryId>('video-processing');
+    const [activeCategory, setActiveCategory] = useState<CategoryId>('candidate-sessions');
     const [autoRefresh, setAutoRefresh] = useState(true);
     const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
     const [taskLogs, setTaskLogs] = useState<Record<string, LogEntry[]>>({});
@@ -415,18 +401,30 @@ export function BackgroundTasks() {
         );
 
         return {
-            'video-processing': [
+            'candidate-sessions': [
                 {
                     id: 'recorded-video',
-                    title: 'Recorded Video Interview',
-                    description: 'Asynchronous interview processing pipeline',
+                    title: 'Video Interview (Recorded)',
+                    description: 'Asynchronous recorded interview processing pipeline',
                     tasks: recorded,
                 },
                 {
                     id: 'live-video',
                     title: 'Live Interview',
-                    description: 'Real-time interview processing pipeline',
+                    description: 'Real-time live interview processing pipeline',
                     tasks: live,
+                },
+                {
+                    id: 'assessment-grading',
+                    title: 'Auto-Grading',
+                    description: 'Background grading of essay and coding answers after submit',
+                    tasks: assessmentTasks.filter((t) => t.task_category === 'assessment_grading'),
+                },
+                {
+                    id: 'assessment-compression',
+                    title: 'Recording Compression',
+                    description: 'FFmpeg compression of screen and webcam recordings',
+                    tasks: assessmentTasks.filter((t) => t.task_category === 'assessment_compression'),
                 },
             ],
             'profile-processing': [
@@ -452,14 +450,6 @@ export function BackgroundTasks() {
                         },
                     ]
                     : []),
-            ],
-            'video-recording': [
-                {
-                    id: 'anti-cheating',
-                    title: 'Anti-Cheating Recordings',
-                    description: 'Recording analysis for suspicious behavior',
-                    tasks: anti,
-                },
             ],
             'question-generation-extraction': [
                 {
@@ -499,20 +489,6 @@ export function BackgroundTasks() {
                     ]
                     : []),
             ],
-            'assessment-processing': [
-                {
-                    id: 'assessment-grading',
-                    title: 'Auto-Grading',
-                    description: 'Background grading of essay and coding answers after submit',
-                    tasks: assessmentTasks.filter((t) => t.task_category === 'assessment_grading'),
-                },
-                {
-                    id: 'assessment-compression',
-                    title: 'Recording Compression',
-                    description: 'FFmpeg compression of screen and webcam recordings',
-                    tasks: assessmentTasks.filter((t) => t.task_category === 'assessment_compression'),
-                },
-            ],
         } as Record<CategoryId, SectionTable[]>;
     }, [videoTasks, questionImportTasks, qagTasks, assessmentTasks]);
 
@@ -547,12 +523,10 @@ export function BackgroundTasks() {
         };
 
         const categoryCounts = {
-            'video-processing': categorized['video-processing'].reduce((sum, table) => sum + table.tasks.length, 0),
+            'candidate-sessions': categorized['candidate-sessions'].reduce((sum, table) => sum + table.tasks.length, 0),
             'profile-processing': categorized['profile-processing'].reduce((sum, table) => sum + table.tasks.length, 0),
-            'video-recording': categorized['video-recording'].reduce((sum, table) => sum + table.tasks.length, 0),
             'question-generation-extraction': categorized['question-generation-extraction'].reduce((sum, table) => sum + table.tasks.length, 0),
             'qag-processing': categorized['qag-processing'].reduce((sum, table) => sum + table.tasks.length, 0),
-            'assessment-processing': categorized['assessment-processing'].reduce((sum, table) => sum + table.tasks.length, 0),
         };
 
         const recent = [...tasks]

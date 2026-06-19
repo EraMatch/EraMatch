@@ -157,6 +157,9 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
                 if (msg.type === 'transcript') {
                     setTranscript(prev => [...prev, { role: msg.role, text: msg.text }]);
                 } else if (msg.type === 'session_complete') {
+                    if (document.fullscreenElement) {
+                        document.exitFullscreen().catch(() => {});
+                    }
                     onComplete();
                 }
             } catch { /* ignore non-JSON */ }
@@ -186,6 +189,9 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
             await liveInterviewService.completeSession(sessionId);
         } catch (e) {
             console.warn('[SAFETY-NET] completeSession failed:', e);
+        }
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
         }
         room.disconnect();
         onExit();
@@ -271,6 +277,9 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
     }, [isConnected, sessionId]);
 
     const handleRetry = useCallback(() => {
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+        }
         room.disconnect();
         onComplete();
     }, [room, onComplete]);
@@ -280,6 +289,9 @@ function RoomUI({ sessionId, timeBudgetMinutes, onComplete, onExit }: { sessionI
             await liveInterviewService.completeSession(sessionId);
         } catch (e) {
             console.warn('[SAFETY-NET] completeSession failed:', e);
+        }
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
         }
         room.disconnect();
         onExit();

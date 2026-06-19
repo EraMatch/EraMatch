@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Video, Mic, CheckCircle2, AlertCircle, Play, Loader2, Sparkles, Settings, Camera, PhoneOff } from 'lucide-react';
+import { Video, Mic, CheckCircle2, AlertCircle, Play, Loader2, Sparkles, Settings, Camera } from 'lucide-react';
 import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { LiveInterviewRoom } from './live-interview-v2/LiveInterviewRoom';
@@ -25,7 +25,11 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
     const [hasRecorded, setHasRecorded] = useState(false);
     const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
-    
+
+    // Face capture state
+    const [faceCaptureDone, setFaceCaptureDone] = useState(false);
+    const [capturedFaceDataUrl, setCapturedFaceDataUrl] = useState<string | null>(null);
+
     // Microphone visualization
     const [audioLevel, setAudioLevel] = useState(0);
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -46,8 +50,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
             const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             setStream(mediaStream);
             setCameraError(null);
-            
-            // Setup audio analyzer
+
             const audioCtx = new AudioContext();
             const analyser = audioCtx.createAnalyser();
             const source = audioCtx.createMediaStreamSource(mediaStream);
@@ -55,7 +58,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
             analyser.fftSize = 256;
             audioContextRef.current = audioCtx;
             analyserRef.current = analyser;
-            
+
             const updateAudioLevel = () => {
                 if (!analyserRef.current) return;
                 const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
@@ -65,7 +68,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                 animationFrameRef.current = requestAnimationFrame(updateAudioLevel);
             };
             updateAudioLevel();
-        } catch (err) {
+        } catch {
             setCameraError('Unable to access camera or microphone. Please ensure permissions are granted in your browser settings.');
         }
     };
@@ -103,7 +106,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
         if (recordedUrl) URL.revokeObjectURL(recordedUrl);
         setRecordedUrl(null);
         if (isPlaying) setIsPlaying(false);
-        
+
         setIsRecording(true);
         chunksRef.current = [];
 
@@ -124,6 +127,38 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                 setIsRecording(false);
             }
         }, 4000);
+    };
+
+    const handleCaptureFace = async () => {
+        if (!videoRef.current || !stream) return;
+        const video = videoRef.current;
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        setCapturedFaceDataUrl(dataUrl);
+        sessionStorage.setItem('reference_face_photo', dataUrl);
+        setFaceCaptureDone(true);
+
+        try {
+            const AI_SERVICE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
+            const res = await fetch(`${AI_SERVICE_URL}/proctoring/extract-face-encoding`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ frame_b64: dataUrl.split(',')[1], session_id: null }),
+            });
+            if (res.ok) {
+                const { encoding } = await res.json();
+                if (Array.isArray(encoding) && encoding.length > 0) {
+                    sessionStorage.setItem('reference_face_encoding', JSON.stringify(encoding));
+                }
+            }
+        } catch {
+            // Non-fatal — identity verification won't run but interview can still proceed
+        }
     };
 
     const fetchRoomToken = async () => {
@@ -187,7 +222,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
 
                 <Card className="p-8 border-none shadow-xl bg-white rounded-3xl overflow-hidden relative">
                     <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500"></div>
-                    
+
                     <div className="grid md:grid-cols-2 gap-10">
                         {/* Left Column - Video Preview */}
                         <div className="space-y-6">
@@ -219,14 +254,14 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                                                 className="w-full h-full object-cover transform -scale-x-100"
                                             />
                                         )}
-                                        
+
                                         {isRecording && (
                                             <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/60 backdrop-blur-md text-white px-3 py-1.5 rounded-full text-sm font-medium animate-pulse border border-white/10">
                                                 <div className="w-2.5 h-2.5 bg-red-500 rounded-full"></div>
                                                 Recording...
                                             </div>
                                         )}
-                                        
+
                                         {!cameraError && !isRecording && !isPlaying && stream && (
                                             <div className="absolute bottom-4 left-4 right-4 flex justify-between items-end">
                                                 <div className="bg-black/50 backdrop-blur-md rounded-lg p-2.5 flex items-center gap-2 border border-white/10">
@@ -248,28 +283,49 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                             </div>
 
                             {!cameraError && (
-                                <div className="flex gap-3 justify-center">
+                                <div className="space-y-3">
+                                    {/* Face capture — required before entering */}
                                     <Button
-                                        onClick={handleRecordTestClip}
-                                        disabled={isRecording || isPlaying}
-                                        className="flex-1 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border-none h-12 font-medium"
+                                        onClick={handleCaptureFace}
+                                        disabled={!stream || isRecording}
+                                        className={`w-full h-12 rounded-xl font-medium border transition-colors ${
+                                            faceCaptureDone
+                                                ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
+                                                : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
+                                        }`}
                                         variant="outline"
                                     >
-                                        {isRecording ? (
-                                            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Recording (4s)...</>
+                                        {faceCaptureDone ? (
+                                            <><CheckCircle2 className="w-4 h-4 mr-2" /> Face Captured — Click to Recapture</>
                                         ) : (
-                                            <><Video className="w-4 h-4 mr-2 text-indigo-600" /> Record Test</>
+                                            <><Camera className="w-4 h-4 mr-2" /> Capture Face Photo</>
                                         )}
                                     </Button>
 
-                                    <Button
-                                        onClick={() => { if (recordedUrl) setIsPlaying(true); }}
-                                        disabled={!hasRecorded || isRecording || isPlaying}
-                                        className="flex-1 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border-none h-12 font-medium disabled:opacity-50"
-                                        variant="outline"
-                                    >
-                                        <Play className="w-4 h-4 mr-2 text-indigo-600" /> Play Test
-                                    </Button>
+                                    {/* Optional test recording */}
+                                    <div className="flex gap-3">
+                                        <Button
+                                            onClick={handleRecordTestClip}
+                                            disabled={isRecording || isPlaying}
+                                            className="flex-1 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border-none h-11 font-medium text-sm"
+                                            variant="outline"
+                                        >
+                                            {isRecording ? (
+                                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Recording (4s)...</>
+                                            ) : (
+                                                <><Video className="w-4 h-4 mr-2 text-gray-500" /> Test Recording</>
+                                            )}
+                                        </Button>
+
+                                        <Button
+                                            onClick={() => { if (recordedUrl) setIsPlaying(true); }}
+                                            disabled={!hasRecorded || isRecording || isPlaying}
+                                            className="flex-1 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border-none h-11 font-medium text-sm disabled:opacity-50"
+                                            variant="outline"
+                                        >
+                                            <Play className="w-4 h-4 mr-2 text-gray-500" /> Play Test
+                                        </Button>
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -293,15 +349,26 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                                     </h4>
                                     <ul className="space-y-3 text-sm text-gray-600">
                                         <li className="flex items-center gap-3">
-                                            <div className={`w-2 h-2 rounded-full ${stream ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                                            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${stream ? 'bg-green-500' : 'bg-gray-300'}`}></div>
                                             Camera and Microphone permissions granted
                                         </li>
                                         <li className="flex items-center gap-3">
-                                            <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${faceCaptureDone ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                                            <span className={faceCaptureDone ? 'text-green-700 font-medium' : ''}>Face photo captured</span>
+                                            {capturedFaceDataUrl && (
+                                                <img
+                                                    src={capturedFaceDataUrl}
+                                                    alt="Captured face"
+                                                    className="w-7 h-7 rounded-full object-cover ml-auto border-2 border-green-300"
+                                                />
+                                            )}
+                                        </li>
+                                        <li className="flex items-center gap-3">
+                                            <div className="w-2 h-2 rounded-full flex-shrink-0 bg-green-500"></div>
                                             Stable internet connection
                                         </li>
                                         <li className="flex items-center gap-3">
-                                            <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                            <div className="w-2 h-2 rounded-full flex-shrink-0 bg-green-500"></div>
                                             Quiet environment for AI transcription
                                         </li>
                                     </ul>
@@ -316,7 +383,7 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                                 )}
                                 <Button
                                     onClick={fetchRoomToken}
-                                    disabled={!!cameraError || !stream || tokenLoading}
+                                    disabled={!!cameraError || !stream || !faceCaptureDone || tokenLoading}
                                     className="w-full h-14 rounded-xl text-lg font-medium shadow-lg shadow-indigo-200 transition-transform active:scale-[0.98]"
                                     style={{ backgroundColor: '#6366F1' }}
                                 >
@@ -326,9 +393,16 @@ export function LiveInterviewFlow({ onSignOut, onExit, onCompletion }: LiveInter
                                         'Enter Interview'
                                     )}
                                 </Button>
-                                <p className="text-center text-xs text-gray-400 mt-4">
-                                    By entering, you agree to our proctoring and privacy guidelines.
-                                </p>
+                                {stream && !cameraError && !faceCaptureDone && (
+                                    <p className="text-center text-xs text-gray-400 mt-2">
+                                        Capture your face photo above to continue
+                                    </p>
+                                )}
+                                {stream && !cameraError && faceCaptureDone && (
+                                    <p className="text-center text-xs text-gray-400 mt-2">
+                                        By entering, you agree to our proctoring and privacy guidelines.
+                                    </p>
+                                )}
                             </div>
                         </div>
                     </div>

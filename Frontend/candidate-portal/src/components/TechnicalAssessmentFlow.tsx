@@ -19,6 +19,7 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
   // Device test states
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -45,6 +46,7 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
   const startCamera = async () => {
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      streamRef.current = mediaStream;
       setStream(mediaStream);
       setCameraError(null);
       
@@ -72,19 +74,6 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
     }
   };
 
-  const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-    }
-    if (audioContextRef.current) {
-      void audioContextRef.current.close();
-    }
-  };
-
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
@@ -96,9 +85,23 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
       startCamera();
     }
     return () => {
-      stopCamera();
+      // Access ref directly — avoids stale-closure over the `stream` state variable
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      setStream(null);
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (audioContextRef.current) {
+        void audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
     };
   }, [inAssessmentSession]);
+
+  useEffect(() => {
+    return () => {
+      screenStream?.getTracks().forEach((t) => t.stop());
+    };
+  }, [screenStream]);
 
   const handleRecordTestClip = () => {
     if (!stream) return;
@@ -218,6 +221,8 @@ export function TechnicalAssessmentFlow({ onSignOut, onCompletion }: TechnicalAs
         }}
         onComplete={() => {
           sessionStorage.removeItem('assessment_checks_done');
+          screenStream?.getTracks().forEach((t) => t.stop());
+          setScreenStream(null);
           onCompletion();
         }}
       />

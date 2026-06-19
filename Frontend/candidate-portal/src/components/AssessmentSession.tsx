@@ -402,6 +402,13 @@ export function AssessmentSession({ onSignOut, onComplete, screenStream }: Asses
     // Stop the injected screen-share stream — assessment is done, parent no longer needs it.
     screenStream?.getTracks().forEach((t) => t.stop());
 
+    // Stop camera / mic and exit fullscreen immediately when session ends.
+    proctoringStreamRef.current?.getTracks().forEach((t) => t.stop());
+    proctoringStreamRef.current = null;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+
     void uploadSystemScreenRecording();
     void uploadWebcamRecording();
   }, [assessmentComplete, sessionId, screenStream, uploadSystemScreenRecording, uploadWebcamRecording]);

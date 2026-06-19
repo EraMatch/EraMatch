@@ -2218,10 +2218,13 @@ async def run_code(
                 "timed_out": True,
             }
 
+    logger.info("[run-code] lang=%s candidate=%s code_len=%d", language, candidate.candidate_id, len(request.code))
+
     try:
         result = await asyncio.to_thread(_run_subprocess)
 
         if result["timed_out"]:
+            logger.warning("[run-code] TLE lang=%s candidate=%s", language, candidate.candidate_id)
             return RunCodeResponse(
                 stdout="",
                 stderr=result["stderr"],
@@ -2232,6 +2235,9 @@ async def run_code(
             )
 
         status_desc = "Accepted" if result["returncode"] == 0 else "Runtime Error"
+        logger.info("[run-code] %s lang=%s time=%ss candidate=%s stderr=%s",
+                    status_desc, language, result["time"], candidate.candidate_id,
+                    result["stderr"][:200] if result["stderr"] else "")
         return RunCodeResponse(
             stdout=result["stdout"],
             stderr=result["stderr"],
@@ -2241,7 +2247,6 @@ async def run_code(
             memory=None,
         )
     finally:
-        # Clean up temp file
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
@@ -2390,6 +2395,10 @@ async def run_tests(
 
         parsed_input = test_input
 
+        # Indent candidate code so it lives inside a try/except that swallows
+        # EOFError from any input() driver calls in the starter template.
+        indented_code = '\n'.join('    ' + line for line in candidate_code.splitlines())
+
         # Build judge wrapper with smart argument unpacking
         judge_code = f'''
 import sys
@@ -2397,8 +2406,11 @@ import json
 import ast
 import inspect
 
-# Candidate's code
-{candidate_code}
+# Candidate's code (wrapped so driver input() calls don't block the judge)
+try:
+{indented_code}
+except (EOFError, StopIteration):
+    pass  # starter-template driver code consumed; function definition survived
 
 # Parse the test input
 try:
@@ -2455,6 +2467,7 @@ except Exception as e:
         try:
             result = subprocess.run(
                 ['python', judge_path],
+                input='',
                 capture_output=True, text=True, timeout=10,
             )
             elapsed = round(time_module.perf_counter() - start, 3)
@@ -2631,8 +2644,11 @@ try {{
         else _extract_function_name_js(request.code)
     )
     
+    logger.info("[run-tests] session=%s question=%s lang=%s func=%s tests=%d candidate=%s",
+                request.session_id, request.question_id, language, func_name, len(test_cases), candidate.candidate_id)
+
     try:
-        for tc in test_cases:
+        for i, tc in enumerate(test_cases):
             test_input = tc.get("input", "")
             # Prefer 'expected' (new schema), fall back to 'expected_output' (legacy)
             raw_expected = tc.get("expected") or tc.get("expected_output") or ""
@@ -2648,8 +2664,13 @@ try {{
             else:
                 # Fall back to simple stdin for legacy support
                 test_result = await asyncio.to_thread(_run_simple_stdin, temp_file_path, test_input, expected)
-            
+
             passed = test_result["passed"]
+            logger.info("[run-tests] tc=%d/%d hidden=%s passed=%s actual=%r expected=%r err=%s time=%s",
+                        i + 1, len(test_cases), is_hidden, passed,
+                        test_result.get("actual", "")[:80], expected[:80],
+                        test_result.get("error", "")[:120] if test_result.get("error") else "",
+                        test_result.get("time", ""))
             if not passed:
                 all_passed = False
 

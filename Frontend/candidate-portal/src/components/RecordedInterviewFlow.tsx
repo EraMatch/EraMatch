@@ -7,6 +7,8 @@ import { Logo } from './ui/Logo';
 import { api } from '../services/api';
 import { captureVideoFrameBase64, toWaveformPayload } from '../utils/proctoringPayload';
 import { queryKeys } from '../lib/queryKeys';
+import { useFullscreenGuard } from '../hooks/useFullscreenGuard';
+import { FullscreenCountdownOverlay } from './FullscreenCountdownOverlay';
 
 const AI_SERVICE_BASE_URL = (import.meta as any).env?.VITE_AI_SERVICE_URL || 'http://localhost:8001';
 const ENABLE_BIOMETRIC_BETA = ((import.meta as any).env?.VITE_ENABLE_BIOMETRIC_BETA ?? 'true') !== 'false';
@@ -37,17 +39,8 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   const [currentStep, setCurrentStep] = useState(1);
   const [isRecording, setIsRecording] = useState(false);
   const [hasRecorded, setHasRecorded] = useState(false);
-  const [faceDetectionStarted, setFaceDetectionStarted] = useState(false);
-  const [faceDetectionComplete, setFaceDetectionComplete] = useState(false);
-  const [detectionProgress, setDetectionProgress] = useState(0);
-  const [isCalibrating, setIsCalibrating] = useState(false);
-  const [calibrationComplete, setCalibrationComplete] = useState(false);
-  const [fireflies, setFireflies] = useState<Array<{ x: number; y: number; id: number; isCalibration: boolean }>>([]);
-  const [score, setScore] = useState(0);
-  const [targetsCaught, setTargetsCaught] = useState(0);
-  const [totalTargets] = useState(5);
-  const calibrationRef = useRef<HTMLDivElement>(null);
-  const [copyPasteUnderstood, setCopyPasteUnderstood] = useState(false);
+  const [faceCaptureDone, setFaceCaptureDone] = useState(false);
+  const [capturedFaceDataUrl, setCapturedFaceDataUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const RECORDING_TIMEOUT_SECONDS = 60;
 
@@ -107,6 +100,19 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
   const silentSamplesRef = useRef(0);
   const totalAudioSamplesRef = useRef(0);
   const sampleWindowStartRef = useRef(Date.now());
+
+  const FULLSCREEN_COUNTDOWN = 15;
+  const { countdownActive: fsCountdownActive, secondsLeft: fsSecondsLeft, enterFullscreen } = useFullscreenGuard({
+    enabled: inInterviewSession && !interviewComplete,
+    onCountdownExpired: () => {
+      stopCamera();
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      setInInterviewSession(false);
+      setInterviewComplete(true);
+      onCompletion();
+    },
+    countdownSeconds: FULLSCREEN_COUNTDOWN,
+  });
 
   // Fetch interview questions from API
   useEffect(() => {
@@ -196,7 +202,7 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
 
   // Activate camera for specific steps and keep it running during interview session
   useEffect(() => {
-    const needsCamera = [2, 4, 7, 8].includes(currentStep) || inInterviewSession;
+    const needsCamera = currentStep === 2 || inInterviewSession;
 
     if (needsCamera && !streamRef.current) {
       // Start camera if we need it and don't have it yet
@@ -249,6 +255,10 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
         }
         setQuestionRecording(false);
         setInInterviewSession(false);
+        stopCamera();
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
         setInterviewComplete(true);
         onCompletion();
       } else if (action === 'pause') {
@@ -790,12 +800,12 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     stopMicMonitoring();
   };
 
-  // Attach stream to video element
+  // Attach stream to video element — re-run whenever the <video> node may have re-mounted
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
     }
-  }, [stream, currentStep, currentQuestion]); // Re-attach when question changes too
+  }, [stream, currentStep, currentQuestion, inInterviewSession, isPlaying]);
 
 
   // Clean up on unmount
@@ -881,21 +891,35 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
     handleRecordTestClip();
   };
 
-  const handleStartFaceDetection = () => {
-    setFaceDetectionStarted(true);
-    setDetectionProgress(0);
+  const handleCaptureFace = async () => {
+    if (!videoRef.current || !streamRef.current) return;
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    setCapturedFaceDataUrl(dataUrl);
+    sessionStorage.setItem('reference_face_photo', dataUrl);
+    setFaceCaptureDone(true);
 
-    // Simulate face detection progress
-    const interval = setInterval(() => {
-      setDetectionProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setFaceDetectionComplete(true);
-          return 100;
-        }
-        return prev + 10;
+    try {
+      const res = await fetch(`${AI_SERVICE_BASE_URL}/proctoring/extract-face-encoding`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frame_b64: dataUrl.split(',')[1], session_id: null }),
       });
-    }, 300);
+      if (res.ok) {
+        const { encoding } = await res.json();
+        if (Array.isArray(encoding) && encoding.length > 0) {
+          sessionStorage.setItem('reference_face_encoding', JSON.stringify(encoding));
+        }
+      }
+    } catch {
+      // Non-fatal — identity verification won't run but interview can still proceed
+    }
   };
 
   const handleRetryCamera = () => {
@@ -1135,6 +1159,9 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
         } else {
           // Interview complete - mark session as completed and show thank you page
           stopCamera();
+          if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+          }
 
           // Mark session as completed in backend first
           if (sessionId) {
@@ -1212,381 +1239,29 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
         );
 
       case 2:
+      default:
         return (
-          <Card className="max-w-5xl mx-auto p-8 transition-all duration-500 ease-in-out">
-            <div className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: '#6366F1' }}>
-                  <Camera className="w-6 h-6 text-white" />
-                </div>
-                <h3 className="text-gray-700">Test Your Camera & Microphone</h3>
-              </div>
+          <Card className="p-8 border-none shadow-xl bg-white rounded-3xl overflow-hidden relative">
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500"></div>
 
-              <p className="text-gray-600 text-sm">
-                Let's verify that your camera and microphone are working correctly. Record a short test clip to ensure everything is functioning properly.
-              </p>
-
-              {/* Device Selectors */}
-              <div className="space-y-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
-                  <Camera className="w-4 h-4" />
-                  <span>Camera Source</span>
-                </div>
-                <div className="relative">
-                  <select
-                    value={selectedCameraId}
-                    onChange={(e) => {
-                      const newCamId = e.target.value;
-                      setSelectedCameraId(newCamId);
-                      startCamera(newCamId, selectedAudioId);
-                    }}
-                    className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 appearance-none cursor-pointer pr-10"
-                    style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`, backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em' }}
-                  >
-                    {cameraDevices.length === 0 ? (
-                      <option value="">No cameras detected</option>
-                    ) : (
-                      cameraDevices.map((device, idx) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.label || `Camera ${idx + 1}`}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
-                  <Mic className="w-4 h-4" />
-                  <span>Microphone Source</span>
-                </div>
-                <div className="relative">
-                  <select
-                    value={selectedAudioId}
-                    onChange={(e) => {
-                      const newAudId = e.target.value;
-                      setSelectedAudioId(newAudId);
-                      startCamera(selectedCameraId, newAudId);
-                    }}
-                    className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 appearance-none cursor-pointer pr-10"
-                    style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`, backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em' }}
-                  >
-                    {audioDevices.length === 0 ? (
-                      <option value="">No microphones detected</option>
-                    ) : (
-                      audioDevices.map((device, idx) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.label || `Microphone ${idx + 1}`}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </div>
-
-                {/* Refresh devices button */}
-                <button
-                  type="button"
-                  onClick={async () => {
-                    console.log('[DeviceDetection] Refreshing devices...');
-                    setCameraError(null);
-                    try {
-                      const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                      tempStream.getTracks().forEach(t => t.stop());
-                      const devices = await navigator.mediaDevices.enumerateDevices();
-                      const cameras = devices.filter(d => d.kind === 'videoinput');
-                      const mics = devices.filter(d => d.kind === 'audioinput');
-                      setCameraDevices(cameras);
-                      setAudioDevices(mics);
-                      if (cameras.length > 0) setSelectedCameraId(cameras[0].deviceId);
-                      if (mics.length > 0) setSelectedAudioId(mics[0].deviceId);
-                      console.log('[DeviceDetection] Refreshed - Cameras:', cameras.length, 'Mics:', mics.length);
-                    } catch (err) {
-                      console.error('[DeviceDetection] Refresh failed:', err);
-                      setCameraError('Failed to refresh devices. Please ensure camera and mic permissions are granted.');
-                    }
-                  }}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  Refresh device list
-                </button>
-              </div>
-
-              {/* Video Container - Expanded View */}
-              <div className="bg-slate-900 rounded-[2rem] ring-4 ring-indigo-500/20 shadow-2xl overflow-hidden relative transition-all duration-500 ease-in-out" style={{ aspectRatio: '16/9', width: '100%', maxHeight: '600px' }}>
-                {isPlaying ? (
-                  <video
-                    src={recordedUrl || ''}
-                    controls
-                    autoPlay
-                    className="w-full h-full object-contain"
-                  />
-                ) : stream ? (
-                  <div className="relative w-full h-full group">
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      className="w-full h-full object-cover transition-transform duration-700"
-                      style={{ transform: 'scaleX(-1)' }}
-                    />
-                    {isRecording && (
-                      <div className="absolute top-4 right-4 flex items-center gap-2 bg-red-500/80 text-white px-3 py-1 rounded-full animate-pulse">
-                        <div className="w-3 h-3 bg-white rounded-full" />
-                        <span className="text-xs font-medium">Recording...</span>
+            <div className="grid md:grid-cols-2 gap-10">
+              {/* Left Column - Video Preview */}
+              <div className="space-y-6">
+                <div className="relative rounded-2xl overflow-hidden bg-gray-900 aspect-video shadow-inner ring-1 ring-black/5">
+                  {cameraError ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
+                      <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-4">
+                        <AlertCircle className="w-8 h-8 text-red-500" />
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center">
-                    <Camera className="w-16 h-16 text-slate-600 mb-4" />
-                    <p className="text-slate-500">{cameraError || 'Camera not available'}</p>
-                    {cameraError && (
-                      <Button variant="outline" size="sm" onClick={() => startCamera()} className="mt-4">
+                      <p className="text-white font-medium text-sm">{cameraError}</p>
+                      <Button variant="outline" size="sm" onClick={() => startCamera(selectedCameraId, selectedAudioId)} className="mt-3 text-white border-white/30 hover:bg-white/10">
                         Retry Camera
                       </Button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-3 text-gray-600">
-                <Mic className={`w-4 h-4 transition-colors ${micActive ? 'text-emerald-500' : 'text-gray-400'}`} />
-                <span className="text-sm">
-                  {micActive ? 'Microphone active' : 'Microphone not detected'}
-                </span>
-                <div className="flex items-center gap-0.5 ml-2">
-                  {Array.from({ length: 20 }).map((_, i) => {
-                    const threshold = (i / 20) * 100;
-                    const isActive = micLevel > threshold;
-                    const barColor = micLevel > 75
-                      ? 'bg-red-500'
-                      : micLevel > 50
-                        ? 'bg-yellow-500'
-                        : 'bg-emerald-500';
-                    return (
-                      <div
-                        key={i}
-                        className={`w-1 rounded-full transition-all duration-75 ${
-                          isActive ? barColor : 'bg-gray-200'
-                        }`}
-                        style={{ height: `${8 + (i * 1.2)}px`, opacity: isActive ? 1 : 0.3 }}
-                      />
-                    );
-                  })}
-                </div>
-                <span className="text-xs text-gray-400 ml-1 w-8">{micLevel}%</span>
-              </div>
-
-              {/* Recording controls */}
-              <div className="space-y-3">
-                {/* Primary action: Record / Stop Recording / Record Again */}
-                <div className="flex gap-3 justify-center">
-                  {isRecording ? (
-                    <Button
-                      className="text-white rounded-full bg-red-500 hover:bg-red-600 animate-pulse px-8"
-                      onClick={handleStopTestRecording}
-                    >
-                      <Square className="w-4 h-4 mr-2" />
-                      Stop Recording
-                    </Button>
+                    </div>
                   ) : isPlaying ? (
-                    <Button
-                      variant="outline"
-                      className="rounded-full px-8"
-                      onClick={handleStopPlayback}
-                    >
-                      <Square className="w-4 h-4 mr-2" />
-                      Stop Playback
-                    </Button>
-                  ) : hasRecorded ? (
-                    <Button
-                      className="text-white rounded-full bg-indigo-600 hover:bg-indigo-700 px-8"
-                      onClick={handleRecordAgain}
-                    >
-                      <Mic className="w-4 h-4 mr-2" />
-                      Record Again
-                    </Button>
-                  ) : (
-                    <Button
-                      className="text-white rounded-full bg-indigo-600 hover:bg-indigo-700 px-8"
-                      onClick={handleRecordTestClip}
-                    >
-                      <Mic className="w-4 h-4 mr-2" />
-                      Record Test Clip
-                    </Button>
-                  )}
-                </div>
-
-                {/* Secondary actions: Play / Stop playback */}
-                {hasRecorded && !isRecording && (
-                  <div className="flex gap-3 justify-center">
-                    {!isPlaying ? (
-                      <Button
-                        variant="outline"
-                        className="rounded-full"
-                        onClick={handlePlayClip}
-                      >
-                        <Play className="w-4 h-4 mr-2" />
-                        Play Clip
-                      </Button>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-
-              <p className="text-center text-gray-500 text-xs">
-                {isRecording
-                  ? 'Recording will auto-stop after 10 seconds'
-                  : isPlaying
-                    ? 'Review your test clip — check video and audio quality'
-                    : hasRecorded
-                      ? 'Clip recorded! Play it back or record again'
-                      : 'Record a short clip to test your camera and microphone'}
-              </p>
-
-              <div className="flex justify-between pt-4">
-                {/* Skip button for development/testing */}
-                <Button
-                  variant="outline"
-                  className="rounded-full text-orange-600 border-orange-300 hover:bg-orange-50"
-                  onClick={() => {
-                    setCurrentStep(8);
-                    setInInterviewSession(true);
-                  }}
-                >
-                  Skip to Interview (Dev)
-                </Button>
-                <Button
-                  className="text-white rounded-full"
-                  style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => setCurrentStep(3)}
-                >
-                  Continue
-                </Button>
-              </div>
-            </div>
-          </Card>
-        );
-
-      case 3:
-        return (
-          <Card className="max-w-5xl mx-auto p-8">
-            <div className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: '#6366F1' }}>
-                  <Video className="w-6 h-6 text-white" />
-                </div>
-                <h3 className="text-gray-700">Before You Begin</h3>
-              </div>
-
-              <p className="text-gray-600">
-                Please review these important guidelines before starting your interview session.
-              </p>
-
-              <div className="space-y-6 pt-4">
-                <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#EEF2FF' }}>
-                    <Video className="w-5 h-5" style={{ color: '#6366F1' }} />
-                  </div>
-                  <div>
-                    <h4 className="text-gray-700 mb-1">You'll record short video answers</h4>
-                    <p className="text-gray-600 text-sm">
-                      Each question will be presented one at a time. Take your time to think before recording.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#EEF2FF' }}>
-                    <Clock className="w-5 h-5" style={{ color: '#6366F1' }} />
-                  </div>
-                  <div>
-                    <h4 className="text-gray-700 mb-1">Each question has a time limit</h4>
-                    <p className="text-gray-600 text-sm">
-                      You'll have up to 2 minutes to answer each question. A countdown timer will be visible.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#EEF2FF' }}>
-                    <User className="w-5 h-5" style={{ color: '#6366F1' }} />
-                  </div>
-                  <div>
-                    <h4 className="text-gray-700 mb-1">Stay centered and speak naturally</h4>
-                    <p className="text-gray-600 text-sm">
-                      Keep yourself in frame, maintain good posture, and speak clearly into your microphone.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-lg" style={{ backgroundColor: '#EFF6FF' }}>
-                <div className="flex items-start gap-3">
-                  <Info className="w-5 h-5 flex-shrink-0" style={{ color: '#3B82F6' }} />
-                  <div>
-                    <h4 className="text-sm mb-1" style={{ color: '#1E40AF' }}>Important notice:</h4>
-                    <p className="text-sm" style={{ color: '#1E40AF' }}>
-                      Make sure you're in a quiet environment. Background noise may affect audio quality and your assessment results.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 pt-4">
-                <Button
-                  variant="outline"
-                  className="rounded-full"
-                  onClick={() => setCurrentStep(2)}
-                >
-                  Back
-                </Button>
-                <Button
-                  className="text-white rounded-full"
-                  style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => setCurrentStep(4)}
-                >
-                  Continue
-                </Button>
-              </div>
-            </div>
-          </Card>
-        );
-
-      case 4:
-        return (
-          <Card className="max-w-5xl mx-auto p-8 border-none shadow-xl bg-white/50 backdrop-blur-sm">
-            <div className="space-y-8">
-              <div className="flex flex-col items-center justify-center text-center">
-                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-200">
-                  <Scan className="w-8 h-8 text-white" />
-                </div>
-                <h3 className="text-2xl font-bold text-gray-800">Biometric Calibration</h3>
-                <p className="text-gray-500 max-w-lg mt-2">
-                  Please center your face within the frame. We will extract a secure biometric signature to verify your identity throughout the session.
-                </p>
-              </div>
-
-              {cameraError && (
-                <div className="max-w-md mx-auto p-4 rounded-xl bg-red-50 border border-red-100 flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-red-700 text-sm font-medium">Camera Access Required</p>
-                    <p className="text-red-600 text-sm mt-1">{cameraError}</p>
-                    <Button variant="outline" size="sm" className="mt-3 bg-white" onClick={handleRetryCamera}>
-                      Retry Permissions
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-center">
-                <div className="relative w-80 h-80">
-                  <div className={`absolute inset-0 rounded-full border-4 transition-all duration-700 z-20 ${faceDetectionComplete ? 'border-emerald-400' : faceDetectionStarted ? 'border-indigo-400 animate-pulse' : 'border-gray-200'}`} />
-                  
-                  <div className="absolute inset-2 rounded-full overflow-hidden bg-slate-900 z-10 flex items-center justify-center">
-                    {stream ? (
+                    <video src={recordedUrl || ''} controls autoPlay className="w-full h-full object-contain" />
+                  ) : stream ? (
+                    <div className="relative w-full h-full">
                       <video
                         ref={videoRef}
                         autoPlay
@@ -1595,433 +1270,179 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
                         className="w-full h-full object-cover"
                         style={{ transform: 'scaleX(-1)' }}
                       />
-                    ) : (
-                      <Camera className="w-12 h-12 text-slate-700" />
-                    )}
-                  </div>
-
-                  {faceDetectionStarted && !faceDetectionComplete && (
-                    <div className="absolute inset-0 z-30 flex items-center justify-center rounded-full bg-indigo-900/20 backdrop-blur-[2px]">
-                      <div className="w-full h-1 bg-indigo-500 absolute top-1/2 -translate-y-1/2 animate-[scan_2s_ease-in-out_infinite] shadow-[0_0_15px_rgba(99,102,241,0.8)]" />
-                    </div>
-                  )}
-
-                  {faceDetectionComplete && (
-                    <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 z-40 bg-emerald-500 text-white px-4 py-2 rounded-full shadow-lg flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span className="text-sm font-medium">Verified</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="max-w-md mx-auto">
-                {faceDetectionStarted && (
-                  <div className="space-y-2 mb-6">
-                    <div className="flex justify-between text-sm font-medium">
-                      <span className={faceDetectionComplete ? "text-emerald-600" : "text-indigo-600"}>
-                        {faceDetectionComplete ? "Biometric signature secured" : "Extracting facial embeddings..."}
-                      </span>
-                      <span className="text-gray-500">{detectionProgress}%</span>
-                    </div>
-                    <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-300 ${faceDetectionComplete ? 'bg-emerald-500' : 'bg-indigo-500'}`}
-                        style={{ width: `${detectionProgress}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex justify-center">
-                  {!faceDetectionStarted ? (
-                    <Button
-                      className="w-full rounded-xl py-6 text-lg font-medium shadow-xl shadow-indigo-500/20 transition-all hover:scale-[1.02]"
-                      style={{ background: 'linear-gradient(to right, #6366F1, #8B5CF6)' }}
-                      onClick={handleStartFaceDetection}
-                      disabled={!stream}
-                    >
-                      Initialize Calibration
-                    </Button>
-                  ) : faceDetectionComplete ? (
-                    <Button
-                      className="w-full rounded-xl py-6 text-lg font-medium shadow-xl shadow-emerald-500/20 transition-all hover:scale-[1.02]"
-                      style={{ background: 'linear-gradient(to right, #10B981, #059669)' }}
-                      onClick={() => setCurrentStep(5)}
-                    >
-                      Continue Assessment
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          </Card>
-        );
-
-      case 5:
-        return (
-          <Card className="max-w-5xl mx-auto p-8">
-            <div className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: '#6366F1' }}>
-                  <Copy className="w-6 h-6 text-white" />
-                </div>
-                <h3 className="text-gray-700">Copy & Paste Disabled</h3>
-              </div>
-
-              <p className="text-gray-600">
-                To maintain the integrity and fairness of this environment, copy and paste functionality has been disabled during your session.
-              </p>
-
-              <div className="p-4 rounded-lg" style={{ backgroundColor: '#FEE2E2' }}>
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 flex-shrink-0 text-red-600" />
-                  <div>
-                    <h4 className="text-red-600 mb-1">Important Notice</h4>
-                    <p className="text-red-600 text-sm">
-                      Any attempt to copy or paste content will be detected and may result in session termination.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="text-gray-700 mb-4">What this means:</h4>
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3 p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
-                    <X className="w-5 h-5 flex-shrink-0 text-red-500 mt-0.5" />
-                    <div>
-                      <span className="text-gray-900">Copy (Ctrl+C / Cmd+C):</span>
-                      <span className="text-gray-600 ml-1">Disabled throughout the session</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-3 p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
-                    <X className="w-5 h-5 flex-shrink-0 text-red-500 mt-0.5" />
-                    <div>
-                      <span className="text-gray-900">Paste (Ctrl+V / Cmd+V):</span>
-                      <span className="text-gray-600 ml-1">Disabled throughout the session</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-3 p-3 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
-                    <X className="w-5 h-5 flex-shrink-0 text-red-500 mt-0.5" />
-                    <div>
-                      <span className="text-gray-900">Right-click context menu:</span>
-                      <span className="text-gray-600 ml-1">Copy/paste options removed</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-4">
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={copyPasteUnderstood}
-                    onChange={(e) => setCopyPasteUnderstood(e.target.checked)}
-                    className="mt-1 w-4 h-4 rounded border-gray-300"
-                    style={{ accentColor: '#6366F1' }}
-                  />
-                  <span className="text-gray-600 text-sm">
-                    I understand that copy and paste functionality is disabled for this session
-                  </span>
-                </label>
-              </div>
-
-              <div className="flex justify-end pt-4">
-                <Button
-                  className="text-white rounded-full px-8"
-                  style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => setCurrentStep(6)}
-                  disabled={!copyPasteUnderstood}
-                >
-                  Next Step
-                </Button>
-              </div>
-            </div>
-          </Card>
-        );
-
-      case 6:
-        return (
-          <Card className="max-w-5xl mx-auto p-8">
-            <div className="space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#EEF2FF' }}>
-                  <Users className="w-6 h-6" style={{ color: '#6366F1' }} />
-                </div>
-                <h3 className="text-gray-700">One Person Presence</h3>
-              </div>
-
-              <p className="text-gray-600">
-                For a fair and secure environment, only one person should be present during the session. Our monitoring system will detect multiple people in the frame.
-              </p>
-
-              <div className="p-4 rounded-lg" style={{ backgroundColor: '#FEE2E2' }}>
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 flex-shrink-0 text-red-600" />
-                  <div>
-                    <h4 className="text-red-600 mb-1">Automatic Session Termination</h4>
-                    <p className="text-red-600 text-sm">
-                      If multiple people are detected, or if you leave the environment, your session will be automatically terminated and you will be required to restart.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-6 pt-4">
-                <div className="p-6 rounded-lg" style={{ backgroundColor: '#D1FAE5' }}>
-                  <div className="flex flex-col items-center text-center space-y-3">
-                    <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ backgroundColor: '#10B981' }}>
-                      <User className="w-8 h-8 text-white" />
-                    </div>
-                    <h4 className="text-emerald-700">Allowed</h4>
-                    <p className="text-emerald-600 text-sm">
-                      One person visible in the camera frame at all times
-                    </p>
-                  </div>
-                </div>
-
-                <div className="p-6 rounded-lg" style={{ backgroundColor: '#FEE2E2' }}>
-                  <div className="flex flex-col items-center text-center space-y-3">
-                    <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ backgroundColor: '#EF4444' }}>
-                      <Users className="w-8 h-8 text-white" />
-                    </div>
-                    <h4 className="text-red-600">Not Allowed</h4>
-                    <p className="text-red-600 text-sm">
-                      Multiple people or leaving the environment during the session
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-4">
-                <h4 className="text-gray-700 mb-3">What will happen if violated:</h4>
-                <div className="p-4 rounded-lg" style={{ backgroundColor: '#F9FAFB' }}>
-                  <div className="text-center">
-                    <p className="text-gray-900 mb-1">Will be Discussed</p>
-                    <p className="text-gray-500 text-sm">Supporting text</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-end pt-4">
-                <Button
-                  className="text-white rounded-full px-8"
-                  style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => setCurrentStep(7)}
-                >
-                  Next Step
-                </Button>
-              </div>
-            </div>
-          </Card>
-        );
-
-      case 7:
-        return (
-          <Card className="max-w-3xl mx-auto p-8 shadow-xl border-0 ring-1 ring-gray-100">
-            <div className="space-y-8">
-              <div className="flex flex-col items-center text-center space-y-4">
-                <div className="w-16 h-16 rounded-full flex items-center justify-center bg-indigo-50 text-indigo-600 mb-2">
-                  <Mic className="w-8 h-8" />
-                </div>
-                <h3 className="text-2xl font-bold text-gray-900">Mock Question Practice</h3>
-                <p className="text-gray-500 max-w-lg">
-                  Let's practice with a warm-up question. This helps you get comfortable with the recording process before the actual interview begins.
-                </p>
-              </div>
-
-              <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100/50 text-center">
-                <p className="text-indigo-900 font-medium text-lg">
-                  "Tell us briefly about yourself and why you're interested in this position."
-                </p>
-              </div>
-
-              <div className={`bg-slate-900 rounded-3xl shadow-2xl h-80 flex flex-col items-center justify-center relative overflow-hidden transition-all duration-300 ${
-                isRecording ? 'ring-4 ring-red-500 shadow-red-500/20' : 'ring-4 ring-indigo-500/20 shadow-indigo-500/20'
-              }`}>
-                {isRecording && (
-                  <div className="absolute top-4 right-4 z-10 flex items-center gap-2 bg-black/50 px-3 py-1.5 rounded-full backdrop-blur-sm">
-                    <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
-                    <span className="text-white text-xs font-medium tracking-wide">REC</span>
-                  </div>
-                )}
-                
-                {recordedUrl && hasRecorded ? (
-                  <video
-                    src={recordedUrl}
-                    controls
-                    className="w-full h-full object-cover"
-                  />
-                ) : stream ? (
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className={`w-full h-full object-cover transition-opacity duration-300 ${isRecording ? 'opacity-100' : 'opacity-70'}`}
-                    style={{ transform: 'scaleX(-1)' }}
-                  />
-                ) : (
-                  <div className="flex flex-col items-center text-slate-500">
-                    <Camera className="w-12 h-12 mb-3 opacity-50" />
-                    <p className="text-sm font-medium">Camera not available</p>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col items-center gap-4 pt-2">
-                {!hasRecorded ? (
-                  <div className="flex flex-col items-center gap-3 w-full">
-                    <Button
-                      className={`text-white rounded-full px-10 py-6 text-lg w-full max-w-xs transition-all duration-300 ${
-                        isRecording ? 'bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/30' : 'bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-500/30'
-                      }`}
-                      onClick={() => {
-                        if (!isRecording) {
-                          if (!stream) {
-                            setCameraError('No camera stream. Please check device setup.');
-                            return;
-                          }
-                          setIsRecording(true);
-                          setHasRecorded(false);
-                          chunksRef.current = [];
-
-                          const recorder = new MediaRecorder(stream, {
-                            mimeType: 'video/webm;codecs=vp8,opus',
-                            videoBitsPerSecond: 250000
-                          });
-                          mediaRecorderRef.current = recorder;
-
-                          recorder.ondataavailable = (e) => {
-                            if (e.data.size > 0) {
-                              chunksRef.current.push(e.data);
-                            }
-                          };
-
-                          recorder.onstop = () => {
-                            const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-                            const url = URL.createObjectURL(blob);
-                            setRecordedUrl(url);
-                            setHasRecorded(true);
-                            setIsRecording(false);
-                          };
-
-                          recorder.start(1000);
-
-                          setTimeout(() => {
-                            if (recorder.state === 'recording') {
-                              recorder.stop();
-                            }
-                          }, RECORDING_TIMEOUT_SECONDS * 1000);
-                        } else if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-                          mediaRecorderRef.current.stop();
-                        }
-                      }}
-                    >
-                      {isRecording ? (
-                        <div className="flex items-center">
-                          <div className="w-2.5 h-2.5 bg-white rounded-full mr-3 animate-pulse" />
-                          Stop Recording
+                      {isRecording && (
+                        <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/60 backdrop-blur-md text-white px-3 py-1.5 rounded-full text-sm font-medium animate-pulse border border-white/10">
+                          <div className="w-2.5 h-2.5 bg-red-500 rounded-full"></div>
+                          Recording...
                         </div>
+                      )}
+                      {!isRecording && (
+                        <div className="absolute bottom-4 left-4 right-4 flex justify-between items-end">
+                          <div className="bg-black/50 backdrop-blur-md rounded-lg p-2.5 flex items-center gap-2 border border-white/10">
+                            <Mic className={`w-4 h-4 ${micActive ? 'text-green-400' : 'text-gray-400'}`} />
+                            <div className="flex gap-0.5 h-3 items-end">
+                              {Array.from({ length: 10 }).map((_, i) => (
+                                <div
+                                  key={i}
+                                  className={`w-1 rounded-t-sm transition-all duration-75 ${micLevel > (i / 10) * 100 ? 'bg-green-400' : 'bg-gray-600'}`}
+                                  style={{ height: Math.max(20, Math.min(100, (micLevel / 50) * 100)) * (i / 10) + '%' }}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Camera className="w-12 h-12 text-slate-600" />
+                    </div>
+                  )}
+                </div>
+
+                {!cameraError && (
+                  <div className="space-y-3">
+                    {/* Face capture — required before starting */}
+                    <Button
+                      onClick={handleCaptureFace}
+                      disabled={!stream || isRecording}
+                      className={`w-full h-12 rounded-xl font-medium border transition-colors ${
+                        faceCaptureDone
+                          ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
+                          : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
+                      }`}
+                      variant="outline"
+                    >
+                      {faceCaptureDone ? (
+                        <><CheckCircle2 className="w-4 h-4 mr-2" /> Face Captured — Click to Recapture</>
                       ) : (
-                        'Start Practice Recording'
+                        <><Camera className="w-4 h-4 mr-2" /> Capture Face Photo</>
                       )}
                     </Button>
-                    {!isRecording && (
-                      <p className="text-sm text-gray-400 font-medium">Max length: 1 minute</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center gap-4 w-full">
-                    <Button
-                      variant="outline"
-                      className="rounded-full px-8 py-6 text-gray-700 border-gray-200 hover:bg-gray-50"
-                      onClick={() => {
-                        setIsRecording(false);
-                        setHasRecorded(false);
-                        setRecordedUrl(null);
-                        chunksRef.current = [];
-                      }}
-                    >
-                      Retry Recording
-                    </Button>
-                    <Button
-                      className="rounded-full px-8 py-6 text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-500/30"
-                      onClick={() => setCurrentStep(8)}
-                    >
-                      Looks Good, Continue
-                    </Button>
+
+                    {/* Device selectors */}
+                    <div className="space-y-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                      <select
+                        value={selectedCameraId}
+                        onChange={(e) => { setSelectedCameraId(e.target.value); startCamera(e.target.value, selectedAudioId); }}
+                        className="w-full p-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 appearance-none cursor-pointer"
+                      >
+                        {cameraDevices.length === 0 ? <option value="">No cameras detected</option> : cameraDevices.map((d, i) => <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${i + 1}`}</option>)}
+                      </select>
+                      <select
+                        value={selectedAudioId}
+                        onChange={(e) => { setSelectedAudioId(e.target.value); startCamera(selectedCameraId, e.target.value); }}
+                        className="w-full p-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 appearance-none cursor-pointer"
+                      >
+                        {audioDevices.length === 0 ? <option value="">No microphones detected</option> : audioDevices.map((d, i) => <option key={d.deviceId} value={d.deviceId}>{d.label || `Microphone ${i + 1}`}</option>)}
+                      </select>
+                    </div>
+
+                    {/* Optional test recording */}
+                    <div className="flex gap-3">
+                      <Button
+                        onClick={isRecording ? handleStopTestRecording : hasRecorded ? handleRecordAgain : handleRecordTestClip}
+                        disabled={isPlaying}
+                        className="flex-1 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border-none h-11 font-medium text-sm"
+                        variant="outline"
+                      >
+                        {isRecording ? (
+                          <><Square className="w-4 h-4 mr-2" /> Stop</>
+                        ) : hasRecorded ? (
+                          <><Mic className="w-4 h-4 mr-2 text-gray-500" /> Record Again</>
+                        ) : (
+                          <><Mic className="w-4 h-4 mr-2 text-gray-500" /> Test Recording</>
+                        )}
+                      </Button>
+                      <Button
+                        onClick={isPlaying ? handleStopPlayback : handlePlayClip}
+                        disabled={!hasRecorded || isRecording}
+                        className="flex-1 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 border-none h-11 font-medium text-sm disabled:opacity-50"
+                        variant="outline"
+                      >
+                        {isPlaying ? (
+                          <><Square className="w-4 h-4 mr-2" /> Stop</>
+                        ) : (
+                          <><Play className="w-4 h-4 mr-2 text-gray-500" /> Play Test</>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 )}
+              </div>
 
-                <div className="w-full h-px bg-gray-100 my-4" />
-                
-                <div className="flex justify-center w-full">
-                  <button 
-                    onClick={() => setCurrentStep(8)}
-                    className="text-sm text-gray-500 hover:text-gray-700 underline underline-offset-4 transition-colors"
-                  >
-                    Skip practice and continue to interview
-                  </button>
+              {/* Right Column - Info & Checklist */}
+              <div className="flex flex-col justify-between py-2">
+                <div className="space-y-6">
+                  <div className="flex gap-4 p-4 rounded-2xl bg-indigo-50/50 border border-indigo-100/50">
+                    <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                      <Sparkles className="w-5 h-5 text-indigo-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900 text-base mb-1">Look your best</h3>
+                      <p className="text-sm text-gray-600 leading-relaxed">Ensure you are in a well-lit room and clearly visible in the center of the frame.</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-green-500" /> Prerequisites
+                    </h4>
+                    <ul className="space-y-3 text-sm text-gray-600">
+                      <li className="flex items-center gap-3">
+                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${stream ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                        Camera and Microphone permissions granted
+                      </li>
+                      <li className="flex items-center gap-3">
+                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${faceCaptureDone ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                        <span className={faceCaptureDone ? 'text-green-700 font-medium' : ''}>Face photo captured</span>
+                        {capturedFaceDataUrl && (
+                          <img
+                            src={capturedFaceDataUrl}
+                            alt="Captured face"
+                            className="w-7 h-7 rounded-full object-cover ml-auto border-2 border-green-300"
+                          />
+                        )}
+                      </li>
+                      <li className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full flex-shrink-0 bg-green-500"></div>
+                        Stable internet connection
+                      </li>
+                      <li className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full flex-shrink-0 bg-green-500"></div>
+                        Quiet environment
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div className="space-y-3 pt-2 border-t border-gray-100">
+                    <h4 className="font-semibold text-gray-800 text-sm">Interview guidelines</h4>
+                    <ul className="space-y-2 text-sm text-gray-600">
+                      <li className="flex items-start gap-2"><span className="text-indigo-500 mt-0.5">•</span> You'll record short video answers, one question at a time</li>
+                      <li className="flex items-start gap-2"><span className="text-indigo-500 mt-0.5">•</span> Each question allows up to 2 minutes — a timer will be visible</li>
+                      <li className="flex items-start gap-2"><span className="text-indigo-500 mt-0.5">•</span> Stay centered, speak clearly, and remain alone in frame</li>
+                    </ul>
+                  </div>
                 </div>
-              </div>
-            </div>
-          </Card>
-        );
 
-      case 8:
-        return (
-          <Card className="max-w-5xl mx-auto p-12">
-            <div className="flex flex-col items-center text-center space-y-8">
-              <div className="w-24 h-24 rounded-full flex items-center justify-center" style={{ backgroundColor: '#10B981' }}>
-                <CheckCircle2 className="w-16 h-16 text-white" />
-              </div>
-
-              <h2 className="text-gray-700">All Set!</h2>
-
-              <p className="text-gray-600">
-                You've completed all the setup steps
-              </p>
-
-              <Button
-                className="text-white rounded-full px-12 py-6 text-lg"
-                style={{ backgroundColor: '#6366F1' }}
-                onClick={() => setInInterviewSession(true)}
-              >
-                Start Session →
-              </Button>
-
-              <p className="text-gray-700 text-sm max-w-xl">
-                Remember: Stay focused, remain alone in frame, and avoid any prohibited actions
-              </p>
-            </div>
-          </Card>
-        );
-
-      default:
-        return (
-          <Card className="max-w-2xl mx-auto p-12">
-            <div className="text-center">
-              <h2 className="text-gray-700 mb-4">Step {currentStep}</h2>
-              <p className="text-gray-600 mb-6">This step is coming soon...</p>
-              <div className="flex gap-4 justify-center">
-                <Button
-                  variant="outline"
-                  className="rounded-full"
-                  onClick={() => setCurrentStep(currentStep - 1)}
-                >
-                  Back
-                </Button>
-                <Button
-                  className="text-white rounded-full"
-                  style={{ backgroundColor: '#6366F1' }}
-                  onClick={() => currentStep < 8 && setCurrentStep(currentStep + 1)}
-                >
-                  Continue
-                </Button>
+                <div className="pt-8 mt-auto">
+                  <Button
+                    onClick={() => {
+                      void document.documentElement.requestFullscreen().catch(() => {});
+                      setInInterviewSession(true);
+                    }}
+                    disabled={!!cameraError || !stream || !faceCaptureDone}
+                    className="w-full h-14 rounded-xl text-lg font-medium shadow-lg shadow-indigo-200 transition-transform active:scale-[0.98]"
+                    style={{ backgroundColor: '#6366F1' }}
+                  >
+                    Start Interview
+                  </Button>
+                  {stream && !cameraError && !faceCaptureDone && (
+                    <p className="text-center text-xs text-gray-400 mt-2">
+                      Capture your face photo above to continue
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           </Card>
@@ -2031,6 +1452,14 @@ export function RecordedInterviewFlow({ onSignOut, onExit, onCompletion }: Recor
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#EDF0F8' }}>
+      {fsCountdownActive && (
+        <FullscreenCountdownOverlay
+          secondsLeft={fsSecondsLeft}
+          totalSeconds={FULLSCREEN_COUNTDOWN}
+          onReenter={enterFullscreen}
+        />
+      )}
+
       {/* Interview Complete Page */}
       {interviewComplete ? (
         <div className="flex flex-col items-center justify-center min-h-screen p-8">
