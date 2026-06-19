@@ -112,6 +112,7 @@ export function FiltrationFlowConfigModal({
         await api.recruiter.updateGroup(groupData.id, {
           filtration_flow: enabledFlow,
           status: 'Live',
+          github_questions_count: finalGithubCount,
           use_github_questions_video_interview: finalUseGithubVideo,
           use_github_questions_live_interview: finalUseGithubLive,
         } as any);
