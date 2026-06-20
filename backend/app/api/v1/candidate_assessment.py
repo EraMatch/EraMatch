@@ -1331,16 +1331,19 @@ async def save_answer(
         correct = q["correct_answer"]
         selected = request.answer_data.get("selected_option")
         
-        # Get the correct index - handle both formats
+        # Get the correct index - handle all formats
         # Format 1: {"correct_index": 2} (direct index)
         # Format 2: {"correct_option": "c"} (letter option id)
+        # Format 3: {"answer": 0} (legacy format)
         correct_index = correct.get("correct_index")
         if correct_index is None and correct.get("correct_option"):
             # Convert letter to index: "a"=0, "b"=1, etc.
             correct_option = correct.get("correct_option")
             if isinstance(correct_option, str) and len(correct_option) == 1:
                 correct_index = ord(correct_option.lower()) - ord('a')
-        
+        if correct_index is None and correct.get("answer") is not None:
+            correct_index = correct.get("answer")
+
         if selected is not None and correct_index is not None:
             is_correct = selected == correct_index
             points_earned = float(q_points) if is_correct else 0.0
@@ -2859,6 +2862,8 @@ async def auto_grade_answers(session_id: UUID, db_session):
                 opt = ca.get("correct_option")
                 if isinstance(opt, str) and len(opt) == 1:
                     correct_index = ord(opt.lower()) - ord("a")
+            if correct_index is None and ca.get("answer") is not None:
+                correct_index = ca.get("answer")
             if selected is not None and correct_index is not None:
                 is_correct = selected == correct_index
                 points_earned = float(points_max) if is_correct else 0.0

@@ -367,7 +367,7 @@ async def get_interview_config(candidate: CurrentCandidate, session: DbSession):
                 ON cpp.application_id = ca.application_id
                 AND cpp.stage_id = gps.stage_id
             WHERE ca.candidate_id = :cid
-              AND gps.state = 'active'
+              AND COALESCE(gps.state, 'not_started') != 'inactive'
               AND cpp.status IN ('unlocked', 'in_progress')
               AND (ca.is_deleted = false OR ca.is_deleted IS NULL)
             LIMIT 1
