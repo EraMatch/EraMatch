@@ -54,11 +54,11 @@ dependencies = [
     "celery[redis]>=5.3.0",
     "redis>=5.0.0",
     # TFLite runtime for FaceNet 512 face embedding (Google's tflite-runtime successor)
-    "ai-edge-litert>=2.0.0",
+    "ai-edge-litert>=2.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     # Proctoring ML (ported from FuturProctor)
     "opencv-contrib-python>=4.10.0",
-    "mediapipe>=0.10.20",
-    "ultralytics>=8.3.0",
+    "mediapipe>=0.10.20; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "ultralytics>=8.3.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "Pillow>=10.0.0",
     "scipy>=1.11.0",
     "torchvision>=0.17.0",
@@ -78,3 +78,6 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 
 [tool.uv]
+override-dependencies = [
+    "onnxruntime==1.18.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
