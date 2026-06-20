@@ -165,9 +165,13 @@ async def interviewer_session(ctx: agents.JobContext):
 
     # --- Build the pipeline ---
     gcp_creds = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    primary_model = os.getenv("INTERVIEWER_PRIMARY_MODEL", "gemini-3-flash-preview:cloud")
+    primary_model = os.getenv("INTERVIEWER_PRIMARY_MODEL", "deepseek-v4-flash:cloud")
     secondary_model = os.getenv("INTERVIEWER_SECONDARY_MODEL", "gemma3:12b-cloud")
     primary_provider = os.getenv("INTERVIEWER_PRIMARY_PROVIDER", "").lower()
+    # Suppress reasoning leakage on reasoning models (deepseek/minimax/gemini-flash):
+    # without this they spend the token budget "thinking" and return empty/truncated
+    # spoken content. Non-reasoning models (gemma3) safely ignore it.
+    reasoning_effort = os.getenv("INTERVIEWER_REASONING_EFFORT", "none")
 
     # --- LLM selection: try primary, fallback to secondary ---
     # Determine provider from env var or model name:
@@ -193,10 +197,14 @@ async def interviewer_session(ctx: agents.JobContext):
             model=primary_model,
             base_url=ollama_base + "/v1",
             api_key=ollama_api_key,
+            reasoning_effort=reasoning_effort,
             timeout=httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=30.0),
         )
         logger.info(
-            "[LLM-PRIMARY] Using %s via Ollama (base=%s)", primary_model, ollama_base
+            "[LLM-PRIMARY] Using %s via Ollama (base=%s, reasoning_effort=%s)",
+            primary_model,
+            ollama_base,
+            reasoning_effort,
         )
     else:
         try:
@@ -233,12 +241,14 @@ async def interviewer_session(ctx: agents.JobContext):
                 model=secondary_model,
                 base_url=ollama_base + "/v1",
                 api_key=ollama_api_key,
+                reasoning_effort=reasoning_effort,
                 timeout=httpx.Timeout(connect=30.0, read=120.0, write=30.0, pool=30.0),
             )
             logger.info(
-                "[LLM-FALLBACK] Using %s via Ollama (base=%s)",
+                "[LLM-FALLBACK] Using %s via Ollama (base=%s, reasoning_effort=%s)",
                 secondary_model,
                 ollama_base,
+                reasoning_effort,
             )
         else:
             llm = google.LLM(model=secondary_model)
@@ -283,29 +293,12 @@ async def interviewer_session(ctx: agents.JobContext):
     else:
         stt_adapter = stt_list[0]
 
-    # TTS with fallback: LiveKit Inference Deepgram → Google Cloud TTS
-    # Deepgram aura-2 is primary (no GCP creds needed). Google TTS is secondary
-    # (only if GCP credentials exist and init succeeds — same pattern as STT).
+    # TTS: Google Cloud TTS primary (if creds available) → Deepgram aura-2 fallback
+    # Google TTS is preferred — more stable than LiveKit Inference on flaky networks.
+    # Deepgram via LiveKit Inference is kept as fallback only.
     tts_list = []
-    # IMPORTANT: inference.TTS uses the LiveKit Inference gateway, which expects
-    # voice NAMES (e.g. "athena", "apollo"), NOT Deepgram plugin model IDs
-    # (e.g. "aura-2-asteria-en"). The old default "aura-2-asteria-en" caused
-    # 400 errors from the gateway: "invalid voice specification: voice ID must be a valid UUID"
-    tts_voice = os.getenv("DEEPGRAM_INFERENCE_VOICE", "athena")
-    tts_list.append(
-        inference.TTS(
-            model="deepgram/aura-2",
-            voice=tts_voice,
-            language="en",
-        )
-    )
-    logger.info(
-        "[TTS] Primary: deepgram/aura-2 (voice=%s) via LiveKit Inference", tts_voice
-    )
 
-    # Secondary: Google Cloud TTS (only if creds exist and init succeeds)
-    tts_provider = os.getenv("TTS_PRIMARY_PROVIDER", "deepgram").lower()
-    if tts_provider == "google" and gcp_creds and os.path.exists(gcp_creds):
+    if gcp_creds and os.path.exists(gcp_creds):
         try:
             google_tts = google.TTS(
                 language="en-US",
@@ -315,16 +308,27 @@ async def interviewer_session(ctx: agents.JobContext):
             )
             tts_list.append(google_tts)
             logger.info(
-                "[TTS] Secondary: google en-US-Wavenet-D (credentials_file=%s)",
+                "[TTS] Primary: google en-US-Wavenet-D (credentials_file=%s)",
                 gcp_creds,
             )
         except Exception as e:
             logger.warning("[TTS] Failed to initialize Google TTS: %s — skipping", e)
     else:
-        logger.info(
-            "[TTS] Google TTS skipped (no credentials or TTS_PRIMARY_PROVIDER=%s)",
-            tts_provider,
+        logger.info("[TTS] Google TTS skipped (no credentials file found)")
+
+    # Fallback: Deepgram aura-2 via LiveKit Inference
+    # IMPORTANT: inference.TTS expects voice NAMES (e.g. "athena"), not plugin model IDs
+    tts_voice = os.getenv("DEEPGRAM_INFERENCE_VOICE", "athena")
+    tts_list.append(
+        inference.TTS(
+            model="deepgram/aura-2",
+            voice=tts_voice,
+            language="en",
         )
+    )
+    logger.info(
+        "[TTS] Fallback: deepgram/aura-2 (voice=%s) via LiveKit Inference", tts_voice
+    )
 
     if len(tts_list) > 1:
         tts_adapter = tts_module.FallbackAdapter(
