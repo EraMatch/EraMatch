@@ -150,14 +150,19 @@ class CandidateDashboardService:
                 # Get stage configs for the group
                 stage_configs_result = await self.session.execute(
                     text("""
-                        SELECT 
+                        SELECT
                             gps.stage_id,
                             gps.stage_type,
                             gps.stage_order,
                             gps.config_id,
                             gps.state,
                             gps.stage_name,
-                            COALESCE(cpp.status, 'locked') as progress_status,
+                            CASE
+                                WHEN COALESCE(cpp.status, 'locked') = 'completed' THEN 'completed'
+                                WHEN gps.stage_type = 'assessment' THEN COALESCE(cpp.status, 'locked')
+                                WHEN COALESCE(gps.state, 'not_started') = 'active' THEN COALESCE(cpp.status, 'locked')
+                                ELSE 'locked'
+                            END as progress_status,
                             cpp.score,
                             cpp.started_at,
                             cpp.completed_at,
@@ -168,8 +173,8 @@ class CandidateDashboardService:
                                 WHEN 'live_interview' THEN (SELECT title FROM live_interview_configs WHERE config_id = gps.config_id)
                             END as stage_title
                         FROM group_pipeline_stages gps
-                        LEFT JOIN candidate_pipeline_progress cpp 
-                            ON cpp.application_id = :app_id 
+                        LEFT JOIN candidate_pipeline_progress cpp
+                            ON cpp.application_id = :app_id
                             AND cpp.stage_id = gps.stage_id
                         WHERE gps.group_id = :gid
                         ORDER BY gps.stage_order
@@ -300,7 +305,12 @@ class CandidateDashboardService:
                 SELECT
                     gps.stage_id, gps.stage_type, gps.stage_order,
                     gps.config_id, gps.state, gps.stage_name,
-                    COALESCE(cpp.status, 'locked') as progress_status,
+                    CASE
+                        WHEN COALESCE(cpp.status, 'locked') = 'completed' THEN 'completed'
+                        WHEN gps.stage_type = 'assessment' THEN COALESCE(cpp.status, 'locked')
+                        WHEN COALESCE(gps.state, 'not_started') = 'active' THEN COALESCE(cpp.status, 'locked')
+                        ELSE 'locked'
+                    END as progress_status,
                     CASE gps.stage_type
                         WHEN 'assessment' THEN (SELECT title FROM assessments WHERE assessment_id = gps.config_id)
                         WHEN 'ai_interview' THEN (SELECT title FROM ai_interview_configs WHERE config_id = gps.config_id)
